@@ -86,12 +86,43 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   int? _selectedCalendarDay;
   List<String> _readAgreementIds = [];
 
+  static const int _kCalendarInitialPage = 1200;
+  late final DateTime _calendarAnchorMonth;
+  late final PageController _pageController;
+
   String get _uid => FirebaseAuth.instance.currentUser!.uid;
 
   @override
   void initState() {
     super.initState();
+    _calendarAnchorMonth = DateTime(
+      _currentCalendarMonth.year,
+      _currentCalendarMonth.month,
+      1,
+    );
+    _pageController = PageController(initialPage: _kCalendarInitialPage);
     _loadReadIds();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  int _pageForMonth(DateTime month) {
+    return _kCalendarInitialPage +
+        (month.year - _calendarAnchorMonth.year) * 12 +
+        (month.month - _calendarAnchorMonth.month);
+  }
+
+  DateTime _monthForPage(int page) {
+    final offset = page - _kCalendarInitialPage;
+    return DateTime(
+      _calendarAnchorMonth.year,
+      _calendarAnchorMonth.month + offset,
+      1,
+    );
   }
 
   Future<void> _loadReadIds() async {
@@ -546,16 +577,15 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     List<PersonalEvent> eventsAsMusician,
     List<Musician> allMusicians,
   ) {
-    final allEvents = [...personalEvents, ...eventsAsMusician];
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
           _buildMonthHeader(),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           _buildDayOfWeekRow(),
-          const SizedBox(height: 4),
-          _buildCalendarGrid(allEvents, personalEvents, eventsAsMusician, allMusicians),
+          const SizedBox(height: 8),
+          _buildCalendarPageView(personalEvents, eventsAsMusician, allMusicians),
           const SizedBox(height: 80),
         ],
       ),
@@ -568,32 +598,44 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         _calNavBtn('‹', () {
+          final newMonth = DateTime(
+            _currentCalendarMonth.year,
+            _currentCalendarMonth.month - 1,
+            1,
+          );
           setState(() {
-            _currentCalendarMonth = DateTime(
-              _currentCalendarMonth.year,
-              _currentCalendarMonth.month - 1,
-              1,
-            );
+            _currentCalendarMonth = newMonth;
             _selectedCalendarDay = null;
           });
+          _pageController.animateToPage(
+            _pageForMonth(newMonth),
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+          );
         }),
         Text(
           '$monthName ${_currentCalendarMonth.year}',
           style: GoogleFonts.playfairDisplay(
-            fontSize: 22,
+            fontSize: 26,
             fontWeight: FontWeight.bold,
             color: kText,
           ),
         ),
         _calNavBtn('›', () {
+          final newMonth = DateTime(
+            _currentCalendarMonth.year,
+            _currentCalendarMonth.month + 1,
+            1,
+          );
           setState(() {
-            _currentCalendarMonth = DateTime(
-              _currentCalendarMonth.year,
-              _currentCalendarMonth.month + 1,
-              1,
-            );
+            _currentCalendarMonth = newMonth;
             _selectedCalendarDay = null;
           });
+          _pageController.animateToPage(
+            _pageForMonth(newMonth),
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+          );
         }),
       ],
     );
@@ -603,14 +645,14 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 44,
-        height: 44,
+        width: 52,
+        height: 52,
         decoration: BoxDecoration(
           color: kBg3,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Center(
-          child: Text(label, style: const TextStyle(fontSize: 24, color: kGold)),
+          child: Text(label, style: const TextStyle(fontSize: 28, color: kGold)),
         ),
       ),
     );
@@ -625,7 +667,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                   child: Text(
                     d,
                     style: const TextStyle(
-                      fontSize: 13,
+                      fontSize: 15,
                       fontWeight: FontWeight.w700,
                       color: kMuted,
                     ),
@@ -636,17 +678,49 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     );
   }
 
-  Widget _buildCalendarGrid(
-    List<PersonalEvent> allEvents,
+  Widget _buildCalendarPageView(
     List<PersonalEvent> personalEvents,
     List<PersonalEvent> eventsAsMusician,
     List<Musician> allMusicians,
   ) {
-    final year = _currentCalendarMonth.year;
-    final month = _currentCalendarMonth.month;
-    final firstWeekday = DateTime(year, month, 1).weekday; // 1=Mon
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cellSize = constraints.maxWidth / 7;
+        final gridHeight = cellSize * 6;
+        return SizedBox(
+          height: gridHeight,
+          child: PageView.builder(
+            controller: _pageController,
+            onPageChanged: (page) {
+              setState(() {
+                _currentCalendarMonth = _monthForPage(page);
+                _selectedCalendarDay = null;
+              });
+            },
+            itemBuilder: (_, page) => _buildCalendarGridForMonth(
+              month: _monthForPage(page),
+              personalEvents: personalEvents,
+              eventsAsMusician: eventsAsMusician,
+              allMusicians: allMusicians,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCalendarGridForMonth({
+    required DateTime month,
+    required List<PersonalEvent> personalEvents,
+    required List<PersonalEvent> eventsAsMusician,
+    required List<Musician> allMusicians,
+  }) {
+    final allEvents = [...personalEvents, ...eventsAsMusician];
+    final year = month.year;
+    final monthNum = month.month;
+    final firstWeekday = DateTime(year, monthNum, 1).weekday; // 1=Mon
     final startOffset = (firstWeekday - 1) % 7; // Mon=0
-    final daysInMonth = DateTime(year, month + 1, 0).day;
+    final daysInMonth = DateTime(year, monthNum + 1, 0).day;
     final today = DateTime.now();
 
     final cells = <Widget>[];
@@ -654,17 +728,19 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       cells.add(const SizedBox());
     }
     for (int day = 1; day <= daysInMonth; day++) {
-      final dayDate = DateTime(year, month, day);
+      final dayDate = DateTime(year, monthNum, day);
       final dayEvents = allEvents.where((e) {
         if (e.date.isEmpty) return false;
         try {
           final d = DateTime.parse(e.date);
-          return d.year == year && d.month == month && d.day == day;
+          return d.year == year && d.month == monthNum && d.day == day;
         } catch (_) {
           return false;
         }
       }).toList();
-      final isSelected = _selectedCalendarDay == day;
+      final isSelected = _selectedCalendarDay == day &&
+          _currentCalendarMonth.year == year &&
+          _currentCalendarMonth.month == monthNum;
       final isToday = _sameDay(dayDate, today);
       final hasEvents = dayEvents.isNotEmpty;
 
@@ -719,8 +795,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           clipBehavior: Clip.none,
           children: [
             Container(
-              width: 36,
-              height: 36,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: bgColor,
                 shape: BoxShape.circle,
@@ -730,7 +806,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                 child: Text(
                   '$day',
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 16,
                     color: textColor,
                     fontWeight: isSelected || hasEvents ? FontWeight.bold : FontWeight.normal,
                   ),
@@ -750,7 +826,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                   child: Text(
                     '$eventCount',
                     style: const TextStyle(
-                      fontSize: 9,
+                      fontSize: 10,
                       color: Color(0xFF1A0E00),
                       fontWeight: FontWeight.bold,
                     ),
