@@ -343,7 +343,7 @@ class _MusiciansSection extends ConsumerWidget {
           ),
         ),
         SizedBox(
-          height: 220,
+          height: 240,
           child: asyncMusicians.when(
             data: (list) {
               final musicians = list.isEmpty ? _fallbackMusicians : list;
@@ -445,6 +445,8 @@ class _MusicianCard extends StatelessWidget {
                 const SizedBox(height: 5),
                 Text(
                   musician.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
                   style: GoogleFonts.playfairDisplay(
                     fontSize: 13,
