@@ -17,6 +17,7 @@ class HomeScreen extends StatelessWidget {
             children: const [
               _HeroBanner(),
               _MusiciansSection(),
+              _EventsSection(),
             ],
           ),
         ),
@@ -434,6 +435,226 @@ class _MusicianCard extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Events section ───────────────────────────────────────────────────────────
+
+class _Event {
+  final String day;
+  final String month;
+  final String title;
+  final String location;
+  final List<String> tags;
+  final List<String> tagColors;
+  final String? spots;
+
+  const _Event({
+    required this.day,
+    required this.month,
+    required this.title,
+    required this.location,
+    required this.tags,
+    required this.tagColors,
+    this.spots,
+  });
+}
+
+const _kEvents = [
+  _Event(
+    day: '18',
+    month: 'May',
+    title: 'Muğam Gecəsi - Bakıda canlı ifa',
+    location: 'Hüseynov Sarayı, Bakı',
+    tags: ['Muğam', 'VIP'],
+    tagColors: ['gold', 'green'],
+    spots: '12 yer qalıb',
+  ),
+  _Event(
+    day: '25',
+    month: 'May',
+    title: 'Tar Festivalı - Açıq hava konserti',
+    location: 'Gənclik Parkı, Bakı',
+    tags: ['Festival'],
+    tagColors: ['gold'],
+  ),
+  _Event(
+    day: '2',
+    month: 'İyun',
+    title: 'Vokal Yarışması Final mərhələsi',
+    location: 'Heydər Əliyev Mərkəzi',
+    tags: ['Yarış', 'Pulsuz'],
+    tagColors: ['gold', 'green'],
+    spots: '5 yer qalıb',
+  ),
+];
+
+class _EventsSection extends StatelessWidget {
+  const _EventsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 18, bottom: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Tədbirlər',
+                style: GoogleFonts.playfairDisplay(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: kText,
+                ),
+              ),
+              const Text(
+                'Hamısı →',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: kGold,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (final event in _kEvents) _EventCard(event: event),
+      ],
+    );
+  }
+}
+
+class _EventCard extends StatelessWidget {
+  final _Event event;
+
+  const _EventCard({required this.event});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: kCard,
+        border: Border.all(color: kBorder),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 50,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            decoration: BoxDecoration(
+              color: kGold,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  event.day,
+                  style: GoogleFonts.playfairDisplay(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF1A0E00),
+                  ),
+                ),
+                Text(
+                  event.month.toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1A0E00),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  event.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.playfairDisplay(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: kText,
+                    height: 20 / 15,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  event.location,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: kMuted,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (int i = 0; i < event.tags.length; i++)
+                      _EventTag(
+                        label: event.tags[i],
+                        colorType: event.tagColors[i],
+                      ),
+                  ],
+                ),
+                if (event.spots != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    event.spots!,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: kRed,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EventTag extends StatelessWidget {
+  final String label;
+  final String colorType;
+
+  const _EventTag({required this.label, required this.colorType});
+
+  @override
+  Widget build(BuildContext context) {
+    final isGold = colorType == 'gold';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: isGold ? kGoldDim : const Color(0x1427AE60),
+        border: Border.all(color: isGold ? kGold : kGreen),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+          color: isGold ? kGold : kGreen,
+        ),
       ),
     );
   }
