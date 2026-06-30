@@ -20,6 +20,7 @@ class AuthService {
     required String displayName,
     required String instrument,
     required String city,
+    required String role,
   }) async {
     final cred = await _auth.createUserWithEmailAndPassword(
       email: email,
@@ -44,6 +45,9 @@ class AuthService {
       'fcmToken': '',
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
+      'role': role == 'musiqici' ? 'musician' : 'user',
+      'specialty': instrument,
+      if (role == 'musiqici') ...{'goldRing': false, 'online': true},
     });
 
     return cred;

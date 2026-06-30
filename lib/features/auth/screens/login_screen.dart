@@ -265,7 +265,7 @@ class _LoginScreenState extends State<LoginScreen> {
           style: TextStyle(color: kMuted, fontSize: 14),
         ),
         GestureDetector(
-          onTap: () {},
+          onTap: () => context.go('/register'),
           child: const Text(
             'Qeydiyyat',
             style: TextStyle(
