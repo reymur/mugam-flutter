@@ -18,6 +18,7 @@ class HomeScreen extends StatelessWidget {
               _HeroBanner(),
               _MusiciansSection(),
               _EventsSection(),
+              _RoomsSection(),
             ],
           ),
         ),
@@ -655,6 +656,239 @@ class _EventTag extends StatelessWidget {
           fontWeight: FontWeight.bold,
           color: isGold ? kGold : kGreen,
         ),
+      ),
+    );
+  }
+}
+
+// ── Rooms section ─────────────────────────────────────────────────────────────
+
+class _Room {
+  final String emoji;
+  final String name;
+  final String members;
+  final String preview;
+  final bool live;
+  final int avatarCount;
+
+  const _Room({
+    required this.emoji,
+    required this.name,
+    required this.members,
+    required this.preview,
+    required this.live,
+    required this.avatarCount,
+  });
+}
+
+const _kRooms = [
+  _Room(
+    emoji: '🎻',
+    name: 'Klassik Muğam Həvəskarları',
+    members: '234 üzv',
+    preview: 'Bu axşam Bakıda canlı konsert olacaq, kim gəlir?',
+    live: true,
+    avatarCount: 7,
+  ),
+  _Room(
+    emoji: '🎤',
+    name: 'Gənc Müğənnilər Klubu',
+    members: '156 üzv',
+    preview: 'Yeni mahnı yazıram, fikir bildirə bilərsiniz',
+    live: false,
+    avatarCount: 4,
+  ),
+  _Room(
+    emoji: '🥁',
+    name: 'Ritm və Performans',
+    members: '89 üzv',
+    preview: 'Nağara dərsləri üçün kim maraqlanır?',
+    live: true,
+    avatarCount: 12,
+  ),
+];
+
+class _RoomsSection extends StatelessWidget {
+  const _RoomsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 18, bottom: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Otaqlar',
+                style: GoogleFonts.playfairDisplay(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: kText,
+                ),
+              ),
+              const Text(
+                'Hamısı →',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: kGold,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (final room in _kRooms) _RoomCard(room: room),
+      ],
+    );
+  }
+}
+
+class _RoomCard extends StatelessWidget {
+  final _Room room;
+
+  const _RoomCard({required this.room});
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleAvatars = room.avatarCount > 4 ? 4 : room.avatarCount;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: kCard,
+        border: Border.all(color: kBorder),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row
+          Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: kBg3,
+                    border: Border.all(color: kBorder),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Center(
+                    child: Text(
+                      room.emoji,
+                      style: const TextStyle(fontSize: 20),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        room.name,
+                        style: GoogleFonts.playfairDisplay(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: kText,
+                        ),
+                      ),
+                      Text(
+                        room.members,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: kMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (room.live)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: const BoxDecoration(
+                          color: kGreen,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Text(
+                        'Canlı',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: kGreen,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+          // Preview with left border
+          Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.only(left: 10),
+            decoration: const BoxDecoration(
+              border: Border(
+                left: BorderSide(color: kBorder, width: 2),
+              ),
+            ),
+            child: Text(
+              room.preview,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                color: kMuted,
+                height: 20 / 13,
+              ),
+            ),
+          ),
+          // Avatars row
+          Row(
+            children: [
+              SizedBox(
+                height: 26,
+                width: 26 + (visibleAvatars - 1) * 18.0,
+                child: Stack(
+                  children: [
+                    for (int i = 0; i < visibleAvatars; i++)
+                      Positioned(
+                        left: i * 18.0,
+                        child: Container(
+                          width: 26,
+                          height: 26,
+                          decoration: BoxDecoration(
+                            color: kBg3,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: kCard, width: 2),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (room.avatarCount > 4) ...[
+                const SizedBox(width: 8),
+                Text(
+                  '+${room.avatarCount - 4} daha',
+                  style: const TextStyle(fontSize: 11, color: kMuted),
+                ),
+              ],
+            ],
+          ),
+        ],
       ),
     );
   }
