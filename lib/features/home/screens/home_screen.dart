@@ -5,6 +5,7 @@ import '../../../core/theme/colors.dart';
 import '../../../shared/widgets/topbar.dart';
 import '../../../firebase/models.dart';
 import '../../../firebase/firestore_service.dart';
+import '../../musician/screens/musician_profile_screen.dart';
 
 // ── Fallback mock data ────────────────────────────────────────────────────────
 
@@ -385,15 +386,22 @@ class _MusicianCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 140,
-      decoration: BoxDecoration(
-        color: kCard,
-        border: Border.all(
-          color: musician.goldRing ? kGold : kBorder,
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MusicianProfileScreen(musician: musician),
         ),
-        borderRadius: BorderRadius.circular(18),
       ),
+      child: Container(
+        width: 140,
+        decoration: BoxDecoration(
+          color: kCard,
+          border: Border.all(
+            color: musician.goldRing ? kGold : kBorder,
+          ),
+          borderRadius: BorderRadius.circular(18),
+        ),
       child: Stack(
         children: [
           Padding(
@@ -524,6 +532,7 @@ class _MusicianCard extends StatelessWidget {
               ),
             ),
         ],
+      ),
       ),
     );
   }
