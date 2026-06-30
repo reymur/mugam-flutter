@@ -111,3 +111,56 @@ class Room {
     );
   }
 }
+
+class PersonalEvent {
+  final String id;
+  final String ownerUid;
+  final String date;
+  final String type;
+  final String location;
+  final String notes;
+  final List<String> musicians;
+  final bool isAgree;
+  final String? agreementChatId;
+  final String? partnerUid;
+  final String? partnerName;
+  final String status;
+  final String? cancelledBy;
+  final dynamic createdAt;
+
+  const PersonalEvent({
+    required this.id,
+    required this.ownerUid,
+    required this.date,
+    required this.type,
+    required this.location,
+    required this.notes,
+    required this.musicians,
+    required this.isAgree,
+    this.agreementChatId,
+    this.partnerUid,
+    this.partnerName,
+    this.status = 'agreed',
+    this.cancelledBy,
+    this.createdAt,
+  });
+
+  factory PersonalEvent.fromFirestore(String id, Map<String, dynamic> data) {
+    return PersonalEvent(
+      id: id,
+      ownerUid: (data['ownerUid'] ?? '') as String,
+      date: (data['date'] ?? '') as String,
+      type: (data['type'] ?? '') as String,
+      location: (data['location'] ?? '') as String,
+      notes: (data['notes'] ?? '') as String,
+      musicians: List<String>.from(data['musicians'] as List? ?? const []),
+      isAgree: (data['isAgree'] ?? false) as bool,
+      agreementChatId: data['agreementChatId'] as String?,
+      partnerUid: data['partnerUid'] as String?,
+      partnerName: data['partnerName'] as String?,
+      status: (data['status'] ?? 'agreed') as String,
+      cancelledBy: data['cancelledBy'] as String?,
+      createdAt: data['createdAt'],
+    );
+  }
+}

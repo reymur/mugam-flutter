@@ -26,6 +26,7 @@ dependencies:
   google_fonts: any
   shared_preferences: any
   path_provider: any
+  intl: any
 
 dev_dependencies:
   flutter_test:
