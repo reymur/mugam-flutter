@@ -2,8 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  int _activeTabIndex = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -12,13 +19,226 @@ class ProfileScreen extends StatelessWidget {
       body: SafeArea(
         child: SingleChildScrollView(
           child: Column(
-            children: const [_ProfileHeader()],
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const _ProfileHeader(),
+              _TabsRow(
+                activeIndex: _activeTabIndex,
+                onTap: (i) => setState(() => _activeTabIndex = i),
+              ),
+              _TabContent(activeIndex: _activeTabIndex),
+            ],
           ),
         ),
       ),
     );
   }
 }
+
+// ── Tab row ──────────────────────────────────────────────────────────────────
+
+class _TabsRow extends StatelessWidget {
+  const _TabsRow({required this.activeIndex, required this.onTap});
+
+  final int activeIndex;
+  final ValueChanged<int> onTap;
+
+  static const _tabs = ['Haqqında', 'Video', 'Tədbirlər', 'Rəylər', '⚙️ Ayarlar'];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(top: 16, bottom: 4),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        child: Row(
+          children: List.generate(_tabs.length, (i) {
+            final active = i == activeIndex;
+            return GestureDetector(
+              onTap: () => onTap(i),
+              child: Container(
+                margin: EdgeInsets.only(right: i < _tabs.length - 1 ? 8 : 0),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: active ? kGold : Colors.transparent,
+                  border: active ? null : Border.all(color: kBorder),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  _tabs[i],
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: active ? const Color(0xFF1A0E00) : kMuted,
+                  ),
+                ),
+              ),
+            );
+          }),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Tab content dispatcher ────────────────────────────────────────────────────
+
+class _TabContent extends StatelessWidget {
+  const _TabContent({required this.activeIndex});
+
+  final int activeIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 30),
+      child: switch (activeIndex) {
+        0 => const _AboutTab(),
+        1 => const _Placeholder(emoji: '🎬', text: 'Tezliklə əlavə olunacaq'),
+        2 => const _Placeholder(emoji: '📅', text: 'Tezliklə əlavə olunacaq'),
+        3 => const _Placeholder(emoji: '⭐', text: 'Tezliklə əlavə olunacaq'),
+        _ => const _Placeholder(emoji: '⚙️', text: 'Ayarlar tezliklə'),
+      },
+    );
+  }
+}
+
+// ── About tab ─────────────────────────────────────────────────────────────────
+
+class _AboutTab extends StatelessWidget {
+  const _AboutTab();
+
+  static const _skills = [
+    'Kaman',
+    'Tar ifası',
+    'Toy musiqisi',
+    'Klassik muğam',
+    'Canlı ifa',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _InfoCard(
+          title: 'Bacarıqlar',
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _skills.map((s) => _SkillTag(label: s)).toList(),
+          ),
+        ),
+        _InfoCard(
+          title: 'Haqqında',
+          child: const Text(
+            '10 illik təcrübəyə malik peşəkar musiqiçiyəm...',
+            style: TextStyle(
+              fontSize: 13,
+              color: kMuted,
+              height: 20 / 13,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _InfoCard extends StatelessWidget {
+  const _InfoCard({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: kCard,
+        border: Border.all(color: kBorder),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              title,
+              style: GoogleFonts.playfairDisplay(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: kText,
+              ),
+            ),
+          ),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _SkillTag extends StatelessWidget {
+  const _SkillTag({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: kGoldDim, // 0x14D4A03C ≈ 8% gold tint
+        border: Border.all(color: const Color(0x40D4A03C)), // 25% gold tint
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+          color: kGold,
+        ),
+      ),
+    );
+  }
+}
+
+// ── Placeholder for tabs 1–4 ──────────────────────────────────────────────────
+
+class _Placeholder extends StatelessWidget {
+  const _Placeholder({required this.emoji, required this.text});
+
+  final String emoji;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 40),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(emoji, style: const TextStyle(fontSize: 48)),
+            const SizedBox(height: 12),
+            Text(
+              text,
+              style: const TextStyle(fontSize: 14, color: kMuted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Profile header (unchanged) ────────────────────────────────────────────────
 
 class _ProfileHeader extends StatelessWidget {
   const _ProfileHeader();
