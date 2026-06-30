@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
+import '../../../shared/widgets/topbar.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -10,17 +11,28 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: kBg,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: const [
-              _HeroBanner(),
-              _MusiciansSection(),
-              _EventsSection(),
-              _RoomsSection(),
-            ],
-          ),
+        child: Column(
+          children: [
+            Topbar(
+              notificationCount: 3,
+              onNotificationTap: () {},
+              onLanguageTap: () {},
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: const [
+                    _HeroBanner(),
+                    _MusiciansSection(),
+                    _EventsSection(),
+                    _RoomsSection(),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
