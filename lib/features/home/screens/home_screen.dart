@@ -1,13 +1,150 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
 import '../../../shared/widgets/topbar.dart';
+import '../../../firebase/models.dart';
+import '../../../firebase/firestore_service.dart';
 
-class HomeScreen extends StatelessWidget {
+// ── Fallback mock data ────────────────────────────────────────────────────────
+
+const List<Musician> _fallbackMusicians = [
+  Musician(
+    id: '',
+    name: 'Anar Musayev',
+    instrument: 'Kaman',
+    city: 'Bakı',
+    emoji: '🎻',
+    available: true,
+    online: true,
+    goldRing: true,
+    rating: 4.9,
+    reviews: 31,
+    bio: '',
+  ),
+  Musician(
+    id: '',
+    name: 'Leyla Həsənova',
+    instrument: 'Tar',
+    city: 'Gəncə',
+    emoji: '🎵',
+    available: false,
+    online: false,
+    goldRing: false,
+    rating: 4.7,
+    reviews: 18,
+    bio: '',
+  ),
+  Musician(
+    id: '',
+    name: 'Rəşad Əliyev',
+    instrument: 'Nağara',
+    city: 'Bakı',
+    emoji: '🥁',
+    available: true,
+    online: true,
+    goldRing: false,
+    rating: 4.8,
+    reviews: 25,
+    bio: '',
+  ),
+  Musician(
+    id: '',
+    name: 'Günel Vəliyeva',
+    instrument: 'Vokal',
+    city: 'Sumqayıt',
+    emoji: '🎤',
+    available: true,
+    online: false,
+    goldRing: false,
+    rating: 5.0,
+    reviews: 12,
+    bio: '',
+  ),
+  Musician(
+    id: '',
+    name: 'Tural Quliyev',
+    instrument: 'Qarmon',
+    city: 'Bakı',
+    emoji: '🪗',
+    available: false,
+    online: true,
+    goldRing: false,
+    rating: 4.6,
+    reviews: 23,
+    bio: '',
+  ),
+];
+
+const List<Event> _fallbackEvents = [
+  Event(
+    id: '',
+    day: '18',
+    month: 'May',
+    title: 'Muğam Gecəsi - Bakıda canlı ifa',
+    location: 'Hüseynov Sarayı, Bakı',
+    tags: ['Muğam', 'VIP'],
+    tagColors: ['gold', 'green'],
+    spots: '12 yer qalıb',
+  ),
+  Event(
+    id: '',
+    day: '25',
+    month: 'May',
+    title: 'Tar Festivalı - Açıq hava konserti',
+    location: 'Gənclik Parkı, Bakı',
+    tags: ['Festival'],
+    tagColors: ['gold'],
+  ),
+  Event(
+    id: '',
+    day: '2',
+    month: 'İyun',
+    title: 'Vokal Yarışması Final mərhələsi',
+    location: 'Heydər Əliyev Mərkəzi',
+    tags: ['Yarış', 'Pulsuz'],
+    tagColors: ['gold', 'green'],
+    spots: '5 yer qalıb',
+  ),
+];
+
+const List<Room> _fallbackRooms = [
+  Room(
+    id: '',
+    emoji: '🎻',
+    name: 'Klassik Muğam Həvəskarları',
+    members: '234 üzv',
+    preview: 'Bu axşam Bakıda canlı konsert olacaq, kim gəlir?',
+    live: true,
+    avatarCount: 7,
+  ),
+  Room(
+    id: '',
+    emoji: '🎤',
+    name: 'Gənc Müğənnilər Klubu',
+    members: '156 üzv',
+    preview: 'Yeni mahnı yazıram, fikir bildirə bilərsiniz',
+    live: false,
+    avatarCount: 4,
+  ),
+  Room(
+    id: '',
+    emoji: '🥁',
+    name: 'Ritm və Performans',
+    members: '89 üzv',
+    preview: 'Nağara dərsləri üçün kim maraqlanır?',
+    live: true,
+    avatarCount: 12,
+  ),
+];
+
+// ── Screen ────────────────────────────────────────────────────────────────────
+
+class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       backgroundColor: kBg,
       body: SafeArea(
@@ -170,95 +307,14 @@ class _HeroBanner extends StatelessWidget {
   }
 }
 
-// ── Musicians section ────────────────────────────────────────────────────────
+// ── Musicians section ─────────────────────────────────────────────────────────
 
-class _Musician {
-  final String name;
-  final String instrument;
-  final String city;
-  final String emoji;
-  final bool available;
-  final bool online;
-  final bool goldRing;
-  final double rating;
-  final int ratingCount;
-
-  const _Musician({
-    required this.name,
-    required this.instrument,
-    required this.city,
-    required this.emoji,
-    required this.available,
-    required this.online,
-    required this.goldRing,
-    required this.rating,
-    required this.ratingCount,
-  });
-}
-
-const _kMusicians = [
-  _Musician(
-    name: 'Anar Musayev',
-    instrument: 'Kaman',
-    city: 'Bakı',
-    emoji: '🎻',
-    available: true,
-    online: true,
-    goldRing: true,
-    rating: 4.9,
-    ratingCount: 31,
-  ),
-  _Musician(
-    name: 'Leyla Həsənova',
-    instrument: 'Tar',
-    city: 'Gəncə',
-    emoji: '🎵',
-    available: false,
-    online: false,
-    goldRing: false,
-    rating: 4.7,
-    ratingCount: 18,
-  ),
-  _Musician(
-    name: 'Rəşad Əliyev',
-    instrument: 'Nağara',
-    city: 'Bakı',
-    emoji: '🥁',
-    available: true,
-    online: true,
-    goldRing: false,
-    rating: 4.8,
-    ratingCount: 25,
-  ),
-  _Musician(
-    name: 'Günel Vəliyeva',
-    instrument: 'Vokal',
-    city: 'Sumqayıt',
-    emoji: '🎤',
-    available: true,
-    online: false,
-    goldRing: false,
-    rating: 5.0,
-    ratingCount: 12,
-  ),
-  _Musician(
-    name: 'Tural Quliyev',
-    instrument: 'Qarmon',
-    city: 'Bakı',
-    emoji: '🪗',
-    available: false,
-    online: true,
-    goldRing: false,
-    rating: 4.6,
-    ratingCount: 23,
-  ),
-];
-
-class _MusiciansSection extends StatelessWidget {
+class _MusiciansSection extends ConsumerWidget {
   const _MusiciansSection();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final asyncMusicians = ref.watch(musiciansProvider);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -288,14 +344,32 @@ class _MusiciansSection extends StatelessWidget {
         ),
         SizedBox(
           height: 220,
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            itemCount: _kMusicians.length,
-            itemBuilder: (context, index) => Padding(
-              padding: EdgeInsets.only(
-                right: index == _kMusicians.length - 1 ? 0 : 12,
+          child: asyncMusicians.when(
+            data: (list) {
+              final musicians = list.isEmpty ? _fallbackMusicians : list;
+              return ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: musicians.length,
+                itemBuilder: (context, index) => Padding(
+                  padding: EdgeInsets.only(
+                    right: index == musicians.length - 1 ? 0 : 12,
+                  ),
+                  child: _MusicianCard(musician: musicians[index]),
+                ),
+              );
+            },
+            loading: () => const Center(
+              child: CircularProgressIndicator(color: kGold),
+            ),
+            error: (_, _) => ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: _fallbackMusicians.length,
+              itemBuilder: (context, index) => Padding(
+                padding: EdgeInsets.only(
+                  right: index == _fallbackMusicians.length - 1 ? 0 : 12,
+                ),
+                child: _MusicianCard(musician: _fallbackMusicians[index]),
               ),
-              child: _MusicianCard(musician: _kMusicians[index]),
             ),
           ),
         ),
@@ -305,7 +379,7 @@ class _MusiciansSection extends StatelessWidget {
 }
 
 class _MusicianCard extends StatelessWidget {
-  final _Musician musician;
+  final Musician musician;
 
   const _MusicianCard({required this.musician});
 
@@ -399,7 +473,7 @@ class _MusicianCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  '⭐ ${musician.rating} (${musician.ratingCount})',
+                  '⭐ ${musician.rating} (${musician.reviews})',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 10,
@@ -453,62 +527,14 @@ class _MusicianCard extends StatelessWidget {
   }
 }
 
-// ── Events section ───────────────────────────────────────────────────────────
+// ── Events section ────────────────────────────────────────────────────────────
 
-class _Event {
-  final String day;
-  final String month;
-  final String title;
-  final String location;
-  final List<String> tags;
-  final List<String> tagColors;
-  final String? spots;
-
-  const _Event({
-    required this.day,
-    required this.month,
-    required this.title,
-    required this.location,
-    required this.tags,
-    required this.tagColors,
-    this.spots,
-  });
-}
-
-const _kEvents = [
-  _Event(
-    day: '18',
-    month: 'May',
-    title: 'Muğam Gecəsi - Bakıda canlı ifa',
-    location: 'Hüseynov Sarayı, Bakı',
-    tags: ['Muğam', 'VIP'],
-    tagColors: ['gold', 'green'],
-    spots: '12 yer qalıb',
-  ),
-  _Event(
-    day: '25',
-    month: 'May',
-    title: 'Tar Festivalı - Açıq hava konserti',
-    location: 'Gənclik Parkı, Bakı',
-    tags: ['Festival'],
-    tagColors: ['gold'],
-  ),
-  _Event(
-    day: '2',
-    month: 'İyun',
-    title: 'Vokal Yarışması Final mərhələsi',
-    location: 'Heydər Əliyev Mərkəzi',
-    tags: ['Yarış', 'Pulsuz'],
-    tagColors: ['gold', 'green'],
-    spots: '5 yer qalıb',
-  ),
-];
-
-class _EventsSection extends StatelessWidget {
+class _EventsSection extends ConsumerWidget {
   const _EventsSection();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final asyncEvents = ref.watch(eventsProvider);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -536,14 +562,29 @@ class _EventsSection extends StatelessWidget {
             ],
           ),
         ),
-        for (final event in _kEvents) _EventCard(event: event),
+        asyncEvents.when(
+          data: (list) {
+            final events = list.isEmpty ? _fallbackEvents : list;
+            return Column(
+              children: [for (final event in events) _EventCard(event: event)],
+            );
+          },
+          loading: () => const Center(
+            child: CircularProgressIndicator(color: kGold),
+          ),
+          error: (_, _) => Column(
+            children: [
+              for (final event in _fallbackEvents) _EventCard(event: event),
+            ],
+          ),
+        ),
       ],
     );
   }
 }
 
 class _EventCard extends StatelessWidget {
-  final _Event event;
+  final Event event;
 
   const _EventCard({required this.event});
 
@@ -675,56 +716,12 @@ class _EventTag extends StatelessWidget {
 
 // ── Rooms section ─────────────────────────────────────────────────────────────
 
-class _Room {
-  final String emoji;
-  final String name;
-  final String members;
-  final String preview;
-  final bool live;
-  final int avatarCount;
-
-  const _Room({
-    required this.emoji,
-    required this.name,
-    required this.members,
-    required this.preview,
-    required this.live,
-    required this.avatarCount,
-  });
-}
-
-const _kRooms = [
-  _Room(
-    emoji: '🎻',
-    name: 'Klassik Muğam Həvəskarları',
-    members: '234 üzv',
-    preview: 'Bu axşam Bakıda canlı konsert olacaq, kim gəlir?',
-    live: true,
-    avatarCount: 7,
-  ),
-  _Room(
-    emoji: '🎤',
-    name: 'Gənc Müğənnilər Klubu',
-    members: '156 üzv',
-    preview: 'Yeni mahnı yazıram, fikir bildirə bilərsiniz',
-    live: false,
-    avatarCount: 4,
-  ),
-  _Room(
-    emoji: '🥁',
-    name: 'Ritm və Performans',
-    members: '89 üzv',
-    preview: 'Nağara dərsləri üçün kim maraqlanır?',
-    live: true,
-    avatarCount: 12,
-  ),
-];
-
-class _RoomsSection extends StatelessWidget {
+class _RoomsSection extends ConsumerWidget {
   const _RoomsSection();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final asyncRooms = ref.watch(roomsProvider);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -752,14 +749,29 @@ class _RoomsSection extends StatelessWidget {
             ],
           ),
         ),
-        for (final room in _kRooms) _RoomCard(room: room),
+        asyncRooms.when(
+          data: (list) {
+            final rooms = list.isEmpty ? _fallbackRooms : list;
+            return Column(
+              children: [for (final room in rooms) _RoomCard(room: room)],
+            );
+          },
+          loading: () => const Center(
+            child: CircularProgressIndicator(color: kGold),
+          ),
+          error: (_, _) => Column(
+            children: [
+              for (final room in _fallbackRooms) _RoomCard(room: room),
+            ],
+          ),
+        ),
       ],
     );
   }
 }
 
 class _RoomCard extends StatelessWidget {
-  final _Room room;
+  final Room room;
 
   const _RoomCard({required this.room});
 
