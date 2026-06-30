@@ -1,6 +1,9 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
+import '../../../firebase/auth_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -12,6 +15,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _authService = AuthService();
   bool _showPassword = false;
   bool _isLoading = false;
   String? _errorMessage;
@@ -34,9 +38,24 @@ class _LoginScreenState extends State<LoginScreen> {
       _isLoading = true;
       _errorMessage = null;
     });
-    // TODO: wire up Firebase Auth
-    await Future.delayed(const Duration(seconds: 1));
-    setState(() => _isLoading = false);
+    try {
+      await _authService.loginWithEmail(
+        _emailController.text.trim(),
+        _passwordController.text,
+      );
+      if (mounted) context.go('/home');
+    } on FirebaseAuthException catch (e) {
+      final msg = switch (e.code) {
+        'user-not-found' || 'wrong-password' || 'invalid-credential' =>
+          'E-poçt və ya şifrə yanlışdır',
+        'invalid-email' => 'E-poçt düzgün deyil',
+        'too-many-requests' => 'Çox cəhd edildi, bir az gözləyin',
+        _ => 'Giriş xətası baş verdi',
+      };
+      if (mounted) setState(() => _errorMessage = msg);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
