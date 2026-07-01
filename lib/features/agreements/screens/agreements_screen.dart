@@ -16,6 +16,11 @@ const _azMonths = [
   'İyul', 'Avqust', 'Sentyabr', 'Oktyabr', 'Noyabr', 'Dekabr',
 ];
 
+const _azMonthsShort = [
+  'Yan', 'Fev', 'Mar', 'Apr', 'May', 'İyn',
+  'İyl', 'Avq', 'Sen', 'Okt', 'Noy', 'Dek',
+];
+
 String _azMonth(int month) => _azMonths[month - 1];
 
 String _fmtDate(String iso) {
@@ -1738,6 +1743,182 @@ class _PersonalEventDetailScreen extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// _WheelDateTimePicker
+// ---------------------------------------------------------------------------
+class _WheelDateTimePicker extends StatefulWidget {
+  final DateTime value;
+  final ValueChanged<DateTime> onChanged;
+
+  const _WheelDateTimePicker({required this.value, required this.onChanged});
+
+  @override
+  State<_WheelDateTimePicker> createState() => _WheelDateTimePickerState();
+}
+
+class _WheelDateTimePickerState extends State<_WheelDateTimePicker> {
+  static const _yearStart = 2024;
+  static const _yearEnd = 2030;
+  static const _itemExtent = 44.0;
+
+  late final FixedExtentScrollController _dayController;
+  late final FixedExtentScrollController _monthController;
+  late final FixedExtentScrollController _yearController;
+  late final FixedExtentScrollController _hourController;
+  late final FixedExtentScrollController _minuteController;
+
+  @override
+  void initState() {
+    super.initState();
+    _dayController = FixedExtentScrollController(initialItem: widget.value.day - 1);
+    _monthController = FixedExtentScrollController(initialItem: widget.value.month - 1);
+    _yearController = FixedExtentScrollController(initialItem: widget.value.year - _yearStart);
+    _hourController = FixedExtentScrollController(initialItem: widget.value.hour);
+    _minuteController = FixedExtentScrollController(initialItem: widget.value.minute);
+  }
+
+  @override
+  void dispose() {
+    _dayController.dispose();
+    _monthController.dispose();
+    _yearController.dispose();
+    _hourController.dispose();
+    _minuteController.dispose();
+    super.dispose();
+  }
+
+  int _daysInMonth(int year, int month) => DateTime(year, month + 1, 0).day;
+
+  void _update({int? day, int? month, int? year, int? hour, int? minute}) {
+    final newYear = year ?? widget.value.year;
+    final newMonth = month ?? widget.value.month;
+    final maxDay = _daysInMonth(newYear, newMonth);
+    var newDay = day ?? widget.value.day;
+    if (newDay > maxDay) {
+      newDay = maxDay;
+      _dayController.jumpToItem(newDay - 1);
+    }
+    final newHour = hour ?? widget.value.hour;
+    final newMinute = minute ?? widget.value.minute;
+    widget.onChanged(DateTime(newYear, newMonth, newDay, newHour, newMinute));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: _itemExtent * 3,
+      decoration: BoxDecoration(
+        color: const Color(0xFF161210),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withAlpha(15)),
+      ),
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          IgnorePointer(
+            child: Container(
+              height: _itemExtent,
+              margin: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(18),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: kGold.withAlpha(128)),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              Expanded(
+                flex: 1,
+                child: _wheel(
+                  controller: _dayController,
+                  itemCount: 31,
+                  labelBuilder: (i) => (i + 1).toString().padLeft(2, '0'),
+                  onChanged: (i) => _update(day: i + 1),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: _wheel(
+                  controller: _monthController,
+                  itemCount: 12,
+                  labelBuilder: (i) => _azMonthsShort[i],
+                  onChanged: (i) => _update(month: i + 1),
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: _wheel(
+                  controller: _yearController,
+                  itemCount: _yearEnd - _yearStart + 1,
+                  labelBuilder: (i) => (_yearStart + i).toString(),
+                  onChanged: (i) => _update(year: _yearStart + i),
+                ),
+              ),
+              const Text(
+                ':',
+                style: TextStyle(color: kGold, fontSize: 28, fontWeight: FontWeight.bold),
+              ),
+              Expanded(
+                flex: 1,
+                child: _wheel(
+                  controller: _hourController,
+                  itemCount: 24,
+                  labelBuilder: (i) => i.toString().padLeft(2, '0'),
+                  onChanged: (i) => _update(hour: i),
+                ),
+              ),
+              Expanded(
+                flex: 1,
+                child: _wheel(
+                  controller: _minuteController,
+                  itemCount: 60,
+                  labelBuilder: (i) => i.toString().padLeft(2, '0'),
+                  onChanged: (i) => _update(minute: i),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _wheel({
+    required FixedExtentScrollController controller,
+    required int itemCount,
+    required String Function(int) labelBuilder,
+    required ValueChanged<int> onChanged,
+  }) {
+    return ListWheelScrollView.useDelegate(
+      controller: controller,
+      itemExtent: _itemExtent,
+      diameterRatio: 1.5,
+      physics: const FixedExtentScrollPhysics(),
+      squeeze: 1.0,
+      overAndUnderCenterOpacity: 0.4,
+      perspective: 0.003,
+      onSelectedItemChanged: onChanged,
+      childDelegate: ListWheelChildBuilderDelegate(
+        childCount: itemCount,
+        builder: (context, index) {
+          final selected = controller.selectedItem == index;
+          return Center(
+            child: Text(
+              labelBuilder(index),
+              style: TextStyle(
+                color: selected ? Colors.white : kMuted,
+                fontSize: selected ? 20 : 15,
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // _EventFormModal
 // ---------------------------------------------------------------------------
 class _EventFormModal extends StatefulWidget {
@@ -1783,7 +1964,11 @@ class _EventFormModalState extends State<_EventFormModal> {
   bool _otherExpanded = false;
   String _freeNote = '';
   bool _saving = false;
-  bool _skipConflict = false;
+  DateTime? _blockedTime;
+  final _scrollController = ScrollController();
+  final _warningKey = GlobalKey();
+  final _locationKey = GlobalKey();
+  bool _showLocationError = false;
 
   static const _eventTypes = ['Toy', 'Konsert', 'Bayram', 'Digər'];
   static const _noteChoices = [
@@ -1831,6 +2016,7 @@ class _EventFormModalState extends State<_EventFormModal> {
     _otherNoteController.dispose();
     _freeNoteController.dispose();
     _musicianSearchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -1841,92 +2027,77 @@ class _EventFormModalState extends State<_EventFormModal> {
     return parts.join(', ');
   }
 
-  Future<void> _pickDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2030),
-      builder: (ctx, child) => Theme(
-        data: Theme.of(ctx).copyWith(
-          colorScheme: const ColorScheme.dark(primary: kGold, onPrimary: Color(0xFF1A0E00)),
-        ),
-        child: child!,
-      ),
-    );
-    if (picked != null && mounted) {
-      setState(() {
-        _selectedDate = DateTime(
-          picked.year,
-          picked.month,
-          picked.day,
-          _selectedDate.hour,
-          _selectedDate.minute,
-        );
-      });
-    }
-  }
-
-  Future<void> _pickTime() async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(hour: _selectedDate.hour, minute: _selectedDate.minute),
-      builder: (ctx, child) => Theme(
-        data: Theme.of(ctx).copyWith(
-          colorScheme: const ColorScheme.dark(primary: kGold, onPrimary: Color(0xFF1A0E00)),
-        ),
-        child: child!,
-      ),
-    );
-    if (picked != null && mounted) {
-      setState(() {
-        _selectedDate = DateTime(
-          _selectedDate.year,
-          _selectedDate.month,
-          _selectedDate.day,
-          picked.hour,
-          picked.minute,
-        );
-      });
-    }
+  bool get _isTimeBlocked {
+    if (_blockedTime == null) return false;
+    return _selectedDate.hour == _blockedTime!.hour &&
+        _selectedDate.minute == _blockedTime!.minute;
   }
 
   Future<void> _handleSave() async {
     if (_saving) return;
-
-    if (!_skipConflict) {
-      final conflicts = widget.allCombinedEvents.where((e) {
-        if (widget.existingEvent != null && e.id == widget.existingEvent!.id) return false;
-        if (e.date.isEmpty) return false;
-        try {
-          final d = DateTime.parse(e.date);
-          return _sameDay(d, _selectedDate);
-        } catch (_) {
-          return false;
-        }
-      }).toList();
-
-      if (conflicts.isNotEmpty) {
-        final conflict = conflicts.first;
-        if (!mounted) return;
-        final result = await showDialog<String>(
-          context: context,
-          builder: (_) => _ConflictDialog(
-            conflict: conflict,
-            onViewConflict: () {
-              Navigator.of(context).pop('view');
-            },
-          ),
+    if (_isTimeBlocked) {
+      await Future.delayed(const Duration(milliseconds: 50));
+      if (_warningKey.currentContext != null) {
+        Scrollable.ensureVisible(
+          _warningKey.currentContext!,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOut,
+          alignment: 0.5,
         );
-        if (result == 'replace') {
-          _skipConflict = true;
-          await _doSave();
-        } else if (result == 'new') {
-          _skipConflict = true;
-        }
-        // 'view' or null: do nothing
-        return;
       }
+      return;
+    }
+
+    if (_location.trim().isEmpty) {
+      setState(() => _showLocationError = true);
+      await Future.delayed(const Duration(milliseconds: 50));
+      if (_locationKey.currentContext != null) {
+        Scrollable.ensureVisible(
+          _locationKey.currentContext!,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOut,
+          alignment: 0.3,
+        );
+      }
+      return;
+    }
+
+    final conflicts = widget.allCombinedEvents.where((e) {
+      if (widget.existingEvent != null && e.id == widget.existingEvent!.id) return false;
+      if (e.date.isEmpty) return false;
+      try {
+        final d = DateTime.parse(e.date);
+        return _sameDay(d, _selectedDate) &&
+            d.hour == _selectedDate.hour &&
+            d.minute == _selectedDate.minute;
+      } catch (_) {
+        return false;
+      }
+    }).toList();
+
+    if (conflicts.isNotEmpty) {
+      final conflict = conflicts.first;
+      if (!mounted) return;
+      final result = await showDialog<String>(
+        context: context,
+        builder: (_) => _ConflictDialog(
+          conflict: conflict,
+          onViewConflict: () {
+            Navigator.of(context).pop('view');
+          },
+        ),
+      );
+      if (result == 'replace') {
+        await _doSave();
+      } else if (result == 'new') {
+        try {
+          setState(() => _blockedTime = DateTime.parse(conflict.date));
+        } catch (_) {
+          // malformed conflict.date — leave _blockedTime null
+        }
+      }
+      // 'view' or null: do nothing
+      return;
     }
     await _doSave();
   }
@@ -1988,6 +2159,7 @@ class _EventFormModalState extends State<_EventFormModal> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: SingleChildScrollView(
+        controller: _scrollController,
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2040,51 +2212,42 @@ class _EventFormModalState extends State<_EventFormModal> {
               ),
             ),
             const SizedBox(height: 12),
-            // Date picker row
-            GestureDetector(
-              onTap: _pickDate,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            // Inline wheel date/time picker
+            _WheelDateTimePicker(
+              value: _selectedDate,
+              onChanged: (d) {
+                setState(() {
+                  _selectedDate = d;
+                  if (_blockedTime != null &&
+                      (d.hour != _blockedTime!.hour || d.minute != _blockedTime!.minute)) {
+                    _blockedTime = null;
+                  }
+                });
+              },
+            ),
+            if (_isTimeBlocked) ...[
+              const SizedBox(height: 8),
+              Container(
+                key: _warningKey,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  color: kBg3,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: kBorder),
+                  color: kRed.withAlpha(25),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: kRed.withAlpha(80)),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.calendar_today, color: kGold, size: 18),
-                    const SizedBox(width: 10),
-                    Text(
-                      '${_selectedDate.day} ${_azMonth(_selectedDate.month)} ${_selectedDate.year}',
-                      style: const TextStyle(color: kText, fontSize: 14),
+                    Expanded(
+                      child: Text(
+                        '⚠️ ${_blockedTime!.hour.toString().padLeft(2, '0')}:${_blockedTime!.minute.toString().padLeft(2, '0')} '
+                        'artıq məşğuldur — zəhmət olmasa başqa vaxt seçin',
+                        style: const TextStyle(color: kRed, fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
                     ),
                   ],
                 ),
               ),
-            ),
-            const SizedBox(height: 8),
-            // Time picker row
-            GestureDetector(
-              onTap: _pickTime,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                decoration: BoxDecoration(
-                  color: kBg3,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: kBorder),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.access_time, color: kGold, size: 18),
-                    const SizedBox(width: 10),
-                    Text(
-                      '${_selectedDate.hour.toString().padLeft(2, '0')}:${_selectedDate.minute.toString().padLeft(2, '0')}',
-                      style: const TextStyle(color: kText, fontSize: 14),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            ],
             if (widget.mode == 'time-only') ...[
               const SizedBox(height: 16),
               // Musicians
@@ -2147,41 +2310,83 @@ class _EventFormModalState extends State<_EventFormModal> {
             ],
             const SizedBox(height: 16),
             // Location
-            const Text('MƏKAN',
-                style: TextStyle(
-                    fontSize: 11,
-                    letterSpacing: 0.8,
-                    color: kMuted,
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _locationController,
-              onChanged: (v) => _location = v,
-              style: const TextStyle(color: kText, fontSize: 14),
-              decoration: InputDecoration(
-                hintText: 'Məkan daxil edin',
-                hintStyle: const TextStyle(color: kMuted),
-                filled: true,
-                fillColor: kBg3,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: kBorder),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: kBorder),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: kGold),
-                ),
+            Container(
+              key: _locationKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('MƏKAN',
+                      style: TextStyle(
+                          fontSize: 11,
+                          letterSpacing: 0.8,
+                          color: kMuted,
+                          fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _locationController,
+                    onChanged: (v) {
+                      _location = v;
+                      if (_showLocationError && v.trim().isNotEmpty) {
+                        setState(() => _showLocationError = false);
+                      }
+                    },
+                    style: const TextStyle(color: kText, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: 'Məkan daxil edin',
+                      hintStyle: const TextStyle(color: kMuted),
+                      filled: true,
+                      fillColor: kBg3,
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: _showLocationError ? kRed : kBorder,
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(
+                          color: _showLocationError ? kRed : kBorder,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kGold),
+                      ),
+                    ),
+                  ),
+                  if (_showLocationError) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: kRed.withAlpha(25),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: kRed.withAlpha(80)),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '⚠️ Məkanı daxil edin',
+                              style: const TextStyle(
+                                color: kRed,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
             const SizedBox(height: 16),
             // Notes checklist
-            const Text('ƏLAVƏLƏR',
+            const Text('GEYİM',
                 style: TextStyle(
                     fontSize: 11,
                     letterSpacing: 0.8,
@@ -2192,33 +2397,37 @@ class _EventFormModalState extends State<_EventFormModal> {
               final sel = _noteOptions.contains(choice);
               return GestureDetector(
                 onTap: () => setState(() {
-                  if (sel) {
+                  if (_noteOptions.contains(choice)) {
                     _noteOptions.remove(choice);
                   } else {
                     _noteOptions.add(choice);
                   }
                 }),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+                  decoration: BoxDecoration(
+                    color: _noteOptions.contains(choice)
+                        ? kGold.withAlpha(25)
+                        : kBg3,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _noteOptions.contains(choice) ? kGold : kBorder,
+                    ),
+                  ),
                   child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Container(
-                        width: 20,
-                        height: 20,
-                        decoration: BoxDecoration(
-                          color: sel ? kGold : Colors.transparent,
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: sel ? kGold : kBorder),
+                      Text(
+                        choice,
+                        style: TextStyle(
+                          color: sel ? kGold : kText,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
                         ),
-                        child: sel
-                            ? const Icon(Icons.check,
-                                size: 14, color: Color(0xFF1A0E00))
-                            : null,
                       ),
-                      const SizedBox(width: 10),
-                      Text(choice,
-                          style: TextStyle(
-                              color: sel ? kText : kMuted, fontSize: 14)),
+                      if (sel)
+                        const Text('✓', style: TextStyle(color: kGold, fontSize: 14)),
                     ],
                   ),
                 ),
@@ -2227,29 +2436,27 @@ class _EventFormModalState extends State<_EventFormModal> {
             // "Digər..." toggle
             GestureDetector(
               onTap: () => setState(() => _otherExpanded = !_otherExpanded),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+                decoration: BoxDecoration(
+                  color: _otherExpanded ? kGold.withAlpha(25) : kBg3,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: _otherExpanded ? kGold : kBorder),
+                ),
                 child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Container(
-                      width: 20,
-                      height: 20,
-                      decoration: BoxDecoration(
-                        color: _otherExpanded ? kGold : Colors.transparent,
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                            color: _otherExpanded ? kGold : kBorder),
+                    Text(
+                      'Digər...',
+                      style: TextStyle(
+                        color: _otherExpanded ? kGold : kText,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
                       ),
-                      child: _otherExpanded
-                          ? const Icon(Icons.check,
-                              size: 14, color: Color(0xFF1A0E00))
-                          : null,
                     ),
-                    const SizedBox(width: 10),
-                    Text('Digər...',
-                        style: TextStyle(
-                            color: _otherExpanded ? kText : kMuted,
-                            fontSize: 14)),
+                    if (_otherExpanded)
+                      const Text('✓', style: TextStyle(color: kGold, fontSize: 14)),
                   ],
                 ),
               ),
@@ -2397,36 +2604,73 @@ class _ConflictDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Bu tarixdə tədbir var',
+              '⚠️ Bu tarixdə tədbir var',
               style: GoogleFonts.playfairDisplay(
-                fontSize: 17,
+                fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: kText,
+                color: kRed,
               ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: kBg3,
                 borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: kGold.withAlpha(60)),
               ),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  if (conflict.type.isNotEmpty)
-                    Text(conflict.type,
-                        style: const TextStyle(
-                            color: kGold,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14)),
-                  if (conflict.location.isNotEmpty)
-                    Text('📍 ${conflict.location}',
-                        style: const TextStyle(color: kMuted, fontSize: 13)),
-                  if (conflict.date.isNotEmpty)
-                    Text('🕐 ${_fmtTime(conflict.date)}',
-                        style: const TextStyle(color: kMuted, fontSize: 13)),
+                  if (conflict.type.isNotEmpty) ...[
+                    Text(
+                      conflict.type,
+                      style: GoogleFonts.playfairDisplay(
+                        color: kGold,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 10),
+                    const Divider(color: kBorder, height: 1),
+                    const SizedBox(height: 10),
+                  ],
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (conflict.location.isNotEmpty) ...[
+                        const Text('📍', style: TextStyle(fontSize: 13)),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            conflict.location,
+                            style: const TextStyle(
+                              color: kText,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (conflict.date.isNotEmpty)
+                          const SizedBox(width: 12),
+                      ],
+                      if (conflict.date.isNotEmpty) ...[
+                        const Text('🕐', style: TextStyle(fontSize: 13)),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${_fmtDate(conflict.date)}  ${_fmtTime(conflict.date)}',
+                          style: const TextStyle(
+                            color: kText,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ],
               ),
             ),
