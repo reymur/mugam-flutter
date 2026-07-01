@@ -112,6 +112,41 @@ class FirestoreService {
     });
   }
 
+  Future<String> uploadChatAudio({
+    required String chatId,
+    required String filePath,
+  }) async {
+    final fileName = 'audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('chats')
+        .child(chatId)
+        .child(fileName);
+    await ref.putFile(File(filePath));
+    return await ref.getDownloadURL();
+  }
+
+  Future<void> sendAudioMessage({
+    required String chatId,
+    required String senderId,
+    required String audioURL,
+  }) async {
+    final now = FieldValue.serverTimestamp();
+    await _db.collection('chats').doc(chatId).collection('messages').add({
+      'senderId': senderId,
+      'text': '',
+      'type': 'audio',
+      'audioURL': audioURL,
+      'imageURL': null,
+      'timestamp': now,
+      'replyToId': null,
+    });
+    await _db.collection('chats').doc(chatId).update({
+      'lastMessage': '🎤 Səs mesajı',
+      'lastMessageTime': now,
+    });
+  }
+
   Future<Map<String, dynamic>?> fetchChatData(String chatId) async {
     final doc = await _db.collection('chats').doc(chatId).get();
     return doc.data();
