@@ -1,8 +1,10 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
@@ -20,6 +22,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _sending = false;
+  bool _uploadingImage = false;
+  final ImagePicker _picker = ImagePicker();
 
   @override
   void dispose() {
@@ -52,6 +56,102 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  Future<void> _pickAndSendImage(ImageSource source) async {
+    Navigator.of(context).pop(); // close bottom sheet
+    final picked = await _picker.pickImage(
+      source: source,
+      imageQuality: 70,
+      maxWidth: 1200,
+    );
+    if (picked == null) return;
+    if (!mounted) return;
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    setState(() => _uploadingImage = true);
+    try {
+      final imageURL = await ref
+          .read(firestoreServiceProvider)
+          .uploadChatImage(chatId: widget.chatId, filePath: picked.path);
+      await ref
+          .read(firestoreServiceProvider)
+          .sendImageMessage(
+            chatId: widget.chatId,
+            senderId: currentUid,
+            imageURL: imageURL,
+          );
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Şəkil göndərilmədi: $e'),
+            backgroundColor: kRed,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _uploadingImage = false);
+    }
+  }
+
+  void _showAttachSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kBg2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: kGold),
+              title: const Text('Qalereya', style: TextStyle(color: kText)),
+              onTap: () => _pickAndSendImage(ImageSource.gallery),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: kGold),
+              title: const Text('Kamera', style: TextStyle(color: kText)),
+              onTap: () => _pickAndSendImage(ImageSource.camera),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showFullImage(BuildContext context, String imageURL) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: SizedBox.expand(
+          child: Stack(
+            children: [
+              InteractiveViewer(
+                panEnabled: true,
+                minScale: 0.5,
+                maxScale: 5.0,
+                child: Center(
+                  child: CachedNetworkImage(imageUrl: imageURL, fit: BoxFit.contain),
+                ),
+              ),
+              Positioned(
+                top: 40,
+                right: 16,
+                child: IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildMessageBubble(Message msg, String currentUid) {
@@ -92,12 +192,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   fontSize: 14,
                 ),
               ),
-            if (msg.type == 'image')
-              Text(
-                '🖼 Şəkil',
-                style: TextStyle(
-                  color: isMe ? const Color(0xFF1A0E00) : kMuted,
-                  fontSize: 14,
+            if (msg.type == 'image' && msg.imageURL != null)
+              GestureDetector(
+                onTap: () => _showFullImage(context, msg.imageURL!),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: CachedNetworkImage(
+                    imageUrl: msg.imageURL!,
+                    width: 200,
+                    height: 200,
+                    fit: BoxFit.cover,
+                    placeholder: (ctx, url) => Container(
+                      width: 200,
+                      height: 200,
+                      color: kBg3,
+                      child: const Center(
+                        child: CircularProgressIndicator(color: kGold),
+                      ),
+                    ),
+                    errorWidget: (ctx, url, err) => Container(
+                      width: 200,
+                      height: 200,
+                      color: kBg3,
+                      child: const Icon(Icons.broken_image, color: kMuted),
+                    ),
+                  ),
                 ),
               ),
             if (msg.type == 'audio')
@@ -205,6 +324,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             padding: const EdgeInsets.fromLTRB(12, 8, 8, 24),
             child: Row(
               children: [
+                IconButton(
+                  icon: _uploadingImage
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: kGold,
+                          ),
+                        )
+                      : const Icon(Icons.attach_file, color: kGold),
+                  onPressed: _uploadingImage ? null : _showAttachSheet,
+                ),
                 Expanded(
                   child: TextField(
                     controller: _messageController,

@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'models.dart';
 
@@ -70,6 +73,41 @@ class FirestoreService {
     });
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': text,
+      'lastMessageTime': now,
+    });
+  }
+
+  Future<String> uploadChatImage({
+    required String chatId,
+    required String filePath,
+  }) async {
+    final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('chats')
+        .child(chatId)
+        .child(fileName);
+    await ref.putFile(File(filePath));
+    return await ref.getDownloadURL();
+  }
+
+  Future<void> sendImageMessage({
+    required String chatId,
+    required String senderId,
+    required String imageURL,
+  }) async {
+    final now = FieldValue.serverTimestamp();
+    await _db.collection('chats').doc(chatId).collection('messages').add({
+      'senderId': senderId,
+      'text': '',
+      'type': 'image',
+      'imageURL': imageURL,
+      'audioURL': null,
+      'timestamp': now,
+      'replyToId': null,
+    });
+    await _db.collection('chats').doc(chatId).update({
+      'lastMessage': '🖼 Şəkil',
       'lastMessageTime': now,
     });
   }
