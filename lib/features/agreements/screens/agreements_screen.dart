@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -904,7 +906,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     String mode = 'time-only',
   }) async {
     final allCombined = [...personalEvents, ...eventsAsMusician];
-    await showModalBottomSheet(
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -1743,6 +1745,125 @@ class _PersonalEventDetailScreen extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// _ConflictEventScreen
+// ---------------------------------------------------------------------------
+class _ConflictEventScreen extends StatefulWidget {
+  final PersonalEvent event;
+  final String categoryTitle;
+  final String currentUid;
+  final List<PersonalEvent> personalEvents;
+  final List<PersonalEvent> eventsAsMusician;
+  final List<Musician> allMusicians;
+  final FirestoreService firestoreService;
+
+  const _ConflictEventScreen({
+    required this.event,
+    required this.categoryTitle,
+    required this.currentUid,
+    required this.personalEvents,
+    required this.eventsAsMusician,
+    required this.allMusicians,
+    required this.firestoreService,
+  });
+
+  @override
+  State<_ConflictEventScreen> createState() => _ConflictEventScreenState();
+}
+
+class _ConflictEventScreenState extends State<_ConflictEventScreen> {
+  bool _highlighted = true; // always highlighted after animation
+
+  // Animate: blink 3 times in 3 seconds, then stay highlighted permanently
+  // Use a simple timer-based blink: toggle off/on 3 times then leave on
+  int _blinkCount = 0;
+  late final _blinkTimer = _startBlink();
+
+  Timer _startBlink() {
+    return Timer.periodic(const Duration(milliseconds: 500), (t) {
+      if (_blinkCount >= 6) { // 3 full blinks = 6 toggles
+        t.cancel();
+        if (mounted) setState(() => _highlighted = true); // ensure stays on
+        return;
+      }
+      if (mounted) setState(() => _highlighted = !_highlighted);
+      _blinkCount++;
+    });
+  }
+
+  @override
+  void dispose() {
+    _blinkTimer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: kBg,
+      appBar: AppBar(
+        backgroundColor: kBg2,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: kGold),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Text(
+          widget.categoryTitle,
+          style: GoogleFonts.playfairDisplay(fontSize: 18, color: kGold),
+        ),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: _highlighted ? kGold : kBorder,
+                  width: _highlighted ? 2.0 : 1.0,
+                ),
+                boxShadow: _highlighted
+                    ? [BoxShadow(
+                        color: kGold.withAlpha(60),
+                        blurRadius: 12,
+                        spreadRadius: 2,
+                      )]
+                    : [],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(13),
+                child: _EventCard(
+                  event: widget.event,
+                  isOwn: widget.event.ownerUid == widget.currentUid,
+                  currentUid: widget.currentUid,
+                  allMusicians: widget.allMusicians,
+                  onTap: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => _PersonalEventDetailScreen(
+                        event: widget.event,
+                        currentUid: widget.currentUid,
+                        personalEvents: widget.personalEvents,
+                        eventsAsMusician: widget.eventsAsMusician,
+                        allMusicians: widget.allMusicians,
+                        firestoreService: widget.firestoreService,
+                        onBack: () => Navigator.of(context).pop(),
+                      ),
+                    ));
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // _WheelDateTimePicker
 // ---------------------------------------------------------------------------
 class _WheelDateTimePicker extends StatefulWidget {
@@ -2033,6 +2154,42 @@ class _EventFormModalState extends State<_EventFormModal> {
         _selectedDate.minute == _blockedTime!.minute;
   }
 
+  Future<void> _showConflictFlow(PersonalEvent conflict) async {
+    if (!mounted) return;
+    final dialogResult = await showDialog<String>(
+      context: context,
+      builder: (_) => _ConflictDialog(conflict: conflict),
+    );
+    if (!mounted) return;
+    if (dialogResult == 'replace') {
+      await _doSave();
+    } else if (dialogResult == 'new') {
+      try {
+        setState(() => _blockedTime = DateTime.parse(conflict.date));
+      } catch (_) {}
+    } else if (dialogResult == 'view') {
+      final isOwn = conflict.ownerUid == widget.currentUid;
+      final categoryTitle = isOwn ? 'Şəxsi tədbir' : 'Dəvətli tədbir';
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => _ConflictEventScreen(
+          event: conflict,
+          categoryTitle: categoryTitle,
+          currentUid: widget.currentUid,
+          personalEvents: widget.allCombinedEvents
+              .where((e) => e.ownerUid == widget.currentUid)
+              .toList(),
+          eventsAsMusician: widget.allCombinedEvents
+              .where((e) => e.ownerUid != widget.currentUid)
+              .toList(),
+          allMusicians: widget.allMusicians,
+          firestoreService: widget.firestoreService,
+        ),
+      ));
+      // User returned back — re-show conflict dialog recursively
+      await _showConflictFlow(conflict);
+    }
+  }
+
   Future<void> _handleSave() async {
     if (_saving) return;
     if (_isTimeBlocked) {
@@ -2077,26 +2234,7 @@ class _EventFormModalState extends State<_EventFormModal> {
 
     if (conflicts.isNotEmpty) {
       final conflict = conflicts.first;
-      if (!mounted) return;
-      final result = await showDialog<String>(
-        context: context,
-        builder: (_) => _ConflictDialog(
-          conflict: conflict,
-          onViewConflict: () {
-            Navigator.of(context).pop('view');
-          },
-        ),
-      );
-      if (result == 'replace') {
-        await _doSave();
-      } else if (result == 'new') {
-        try {
-          setState(() => _blockedTime = DateTime.parse(conflict.date));
-        } catch (_) {
-          // malformed conflict.date — leave _blockedTime null
-        }
-      }
-      // 'view' or null: do nothing
+      await _showConflictFlow(conflict);
       return;
     }
     await _doSave();
@@ -2586,11 +2724,9 @@ class _EventFormModalState extends State<_EventFormModal> {
 // ---------------------------------------------------------------------------
 class _ConflictDialog extends StatelessWidget {
   final PersonalEvent conflict;
-  final VoidCallback onViewConflict;
 
   const _ConflictDialog({
     required this.conflict,
-    required this.onViewConflict,
   });
 
   @override
@@ -2679,7 +2815,7 @@ class _ConflictDialog extends StatelessWidget {
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: onViewConflict,
+                    onPressed: () => Navigator.of(context).pop('view'),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: kGold,
                       side: const BorderSide(color: kGold),
