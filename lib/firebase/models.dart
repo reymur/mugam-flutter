@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class Musician {
   final String id;
   final String name;
@@ -41,6 +43,57 @@ class Musician {
       online: (data['online'] ?? false) as bool,
       bio: (data['bio'] ?? '') as String,
       photoURL: data['photoURL'] as String?,
+    );
+  }
+}
+
+class Chat {
+  final String id;
+  final String name;
+  final String emoji;
+  final String lastMessage;
+  final DateTime? lastMessageTime;
+  final int unreadCount;
+  final List<String> members;
+  final bool isGroup;
+  final String? photoURL;
+
+  const Chat({
+    required this.id,
+    required this.name,
+    required this.emoji,
+    required this.lastMessage,
+    this.lastMessageTime,
+    required this.unreadCount,
+    required this.members,
+    required this.isGroup,
+    this.photoURL,
+  });
+
+  factory Chat.fromFirestore(String id, Map<String, dynamic> data) {
+    return Chat(
+      id: id,
+      name: data['name'] ?? '',
+      emoji: data['emoji'] ?? '💬',
+      lastMessage: data['lastMessage'] ?? '',
+      lastMessageTime: data['lastMessageTime'] != null
+          ? (data['lastMessageTime'] as Timestamp).toDate()
+          : null,
+      unreadCount: () {
+        final raw = data['unreadCount'];
+        if (raw == null) return 0;
+        if (raw is int) return raw;
+        if (raw is Map) {
+          // per-user unread count map — sum all values or return 0
+          try {
+            return (raw.values.fold<int>(0, (acc, v) => acc + (v is int ? v : 0)));
+          } catch (_) { return 0; }
+        }
+        return 0;
+      }(),
+      members: List<String>.from(data['members'] as List? ?? const []),
+      isGroup: data['isGroup'] ?? false,
+      photoURL: data['photoURL'],
     );
   }
 }

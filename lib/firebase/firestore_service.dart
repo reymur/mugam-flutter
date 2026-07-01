@@ -11,18 +11,46 @@ class FirestoreService {
         .where('role', isEqualTo: 'musician')
         .limit(50)
         .snapshots()
-        .map((snap) =>
-            snap.docs.map((doc) => Musician.fromFirestore(doc.id, doc.data())).toList());
+        .map(
+          (snap) => snap.docs
+              .map((doc) => Musician.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
+  }
+
+  Stream<List<Chat>> watchChats(String uid) {
+    return _db
+        .collection('chats')
+        .where('members', arrayContains: uid)
+        .snapshots()
+        .map(
+          (snap) =>
+              snap.docs
+                  .map((doc) => Chat.fromFirestore(doc.id, doc.data()))
+                  .toList()
+                ..sort((a, b) {
+                  if (a.lastMessageTime == null && b.lastMessageTime == null) {
+                    return 0;
+                  }
+                  if (a.lastMessageTime == null) return 1;
+                  if (b.lastMessageTime == null) return -1;
+                  return b.lastMessageTime!.compareTo(a.lastMessageTime!);
+                }),
+        );
   }
 
   Future<List<Event>> fetchEvents() async {
     final snap = await _db.collection('events').limit(10).get();
-    return snap.docs.map((doc) => Event.fromFirestore(doc.id, doc.data())).toList();
+    return snap.docs
+        .map((doc) => Event.fromFirestore(doc.id, doc.data()))
+        .toList();
   }
 
   Future<List<Room>> fetchRooms() async {
     final snap = await _db.collection('rooms').limit(10).get();
-    return snap.docs.map((doc) => Room.fromFirestore(doc.id, doc.data())).toList();
+    return snap.docs
+        .map((doc) => Room.fromFirestore(doc.id, doc.data()))
+        .toList();
   }
 
   Stream<List<PersonalEvent>> watchPersonalEvents(String uid) {
@@ -30,8 +58,11 @@ class FirestoreService {
         .collection('personalEvents')
         .where('ownerUid', isEqualTo: uid)
         .snapshots()
-        .map((snap) =>
-            snap.docs.map((doc) => PersonalEvent.fromFirestore(doc.id, doc.data())).toList());
+        .map(
+          (snap) => snap.docs
+              .map((doc) => PersonalEvent.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
   }
 
   Stream<List<PersonalEvent>> watchEventsAsMusician(String uid) {
@@ -39,8 +70,11 @@ class FirestoreService {
         .collection('personalEvents')
         .where('musicians', arrayContains: uid)
         .snapshots()
-        .map((snap) =>
-            snap.docs.map((doc) => PersonalEvent.fromFirestore(doc.id, doc.data())).toList());
+        .map(
+          (snap) => snap.docs
+              .map((doc) => PersonalEvent.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
   }
 
   Future<String> addPersonalEvent({
@@ -107,9 +141,17 @@ final roomsProvider = FutureProvider<List<Room>>(
 );
 
 final personalEventsProvider =
-    StreamProvider.family<List<PersonalEvent>, String>((ref, uid) =>
-        ref.watch(firestoreServiceProvider).watchPersonalEvents(uid));
+    StreamProvider.family<List<PersonalEvent>, String>(
+      (ref, uid) =>
+          ref.watch(firestoreServiceProvider).watchPersonalEvents(uid),
+    );
 
 final eventsAsMusicianProvider =
-    StreamProvider.family<List<PersonalEvent>, String>((ref, uid) =>
-        ref.watch(firestoreServiceProvider).watchEventsAsMusician(uid));
+    StreamProvider.family<List<PersonalEvent>, String>(
+      (ref, uid) =>
+          ref.watch(firestoreServiceProvider).watchEventsAsMusician(uid),
+    );
+
+final chatsProvider = StreamProvider.family<List<Chat>, String>((ref, uid) {
+  return ref.watch(firestoreServiceProvider).watchChats(uid);
+});

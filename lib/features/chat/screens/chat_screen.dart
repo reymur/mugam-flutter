@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import '../../../core/theme/colors.dart';
 
 class ChatScreen extends StatelessWidget {
@@ -8,22 +9,23 @@ class ChatScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kBg,
       appBar: AppBar(
         backgroundColor: kBg2,
-        title: const Text('Mugam', style: TextStyle(color: kGold, letterSpacing: 4)),
-        iconTheme: const IconThemeData(color: kGold),
-      ),
-      body: const Center(
-        child: Text(
-          'Mugam',
-          style: TextStyle(
-            color: kGold,
-            fontSize: 32,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 4,
-          ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: kGold),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/chats');
+            }
+          },
         ),
+        title: Text('Chat $chatId', style: const TextStyle(color: kText)),
+      ),
+      backgroundColor: kBg,
+      body: const Center(
+        child: Text('Chat coming soon...', style: TextStyle(color: kMuted)),
       ),
     );
   }
