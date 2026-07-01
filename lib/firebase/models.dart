@@ -86,14 +86,54 @@ class Chat {
         if (raw is Map) {
           // per-user unread count map — sum all values or return 0
           try {
-            return (raw.values.fold<int>(0, (acc, v) => acc + (v is int ? v : 0)));
-          } catch (_) { return 0; }
+            return (raw.values.fold<int>(
+              0,
+              (acc, v) => acc + (v is int ? v : 0),
+            ));
+          } catch (_) {
+            return 0;
+          }
         }
         return 0;
       }(),
       members: List<String>.from(data['members'] as List? ?? const []),
       isGroup: data['isGroup'] ?? false,
       photoURL: data['photoURL'],
+    );
+  }
+}
+
+class Message {
+  final String id;
+  final String senderId;
+  final String text;
+  final String? imageURL;
+  final String? audioURL;
+  final Timestamp? timestamp;
+  final String type; // 'text', 'image', 'audio'
+  final String? replyToId;
+
+  const Message({
+    required this.id,
+    required this.senderId,
+    required this.text,
+    this.imageURL,
+    this.audioURL,
+    this.timestamp,
+    required this.type,
+    this.replyToId,
+  });
+
+  factory Message.fromFirestore(String id, Map<String, dynamic> data) {
+    return Message(
+      id: id,
+      senderId: data['senderId'] ?? '',
+      text: data['text'] ?? '',
+      imageURL: data['imageURL'],
+      audioURL: data['audioURL'],
+      timestamp: data['timestamp'] as Timestamp?,
+      type: data['type'] ?? 'text',
+      replyToId: data['replyToId'],
     );
   }
 }

@@ -39,6 +39,46 @@ class FirestoreService {
         );
   }
 
+  Stream<List<Message>> watchMessages(String chatId) {
+    return _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .orderBy('timestamp', descending: false)
+        .snapshots()
+        .map(
+          (snap) => snap.docs
+              .map((doc) => Message.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
+  }
+
+  Future<void> sendMessage({
+    required String chatId,
+    required String senderId,
+    required String text,
+  }) async {
+    final now = FieldValue.serverTimestamp();
+    await _db.collection('chats').doc(chatId).collection('messages').add({
+      'senderId': senderId,
+      'text': text,
+      'type': 'text',
+      'timestamp': now,
+      'imageURL': null,
+      'audioURL': null,
+      'replyToId': null,
+    });
+    await _db.collection('chats').doc(chatId).update({
+      'lastMessage': text,
+      'lastMessageTime': now,
+    });
+  }
+
+  Future<Map<String, dynamic>?> fetchChatData(String chatId) async {
+    final doc = await _db.collection('chats').doc(chatId).get();
+    return doc.data();
+  }
+
   Future<List<Event>> fetchEvents() async {
     final snap = await _db.collection('events').limit(10).get();
     return snap.docs
@@ -154,4 +194,18 @@ final eventsAsMusicianProvider =
 
 final chatsProvider = StreamProvider.family<List<Chat>, String>((ref, uid) {
   return ref.watch(firestoreServiceProvider).watchChats(uid);
+});
+
+final messagesProvider = StreamProvider.family<List<Message>, String>((
+  ref,
+  chatId,
+) {
+  return ref.watch(firestoreServiceProvider).watchMessages(chatId);
+});
+
+final chatDataProvider = FutureProvider.family<Map<String, dynamic>?, String>((
+  ref,
+  chatId,
+) {
+  return ref.watch(firestoreServiceProvider).fetchChatData(chatId);
 });
