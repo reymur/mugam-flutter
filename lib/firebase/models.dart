@@ -115,6 +115,9 @@ class Message {
   final String? replyToText;
   final String? replyToSenderName;
   final String? replyToImageURL;
+  final bool deletedForAll;
+  final List<String> deletedFor;
+  final String? deletedAt;
 
   const Message({
     required this.id,
@@ -128,6 +131,9 @@ class Message {
     this.replyToText,
     this.replyToSenderName,
     this.replyToImageURL,
+    this.deletedForAll = false,
+    this.deletedFor = const [],
+    this.deletedAt,
   });
 
   factory Message.fromFirestore(String id, Map<String, dynamic> data) {
@@ -144,6 +150,9 @@ class Message {
       replyToText: replyTo?['text'] as String?,
       replyToSenderName: replyTo?['senderName'] as String?,
       replyToImageURL: replyTo?['imageURL'] as String?,
+      deletedForAll: data['deletedForAll'] ?? false,
+      deletedFor: List<String>.from(data['deletedFor'] as List? ?? const []),
+      deletedAt: data['deletedAt'] as String?,
     );
   }
 }
