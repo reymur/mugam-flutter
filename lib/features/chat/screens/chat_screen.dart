@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -138,6 +139,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (msg.text.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.copy, color: kGold),
+                title: const Text(
+                  'Mətni kopyala',
+                  style: TextStyle(color: kText),
+                ),
+                onTap: () => _copyMessageText(msg),
+              ),
+            ListTile(
+              leading: const Icon(Icons.forward, color: kGold),
+              title: const Text('Yönləndir', style: TextStyle(color: kText)),
+              onTap: () => _openForwardSheet(msg),
+            ),
             ListTile(
               leading: const Icon(Icons.delete_outline, color: kText),
               title: const Text(
@@ -159,6 +174,128 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ),
       ),
     );
+  }
+
+  void _copyMessageText(Message msg) {
+    Navigator.of(context).pop();
+    Clipboard.setData(ClipboardData(text: msg.text));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Kopyalandı')));
+  }
+
+  void _openForwardSheet(Message msg) {
+    Navigator.of(context).pop();
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kBg2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: SizedBox(
+          height: 400,
+          child: Consumer(
+            builder: (context, ref, _) {
+              final chatsAsync = ref.watch(chatsProvider(currentUid));
+              return chatsAsync.when(
+                loading: () => const Center(
+                  child: CircularProgressIndicator(color: kGold),
+                ),
+                error: (_, _) =>
+                    const Center(child: Text('Xəta', style: TextStyle(color: kMuted))),
+                data: (chats) {
+                  final targets = chats
+                      .where((c) => c.id != widget.chatId)
+                      .toList();
+                  if (targets.isEmpty) {
+                    return const Center(
+                      child: Text(
+                        'Söhbət tapılmadı',
+                        style: TextStyle(color: kMuted),
+                      ),
+                    );
+                  }
+                  return ListView.builder(
+                    itemCount: targets.length,
+                    itemBuilder: (ctx, i) {
+                      final chat = targets[i];
+                      return ListTile(
+                        leading: Text(
+                          chat.emoji,
+                          style: const TextStyle(fontSize: 24),
+                        ),
+                        title: Text(
+                          chat.name,
+                          style: const TextStyle(color: kText),
+                        ),
+                        onTap: () async {
+                          Navigator.of(context).pop();
+                          await _forwardMessage(msg, chat.id, currentUid);
+                        },
+                      );
+                    },
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _forwardMessage(
+    Message msg,
+    String targetChatId,
+    String currentUid,
+  ) async {
+    final service = ref.read(firestoreServiceProvider);
+    try {
+      switch (msg.type) {
+        case 'image':
+          final imageURL = msg.imageURL;
+          if (imageURL != null) {
+            await service.sendImageMessage(
+              chatId: targetChatId,
+              senderId: currentUid,
+              imageURL: imageURL,
+            );
+          }
+          break;
+        case 'audio':
+          final audioURL = msg.audioURL;
+          if (audioURL != null) {
+            await service.sendAudioMessage(
+              chatId: targetChatId,
+              senderId: currentUid,
+              audioURL: audioURL,
+            );
+          }
+          break;
+        default:
+          await service.sendMessage(
+            chatId: targetChatId,
+            senderId: currentUid,
+            text: msg.text,
+          );
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Yönləndirildi')));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Yönləndirmə uğursuz oldu'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _deleteForMe(Message msg) async {
