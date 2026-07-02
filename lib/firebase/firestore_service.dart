@@ -156,6 +156,7 @@ class FirestoreService {
     return _db.collection('chats').doc(chatId).snapshots().map((snap) {
       final data = snap.data() ?? {};
       return {
+        'members': List<String>.from(data['members'] ?? const []),
         'deliveredTo': Map<String, dynamic>.from(data['deliveredTo'] ?? {}),
         'lastReadMsgId': Map<String, dynamic>.from(
           data['lastReadMsgId'] ?? {},

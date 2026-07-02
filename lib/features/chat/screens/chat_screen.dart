@@ -487,7 +487,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         chatMetaAsync.value?['deliveredTo'] as Map<String, dynamic>? ?? {};
     final lastReadMsgId =
         chatMetaAsync.value?['lastReadMsgId'] as Map<String, dynamic>? ?? {};
-    final members = (chatDataAsync.value?['members'] as List?)
+    final members = (chatMetaAsync.value?['members'] as List?)
         ?.cast<String>();
     final otherUid = members?.firstWhere(
       (m) => m != currentUid,
