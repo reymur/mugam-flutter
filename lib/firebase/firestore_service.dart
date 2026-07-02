@@ -152,6 +152,43 @@ class FirestoreService {
     return doc.data();
   }
 
+  Stream<Map<String, dynamic>> watchChatMeta(String chatId) {
+    return _db.collection('chats').doc(chatId).snapshots().map((snap) {
+      final data = snap.data() ?? {};
+      return {
+        'deliveredTo': Map<String, dynamic>.from(data['deliveredTo'] ?? {}),
+        'lastReadMsgId': Map<String, dynamic>.from(
+          data['lastReadMsgId'] ?? {},
+        ),
+      };
+    });
+  }
+
+  Future<void> markChatAsDelivered({
+    required String chatId,
+    required String uid,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'deliveredTo.$uid': true,
+      });
+    } catch (_) {}
+  }
+
+  Future<void> markChatAsReadBy({
+    required String chatId,
+    required String uid,
+    required String lastMsgId,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'readBy': FieldValue.arrayUnion([uid]),
+        'lastReadAt.$uid': DateTime.now().toIso8601String(),
+        'lastReadMsgId.$uid': lastMsgId,
+      });
+    } catch (_) {}
+  }
+
   Future<List<Event>> fetchEvents() async {
     final snap = await _db.collection('events').limit(10).get();
     return snap.docs
@@ -281,4 +318,11 @@ final chatDataProvider = FutureProvider.family<Map<String, dynamic>?, String>((
   chatId,
 ) {
   return ref.watch(firestoreServiceProvider).fetchChatData(chatId);
+});
+
+final chatMetaProvider = StreamProvider.family<Map<String, dynamic>, String>((
+  ref,
+  chatId,
+) {
+  return ref.watch(firestoreServiceProvider).watchChatMeta(chatId);
 });

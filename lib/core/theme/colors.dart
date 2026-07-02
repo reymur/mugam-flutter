@@ -12,6 +12,7 @@ const Color kRed = Color(0xFFC0392B);
 const Color kGreen = Color(0xFF27AE60);
 const Color kText = Color(0xFFF5EAD8);
 const Color kMuted = Color(0xFF8A7A60);
+const Color kReadBlue = Color(0xFF1A6B9E);
 
 const double kRadius = 18.0;
 const double kNavH = 68.0;

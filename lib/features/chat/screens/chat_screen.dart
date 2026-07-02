@@ -64,6 +64,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
     _initBeepPlayer();
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid != null && currentUid.isNotEmpty) {
+      ref
+          .read(firestoreServiceProvider)
+          .markChatAsDelivered(chatId: widget.chatId, uid: currentUid);
+    }
   }
 
   void _initBeepPlayer() async {
@@ -330,11 +336,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     });
   }
 
-  Widget _buildMessageBubble(Message msg, String currentUid) {
+  Widget _buildMessageBubble(
+    Message msg,
+    int index,
+    List<String> allMsgIds,
+    String currentUid,
+    String? otherUid,
+    Map<String, dynamic> deliveredTo,
+    Map<String, dynamic> lastReadMsgId,
+  ) {
     final isMe = msg.senderId == currentUid;
     final time = msg.timestamp != null
         ? DateFormat('HH:mm').format(msg.timestamp!.toDate())
         : '';
+    Widget? checkMark;
+    if (isMe && otherUid != null) {
+      final lastReadId = lastReadMsgId[otherUid] as String?;
+      final lastReadIndex = lastReadId != null
+          ? allMsgIds.indexOf(lastReadId)
+          : -1;
+      final isRead = lastReadIndex >= index && index != -1;
+      final isDelivered = deliveredTo[otherUid] == true || isRead;
+      checkMark = Icon(
+        isDelivered ? Icons.done_all : Icons.done,
+        size: 14,
+        color: isRead ? kReadBlue : const Color(0xFF1A0E00).withAlpha(128),
+      );
+    }
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -398,12 +426,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             if (msg.type == 'audio' && msg.audioURL != null)
               _VoiceMessagePlayer(audioURL: msg.audioURL!, isMe: isMe),
             const SizedBox(height: 2),
-            Text(
-              time,
-              style: TextStyle(
-                color: isMe ? const Color(0xFF1A0E00).withAlpha(150) : kMuted,
-                fontSize: 10,
-              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  time,
+                  style: TextStyle(
+                    color: isMe
+                        ? const Color(0xFF1A0E00).withAlpha(150)
+                        : kMuted,
+                    fontSize: 10,
+                  ),
+                ),
+                if (checkMark != null) ...[
+                  const SizedBox(width: 3),
+                  checkMark,
+                ],
+              ],
             ),
           ],
         ),
@@ -422,7 +461,41 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           _scrollToBottom();
         });
       });
+      next.whenData((messages) {
+        if (messages.isEmpty) return;
+        Message? lastOtherMsg;
+        for (final m in messages.reversed) {
+          if (m.senderId != currentUid) {
+            lastOtherMsg = m;
+            break;
+          }
+        }
+        if (lastOtherMsg != null && currentUid.isNotEmpty) {
+          ref
+              .read(firestoreServiceProvider)
+              .markChatAsReadBy(
+                chatId: widget.chatId,
+                uid: currentUid,
+                lastMsgId: lastOtherMsg.id,
+              );
+        }
+      });
     });
+
+    final chatMetaAsync = ref.watch(chatMetaProvider(widget.chatId));
+    final deliveredTo =
+        chatMetaAsync.value?['deliveredTo'] as Map<String, dynamic>? ?? {};
+    final lastReadMsgId =
+        chatMetaAsync.value?['lastReadMsgId'] as Map<String, dynamic>? ?? {};
+    final members = (chatDataAsync.value?['members'] as List?)
+        ?.cast<String>();
+    final otherUid = members?.firstWhere(
+      (m) => m != currentUid,
+      orElse: () => '',
+    );
+    final otherUidResolved = (otherUid != null && otherUid.isNotEmpty)
+        ? otherUid
+        : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -476,17 +549,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   error: (err, stack) => const Center(
                     child: Text('Xəta', style: TextStyle(color: kMuted)),
                   ),
-                  data: (messages) => ListView.builder(
-                    controller: _scrollController,
-                    reverse: false,
-                    itemCount: messages.length,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    itemBuilder: (ctx, i) =>
-                        _buildMessageBubble(messages[i], currentUid),
-                  ),
+                  data: (messages) {
+                    final allMsgIds = messages.map((m) => m.id).toList();
+                    return ListView.builder(
+                      controller: _scrollController,
+                      reverse: false,
+                      itemCount: messages.length,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      itemBuilder: (ctx, i) => _buildMessageBubble(
+                        messages[i],
+                        i,
+                        allMsgIds,
+                        currentUid,
+                        otherUidResolved,
+                        deliveredTo,
+                        lastReadMsgId,
+                      ),
+                    );
+                  },
                 ),
           ),
           Container(
