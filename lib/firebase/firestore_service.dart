@@ -56,12 +56,40 @@ class FirestoreService {
         );
   }
 
+  Map<String, dynamic>? _buildReplyTo({
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderName,
+    String? replyToImageURL,
+  }) {
+    if (replyToId == null) return null;
+    final map = <String, dynamic>{
+      'id': replyToId,
+      'text': replyToText ?? '',
+      'senderName': replyToSenderName ?? '',
+    };
+    if (replyToImageURL != null) {
+      map['imageURL'] = replyToImageURL;
+    }
+    return map;
+  }
+
   Future<void> sendMessage({
     required String chatId,
     required String senderId,
     required String text,
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderName,
+    String? replyToImageURL,
   }) async {
     final now = FieldValue.serverTimestamp();
+    final replyTo = _buildReplyTo(
+      replyToId: replyToId,
+      replyToText: replyToText,
+      replyToSenderName: replyToSenderName,
+      replyToImageURL: replyToImageURL,
+    );
     await _db.collection('chats').doc(chatId).collection('messages').add({
       'senderId': senderId,
       'text': text,
@@ -69,7 +97,7 @@ class FirestoreService {
       'timestamp': now,
       'imageURL': null,
       'audioURL': null,
-      'replyToId': null,
+      if (replyTo != null) 'replyTo': replyTo,
     });
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': text,
@@ -95,8 +123,18 @@ class FirestoreService {
     required String chatId,
     required String senderId,
     required String imageURL,
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderName,
+    String? replyToImageURL,
   }) async {
     final now = FieldValue.serverTimestamp();
+    final replyTo = _buildReplyTo(
+      replyToId: replyToId,
+      replyToText: replyToText,
+      replyToSenderName: replyToSenderName,
+      replyToImageURL: replyToImageURL,
+    );
     await _db.collection('chats').doc(chatId).collection('messages').add({
       'senderId': senderId,
       'text': '',
@@ -104,7 +142,7 @@ class FirestoreService {
       'imageURL': imageURL,
       'audioURL': null,
       'timestamp': now,
-      'replyToId': null,
+      if (replyTo != null) 'replyTo': replyTo,
     });
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🖼 Şəkil',
@@ -130,8 +168,18 @@ class FirestoreService {
     required String chatId,
     required String senderId,
     required String audioURL,
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderName,
+    String? replyToImageURL,
   }) async {
     final now = FieldValue.serverTimestamp();
+    final replyTo = _buildReplyTo(
+      replyToId: replyToId,
+      replyToText: replyToText,
+      replyToSenderName: replyToSenderName,
+      replyToImageURL: replyToImageURL,
+    );
     await _db.collection('chats').doc(chatId).collection('messages').add({
       'senderId': senderId,
       'text': '',
@@ -139,7 +187,7 @@ class FirestoreService {
       'audioURL': audioURL,
       'imageURL': null,
       'timestamp': now,
-      'replyToId': null,
+      if (replyTo != null) 'replyTo': replyTo,
     });
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🎤 Səs mesajı',
@@ -158,9 +206,7 @@ class FirestoreService {
       return {
         'members': List<String>.from(data['members'] ?? const []),
         'deliveredTo': Map<String, dynamic>.from(data['deliveredTo'] ?? {}),
-        'lastReadMsgId': Map<String, dynamic>.from(
-          data['lastReadMsgId'] ?? {},
-        ),
+        'lastReadMsgId': Map<String, dynamic>.from(data['lastReadMsgId'] ?? {}),
       };
     });
   }
