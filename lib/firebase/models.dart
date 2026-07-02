@@ -112,6 +112,9 @@ class Message {
   final Timestamp? timestamp;
   final String type; // 'text', 'image', 'audio'
   final String? replyToId;
+  final String? replyToText;
+  final String? replyToSenderName;
+  final String? replyToImageURL;
 
   const Message({
     required this.id,
@@ -122,9 +125,13 @@ class Message {
     this.timestamp,
     required this.type,
     this.replyToId,
+    this.replyToText,
+    this.replyToSenderName,
+    this.replyToImageURL,
   });
 
   factory Message.fromFirestore(String id, Map<String, dynamic> data) {
+    final replyTo = data['replyTo'] as Map<String, dynamic>?;
     return Message(
       id: id,
       senderId: data['senderId'] ?? '',
@@ -133,7 +140,10 @@ class Message {
       audioURL: data['audioURL'],
       timestamp: data['timestamp'] as Timestamp?,
       type: data['type'] ?? 'text',
-      replyToId: data['replyToId'],
+      replyToId: replyTo?['id'] as String?,
+      replyToText: replyTo?['text'] as String?,
+      replyToSenderName: replyTo?['senderName'] as String?,
+      replyToImageURL: replyTo?['imageURL'] as String?,
     );
   }
 }
