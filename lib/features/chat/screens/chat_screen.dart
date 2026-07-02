@@ -51,6 +51,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   String? _highlightedMessageId;
   Timer? _highlightTimer;
   List<Message> _lastMessages = [];
+  final Map<String, Timer> _purgeTimers = {};
 
   @override
   void initState() {
@@ -96,7 +97,88 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _pulseController.dispose();
     _beepPlayer.dispose();
     _highlightTimer?.cancel();
+    for (final timer in _purgeTimers.values) {
+      timer.cancel();
+    }
     super.dispose();
+  }
+
+  // Opportunistic client-side purge, matching mugam-v2 exactly: schedules a
+  // hard delete 5 minutes after deletedAt. If the chat is reopened after
+  // that window has already passed, the purge fires immediately (delay 0)
+  // instead of being handled by any server-side TTL.
+  void _schedulePurgeTimers(List<Message> messages) {
+    for (final m in messages) {
+      if (!m.deletedForAll || m.deletedAt == null) continue;
+      if (_purgeTimers.containsKey(m.id)) continue;
+      final deletedAt = DateTime.tryParse(m.deletedAt!);
+      if (deletedAt == null) continue;
+      final remaining = deletedAt
+          .add(const Duration(minutes: 5))
+          .difference(DateTime.now());
+      final delay = remaining.isNegative ? Duration.zero : remaining;
+      final chatId = widget.chatId;
+      _purgeTimers[m.id] = Timer(delay, () {
+        _purgeTimers.remove(m.id);
+        ref
+            .read(firestoreServiceProvider)
+            .deleteMessagePermanently(chatId: chatId, messageId: m.id);
+      });
+    }
+  }
+
+  void _showMessageOptionsSheet(Message msg, bool isMe) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kBg2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: kText),
+              title: const Text(
+                'Yalnız məndən sil',
+                style: TextStyle(color: kText),
+              ),
+              onTap: () => _deleteForMe(msg),
+            ),
+            if (isMe)
+              ListTile(
+                leading: const Icon(Icons.delete_forever, color: Colors.red),
+                title: const Text(
+                  'Hamıdan sil',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onTap: () => _deleteForAll(msg),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteForMe(Message msg) async {
+    Navigator.of(context).pop();
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    if (currentUid.isEmpty) return;
+    await ref
+        .read(firestoreServiceProvider)
+        .deleteMessageForMe(
+          chatId: widget.chatId,
+          messageId: msg.id,
+          uid: currentUid,
+        );
+  }
+
+  Future<void> _deleteForAll(Message msg) async {
+    Navigator.of(context).pop();
+    await ref
+        .read(firestoreServiceProvider)
+        .deleteMessageForAll(chatId: widget.chatId, messageId: msg.id);
   }
 
   void _scrollToBottom() {
@@ -493,6 +575,52 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
     final messageKey = _messageKeys.putIfAbsent(msg.id, () => GlobalKey());
     final isHighlighted = _highlightedMessageId == msg.id;
+    if (msg.deletedForAll) {
+      return AnimatedContainer(
+        key: messageKey,
+        duration: const Duration(milliseconds: 300),
+        decoration: BoxDecoration(
+          color: isHighlighted ? kBorder : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: _SwipeableMessageBubble(
+          onReply: () => _startReply(msg),
+          child: Align(
+            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              margin: EdgeInsets.only(
+                top: 4,
+                bottom: 4,
+                left: isMe ? 60 : 0,
+                right: isMe ? 0 : 60,
+              ),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 10,
+              ),
+              decoration: BoxDecoration(
+                color: kBg3,
+                border: Border.all(color: kBorder),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(18),
+                  topRight: Radius.circular(18),
+                  bottomLeft: Radius.circular(4),
+                  bottomRight: Radius.circular(18),
+                ),
+              ),
+              child: const Text(
+                '🚫 Bu mesaj silindi',
+                style: TextStyle(
+                  color: kMuted,
+                  fontSize: 13,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     return AnimatedContainer(
       key: messageKey,
       duration: const Duration(milliseconds: 300),
@@ -502,6 +630,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ),
       child: _SwipeableMessageBubble(
         onReply: () => _startReply(msg),
+        onLongPress: () => _showMessageOptionsSheet(msg, isMe),
         child: Align(
           alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
           child: Container(
@@ -778,18 +907,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     child: Text('Xəta', style: TextStyle(color: kMuted)),
                   ),
                   data: (messages) {
-                    _lastMessages = messages;
-                    final allMsgIds = messages.map((m) => m.id).toList();
+                    final visibleMessages = messages
+                        .where((m) => !m.deletedFor.contains(currentUid))
+                        .toList();
+                    _lastMessages = visibleMessages;
+                    _schedulePurgeTimers(visibleMessages);
+                    final allMsgIds = visibleMessages
+                        .map((m) => m.id)
+                        .toList();
                     return ListView.builder(
                       controller: _scrollController,
                       reverse: false,
-                      itemCount: messages.length,
+                      itemCount: visibleMessages.length,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
                         vertical: 8,
                       ),
                       itemBuilder: (ctx, i) => _buildMessageBubble(
-                        messages[i],
+                        visibleMessages[i],
                         i,
                         allMsgIds,
                         currentUid,
@@ -1165,7 +1300,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 class _SwipeableMessageBubble extends StatefulWidget {
   final Widget child;
   final VoidCallback onReply;
-  const _SwipeableMessageBubble({required this.child, required this.onReply});
+  final VoidCallback? onLongPress;
+  const _SwipeableMessageBubble({
+    required this.child,
+    required this.onReply,
+    this.onLongPress,
+  });
 
   @override
   State<_SwipeableMessageBubble> createState() =>
@@ -1224,6 +1364,7 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
             ),
           ),
         GestureDetector(
+          onLongPress: widget.onLongPress,
           onHorizontalDragUpdate: (details) {
             final next = (_dragX + details.delta.dx).clamp(0.0, _maxDrag);
             if (next != _dragX) setState(() => _dragX = next);

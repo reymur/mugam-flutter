@@ -195,6 +195,49 @@ class FirestoreService {
     });
   }
 
+  Future<void> deleteMessageForAll({
+    required String chatId,
+    required String messageId,
+  }) async {
+    await _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .doc(messageId)
+        .update({
+          'deletedForAll': true,
+          'deletedAt': DateTime.now().toIso8601String(),
+          'text': '',
+        });
+  }
+
+  Future<void> deleteMessageForMe({
+    required String chatId,
+    required String messageId,
+    required String uid,
+  }) async {
+    await _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .doc(messageId)
+        .update({
+          'deletedFor': FieldValue.arrayUnion([uid]),
+        });
+  }
+
+  Future<void> deleteMessagePermanently({
+    required String chatId,
+    required String messageId,
+  }) async {
+    await _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .doc(messageId)
+        .delete();
+  }
+
   Future<Map<String, dynamic>?> fetchChatData(String chatId) async {
     final doc = await _db.collection('chats').doc(chatId).get();
     return doc.data();
