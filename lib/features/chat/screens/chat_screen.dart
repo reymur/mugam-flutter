@@ -46,6 +46,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
   final AudioPlayer _beepPlayer = AudioPlayer();
+  Message? _replyingTo;
+  final Map<String, GlobalKey> _messageKeys = {};
+  String? _highlightedMessageId;
+  Timer? _highlightTimer;
+  List<Message> _lastMessages = [];
 
   @override
   void initState() {
@@ -90,6 +95,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _recordingTimer?.cancel();
     _pulseController.dispose();
     _beepPlayer.dispose();
+    _highlightTimer?.cancel();
     super.dispose();
   }
 
@@ -103,16 +109,111 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
+  String _replyPreviewText(Message msg) {
+    switch (msg.type) {
+      case 'image':
+        return '🖼 Şəkil';
+      case 'audio':
+        return '🎤 Səs mesajı';
+      default:
+        return msg.text;
+    }
+  }
+
+  String _replySenderName(Message msg, String currentUid) {
+    if (msg.senderId == currentUid) {
+      return FirebaseAuth.instance.currentUser?.displayName ?? '';
+    }
+    final chatData = ref.read(chatDataProvider(widget.chatId)).value;
+    return chatData?['name'] as String? ?? '';
+  }
+
+  String? _replyImageURL(Message msg) {
+    return msg.type == 'image' ? msg.imageURL : null;
+  }
+
+  void _startReply(Message msg) {
+    setState(() => _replyingTo = msg);
+  }
+
+  void _cancelReply() {
+    setState(() => _replyingTo = null);
+  }
+
+  void _scrollToMessage(String messageId) {
+    final index = _lastMessages.indexWhere((m) => m.id == messageId);
+    if (index == -1) return;
+    final ctx = _messageKeys[messageId]?.currentContext;
+    if (ctx != null) {
+      _doScrollAndHighlight(ctx, messageId);
+      return;
+    }
+    if (!_scrollController.hasClients) return;
+    final estimate =
+        (index / _lastMessages.length) *
+        _scrollController.position.maxScrollExtent;
+    unawaited(_scrollThenHighlight(estimate, messageId));
+  }
+
+  Future<void> _scrollThenHighlight(double estimate, String messageId) async {
+    await _scrollController.animateTo(
+      estimate.clamp(0.0, _scrollController.position.maxScrollExtent),
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOut,
+    );
+    if (!mounted) return;
+    final retryCtx = _messageKeys[messageId]?.currentContext;
+    if (retryCtx != null && retryCtx.mounted) {
+      _doScrollAndHighlight(retryCtx, messageId);
+    } else {
+      _flashHighlight(messageId);
+    }
+  }
+
+  void _doScrollAndHighlight(BuildContext ctx, String messageId) {
+    Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+      alignment: 0.5,
+    );
+    _flashHighlight(messageId);
+  }
+
+  void _flashHighlight(String messageId) {
+    setState(() => _highlightedMessageId = messageId);
+    _highlightTimer?.cancel();
+    _highlightTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _highlightedMessageId = null);
+    });
+  }
+
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty || _sending) return;
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final replyingTo = _replyingTo;
     setState(() => _sending = true);
     _messageController.clear();
+    _cancelReply();
     try {
       await ref
           .read(firestoreServiceProvider)
-          .sendMessage(chatId: widget.chatId, senderId: currentUid, text: text);
+          .sendMessage(
+            chatId: widget.chatId,
+            senderId: currentUid,
+            text: text,
+            replyToId: replyingTo?.id,
+            replyToText: replyingTo != null
+                ? _replyPreviewText(replyingTo)
+                : null,
+            replyToSenderName: replyingTo != null
+                ? _replySenderName(replyingTo, currentUid)
+                : null,
+            replyToImageURL: replyingTo != null
+                ? _replyImageURL(replyingTo)
+                : null,
+          );
       _scrollToBottom();
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -129,7 +230,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (picked == null) return;
     if (!mounted) return;
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final replyingTo = _replyingTo;
     setState(() => _uploadingImage = true);
+    _cancelReply();
     try {
       final imageURL = await ref
           .read(firestoreServiceProvider)
@@ -140,6 +243,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             chatId: widget.chatId,
             senderId: currentUid,
             imageURL: imageURL,
+            replyToId: replyingTo?.id,
+            replyToText: replyingTo != null
+                ? _replyPreviewText(replyingTo)
+                : null,
+            replyToSenderName: replyingTo != null
+                ? _replySenderName(replyingTo, currentUid)
+                : null,
+            replyToImageURL: replyingTo != null
+                ? _replyImageURL(replyingTo)
+                : null,
           );
       _scrollToBottom();
     } catch (e) {
@@ -197,7 +310,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 minScale: 0.5,
                 maxScale: 5.0,
                 child: Center(
-                  child: CachedNetworkImage(imageUrl: imageURL, fit: BoxFit.contain),
+                  child: CachedNetworkImage(
+                    imageUrl: imageURL,
+                    fit: BoxFit.contain,
+                  ),
                 ),
               ),
               Positioned(
@@ -285,6 +401,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       return;
     }
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final replyingTo = _replyingTo;
+    _cancelReply();
     try {
       final audioURL = await ref
           .read(firestoreServiceProvider)
@@ -295,6 +413,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             chatId: widget.chatId,
             senderId: currentUid,
             audioURL: audioURL,
+            replyToId: replyingTo?.id,
+            replyToText: replyingTo != null
+                ? _replyPreviewText(replyingTo)
+                : null,
+            replyToSenderName: replyingTo != null
+                ? _replySenderName(replyingTo, currentUid)
+                : null,
+            replyToImageURL: replyingTo != null
+                ? _replyImageURL(replyingTo)
+                : null,
           );
       _scrollToBottom();
     } catch (e) {
@@ -363,88 +491,189 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         color: isRead ? kReadBlue : const Color(0xFF1A0E00).withAlpha(128),
       );
     }
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: EdgeInsets.only(
-          top: 4,
-          bottom: 4,
-          left: isMe ? 60 : 0,
-          right: isMe ? 0 : 60,
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: isMe ? kGold : kBg3,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(18),
-            topRight: const Radius.circular(18),
-            bottomLeft: Radius.circular(isMe ? 18 : 4),
-            bottomRight: Radius.circular(isMe ? 4 : 18),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: isMe
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (msg.type == 'text')
-              Text(
-                msg.text,
-                style: TextStyle(
-                  color: isMe ? const Color(0xFF1A0E00) : kText,
-                  fontSize: 14,
-                ),
+    final messageKey = _messageKeys.putIfAbsent(msg.id, () => GlobalKey());
+    final isHighlighted = _highlightedMessageId == msg.id;
+    return AnimatedContainer(
+      key: messageKey,
+      duration: const Duration(milliseconds: 300),
+      decoration: BoxDecoration(
+        color: isHighlighted ? kBorder : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: _SwipeableMessageBubble(
+        onReply: () => _startReply(msg),
+        child: Align(
+          alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            margin: EdgeInsets.only(
+              top: 4,
+              bottom: 4,
+              left: isMe ? 60 : 0,
+              right: isMe ? 0 : 60,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: isMe ? kGold : kBg3,
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(18),
+                topRight: const Radius.circular(18),
+                bottomLeft: Radius.circular(isMe ? 18 : 4),
+                bottomRight: Radius.circular(isMe ? 4 : 18),
               ),
-            if (msg.type == 'image' && msg.imageURL != null)
-              GestureDetector(
-                onTap: () => _showFullImage(context, msg.imageURL!),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: CachedNetworkImage(
-                    imageUrl: msg.imageURL!,
-                    width: 200,
-                    height: 200,
-                    fit: BoxFit.cover,
-                    placeholder: (ctx, url) => Container(
-                      width: 200,
-                      height: 200,
-                      color: kBg3,
-                      child: const Center(
-                        child: CircularProgressIndicator(color: kGold),
-                      ),
-                    ),
-                    errorWidget: (ctx, url, err) => Container(
-                      width: 200,
-                      height: 200,
-                      color: kBg3,
-                      child: const Icon(Icons.broken_image, color: kMuted),
-                    ),
-                  ),
-                ),
-              ),
-            if (msg.type == 'audio' && msg.audioURL != null)
-              _VoiceMessagePlayer(audioURL: msg.audioURL!, isMe: isMe),
-            const SizedBox(height: 2),
-            Row(
+            ),
+            child: Column(
+              crossAxisAlignment: isMe
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  time,
-                  style: TextStyle(
-                    color: isMe
-                        ? const Color(0xFF1A0E00).withAlpha(150)
-                        : kMuted,
-                    fontSize: 10,
+                if (msg.replyToId != null)
+                  GestureDetector(
+                    onTap: () => _scrollToMessage(msg.replyToId!),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      clipBehavior: Clip.antiAlias,
+                      decoration: const BoxDecoration(
+                        color: Colors.transparent,
+                        borderRadius: BorderRadius.only(
+                          topRight: Radius.circular(6),
+                          bottomRight: Radius.circular(6),
+                        ),
+                      ),
+                      child: IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Container(
+                              width: 4,
+                              color: isMe ? const Color(0xFF1A0E00) : kGold,
+                            ),
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  8,
+                                  10,
+                                  10,
+                                  10,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      msg.replyToSenderName ?? '',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: isMe
+                                            ? const Color(0xFF1A0E00)
+                                            : kGold,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      msg.replyToText ?? '',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: isMe
+                                            ? const Color(
+                                                0xFF1A0E00,
+                                              ).withAlpha(180)
+                                            : kMuted,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            if (msg.replyToImageURL != null)
+                              SizedBox(
+                                width: 60,
+                                height: 60,
+                                child: CachedNetworkImage(
+                                  imageUrl: msg.replyToImageURL!,
+                                  width: 60,
+                                  height: 60,
+                                  fit: BoxFit.cover,
+                                  placeholder: (ctx, url) =>
+                                      Container(color: kBg3),
+                                  errorWidget: (ctx, url, err) => Container(
+                                    color: kBg3,
+                                    child: const Icon(
+                                      Icons.broken_image,
+                                      color: kMuted,
+                                      size: 16,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
+                if (msg.type == 'text')
+                  Text(
+                    msg.text,
+                    style: TextStyle(
+                      color: isMe ? const Color(0xFF1A0E00) : kText,
+                      fontSize: 14,
+                    ),
+                  ),
+                if (msg.type == 'image' && msg.imageURL != null)
+                  GestureDetector(
+                    onTap: () => _showFullImage(context, msg.imageURL!),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: CachedNetworkImage(
+                        imageUrl: msg.imageURL!,
+                        width: 200,
+                        height: 200,
+                        fit: BoxFit.cover,
+                        placeholder: (ctx, url) => Container(
+                          width: 200,
+                          height: 200,
+                          color: kBg3,
+                          child: const Center(
+                            child: CircularProgressIndicator(color: kGold),
+                          ),
+                        ),
+                        errorWidget: (ctx, url, err) => Container(
+                          width: 200,
+                          height: 200,
+                          color: kBg3,
+                          child: const Icon(Icons.broken_image, color: kMuted),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (msg.type == 'audio' && msg.audioURL != null)
+                  _VoiceMessagePlayer(audioURL: msg.audioURL!, isMe: isMe),
+                const SizedBox(height: 2),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      time,
+                      style: TextStyle(
+                        color: isMe
+                            ? const Color(0xFF1A0E00).withAlpha(150)
+                            : kMuted,
+                        fontSize: 10,
+                      ),
+                    ),
+                    if (checkMark != null) ...[
+                      const SizedBox(width: 3),
+                      checkMark,
+                    ],
+                  ],
                 ),
-                if (checkMark != null) ...[
-                  const SizedBox(width: 3),
-                  checkMark,
-                ],
               ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -487,8 +716,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         chatMetaAsync.value?['deliveredTo'] as Map<String, dynamic>? ?? {};
     final lastReadMsgId =
         chatMetaAsync.value?['lastReadMsgId'] as Map<String, dynamic>? ?? {};
-    final members = (chatMetaAsync.value?['members'] as List?)
-        ?.cast<String>();
+    final members = (chatMetaAsync.value?['members'] as List?)?.cast<String>();
     final otherUid = members?.firstWhere(
       (m) => m != currentUid,
       orElse: () => '',
@@ -550,6 +778,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     child: Text('Xəta', style: TextStyle(color: kMuted)),
                   ),
                   data: (messages) {
+                    _lastMessages = messages;
                     final allMsgIds = messages.map((m) => m.id).toList();
                     return ListView.builder(
                       controller: _scrollController,
@@ -572,6 +801,87 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   },
                 ),
           ),
+          if (_replyingTo != null)
+            Container(
+              decoration: const BoxDecoration(
+                color: kBg2,
+                border: Border(top: BorderSide(color: kBorder)),
+              ),
+              child: IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(width: 4, color: kGold),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              _replyingTo!.senderId == currentUid
+                                  ? 'Siz'
+                                  : (chatDataAsync.value?['name'] as String? ??
+                                        ''),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: kGold,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              _replyPreviewText(_replyingTo!),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: kMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (_replyingTo!.type == 'image' &&
+                        _replyingTo!.imageURL != null)
+                      SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: CachedNetworkImage(
+                          imageUrl: _replyingTo!.imageURL!,
+                          width: 44,
+                          height: 44,
+                          fit: BoxFit.cover,
+                          placeholder: (ctx, url) => Container(color: kBg3),
+                          errorWidget: (ctx, url, err) => Container(
+                            color: kBg3,
+                            child: const Icon(
+                              Icons.broken_image,
+                              color: kMuted,
+                              size: 16,
+                            ),
+                          ),
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Center(
+                        child: GestureDetector(
+                          onTap: _cancelReply,
+                          child: const Icon(
+                            Icons.close,
+                            color: kMuted,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           Container(
             color: kBg2,
             padding: const EdgeInsets.fromLTRB(12, 8, 8, 24),
@@ -612,7 +922,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     ),
                   )
                 else
-                  const SizedBox(width: 48), // placeholder to keep layout stable
+                  const SizedBox(
+                    width: 48,
+                  ), // placeholder to keep layout stable
 
                 const SizedBox(width: 4),
 
@@ -652,9 +964,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                               if (!_isLocked)
                                 Opacity(
                                   opacity:
-                                      (1.0 +
-                                              _dragX /
-                                                  _cancelThreshold.abs())
+                                      (1.0 + _dragX / _cancelThreshold.abs())
                                           .clamp(0.0, 1.0),
                                   child: Row(
                                     children: [
@@ -814,11 +1124,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           left: 0,
                           right: 0,
                           child: Opacity(
-                            opacity:
-                                (1.0 + _dragY / _lockThreshold.abs()).clamp(
-                                  0.0,
-                                  1.0,
-                                ),
+                            opacity: (1.0 + _dragY / _lockThreshold.abs())
+                                .clamp(0.0, 1.0),
                             child: Column(
                               children: [
                                 Container(
@@ -838,10 +1145,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                 const SizedBox(height: 4),
                                 const Text(
                                   'Kilid',
-                                  style: TextStyle(
-                                    color: kMuted,
-                                    fontSize: 9,
-                                  ),
+                                  style: TextStyle(color: kMuted, fontSize: 9),
                                 ),
                               ],
                             ),
@@ -854,6 +1158,88 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           ),
         ],
       ),
+    );
+  }
+}
+
+class _SwipeableMessageBubble extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onReply;
+  const _SwipeableMessageBubble({required this.child, required this.onReply});
+
+  @override
+  State<_SwipeableMessageBubble> createState() =>
+      _SwipeableMessageBubbleState();
+}
+
+class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
+    with SingleTickerProviderStateMixin {
+  double _dragX = 0.0;
+  late final AnimationController _snapController;
+  Animation<double>? _snapAnimation;
+  static const double _maxDrag = 80.0;
+  static const double _triggerThreshold = 60.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _snapController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+  }
+
+  @override
+  void dispose() {
+    _snapController.dispose();
+    super.dispose();
+  }
+
+  void _snapBack() {
+    _snapAnimation = Tween<double>(begin: _dragX, end: 0.0).animate(
+      CurvedAnimation(parent: _snapController, curve: Curves.easeOut),
+    )..addListener(() => setState(() => _dragX = _snapAnimation!.value));
+    _snapController.forward(from: 0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = (_dragX / _maxDrag).clamp(0.0, 1.0);
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        if (_dragX > 0)
+          Positioned(
+            left: 8,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: Opacity(
+                opacity: progress,
+                child: Transform.scale(
+                  scale: 0.5 + progress * 0.5,
+                  child: const Icon(Icons.reply, color: kGold, size: 22),
+                ),
+              ),
+            ),
+          ),
+        GestureDetector(
+          onHorizontalDragUpdate: (details) {
+            final next = (_dragX + details.delta.dx).clamp(0.0, _maxDrag);
+            if (next != _dragX) setState(() => _dragX = next);
+          },
+          onHorizontalDragEnd: (_) {
+            if (_dragX >= _triggerThreshold) {
+              widget.onReply();
+            }
+            _snapBack();
+          },
+          child: Transform.translate(
+            offset: Offset(_dragX, 0),
+            child: widget.child,
+          ),
+        ),
+      ],
     );
   }
 }
