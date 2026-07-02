@@ -133,7 +133,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   void _startReply(Message msg) {
-    debugPrint('🟣 VERIFY DEBUG: _startReply fired for msgId=${msg.id}');
     setState(() => _replyingTo = msg);
   }
 
@@ -725,11 +724,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final otherUidResolved = (otherUid != null && otherUid.isNotEmpty)
         ? otherUid
         : null;
-    debugPrint(
-      '🟢 VERIFY DEBUG: chatMetaAsync isLoading=${chatMetaAsync.isLoading} '
-      'hasError=${chatMetaAsync.hasError} deliveredTo=$deliveredTo '
-      'lastReadMsgId=$lastReadMsgId otherUidResolved=$otherUidResolved',
-    );
 
     return Scaffold(
       appBar: AppBar(
