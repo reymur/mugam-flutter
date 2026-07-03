@@ -415,6 +415,32 @@ class FirestoreService {
     } catch (_) {}
   }
 
+  // Tracks who's currently viewing a chat so the push-notification Cloud
+  // Function can skip notifying them — mirrors mugam-v2's
+  // addActiveUser/removeActiveUser exactly (same field, same arrayUnion/
+  // arrayRemove semantics).
+  Future<void> addActiveUser({
+    required String chatId,
+    required String uid,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'activeUsers': FieldValue.arrayUnion([uid]),
+      });
+    } catch (_) {}
+  }
+
+  Future<void> removeActiveUser({
+    required String chatId,
+    required String uid,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'activeUsers': FieldValue.arrayRemove([uid]),
+      });
+    } catch (_) {}
+  }
+
   Future<void> markChatAsReadBy({
     required String chatId,
     required String uid,

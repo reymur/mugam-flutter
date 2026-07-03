@@ -116,6 +116,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ref
           .read(firestoreServiceProvider)
           .markChatAsDelivered(chatId: widget.chatId, uid: currentUid);
+      ref
+          .read(firestoreServiceProvider)
+          .addActiveUser(chatId: widget.chatId, uid: currentUid);
     }
   }
 
@@ -131,6 +134,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   @override
   void dispose() {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid != null && currentUid.isNotEmpty) {
+      ref
+          .read(firestoreServiceProvider)
+          .removeActiveUser(chatId: widget.chatId, uid: currentUid);
+    }
     _messageController.dispose();
     _messageFocusNode.dispose();
     _scrollController.dispose();
