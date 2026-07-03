@@ -75,6 +75,13 @@ class FirestoreService {
           (snap) =>
               snap.docs
                   .map((doc) => Chat.fromFirestore(doc.id, doc.data()))
+                  // mugam-v2 marks a direct chat completed once the pair
+                  // finalizes a Razılaşma (agreement) and starts a fresh
+                  // chat doc the next time they talk — its own chat list
+                  // hides completed chats the same way, so without this
+                  // filter every past agreement's chat resurfaces as a
+                  // separate duplicate entry for the same person.
+                  .where((chat) => !chat.completed)
                   .toList()
                 ..sort((a, b) {
                   if (a.lastMessageTime == null && b.lastMessageTime == null) {

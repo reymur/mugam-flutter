@@ -66,6 +66,7 @@ class Chat {
   final List<String> members;
   final bool isGroup;
   final String? photoURL;
+  final bool completed;
 
   const Chat({
     required this.id,
@@ -77,6 +78,7 @@ class Chat {
     required this.members,
     required this.isGroup,
     this.photoURL,
+    this.completed = false,
   });
 
   factory Chat.fromFirestore(String id, Map<String, dynamic> data) {
@@ -108,6 +110,7 @@ class Chat {
       members: List<String>.from(data['members'] as List? ?? const []),
       isGroup: data['isGroup'] ?? false,
       photoURL: data['photoURL'],
+      completed: (data['completed'] ?? false) as bool,
     );
   }
 }
