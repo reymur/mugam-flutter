@@ -256,12 +256,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
+  // Floating + a margin tall enough to clear the composer (and the reply
+  // preview bar, when visible) so the confirmation doesn't sit on top of the
+  // input the way the default fixed/4s SnackBar did.
+  void _showCopySnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(milliseconds: 1500),
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.only(
+          bottom: _replyingTo != null ? 160 : 90,
+          left: 16,
+          right: 16,
+        ),
+      ),
+    );
+  }
+
   void _copyMessageText(Message msg) {
     Navigator.of(context).pop();
     Clipboard.setData(ClipboardData(text: msg.text));
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Kopyalandı')));
+    _showCopySnackBar('Kopyalandı');
     _restoreComposerFocusIfNeeded();
   }
 
@@ -278,15 +294,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       item.add(Formats.jpeg(bytes));
       await clipboard.write([item]);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Kopyalandı')));
+      _showCopySnackBar('Kopyalandı');
       _restoreComposerFocusIfNeeded();
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Xəta baş verdi')));
+      _showCopySnackBar('Xəta baş verdi');
       _restoreComposerFocusIfNeeded();
     }
   }
@@ -1176,10 +1188,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final chatDataAsync = ref.watch(chatDataProvider(widget.chatId));
 
     ref.listen(messagesProvider(widget.chatId), (previous, next) {
-      next.whenData((_) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _scrollToBottom();
-        });
+      next.whenData((messages) {
+        // Only auto-scroll when a message was actually appended — deletes,
+        // reactions and other field-only updates re-emit the same count and
+        // must not yank the view back to the bottom.
+        final previousCount = previous?.value?.length ?? 0;
+        if (messages.length > previousCount) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _scrollToBottom();
+          });
+        }
       });
       next.whenData((messages) {
         if (messages.isEmpty) return;
