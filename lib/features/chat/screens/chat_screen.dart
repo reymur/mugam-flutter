@@ -139,6 +139,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            ListTile(
+              leading: const Icon(Icons.reply, color: kGold),
+              title: const Text('Cavabla', style: TextStyle(color: kText)),
+              onTap: () => _replyFromMenu(msg),
+            ),
             if (msg.text.isNotEmpty)
               ListTile(
                 leading: const Icon(Icons.copy, color: kGold),
@@ -353,6 +358,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   void _startReply(Message msg) {
     setState(() => _replyingTo = msg);
+  }
+
+  void _replyFromMenu(Message msg) {
+    Navigator.of(context).pop();
+    _startReply(msg);
   }
 
   void _cancelReply() {
