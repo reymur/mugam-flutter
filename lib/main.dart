@@ -1,8 +1,12 @@
+import 'dart:async';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/colors.dart';
 import 'core/theme/typography.dart';
+import 'firebase/push_notification_service.dart';
 import 'firebase_options.dart';
 import 'navigation/app_router.dart';
 
@@ -12,8 +16,31 @@ Future<void> main() async {
   runApp(const ProviderScope(child: MugamApp()));
 }
 
-class MugamApp extends StatelessWidget {
+class MugamApp extends StatefulWidget {
   const MugamApp({super.key});
+
+  @override
+  State<MugamApp> createState() => _MugamAppState();
+}
+
+class _MugamAppState extends State<MugamApp> {
+  StreamSubscription<User?>? _authSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+      if (user != null) {
+        PushNotificationService.instance.registerToken(user.uid);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

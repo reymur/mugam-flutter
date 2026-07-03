@@ -34,6 +34,7 @@ dependencies:
   super_clipboard: any
   flutter_cache_manager: any
   share_plus: any
+  device_info_plus: any
 
 dev_dependencies:
   flutter_test:
