@@ -21,6 +21,7 @@ dependencies:
   riverpod: any
   cached_network_image: any
   image_picker: any
+  camera: ^0.12.0+1
   just_audio: any
   record: any
   google_fonts: any

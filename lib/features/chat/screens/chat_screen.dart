@@ -21,6 +21,7 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import 'about_contact_screen.dart';
+import 'camera_capture_screen.dart';
 import 'message_info_screen.dart';
 
 enum _SelectionPurpose { forward, delete }
@@ -833,6 +834,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
+  // Opens the unified photo/video camera screen. Photos are sent exactly
+  // like before (via the shared upload helper); video capture isn't wired
+  // to sending yet — the message model/Firestore schema don't support a
+  // video type — so it's just logged for verification at this step.
+  Future<void> _openCameraCapture() async {
+    final result = await Navigator.push<CapturedMedia>(
+      context,
+      MaterialPageRoute(builder: (_) => const CameraCaptureScreen()),
+    );
+    if (result == null) return;
+    if (result.isVideo) {
+      debugPrint('🎥 Video captured, send not yet wired: ${result.path}');
+      // debugPrint isn't reliably observable on-device (profile builds over
+      // wireless debugging), so this step's verification also gets a
+      // visible on-screen confirmation instead of relying on console logs.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🎥 Video hazırdır (göndərmə hələ yoxdur): ${result.path.split('/').last}'),
+            backgroundColor: kBg3,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    await _uploadAndSendImageFile(result.path);
+  }
+
   Future<void> _pickAndSendImage(ImageSource source) async {
     final picked = await _picker.pickImage(
       source: source,
@@ -1044,7 +1075,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               title: const Text('Kamera', style: TextStyle(color: kText)),
               onTap: () {
                 Navigator.of(context).pop();
-                _pickAndSendImage(ImageSource.camera);
+                _openCameraCapture();
               },
             ),
           ],
@@ -2010,9 +2041,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   if (!_hasText && !_isRecording)
                     IconButton(
                       icon: const Icon(Icons.camera_alt, color: kGold),
-                      onPressed: _uploadingImage
-                          ? null
-                          : () => _pickAndSendImage(ImageSource.camera),
+                      onPressed: _uploadingImage ? null : _openCameraCapture,
                     ),
 
                   const SizedBox(width: 4),
