@@ -49,6 +49,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   final ScrollController _scrollController = ScrollController();
   bool _sending = false;
   bool _uploadingImage = false;
+  bool _uploadingVideo = false;
   final ImagePicker _picker = ImagePicker();
   final AudioRecorder _audioRecorder = AudioRecorder();
   bool _isRecording = false;
@@ -446,6 +447,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             );
           }
           break;
+        case 'video':
+          final videoURL = msg.videoURL;
+          if (videoURL != null) {
+            await service.sendVideoMessage(
+              chatId: targetChatId,
+              senderId: currentUid,
+              videoURL: videoURL,
+            );
+          }
+          break;
         default:
           await service.sendMessage(
             chatId: targetChatId,
@@ -689,6 +700,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               files.add(XFile(path));
             }
             break;
+          case 'video':
+            final videoURL = msg.videoURL;
+            if (videoURL != null) {
+              final cached = await DefaultCacheManager().getSingleFile(
+                videoURL,
+              );
+              final bytes = await cached.readAsBytes();
+              final path = '${tempDir.path}/share_${msg.id}.mp4';
+              await File(path).writeAsBytes(bytes);
+              files.add(XFile(path));
+            }
+            break;
           default:
             if (msg.text.isNotEmpty) texts.add(msg.text);
         }
@@ -834,34 +857,62 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
-  // Opens the unified photo/video camera screen. Photos are sent exactly
-  // like before (via the shared upload helper); video capture isn't wired
-  // to sending yet — the message model/Firestore schema don't support a
-  // video type — so it's just logged for verification at this step.
+  // Opens the unified photo/video camera screen and routes the captured
+  // file to the matching upload+send helper.
   Future<void> _openCameraCapture() async {
     final result = await Navigator.push<CapturedMedia>(
       context,
       MaterialPageRoute(builder: (_) => const CameraCaptureScreen()),
     );
     if (result == null) return;
+    if (!mounted) return;
     if (result.isVideo) {
-      debugPrint('🎥 Video captured, send not yet wired: ${result.path}');
-      // debugPrint isn't reliably observable on-device (profile builds over
-      // wireless debugging), so this step's verification also gets a
-      // visible on-screen confirmation instead of relying on console logs.
+      await _uploadAndSendVideoFile(result.path);
+    } else {
+      await _uploadAndSendImageFile(result.path);
+    }
+  }
+
+  Future<void> _uploadAndSendVideoFile(String filePath) async {
+    if (!mounted) return;
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final replyingTo = _replyingTo;
+    setState(() => _uploadingVideo = true);
+    _cancelReply();
+    try {
+      final videoURL = await ref
+          .read(firestoreServiceProvider)
+          .uploadChatVideo(chatId: widget.chatId, filePath: filePath);
+      await ref
+          .read(firestoreServiceProvider)
+          .sendVideoMessage(
+            chatId: widget.chatId,
+            senderId: currentUid,
+            videoURL: videoURL,
+            replyToId: replyingTo?.id,
+            replyToText: replyingTo != null
+                ? _replyPreviewText(replyingTo)
+                : null,
+            replyToSenderName: replyingTo != null
+                ? _replySenderName(replyingTo, currentUid)
+                : null,
+            replyToImageURL: replyingTo != null
+                ? _replyImageURL(replyingTo)
+                : null,
+          );
+      _scrollToBottom();
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('🎥 Video hazırdır (göndərmə hələ yoxdur): ${result.path.split('/').last}'),
-            backgroundColor: kBg3,
-            duration: const Duration(seconds: 4),
+            content: Text('Video göndərilmədi: $e'),
+            backgroundColor: kRed,
           ),
         );
       }
-      return;
+    } finally {
+      if (mounted) setState(() => _uploadingVideo = false);
     }
-    if (!mounted) return;
-    await _uploadAndSendImageFile(result.path);
   }
 
   Future<void> _pickAndSendImage(ImageSource source) async {
@@ -1914,7 +1965,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   // Left button — attach (hidden during recording) or cancel (locked mode)
                   if (!_isRecording)
                     IconButton(
-                      icon: _uploadingImage
+                      icon: (_uploadingImage || _uploadingVideo)
                           ? const SizedBox(
                               width: 20,
                               height: 20,
@@ -1924,7 +1975,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                               ),
                             )
                           : const Icon(Icons.attach_file, color: kGold),
-                      onPressed: _uploadingImage ? null : _showAttachSheet,
+                      onPressed: (_uploadingImage || _uploadingVideo)
+                          ? null
+                          : _showAttachSheet,
                     )
                   else if (_isLocked)
                     GestureDetector(
@@ -2041,7 +2094,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   if (!_hasText && !_isRecording)
                     IconButton(
                       icon: const Icon(Icons.camera_alt, color: kGold),
-                      onPressed: _uploadingImage ? null : _openCameraCapture,
+                      onPressed: (_uploadingImage || _uploadingVideo)
+                          ? null
+                          : _openCameraCapture,
                     ),
 
                   const SizedBox(width: 4),

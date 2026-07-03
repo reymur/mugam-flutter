@@ -67,6 +67,7 @@ class FirestoreService {
     String? replyToText,
     String? replyToSenderName,
     String? replyToImageURL,
+    String? replyToVideoURL,
   }) {
     if (replyToId == null) return null;
     final map = <String, dynamic>{
@@ -76,6 +77,9 @@ class FirestoreService {
     };
     if (replyToImageURL != null) {
       map['imageURL'] = replyToImageURL;
+    }
+    if (replyToVideoURL != null) {
+      map['videoURL'] = replyToVideoURL;
     }
     return map;
   }
@@ -88,6 +92,7 @@ class FirestoreService {
     String? replyToText,
     String? replyToSenderName,
     String? replyToImageURL,
+    String? replyToVideoURL,
   }) async {
     final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
@@ -95,6 +100,7 @@ class FirestoreService {
       replyToText: replyToText,
       replyToSenderName: replyToSenderName,
       replyToImageURL: replyToImageURL,
+      replyToVideoURL: replyToVideoURL,
     );
     await _db.collection('chats').doc(chatId).collection('messages').add({
       'senderId': senderId,
@@ -133,6 +139,7 @@ class FirestoreService {
     String? replyToText,
     String? replyToSenderName,
     String? replyToImageURL,
+    String? replyToVideoURL,
   }) async {
     final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
@@ -140,6 +147,7 @@ class FirestoreService {
       replyToText: replyToText,
       replyToSenderName: replyToSenderName,
       replyToImageURL: replyToImageURL,
+      replyToVideoURL: replyToVideoURL,
     );
     await _db.collection('chats').doc(chatId).collection('messages').add({
       'senderId': senderId,
@@ -152,6 +160,55 @@ class FirestoreService {
     });
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🖼 Şəkil',
+      'lastMessageTime': now,
+    });
+  }
+
+  Future<String> uploadChatVideo({
+    required String chatId,
+    required String filePath,
+  }) async {
+    final ext = filePath.contains('.') ? filePath.split('.').last : 'mp4';
+    final fileName = 'video_${DateTime.now().millisecondsSinceEpoch}.$ext';
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('chats')
+        .child(chatId)
+        .child(fileName);
+    await ref.putFile(File(filePath));
+    return await ref.getDownloadURL();
+  }
+
+  Future<void> sendVideoMessage({
+    required String chatId,
+    required String senderId,
+    required String videoURL,
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderName,
+    String? replyToImageURL,
+    String? replyToVideoURL,
+  }) async {
+    final now = FieldValue.serverTimestamp();
+    final replyTo = _buildReplyTo(
+      replyToId: replyToId,
+      replyToText: replyToText,
+      replyToSenderName: replyToSenderName,
+      replyToImageURL: replyToImageURL,
+      replyToVideoURL: replyToVideoURL,
+    );
+    await _db.collection('chats').doc(chatId).collection('messages').add({
+      'senderId': senderId,
+      'text': '',
+      'type': 'video',
+      'videoURL': videoURL,
+      'imageURL': null,
+      'audioURL': null,
+      'timestamp': now,
+      if (replyTo != null) 'replyTo': replyTo,
+    });
+    await _db.collection('chats').doc(chatId).update({
+      'lastMessage': '🎥 Video',
       'lastMessageTime': now,
     });
   }
@@ -178,6 +235,7 @@ class FirestoreService {
     String? replyToText,
     String? replyToSenderName,
     String? replyToImageURL,
+    String? replyToVideoURL,
   }) async {
     final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
@@ -185,6 +243,7 @@ class FirestoreService {
       replyToText: replyToText,
       replyToSenderName: replyToSenderName,
       replyToImageURL: replyToImageURL,
+      replyToVideoURL: replyToVideoURL,
     );
     await _db.collection('chats').doc(chatId).collection('messages').add({
       'senderId': senderId,
@@ -295,6 +354,7 @@ class FirestoreService {
           'type': message.type,
           'imageURL': message.imageURL,
           'audioURL': message.audioURL,
+          'videoURL': message.videoURL,
           'timestamp': message.timestamp,
           'starredAt': FieldValue.serverTimestamp(),
         });
