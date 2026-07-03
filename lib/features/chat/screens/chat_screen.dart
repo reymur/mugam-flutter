@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
@@ -14,6 +15,7 @@ import 'package:intl/intl.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
@@ -59,6 +61,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   Timer? _highlightTimer;
   List<Message> _lastMessages = [];
   final Map<String, Timer> _purgeTimers = {};
+  bool _selectionMode = false;
+  final Set<String> _selectedMessageIds = {};
   static const List<String> _quickReactions = [
     '👍',
     '❤️',
@@ -194,7 +198,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             ListTile(
               leading: const Icon(Icons.forward, color: kGold),
               title: const Text('Göndər', style: TextStyle(color: kText)),
-              onTap: () => _openForwardSheet(msg),
+              onTap: () => _enterSelectionMode(msg),
             ),
             if (msg.text.isNotEmpty)
               ListTile(
@@ -303,8 +307,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
-  void _openForwardSheet(Message msg) {
-    Navigator.of(context).pop();
+  void _openForwardSheet(List<Message> messages) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     showModalBottomSheet(
       context: context,
@@ -352,7 +355,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         ),
                         onTap: () async {
                           Navigator.of(context).pop();
-                          await _forwardMessage(msg, chat.id, currentUid);
+                          for (final msg in messages) {
+                            await _forwardMessage(msg, chat.id, currentUid);
+                          }
+                          _exitSelectionMode();
                         },
                       );
                     },
@@ -478,6 +484,98 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   void _replyFromMenu(Message msg) {
     Navigator.of(context).pop();
     _startReply(msg);
+  }
+
+  void _enterSelectionMode(Message msg) {
+    Navigator.of(context).pop();
+    setState(() {
+      _selectionMode = true;
+      _selectedMessageIds
+        ..clear()
+        ..add(msg.id);
+    });
+  }
+
+  void _exitSelectionMode() {
+    setState(() {
+      _selectionMode = false;
+      _selectedMessageIds.clear();
+    });
+  }
+
+  void _toggleMessageSelection(String messageId) {
+    setState(() {
+      if (_selectedMessageIds.contains(messageId)) {
+        _selectedMessageIds.remove(messageId);
+      } else {
+        _selectedMessageIds.add(messageId);
+      }
+    });
+  }
+
+  List<Message> get _selectedMessages =>
+      _lastMessages.where((m) => _selectedMessageIds.contains(m.id)).toList();
+
+  void _forwardSelected() {
+    final messages = _selectedMessages;
+    if (messages.isEmpty) return;
+    _openForwardSheet(messages);
+  }
+
+  Future<void> _shareSelected() async {
+    final messages = _selectedMessages;
+    if (messages.isEmpty) return;
+    final texts = <String>[];
+    final files = <XFile>[];
+    try {
+      final tempDir = await getTemporaryDirectory();
+      for (final msg in messages) {
+        switch (msg.type) {
+          case 'image':
+            final imageURL = msg.imageURL;
+            if (imageURL != null) {
+              final cached = await DefaultCacheManager().getSingleFile(
+                imageURL,
+              );
+              final bytes = await cached.readAsBytes();
+              final path = '${tempDir.path}/share_${msg.id}.jpg';
+              await File(path).writeAsBytes(bytes);
+              files.add(XFile(path));
+            }
+            break;
+          case 'audio':
+            final audioURL = msg.audioURL;
+            if (audioURL != null) {
+              final cached = await DefaultCacheManager().getSingleFile(
+                audioURL,
+              );
+              final bytes = await cached.readAsBytes();
+              final path = '${tempDir.path}/share_${msg.id}.m4a';
+              await File(path).writeAsBytes(bytes);
+              files.add(XFile(path));
+            }
+            break;
+          default:
+            if (msg.text.isNotEmpty) texts.add(msg.text);
+        }
+      }
+      if (files.isNotEmpty) {
+        await SharePlus.instance.share(
+          ShareParams(
+            files: files,
+            text: texts.isNotEmpty ? texts.join('\n') : null,
+          ),
+        );
+      } else if (texts.isNotEmpty) {
+        await SharePlus.instance.share(ShareParams(text: texts.join('\n')));
+      }
+      _exitSelectionMode();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Xəta baş verdi')));
+    }
   }
 
   void _reactToMessage(Message msg, String emoji) {
@@ -878,7 +976,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final messageKey = _messageKeys.putIfAbsent(msg.id, () => GlobalKey());
     final isHighlighted = _highlightedMessageId == msg.id;
     if (msg.deletedForAll) {
-      return AnimatedContainer(
+      final content = AnimatedContainer(
         key: messageKey,
         duration: const Duration(milliseconds: 300),
         decoration: BoxDecoration(
@@ -919,8 +1017,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           ),
         ),
       );
+      return _wrapSelectableMessage(msg, content);
     }
-    return AnimatedContainer(
+    final content = AnimatedContainer(
       key: messageKey,
       duration: const Duration(milliseconds: 300),
       decoration: BoxDecoration(
@@ -1143,6 +1242,72 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ),
       ),
     );
+    return _wrapSelectableMessage(msg, content);
+  }
+
+  Widget _buildSelectionBar() {
+    return Container(
+      color: kBg2,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      child: Row(
+        children: [
+          GestureDetector(
+            onTap: _forwardSelected,
+            child: const Icon(Icons.forward, color: kGold),
+          ),
+          Expanded(
+            child: Center(
+              child: Text(
+                'Seçilib: ${_selectedMessageIds.length}',
+                style: const TextStyle(color: kText, fontSize: 14),
+              ),
+            ),
+          ),
+          GestureDetector(
+            onTap: _shareSelected,
+            child: const Icon(Icons.ios_share, color: kGold),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _wrapSelectableMessage(Message msg, Widget content) {
+    if (!_selectionMode) return content;
+    final selected = _selectedMessageIds.contains(msg.id);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, right: 8),
+          child: GestureDetector(
+            onTap: () => _toggleMessageSelection(msg.id),
+            child: Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: selected ? kGold : Colors.transparent,
+                border: Border.all(
+                  color: selected ? kGold : kMuted,
+                  width: 1.5,
+                ),
+              ),
+              child: selected
+                  ? const Icon(Icons.check, size: 14, color: Color(0xFF1A0E00))
+                  : null,
+            ),
+          ),
+        ),
+        Expanded(
+          child: GestureDetector(
+            onTap: () => _toggleMessageSelection(msg.id),
+            behavior: HitTestBehavior.opaque,
+            child: IgnorePointer(child: content),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildReactionsRow(Message msg, String currentUid, bool isMe) {
@@ -1272,6 +1437,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           loading: () => const Text('...', style: TextStyle(color: kText)),
           error: (_, _) => const Text('Chat', style: TextStyle(color: kText)),
         ),
+        actions: [
+          if (_selectionMode)
+            TextButton(
+              onPressed: _exitSelectionMode,
+              child: const Text('Ləğv et', style: TextStyle(color: kGold)),
+            ),
+        ],
       ),
       backgroundColor: kBg,
       body: Column(
@@ -1395,281 +1567,287 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 ),
               ),
             ),
-          Container(
-            color: kBg2,
-            padding: const EdgeInsets.fromLTRB(12, 8, 8, 24),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                // Left button — attach (hidden during recording) or cancel (locked mode)
-                if (!_isRecording)
-                  IconButton(
-                    icon: _uploadingImage
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: kGold,
-                            ),
-                          )
-                        : const Icon(Icons.attach_file, color: kGold),
-                    onPressed: _uploadingImage ? null : _showAttachSheet,
-                  )
-                else if (_isLocked)
-                  GestureDetector(
-                    onTap: _cancelRecording,
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: kBg3,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: kBorder),
-                      ),
-                      child: const Icon(
-                        Icons.delete_outline,
-                        color: kRed,
-                        size: 22,
-                      ),
-                    ),
-                  )
-                else
-                  const SizedBox(
-                    width: 48,
-                  ), // placeholder to keep layout stable
-
-                const SizedBox(width: 4),
-
-                // Center — text field (normal) or recording indicator (recording)
-                Expanded(
-                  child: _isRecording
-                      ? Container(
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: kBg3,
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Row(
-                            children: [
-                              AnimatedBuilder(
-                                animation: _pulseAnimation,
-                                builder: (_, _) => Opacity(
-                                  opacity: _pulseAnimation.value,
-                                  child: const Icon(
-                                    Icons.circle,
-                                    color: kRed,
-                                    size: 10,
-                                  ),
-                                ),
+          if (_selectionMode)
+            _buildSelectionBar()
+          else
+            Container(
+              color: kBg2,
+              padding: const EdgeInsets.fromLTRB(12, 8, 8, 24),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  // Left button — attach (hidden during recording) or cancel (locked mode)
+                  if (!_isRecording)
+                    IconButton(
+                      icon: _uploadingImage
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: kGold,
                               ),
-                              const SizedBox(width: 8),
-                              Text(
-                                _recordingDuration,
-                                style: const TextStyle(
-                                  color: kRed,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const Spacer(),
-                              if (!_isLocked)
-                                Opacity(
-                                  opacity:
-                                      (1.0 + _dragX / _cancelThreshold.abs())
-                                          .clamp(0.0, 1.0),
-                                  child: Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.chevron_left,
-                                        color: kMuted,
-                                        size: 16,
-                                      ),
-                                      const Text(
-                                        'Sürüşdür',
-                                        style: TextStyle(
-                                          color: kMuted,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                            ],
-                          ),
-                        )
-                      : TextField(
-                          controller: _messageController,
-                          focusNode: _messageFocusNode,
-                          style: const TextStyle(color: kText, fontSize: 14),
-                          decoration: InputDecoration(
-                            hintText: 'Mesaj yazın...',
-                            hintStyle: const TextStyle(color: kMuted),
-                            filled: true,
-                            fillColor: kBg3,
-                            border: OutlineInputBorder(
+                            )
+                          : const Icon(Icons.attach_file, color: kGold),
+                      onPressed: _uploadingImage ? null : _showAttachSheet,
+                    )
+                  else if (_isLocked)
+                    GestureDetector(
+                      onTap: _cancelRecording,
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: kBg3,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: kBorder),
+                        ),
+                        child: const Icon(
+                          Icons.delete_outline,
+                          color: kRed,
+                          size: 22,
+                        ),
+                      ),
+                    )
+                  else
+                    const SizedBox(
+                      width: 48,
+                    ), // placeholder to keep layout stable
+
+                  const SizedBox(width: 4),
+
+                  // Center — text field (normal) or recording indicator (recording)
+                  Expanded(
+                    child: _isRecording
+                        ? Container(
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: kBg3,
                               borderRadius: BorderRadius.circular(24),
-                              borderSide: BorderSide.none,
                             ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 10,
-                            ),
-                          ),
-                          maxLines: null,
-                          textCapitalization: TextCapitalization.sentences,
-                        ),
-                ),
-
-                const SizedBox(width: 8),
-
-                // Right button — send (has text or locked recording) or mic (empty/recording)
-                if (_hasText && !_isRecording)
-                  GestureDetector(
-                    onTap: _sendMessage,
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: const BoxDecoration(
-                        color: kGold,
-                        shape: BoxShape.circle,
-                      ),
-                      child: _sending
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Color(0xFF1A0E00),
-                              ),
-                            )
-                          : const Icon(
-                              Icons.send,
-                              color: Color(0xFF1A0E00),
-                              size: 20,
-                            ),
-                    ),
-                  )
-                else if (_isLocked)
-                  GestureDetector(
-                    onTap: _stopAndSendRecording,
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: const BoxDecoration(
-                        color: kGold,
-                        shape: BoxShape.circle,
-                      ),
-                      child: _uploadingAudio
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Color(0xFF1A0E00),
-                              ),
-                            )
-                          : const Icon(
-                              Icons.send,
-                              color: Color(0xFF1A0E00),
-                              size: 20,
-                            ),
-                    ),
-                  )
-                else
-                  // Mic button with lock icon above (Stack)
-                  Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onLongPressStart: (_) => _startRecording(),
-                        onLongPressMoveUpdate: (details) {
-                          if (!_isRecording || _isLocked) return;
-                          setState(() {
-                            _dragX = details.offsetFromOrigin.dx;
-                            _dragY = details.offsetFromOrigin.dy;
-                          });
-                          if (_dragX < _cancelThreshold) {
-                            _cancelRecording();
-                          } else if (_dragY < _lockThreshold) {
-                            _lockRecording();
-                          }
-                        },
-                        onLongPressEnd: (_) {
-                          if (_isLocked) return;
-                          if (_isRecording) _stopAndSendRecording();
-                        },
-                        onLongPressCancel: () {
-                          if (_isLocked) return;
-                          if (_isRecording) _cancelRecording();
-                        },
-                        child: Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: _isRecording ? kRed : kBg3,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: _isRecording ? kRed : kBorder,
-                            ),
-                          ),
-                          child: _uploadingAudio
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: kGold,
-                                  ),
-                                )
-                              : Icon(
-                                  Icons.mic,
-                                  color: _isRecording ? Colors.white : kGold,
-                                  size: 22,
-                                ),
-                        ),
-                      ),
-                      // Lock icon above mic button — only shown during unlocked recording
-                      if (_isRecording && !_isLocked)
-                        Positioned(
-                          top: -48,
-                          left: 0,
-                          right: 0,
-                          child: Opacity(
-                            opacity: (1.0 + _dragY / _lockThreshold.abs())
-                                .clamp(0.0, 1.0),
-                            child: Column(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Row(
                               children: [
-                                Container(
-                                  width: 36,
-                                  height: 36,
-                                  decoration: BoxDecoration(
-                                    color: kBg3,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: kBorder),
-                                  ),
-                                  child: const Icon(
-                                    Icons.lock_outline,
-                                    color: kMuted,
-                                    size: 18,
+                                AnimatedBuilder(
+                                  animation: _pulseAnimation,
+                                  builder: (_, _) => Opacity(
+                                    opacity: _pulseAnimation.value,
+                                    child: const Icon(
+                                      Icons.circle,
+                                      color: kRed,
+                                      size: 10,
+                                    ),
                                   ),
                                 ),
-                                const SizedBox(height: 4),
-                                const Text(
-                                  'Kilid',
-                                  style: TextStyle(color: kMuted, fontSize: 9),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _recordingDuration,
+                                  style: const TextStyle(
+                                    color: kRed,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
+                                const Spacer(),
+                                if (!_isLocked)
+                                  Opacity(
+                                    opacity:
+                                        (1.0 + _dragX / _cancelThreshold.abs())
+                                            .clamp(0.0, 1.0),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.chevron_left,
+                                          color: kMuted,
+                                          size: 16,
+                                        ),
+                                        const Text(
+                                          'Sürüşdür',
+                                          style: TextStyle(
+                                            color: kMuted,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                               ],
                             ),
+                          )
+                        : TextField(
+                            controller: _messageController,
+                            focusNode: _messageFocusNode,
+                            style: const TextStyle(color: kText, fontSize: 14),
+                            decoration: InputDecoration(
+                              hintText: 'Mesaj yazın...',
+                              hintStyle: const TextStyle(color: kMuted),
+                              filled: true,
+                              fillColor: kBg3,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(24),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 10,
+                              ),
+                            ),
+                            maxLines: null,
+                            textCapitalization: TextCapitalization.sentences,
+                          ),
+                  ),
+
+                  const SizedBox(width: 8),
+
+                  // Right button — send (has text or locked recording) or mic (empty/recording)
+                  if (_hasText && !_isRecording)
+                    GestureDetector(
+                      onTap: _sendMessage,
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: kGold,
+                          shape: BoxShape.circle,
+                        ),
+                        child: _sending
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Color(0xFF1A0E00),
+                                ),
+                              )
+                            : const Icon(
+                                Icons.send,
+                                color: Color(0xFF1A0E00),
+                                size: 20,
+                              ),
+                      ),
+                    )
+                  else if (_isLocked)
+                    GestureDetector(
+                      onTap: _stopAndSendRecording,
+                      child: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: const BoxDecoration(
+                          color: kGold,
+                          shape: BoxShape.circle,
+                        ),
+                        child: _uploadingAudio
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Color(0xFF1A0E00),
+                                ),
+                              )
+                            : const Icon(
+                                Icons.send,
+                                color: Color(0xFF1A0E00),
+                                size: 20,
+                              ),
+                      ),
+                    )
+                  else
+                    // Mic button with lock icon above (Stack)
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onLongPressStart: (_) => _startRecording(),
+                          onLongPressMoveUpdate: (details) {
+                            if (!_isRecording || _isLocked) return;
+                            setState(() {
+                              _dragX = details.offsetFromOrigin.dx;
+                              _dragY = details.offsetFromOrigin.dy;
+                            });
+                            if (_dragX < _cancelThreshold) {
+                              _cancelRecording();
+                            } else if (_dragY < _lockThreshold) {
+                              _lockRecording();
+                            }
+                          },
+                          onLongPressEnd: (_) {
+                            if (_isLocked) return;
+                            if (_isRecording) _stopAndSendRecording();
+                          },
+                          onLongPressCancel: () {
+                            if (_isLocked) return;
+                            if (_isRecording) _cancelRecording();
+                          },
+                          child: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: _isRecording ? kRed : kBg3,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: _isRecording ? kRed : kBorder,
+                              ),
+                            ),
+                            child: _uploadingAudio
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: kGold,
+                                    ),
+                                  )
+                                : Icon(
+                                    Icons.mic,
+                                    color: _isRecording ? Colors.white : kGold,
+                                    size: 22,
+                                  ),
                           ),
                         ),
-                    ],
-                  ),
-              ],
+                        // Lock icon above mic button — only shown during unlocked recording
+                        if (_isRecording && !_isLocked)
+                          Positioned(
+                            top: -48,
+                            left: 0,
+                            right: 0,
+                            child: Opacity(
+                              opacity: (1.0 + _dragY / _lockThreshold.abs())
+                                  .clamp(0.0, 1.0),
+                              child: Column(
+                                children: [
+                                  Container(
+                                    width: 36,
+                                    height: 36,
+                                    decoration: BoxDecoration(
+                                      color: kBg3,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(color: kBorder),
+                                    ),
+                                    child: const Icon(
+                                      Icons.lock_outline,
+                                      color: kMuted,
+                                      size: 18,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  const Text(
+                                    'Kilid',
+                                    style: TextStyle(
+                                      color: kMuted,
+                                      fontSize: 9,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                ],
+              ),
             ),
-          ),
         ],
       ),
     );

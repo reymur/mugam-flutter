@@ -30,6 +30,7 @@ dependencies:
   emoji_picker_flutter: any
   super_clipboard: any
   flutter_cache_manager: any
+  share_plus: any
 
 dev_dependencies:
   flutter_test:
