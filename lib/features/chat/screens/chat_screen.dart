@@ -791,6 +791,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
     if (picked == null) return;
     if (!mounted) return;
+    await _uploadAndSendImageFile(picked.path);
+  }
+
+  // Shared by the gallery/camera picker and by clipboard image paste.
+  Future<void> _uploadAndSendImageFile(String filePath) async {
+    if (!mounted) return;
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final replyingTo = _replyingTo;
     setState(() => _uploadingImage = true);
@@ -798,7 +804,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     try {
       final imageURL = await ref
           .read(firestoreServiceProvider)
-          .uploadChatImage(chatId: widget.chatId, filePath: picked.path);
+          .uploadChatImage(chatId: widget.chatId, filePath: filePath);
       await ref
           .read(firestoreServiceProvider)
           .sendImageMessage(
@@ -829,6 +835,139 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     } finally {
       if (mounted) setState(() => _uploadingImage = false);
     }
+  }
+
+  // Only ever invoked from the context menu's explicit "Paste" tap
+  // (see the TextField's contextMenuBuilder) — never on focus/timers.
+  Future<void> _sendPastedImage(DataReaderFile file) async {
+    final bytes = await file.readAll();
+    final dir = await getTemporaryDirectory();
+    final path = '${dir.path}/pasted_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    await File(path).writeAsBytes(bytes);
+    await _uploadAndSendImageFile(path);
+  }
+
+  // Replaces only the Paste entry of the context menu (native iOS system menu
+  // when supported, Flutter-drawn toolbar otherwise) so we can detect a
+  // clipboard image and send it as a photo. Falls back to the field's own
+  // paste callback untouched when the clipboard holds text (or nothing).
+  void _handlePasteButton(VoidCallback? originalOnPressed) {
+    () async {
+      final clipboard = SystemClipboard.instance;
+      if (clipboard == null) {
+        originalOnPressed?.call();
+        return;
+      }
+      final reader = await clipboard.read();
+      final format = reader.canProvide(Formats.png)
+          ? Formats.png
+          : (reader.canProvide(Formats.jpeg) ? Formats.jpeg : null);
+      if (format == null) {
+        originalOnPressed?.call();
+        return;
+      }
+      reader.getFile(format, _sendPastedImage);
+    }();
+  }
+
+  // Mirrors SystemContextMenu.getDefaultItems' mapping for every button type
+  // except paste, which the caller substitutes with a custom item.
+  IOSSystemContextMenuItem? _nativeMenuItemFor(ContextMenuButtonType type) {
+    switch (type) {
+      case ContextMenuButtonType.copy:
+        return const IOSSystemContextMenuItemCopy();
+      case ContextMenuButtonType.cut:
+        return const IOSSystemContextMenuItemCut();
+      case ContextMenuButtonType.selectAll:
+        return const IOSSystemContextMenuItemSelectAll();
+      case ContextMenuButtonType.lookUp:
+        return const IOSSystemContextMenuItemLookUp();
+      case ContextMenuButtonType.searchWeb:
+        return const IOSSystemContextMenuItemSearchWeb();
+      case ContextMenuButtonType.share:
+        return const IOSSystemContextMenuItemShare();
+      case ContextMenuButtonType.liveTextInput:
+        return const IOSSystemContextMenuItemLiveText();
+      case ContextMenuButtonType.paste:
+      case ContextMenuButtonType.delete:
+      case ContextMenuButtonType.custom:
+        return null;
+    }
+  }
+
+  // Keeps the real native iOS context menu (and its Copy/Cut/Select All/etc.)
+  // wherever the platform supports it; only the Paste entry becomes a custom
+  // item so we get a callback to inspect the clipboard. On platforms without
+  // the native system menu, the same substitution is applied to Flutter's
+  // own toolbar instead.
+  //
+  // Flutter only includes a paste button in contextMenuButtonItems when
+  // Clipboard.hasStrings() is true, i.e. it never accounts for an image sitting
+  // in the clipboard. So Paste is added unconditionally here (as long as the
+  // field isn't read-only) instead of being derived from that list.
+  Widget _buildMessageContextMenu(
+    BuildContext context,
+    EditableTextState editableTextState,
+  ) {
+    final canPaste = !editableTextState.widget.readOnly;
+    void pasteFallback() =>
+        editableTextState.pasteText(SelectionChangedCause.toolbar);
+
+    if (SystemContextMenu.isSupportedByField(editableTextState)) {
+      final localizations = WidgetsLocalizations.of(context);
+      final items = <IOSSystemContextMenuItem>[];
+      var pasteAdded = false;
+      for (final button in editableTextState.contextMenuButtonItems) {
+        if (button.type == ContextMenuButtonType.paste) {
+          items.add(
+            IOSSystemContextMenuItemCustom(
+              title: localizations.pasteButtonLabel,
+              onPressed: () => _handlePasteButton(pasteFallback),
+            ),
+          );
+          pasteAdded = true;
+        } else {
+          final item = _nativeMenuItemFor(button.type);
+          if (item != null) items.add(item);
+        }
+      }
+      if (!pasteAdded && canPaste) {
+        items.add(
+          IOSSystemContextMenuItemCustom(
+            title: localizations.pasteButtonLabel,
+            onPressed: () => _handlePasteButton(pasteFallback),
+          ),
+        );
+      }
+      return SystemContextMenu.editableText(
+        editableTextState: editableTextState,
+        items: items,
+      );
+    }
+    final items = <ContextMenuButtonItem>[];
+    var pasteAdded = false;
+    for (final button in editableTextState.contextMenuButtonItems) {
+      if (button.type == ContextMenuButtonType.paste) {
+        items.add(
+          button.copyWith(onPressed: () => _handlePasteButton(button.onPressed)),
+        );
+        pasteAdded = true;
+      } else {
+        items.add(button);
+      }
+    }
+    if (!pasteAdded && canPaste) {
+      items.add(
+        ContextMenuButtonItem(
+          onPressed: () => _handlePasteButton(pasteFallback),
+          type: ContextMenuButtonType.paste,
+        ),
+      );
+    }
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: editableTextState.contextMenuAnchors,
+      buttonItems: items,
+    );
   }
 
   void _showAttachSheet() {
@@ -1759,6 +1898,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         : TextField(
                             controller: _messageController,
                             focusNode: _messageFocusNode,
+                            contextMenuBuilder: _buildMessageContextMenu,
                             style: const TextStyle(color: kText, fontSize: 14),
                             decoration: InputDecoration(
                               hintText: 'Mesaj yazın...',
