@@ -34,6 +34,13 @@ class _MugamAppState extends State<MugamApp> {
         PushNotificationService.instance.registerToken(user.uid);
       }
     });
+    PushNotificationService.instance.setupForegroundPresentation();
+    PushNotificationService.instance.setupMessageOpenedHandler((data) {
+      final chatId = data['chatId'];
+      if (data['type'] == 'new_message' && chatId != null) {
+        appRouter.push('/chat/$chatId');
+      }
+    });
   }
 
   @override

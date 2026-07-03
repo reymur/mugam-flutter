@@ -77,4 +77,32 @@ class PushNotificationService {
     } catch (_) {}
     _registeredUid = null;
   }
+
+  // Shows the system banner/sound/badge even while the app is foregrounded —
+  // otherwise iOS suppresses notification-payload pushes whenever the app is
+  // already open. Every push our Cloud Function sends is a notification
+  // payload, so this is the only foreground handling needed; no data-only
+  // messages, so no onBackgroundMessage handler is required either — APNs
+  // displays those natively while backgrounded/terminated.
+  Future<void> setupForegroundPresentation() async {
+    if (!Platform.isIOS) return;
+    await _messaging.setForegroundNotificationPresentationOptions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+  }
+
+  // Covers both the "app was backgrounded, user tapped the notification"
+  // path (onMessageOpenedApp) and the "app was fully terminated, the
+  // notification launched it" cold-start path (getInitialMessage) — mirrors
+  // mugam-v2's onNotificationTap handling both cases.
+  void setupMessageOpenedHandler(void Function(Map<String, dynamic> data) onTap) {
+    FirebaseMessaging.onMessageOpenedApp.listen((message) {
+      onTap(message.data);
+    });
+    _messaging.getInitialMessage().then((message) {
+      if (message != null) onTap(message.data);
+    });
+  }
 }
