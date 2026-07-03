@@ -13,6 +13,9 @@ class Musician {
   final bool online;
   final String bio;
   final String? photoURL;
+  final int gigs;
+  final bool verified;
+  final String role;
 
   const Musician({
     required this.id,
@@ -27,6 +30,9 @@ class Musician {
     required this.online,
     required this.bio,
     this.photoURL,
+    this.gigs = 0,
+    this.verified = false,
+    this.role = 'user',
   });
 
   factory Musician.fromFirestore(String id, Map<String, dynamic> data) {
@@ -43,6 +49,9 @@ class Musician {
       online: (data['online'] ?? false) as bool,
       bio: (data['bio'] ?? '') as String,
       photoURL: data['photoURL'] as String?,
+      gigs: (data['gigs'] ?? 0) as int,
+      verified: (data['verified'] ?? false) as bool,
+      role: (data['role'] ?? 'user') as String,
     );
   }
 }

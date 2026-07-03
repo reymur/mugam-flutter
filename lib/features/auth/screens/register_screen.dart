@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../../core/constants/musician_options.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/auth_service.dart';
 
@@ -26,29 +27,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _showConfirmPassword = false;
   bool _isLoading = false;
   String? _errorMessage;
-
-  static const _instruments = [
-    '🎻 Kaman',
-    '🎤 Müğənni',
-    '🪗 Qarmon',
-    '🎵 Tar',
-    '🎷 Balaban',
-    '🥁 Zərb',
-    '🎸 Gitara',
-    '🎹 Piano',
-    '🎺 Zurna',
-  ];
-
-  static const _cities = [
-    'Bakı',
-    'Gəncə',
-    'Şəki',
-    'Lənkəran',
-    'Sumqayıt',
-    'Şamaxı',
-    'Naxçıvan',
-    'Mingəçevir',
-  ];
 
   @override
   void dispose() {
@@ -366,7 +344,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: _instruments.map((instr) {
+      children: kInstruments.map((instr) {
         final selected = _instrument == instr;
         return GestureDetector(
           onTap: () => setState(() => _instrument = instr),
@@ -399,7 +377,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: _cities.map((cityName) {
+      children: kCities.map((cityName) {
         final selected = _city == cityName;
         return GestureDetector(
           onTap: () => setState(() => _city = cityName),

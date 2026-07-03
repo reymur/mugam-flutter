@@ -1,35 +1,60 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
+import '../../../firebase/firestore_service.dart';
+import '../../../firebase/models.dart';
+import 'edit_profile_screen.dart';
 
-class ProfileScreen extends StatefulWidget {
+class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  ConsumerState<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   int _activeTabIndex = 0;
 
   @override
   Widget build(BuildContext context) {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final musicianAsync = ref.watch(currentUserProvider(currentUid));
+
     return Scaffold(
       backgroundColor: kBg,
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const _ProfileHeader(),
-              _TabsRow(
-                activeIndex: _activeTabIndex,
-                onTap: (i) => setState(() => _activeTabIndex = i),
-              ),
-              _TabContent(activeIndex: _activeTabIndex),
-            ],
+        child: musicianAsync.when(
+          loading: () =>
+              const Center(child: CircularProgressIndicator(color: kGold)),
+          error: (_, _) => const Center(
+            child: Text('Xəta baş verdi', style: TextStyle(color: kMuted)),
           ),
+          data: (musician) {
+            if (musician == null) {
+              return const Center(
+                child: Text(
+                  'İstifadəçi tapılmadı',
+                  style: TextStyle(color: kMuted),
+                ),
+              );
+            }
+            return SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _ProfileHeader(musician: musician),
+                  _TabsRow(
+                    activeIndex: _activeTabIndex,
+                    onTap: (i) => setState(() => _activeTabIndex = i),
+                  ),
+                  _TabContent(activeIndex: _activeTabIndex, musician: musician),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );
@@ -86,16 +111,17 @@ class _TabsRow extends StatelessWidget {
 // ── Tab content dispatcher ────────────────────────────────────────────────────
 
 class _TabContent extends StatelessWidget {
-  const _TabContent({required this.activeIndex});
+  const _TabContent({required this.activeIndex, required this.musician});
 
   final int activeIndex;
+  final Musician musician;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 30),
       child: switch (activeIndex) {
-        0 => const _AboutTab(),
+        0 => _AboutTab(musician: musician),
         1 => const _Placeholder(emoji: '🎬', text: 'Tezliklə əlavə olunacaq'),
         2 => const _Placeholder(emoji: '📅', text: 'Tezliklə əlavə olunacaq'),
         3 => const _Placeholder(emoji: '⭐', text: 'Tezliklə əlavə olunacaq'),
@@ -108,34 +134,29 @@ class _TabContent extends StatelessWidget {
 // ── About tab ─────────────────────────────────────────────────────────────────
 
 class _AboutTab extends StatelessWidget {
-  const _AboutTab();
+  const _AboutTab({required this.musician});
 
-  static const _skills = [
-    'Kaman',
-    'Tar ifası',
-    'Toy musiqisi',
-    'Klassik muğam',
-    'Canlı ifa',
-  ];
+  final Musician musician;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _InfoCard(
-          title: 'Bacarıqlar',
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _skills.map((s) => _SkillTag(label: s)).toList(),
+        if (musician.instrument.isNotEmpty)
+          _InfoCard(
+            title: 'Bacarıqlar',
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [_SkillTag(label: musician.instrument)],
+            ),
           ),
-        ),
         _InfoCard(
           title: 'Haqqında',
-          child: const Text(
-            '10 illik təcrübəyə malik peşəkar musiqiçiyəm...',
-            style: TextStyle(
+          child: Text(
+            musician.bio.isNotEmpty ? musician.bio : 'Məlumat yoxdur',
+            style: const TextStyle(
               fontSize: 13,
               color: kMuted,
               height: 20 / 13,
@@ -262,13 +283,16 @@ class _SettingsTab extends StatelessWidget {
   }
 }
 
-// ── Profile header (unchanged) ────────────────────────────────────────────────
+// ── Profile header ──────────────────────────────────────────────────────────
 
 class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader();
+  const _ProfileHeader({required this.musician});
+
+  final Musician musician;
 
   @override
   Widget build(BuildContext context) {
+    final isMusician = musician.role == 'musician';
     return Container(
       clipBehavior: Clip.hardEdge,
       decoration: const BoxDecoration(color: Color(0xFF15100A)),
@@ -304,45 +328,54 @@ class _ProfileHeader extends StatelessWidget {
                             color: kBg3,
                             shape: BoxShape.circle,
                             border: Border.all(color: kGold, width: 3),
+                            image: musician.photoURL != null
+                                ? DecorationImage(
+                                    image: NetworkImage(musician.photoURL!),
+                                    fit: BoxFit.cover,
+                                  )
+                                : null,
                           ),
                           alignment: Alignment.center,
-                          child: const Text(
-                            '🎵',
-                            style: TextStyle(fontSize: 38),
-                          ),
+                          child: musician.photoURL == null
+                              ? Text(
+                                  musician.emoji,
+                                  style: const TextStyle(fontSize: 38),
+                                )
+                              : null,
                         ),
-                        Positioned(
-                          bottom: 0,
-                          right: 0,
-                          child: Container(
-                            width: 24,
-                            height: 24,
-                            decoration: BoxDecoration(
-                              color: kGold,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: const Color(0xFF15100A),
-                                width: 2,
+                        if (musician.verified)
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: Container(
+                              width: 24,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                color: kGold,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: const Color(0xFF15100A),
+                                  width: 2,
+                                ),
+                              ),
+                              alignment: Alignment.center,
+                              child: const Text(
+                                '✓',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF1A0E00),
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
-                            alignment: Alignment.center,
-                            child: const Text(
-                              '✓',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Color(0xFF1A0E00),
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
                           ),
-                        ),
                       ],
                     ),
                   ),
                 ),
                 // Name
                 Text(
-                  'Anar Musayev',
+                  musician.name,
                   textAlign: TextAlign.center,
                   style: GoogleFonts.playfairDisplay(
                     fontSize: 22,
@@ -350,55 +383,56 @@ class _ProfileHeader extends StatelessWidget {
                     color: kText,
                   ),
                 ),
-                const SizedBox(height: 2),
-                // Handle
-                const Text(
-                  '@anar_musician',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 13, color: kMuted),
-                ),
                 const SizedBox(height: 8),
                 // Badges
-                Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: const [
-                    _Badge(
-                      label: '🎵 Musiqiçi',
-                      textColor: kGold,
-                      bgColor: Color(0x26D4A03C),
-                      borderColor: Color(0x4DD4A03C),
-                    ),
-                    _Badge(
-                      label: '✅ Təsdiqlənmiş',
-                      textColor: kGreen,
-                      bgColor: Color(0x2627AE60),
-                      borderColor: Color(0x4D27AE60),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                // Bio
-                const Text(
-                  'Klassik kaman ifaçısı, 10 illik təcrübə',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Color(0xFFB0A080),
-                    height: 20 / 13,
+                if (isMusician || musician.verified)
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      if (isMusician)
+                        const _Badge(
+                          label: '🎵 Musiqiçi',
+                          textColor: kGold,
+                          bgColor: Color(0x26D4A03C),
+                          borderColor: Color(0x4DD4A03C),
+                        ),
+                      if (musician.verified)
+                        const _Badge(
+                          label: '✅ Təsdiqlənmiş',
+                          textColor: kGreen,
+                          bgColor: Color(0x2627AE60),
+                          borderColor: Color(0x4D27AE60),
+                        ),
+                    ],
                   ),
-                ),
+                if (musician.bio.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  // Bio
+                  Text(
+                    musician.bio,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFFB0A080),
+                      height: 20 / 13,
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 14),
                 // Stats
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
-                  children: const [
-                    _StatItem(value: '47', label: 'Gigs'),
-                    SizedBox(width: 24),
-                    _StatItem(value: '234', label: 'Rəy'),
-                    SizedBox(width: 24),
-                    _StatItem(value: '4.9', label: 'Reytinq'),
+                  children: [
+                    _StatItem(value: '${musician.gigs}', label: 'Gigs'),
+                    const SizedBox(width: 24),
+                    _StatItem(value: '${musician.reviews}', label: 'Rəy'),
+                    const SizedBox(width: 24),
+                    _StatItem(
+                      value: musician.rating.toStringAsFixed(1),
+                      label: 'Reytinq',
+                    ),
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -407,7 +441,13 @@ class _ProfileHeader extends StatelessWidget {
                   children: [
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () {},
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                EditProfileScreen(musician: musician),
+                          ),
+                        ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: kGold,
                           foregroundColor: const Color(0xFF1A0E00),
@@ -430,7 +470,16 @@ class _ProfileHeader extends StatelessWidget {
                     const SizedBox(width: 10),
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: () {},
+                        onPressed: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Bu funksiya tezliklə əlavə olunacaq',
+                              ),
+                              backgroundColor: kBg3,
+                            ),
+                          );
+                        },
                         style: OutlinedButton.styleFrom(
                           side: const BorderSide(color: kBorder),
                           shape: RoundedRectangleBorder(

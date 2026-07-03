@@ -14,6 +14,45 @@ class FirestoreService {
     return Musician.fromFirestore(doc.id, doc.data()!);
   }
 
+  Stream<Musician?> watchUserById(String uid) {
+    return _db.collection('users').doc(uid).snapshots().map(
+      (doc) => doc.exists ? Musician.fromFirestore(doc.id, doc.data()!) : null,
+    );
+  }
+
+  Future<String> uploadAvatar({
+    required String uid,
+    required String filePath,
+  }) async {
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('avatars')
+        .child('$uid.jpg');
+    await ref.putFile(File(filePath));
+    return await ref.getDownloadURL();
+  }
+
+  Future<void> updateUserProfile({
+    required String uid,
+    required String displayName,
+    required String bio,
+    required String instrument,
+    required String city,
+    required bool available,
+    String? photoURL,
+  }) async {
+    await _db.collection('users').doc(uid).update({
+      'displayName': displayName,
+      'bio': bio,
+      'instrument': instrument,
+      'specialty': instrument,
+      'city': city,
+      'available': available,
+      'updatedAt': FieldValue.serverTimestamp(),
+      if (photoURL != null) 'photoURL': photoURL,
+    });
+  }
+
   Stream<List<Musician>> watchMusicians() {
     return _db
         .collection('users')
@@ -553,6 +592,13 @@ final userByIdProvider = FutureProvider.family<Musician?, String>((
   uid,
 ) {
   return ref.watch(firestoreServiceProvider).fetchUserById(uid);
+});
+
+final currentUserProvider = StreamProvider.family<Musician?, String>((
+  ref,
+  uid,
+) {
+  return ref.watch(firestoreServiceProvider).watchUserById(uid);
 });
 
 final eventsProvider = FutureProvider<List<Event>>(
