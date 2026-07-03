@@ -27,6 +27,7 @@ dependencies:
   shared_preferences: any
   path_provider: any
   intl: any
+  emoji_picker_flutter: any
 
 dev_dependencies:
   flutter_test:

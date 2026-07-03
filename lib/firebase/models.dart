@@ -118,6 +118,7 @@ class Message {
   final bool deletedForAll;
   final List<String> deletedFor;
   final String? deletedAt;
+  final Map<String, List<String>> reactions;
 
   const Message({
     required this.id,
@@ -134,10 +135,12 @@ class Message {
     this.deletedForAll = false,
     this.deletedFor = const [],
     this.deletedAt,
+    this.reactions = const {},
   });
 
   factory Message.fromFirestore(String id, Map<String, dynamic> data) {
     final replyTo = data['replyTo'] as Map<String, dynamic>?;
+    final rawReactions = data['reactions'] as Map<String, dynamic>? ?? {};
     return Message(
       id: id,
       senderId: data['senderId'] ?? '',
@@ -153,6 +156,10 @@ class Message {
       deletedForAll: data['deletedForAll'] ?? false,
       deletedFor: List<String>.from(data['deletedFor'] as List? ?? const []),
       deletedAt: data['deletedAt'] as String?,
+      reactions: {
+        for (final entry in rawReactions.entries)
+          entry.key: List<String>.from(entry.value as List? ?? const []),
+      },
     );
   }
 }

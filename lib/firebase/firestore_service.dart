@@ -226,6 +226,36 @@ class FirestoreService {
         });
   }
 
+  Future<void> toggleReaction({
+    required String chatId,
+    required String messageId,
+    required String uid,
+    required String emoji,
+  }) async {
+    final docRef = _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .doc(messageId);
+    await _db.runTransaction((transaction) async {
+      final snap = await transaction.get(docRef);
+      final raw = snap.data()?['reactions'] as Map<String, dynamic>? ?? {};
+      final reactions = <String, List<String>>{
+        for (final entry in raw.entries)
+          entry.key: List<String>.from(entry.value as List? ?? const []),
+      };
+      final hadThisEmoji = reactions[emoji]?.contains(uid) ?? false;
+      for (final key in reactions.keys.toList()) {
+        reactions[key]!.remove(uid);
+        if (reactions[key]!.isEmpty) reactions.remove(key);
+      }
+      if (!hadThisEmoji) {
+        reactions.putIfAbsent(emoji, () => []).add(uid);
+      }
+      transaction.update(docRef, {'reactions': reactions});
+    });
+  }
+
   Future<void> deleteMessagePermanently({
     required String chatId,
     required String messageId,

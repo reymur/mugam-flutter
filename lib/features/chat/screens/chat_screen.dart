@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -53,6 +54,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   Timer? _highlightTimer;
   List<Message> _lastMessages = [];
   final Map<String, Timer> _purgeTimers = {};
+  static const List<String> _quickReactions = [
+    '👍',
+    '❤️',
+    '😂',
+    '😮',
+    '😢',
+    '🙏',
+  ];
 
   @override
   void initState() {
@@ -139,6 +148,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  for (final emoji in _quickReactions)
+                    GestureDetector(
+                      onTap: () => _reactToMessage(msg, emoji),
+                      child: Padding(
+                        padding: const EdgeInsets.all(6),
+                        child: Text(
+                          emoji,
+                          style: const TextStyle(fontSize: 26),
+                        ),
+                      ),
+                    ),
+                  GestureDetector(
+                    onTap: () => _openFullEmojiPicker(msg),
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: kBorder),
+                      ),
+                      child: const Icon(Icons.add, color: kMuted, size: 20),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(color: kBorder, height: 1),
             ListTile(
               leading: const Icon(Icons.reply, color: kGold),
               title: const Text('Cavabla', style: TextStyle(color: kText)),
@@ -208,8 +248,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 loading: () => const Center(
                   child: CircularProgressIndicator(color: kGold),
                 ),
-                error: (_, _) =>
-                    const Center(child: Text('Xəta', style: TextStyle(color: kMuted))),
+                error: (_, _) => const Center(
+                  child: Text('Xəta', style: TextStyle(color: kMuted)),
+                ),
                 data: (chats) {
                   final targets = chats
                       .where((c) => c.id != widget.chatId)
@@ -363,6 +404,44 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   void _replyFromMenu(Message msg) {
     Navigator.of(context).pop();
     _startReply(msg);
+  }
+
+  void _reactToMessage(Message msg, String emoji) {
+    Navigator.of(context).pop();
+    _toggleReaction(msg, emoji);
+  }
+
+  void _openFullEmojiPicker(Message msg) {
+    Navigator.of(context).pop();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kBg2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SizedBox(
+        height: 320,
+        child: EmojiPicker(
+          onEmojiSelected: (category, emoji) {
+            Navigator.of(context).pop();
+            _toggleReaction(msg, emoji.emoji);
+          },
+        ),
+      ),
+    );
+  }
+
+  void _toggleReaction(Message msg, String emoji) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return;
+    ref
+        .read(firestoreServiceProvider)
+        .toggleReaction(
+          chatId: widget.chatId,
+          messageId: msg.id,
+          uid: uid,
+          emoji: emoji,
+        );
   }
 
   void _cancelReply() {
@@ -741,10 +820,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 left: isMe ? 60 : 0,
                 right: isMe ? 0 : 60,
               ),
-              padding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 10,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 color: kBg3,
                 border: Border.all(color: kBorder),
@@ -780,178 +856,240 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         onLongPress: () => _showMessageOptionsSheet(msg, isMe),
         child: Align(
           alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            margin: EdgeInsets.only(
-              top: 4,
-              bottom: 4,
-              left: isMe ? 60 : 0,
-              right: isMe ? 0 : 60,
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: isMe ? kGold : kBg3,
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(18),
-                topRight: const Radius.circular(18),
-                bottomLeft: Radius.circular(isMe ? 18 : 4),
-                bottomRight: Radius.circular(isMe ? 4 : 18),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: isMe
-                  ? CrossAxisAlignment.end
-                  : CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (msg.replyToId != null)
-                  GestureDetector(
-                    onTap: () => _scrollToMessage(msg.replyToId!),
-                    child: Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      clipBehavior: Clip.antiAlias,
-                      decoration: const BoxDecoration(
-                        color: Colors.transparent,
-                        borderRadius: BorderRadius.only(
-                          topRight: Radius.circular(6),
-                          bottomRight: Radius.circular(6),
-                        ),
-                      ),
-                      child: IntrinsicHeight(
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Container(
-                              width: 4,
-                              color: isMe ? const Color(0xFF1A0E00) : kGold,
+          child: Column(
+            crossAxisAlignment: isMe
+                ? CrossAxisAlignment.end
+                : CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                margin: EdgeInsets.only(
+                  top: 4,
+                  bottom: 4,
+                  left: isMe ? 60 : 0,
+                  right: isMe ? 0 : 60,
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: isMe ? kGold : kBg3,
+                  borderRadius: BorderRadius.only(
+                    topLeft: const Radius.circular(18),
+                    topRight: const Radius.circular(18),
+                    bottomLeft: Radius.circular(isMe ? 18 : 4),
+                    bottomRight: Radius.circular(isMe ? 4 : 18),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: isMe
+                      ? CrossAxisAlignment.end
+                      : CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (msg.replyToId != null)
+                      GestureDetector(
+                        onTap: () => _scrollToMessage(msg.replyToId!),
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          clipBehavior: Clip.antiAlias,
+                          decoration: const BoxDecoration(
+                            color: Colors.transparent,
+                            borderRadius: BorderRadius.only(
+                              topRight: Radius.circular(6),
+                              bottomRight: Radius.circular(6),
                             ),
-                            Expanded(
-                              child: Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                  8,
-                                  10,
-                                  10,
-                                  10,
+                          ),
+                          child: IntrinsicHeight(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Container(
+                                  width: 4,
+                                  color: isMe ? const Color(0xFF1A0E00) : kGold,
                                 ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      msg.replyToSenderName ?? '',
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: isMe
-                                            ? const Color(0xFF1A0E00)
-                                            : kGold,
-                                        fontWeight: FontWeight.bold,
-                                      ),
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      8,
+                                      10,
+                                      10,
+                                      10,
                                     ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      msg.replyToText ?? '',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 13,
-                                        color: isMe
-                                            ? const Color(
-                                                0xFF1A0E00,
-                                              ).withAlpha(180)
-                                            : kMuted,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            if (msg.replyToImageURL != null)
-                              SizedBox(
-                                width: 60,
-                                height: 60,
-                                child: CachedNetworkImage(
-                                  imageUrl: msg.replyToImageURL!,
-                                  width: 60,
-                                  height: 60,
-                                  fit: BoxFit.cover,
-                                  placeholder: (ctx, url) =>
-                                      Container(color: kBg3),
-                                  errorWidget: (ctx, url, err) => Container(
-                                    color: kBg3,
-                                    child: const Icon(
-                                      Icons.broken_image,
-                                      color: kMuted,
-                                      size: 16,
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                          msg.replyToSenderName ?? '',
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: isMe
+                                                ? const Color(0xFF1A0E00)
+                                                : kGold,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 3),
+                                        Text(
+                                          msg.replyToText ?? '',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: isMe
+                                                ? const Color(
+                                                    0xFF1A0E00,
+                                                  ).withAlpha(180)
+                                                : kMuted,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                if (msg.type == 'text')
-                  Text(
-                    msg.text,
-                    style: TextStyle(
-                      color: isMe ? const Color(0xFF1A0E00) : kText,
-                      fontSize: 14,
-                    ),
-                  ),
-                if (msg.type == 'image' && msg.imageURL != null)
-                  GestureDetector(
-                    onTap: () => _showFullImage(context, msg.imageURL!),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: CachedNetworkImage(
-                        imageUrl: msg.imageURL!,
-                        width: 200,
-                        height: 200,
-                        fit: BoxFit.cover,
-                        placeholder: (ctx, url) => Container(
-                          width: 200,
-                          height: 200,
-                          color: kBg3,
-                          child: const Center(
-                            child: CircularProgressIndicator(color: kGold),
+                                if (msg.replyToImageURL != null)
+                                  SizedBox(
+                                    width: 60,
+                                    height: 60,
+                                    child: CachedNetworkImage(
+                                      imageUrl: msg.replyToImageURL!,
+                                      width: 60,
+                                      height: 60,
+                                      fit: BoxFit.cover,
+                                      placeholder: (ctx, url) =>
+                                          Container(color: kBg3),
+                                      errorWidget: (ctx, url, err) => Container(
+                                        color: kBg3,
+                                        child: const Icon(
+                                          Icons.broken_image,
+                                          color: kMuted,
+                                          size: 16,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
-                        errorWidget: (ctx, url, err) => Container(
-                          width: 200,
-                          height: 200,
-                          color: kBg3,
-                          child: const Icon(Icons.broken_image, color: kMuted),
+                      ),
+                    if (msg.type == 'text')
+                      Text(
+                        msg.text,
+                        style: TextStyle(
+                          color: isMe ? const Color(0xFF1A0E00) : kText,
+                          fontSize: 14,
                         ),
                       ),
-                    ),
-                  ),
-                if (msg.type == 'audio' && msg.audioURL != null)
-                  _VoiceMessagePlayer(audioURL: msg.audioURL!, isMe: isMe),
-                const SizedBox(height: 2),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      time,
-                      style: TextStyle(
-                        color: isMe
-                            ? const Color(0xFF1A0E00).withAlpha(150)
-                            : kMuted,
-                        fontSize: 10,
+                    if (msg.type == 'image' && msg.imageURL != null)
+                      GestureDetector(
+                        onTap: () => _showFullImage(context, msg.imageURL!),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: CachedNetworkImage(
+                            imageUrl: msg.imageURL!,
+                            width: 200,
+                            height: 200,
+                            fit: BoxFit.cover,
+                            placeholder: (ctx, url) => Container(
+                              width: 200,
+                              height: 200,
+                              color: kBg3,
+                              child: const Center(
+                                child: CircularProgressIndicator(color: kGold),
+                              ),
+                            ),
+                            errorWidget: (ctx, url, err) => Container(
+                              width: 200,
+                              height: 200,
+                              color: kBg3,
+                              child: const Icon(
+                                Icons.broken_image,
+                                color: kMuted,
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
+                    if (msg.type == 'audio' && msg.audioURL != null)
+                      _VoiceMessagePlayer(audioURL: msg.audioURL!, isMe: isMe),
+                    const SizedBox(height: 2),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          time,
+                          style: TextStyle(
+                            color: isMe
+                                ? const Color(0xFF1A0E00).withAlpha(150)
+                                : kMuted,
+                            fontSize: 10,
+                          ),
+                        ),
+                        if (checkMark != null) ...[
+                          const SizedBox(width: 3),
+                          checkMark,
+                        ],
+                      ],
                     ),
-                    if (checkMark != null) ...[
-                      const SizedBox(width: 3),
-                      checkMark,
-                    ],
                   ],
                 ),
-              ],
-            ),
+              ),
+              if (msg.reactions.isNotEmpty)
+                Padding(
+                  padding: EdgeInsets.only(
+                    top: 4,
+                    left: isMe ? 60 : 14,
+                    right: isMe ? 14 : 60,
+                  ),
+                  child: _buildReactionsRow(msg, currentUid, isMe),
+                ),
+            ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildReactionsRow(Message msg, String currentUid, bool isMe) {
+    return Wrap(
+      alignment: isMe ? WrapAlignment.end : WrapAlignment.start,
+      spacing: 4,
+      runSpacing: 4,
+      children: msg.reactions.entries.map((entry) {
+        final emoji = entry.key;
+        final uids = entry.value;
+        final reactedByMe = uids.contains(currentUid);
+        return GestureDetector(
+          onTap: () => _toggleReaction(msg, emoji),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: reactedByMe ? kGold.withAlpha(60) : kBg3,
+              border: Border.all(color: reactedByMe ? kGold : kBorder),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(emoji, style: const TextStyle(fontSize: 13)),
+                if (uids.length > 1) ...[
+                  const SizedBox(width: 3),
+                  Text(
+                    '${uids.length}',
+                    style: const TextStyle(fontSize: 11, color: kMuted),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -1059,9 +1197,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         .toList();
                     _lastMessages = visibleMessages;
                     _schedulePurgeTimers(visibleMessages);
-                    final allMsgIds = visibleMessages
-                        .map((m) => m.id)
-                        .toList();
+                    final allMsgIds = visibleMessages.map((m) => m.id).toList();
                     return ListView.builder(
                       controller: _scrollController,
                       reverse: false,

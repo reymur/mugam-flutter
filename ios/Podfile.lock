@@ -1200,6 +1200,8 @@ PODS:
     - Firebase/Firestore (= 12.15.0)
     - firebase_core
     - Flutter
+  - emoji_picker_flutter (0.0.1):
+    - Flutter
   - Firebase/Auth (12.15.0):
     - Firebase/CoreOnly
     - FirebaseAuth (~> 12.15.0)
@@ -1436,6 +1438,7 @@ PODS:
 DEPENDENCIES:
   - audio_session (from `.symlinks/plugins/audio_session/ios`)
   - cloud_firestore (from `.symlinks/plugins/cloud_firestore/ios`)
+  - emoji_picker_flutter (from `.symlinks/plugins/emoji_picker_flutter/ios`)
   - firebase_auth (from `.symlinks/plugins/firebase_auth/ios`)
   - firebase_core (from `.symlinks/plugins/firebase_core/ios`)
   - firebase_messaging (from `.symlinks/plugins/firebase_messaging/ios`)
@@ -1479,6 +1482,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/audio_session/ios"
   cloud_firestore:
     :path: ".symlinks/plugins/cloud_firestore/ios"
+  emoji_picker_flutter:
+    :path: ".symlinks/plugins/emoji_picker_flutter/ios"
   firebase_auth:
     :path: ".symlinks/plugins/firebase_auth/ios"
   firebase_core:
@@ -1505,6 +1510,7 @@ SPEC CHECKSUMS:
   audio_session: 9bb7f6c970f21241b19f5a3658097ae459681ba0
   BoringSSL-GRPC: dded2a44897e45f28f08ae87a55ee4bcd19bc508
   cloud_firestore: 6413b4f717c368edb9c94214547da4c65c5a2fd9
+  emoji_picker_flutter: ece213fc274bdddefb77d502d33080dc54e616cc
   Firebase: a8539b633d474fbeb654c7043f9c1649e274045b
   firebase_auth: 78f0e9fa5dd3dce7e44164c53d2702eeffba360a
   firebase_core: fc23178af8ea070194d09031ae4198a9608a3d22
