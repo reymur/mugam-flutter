@@ -6,6 +6,7 @@ import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -14,6 +15,7 @@ import 'package:intl/intl.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:super_clipboard/super_clipboard.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -201,6 +203,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   style: TextStyle(color: kText),
                 ),
                 onTap: () => _copyMessageText(msg),
+              )
+            else if (msg.type == 'image' && msg.imageURL != null)
+              ListTile(
+                leading: const Icon(Icons.copy, color: kGold),
+                title: const Text(
+                  'Şəkli kopyala',
+                  style: TextStyle(color: kText),
+                ),
+                onTap: () => _copyMessageImage(msg),
               ),
             ListTile(
               leading: const Icon(Icons.forward, color: kGold),
@@ -252,6 +263,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Kopyalandı')));
+  }
+
+  Future<void> _copyMessageImage(Message msg) async {
+    Navigator.of(context).pop();
+    final imageURL = msg.imageURL;
+    if (imageURL == null) return;
+    try {
+      final file = await DefaultCacheManager().getSingleFile(imageURL);
+      final bytes = await file.readAsBytes();
+      final clipboard = SystemClipboard.instance;
+      if (clipboard == null) return;
+      final item = DataWriterItem();
+      item.add(Formats.jpeg(bytes));
+      await clipboard.write([item]);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Kopyalandı')));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Xəta baş verdi')));
+    }
   }
 
   void _openForwardSheet(Message msg) {
