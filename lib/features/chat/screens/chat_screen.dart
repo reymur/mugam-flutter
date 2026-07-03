@@ -1634,16 +1634,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           ),
                         ),
                       ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      child: Center(
-                        child: GestureDetector(
-                          onTap: _cancelReply,
-                          child: const Icon(
-                            Icons.close,
-                            color: kMuted,
-                            size: 18,
-                          ),
+                    Center(
+                      child: GestureDetector(
+                        onTap: _cancelReply,
+                        behavior: HitTestBehavior.opaque,
+                        child: const SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: Icon(Icons.close, color: kMuted, size: 18),
                         ),
                       ),
                     ),
