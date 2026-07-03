@@ -195,6 +195,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               title: const Text('Cavabla', style: TextStyle(color: kText)),
               onTap: () => _replyFromMenu(msg),
             ),
+            ListTile(
+              leading: const Icon(Icons.forward, color: kGold),
+              title: const Text('Yönləndir', style: TextStyle(color: kText)),
+              onTap: () => _openForwardSheet(msg),
+            ),
             if (msg.text.isNotEmpty)
               ListTile(
                 leading: const Icon(Icons.copy, color: kGold),
@@ -213,19 +218,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 ),
                 onTap: () => _copyMessageImage(msg),
               ),
-            ListTile(
-              leading: const Icon(Icons.forward, color: kGold),
-              title: const Text('Yönləndir', style: TextStyle(color: kText)),
-              onTap: () => _openForwardSheet(msg),
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: kText),
-              title: const Text(
-                'Yalnız məndən sil',
-                style: TextStyle(color: kText),
-              ),
-              onTap: () => _deleteForMe(msg),
-            ),
             if (isMe && otherUid != null)
               ListTile(
                 leading: const Icon(Icons.info_outline, color: kGold),
@@ -242,6 +234,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   );
                 },
               ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: kText),
+              title: const Text(
+                'Yalnız məndən sil',
+                style: TextStyle(color: kText),
+              ),
+              onTap: () => _deleteForMe(msg),
+            ),
             if (isMe)
               ListTile(
                 leading: const Icon(Icons.delete_forever, color: Colors.red),
