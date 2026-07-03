@@ -834,7 +834,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   Future<void> _pickAndSendImage(ImageSource source) async {
-    Navigator.of(context).pop(); // close bottom sheet
     final picked = await _picker.pickImage(
       source: source,
       imageQuality: 70,
@@ -1035,12 +1034,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             ListTile(
               leading: const Icon(Icons.photo_library, color: kGold),
               title: const Text('Qalereya', style: TextStyle(color: kText)),
-              onTap: () => _pickAndSendImage(ImageSource.gallery),
+              onTap: () {
+                Navigator.of(context).pop();
+                _pickAndSendImage(ImageSource.gallery);
+              },
             ),
             ListTile(
               leading: const Icon(Icons.camera_alt, color: kGold),
               title: const Text('Kamera', style: TextStyle(color: kText)),
-              onTap: () => _pickAndSendImage(ImageSource.camera),
+              onTap: () {
+                Navigator.of(context).pop();
+                _pickAndSendImage(ImageSource.camera);
+              },
             ),
           ],
         ),

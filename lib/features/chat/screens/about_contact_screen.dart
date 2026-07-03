@@ -78,7 +78,7 @@ class AboutContactScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 24),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 60),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: _ProfileButton(
                     onTap: () => Navigator.push(
                       context,
@@ -179,21 +179,26 @@ class _ProfileButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14),
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 20),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(16),
             border: Border.all(color: kGold.withAlpha(90)),
           ),
           child: const Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.person_outline, color: kGold),
-              SizedBox(height: 6),
+              Icon(Icons.person_outline, color: kGold, size: 30),
+              SizedBox(height: 8),
               Text(
                 'Profil',
-                style: TextStyle(color: kText, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: kText,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                ),
               ),
             ],
           ),
