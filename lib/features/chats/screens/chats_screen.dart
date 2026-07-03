@@ -124,6 +124,12 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
                   );
                 }
 
+                // Known follow-up: search still matches against the chat
+                // doc's static `name` field, which for 1:1 chats is written
+                // from the initiator's perspective and can be wrong for the
+                // recipient (see _ChatListItem, which resolves the correct
+                // name dynamically for display). Not fixed here — lower
+                // priority, separate from the display bug this fix targets.
                 final filtered = chats
                     .where((c) => c.name.toLowerCase().contains(_searchQuery))
                     .toList();
@@ -143,6 +149,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
                     final chat = filtered[index];
                     return _ChatListItem(
                       chat: chat,
+                      currentUid: currentUid,
                       onTap: () => context.push('/chat/${chat.id}'),
                     );
                   },
@@ -156,11 +163,16 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
   }
 }
 
-class _ChatListItem extends StatelessWidget {
+class _ChatListItem extends ConsumerWidget {
   final Chat chat;
+  final String currentUid;
   final VoidCallback onTap;
 
-  const _ChatListItem({required this.chat, required this.onTap});
+  const _ChatListItem({
+    required this.chat,
+    required this.currentUid,
+    required this.onTap,
+  });
 
   String _formatTime(DateTime? time) {
     if (time == null) return '';
@@ -173,7 +185,29 @@ class _ChatListItem extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // mugam-v2 writes a 1:1 chat's `name`/`emoji` fields from the
+    // initiator's perspective (the other participant's name/emoji at
+    // creation time), never updating them afterwards. The recipient reading
+    // that field back sees their OWN name/emoji instead of the initiator's.
+    // Resolve the other participant's current name/emoji dynamically
+    // instead of trusting those static fields.
+    var displayName = chat.name;
+    var displayEmoji = chat.emoji;
+    if (!chat.isGroup) {
+      final otherUid = chat.members.firstWhere(
+        (m) => m != currentUid,
+        orElse: () => '',
+      );
+      if (otherUid.isNotEmpty) {
+        final other = ref.watch(userByIdProvider(otherUid)).value;
+        if (other != null) {
+          displayName = other.name;
+          displayEmoji = other.emoji;
+        }
+      }
+    }
+
     return GestureDetector(
       onTap: onTap,
       child: Column(
@@ -199,7 +233,7 @@ class _ChatListItem extends StatelessWidget {
                         ),
                         alignment: Alignment.center,
                         child: Text(
-                          chat.emoji,
+                          displayEmoji,
                           style: const TextStyle(fontSize: 24),
                         ),
                       ),
@@ -229,7 +263,7 @@ class _ChatListItem extends StatelessWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              chat.name,
+                              displayName,
                               overflow: TextOverflow.ellipsis,
                               style: GoogleFonts.nunito(
                                 fontWeight: FontWeight.w700,
