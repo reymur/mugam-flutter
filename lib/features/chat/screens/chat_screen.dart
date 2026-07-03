@@ -197,25 +197,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             ),
             ListTile(
               leading: const Icon(Icons.forward, color: kGold),
-              title: const Text('Yönləndir', style: TextStyle(color: kText)),
+              title: const Text('Göndər', style: TextStyle(color: kText)),
               onTap: () => _openForwardSheet(msg),
             ),
             if (msg.text.isNotEmpty)
               ListTile(
                 leading: const Icon(Icons.copy, color: kGold),
-                title: const Text(
-                  'Mətni kopyala',
-                  style: TextStyle(color: kText),
-                ),
+                title: const Text('Kopyala', style: TextStyle(color: kText)),
                 onTap: () => _copyMessageText(msg),
               )
             else if (msg.type == 'image' && msg.imageURL != null)
               ListTile(
                 leading: const Icon(Icons.copy, color: kGold),
-                title: const Text(
-                  'Şəkli kopyala',
-                  style: TextStyle(color: kText),
-                ),
+                title: const Text('Kopyala', style: TextStyle(color: kText)),
                 onTap: () => _copyMessageImage(msg),
               ),
             if (isMe && otherUid != null)
