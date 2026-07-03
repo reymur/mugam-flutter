@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -137,7 +138,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
-  void _showMessageOptionsSheet(Message msg, bool isMe) {
+  void _showMessageOptionsSheet(
+    Message msg,
+    bool isMe, {
+    String? otherUid,
+    bool isDelivered = false,
+    bool isRead = false,
+    String? deliveredAt,
+    String? readAt,
+  }) {
     showModalBottomSheet(
       context: context,
       backgroundColor: kBg2,
@@ -206,6 +215,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               ),
               onTap: () => _deleteForMe(msg),
             ),
+            if (isMe && otherUid != null)
+              ListTile(
+                leading: const Icon(Icons.info_outline, color: kGold),
+                title: const Text('Məlumat', style: TextStyle(color: kText)),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _showMessageInfoSheet(
+                    msg,
+                    otherUid,
+                    isDelivered,
+                    isRead,
+                    deliveredAt,
+                    readAt,
+                  );
+                },
+              ),
             if (isMe)
               ListTile(
                 leading: const Icon(Icons.delete_forever, color: Colors.red),
@@ -404,6 +429,98 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   void _replyFromMenu(Message msg) {
     Navigator.of(context).pop();
     _startReply(msg);
+  }
+
+  String _formatInfoTime(dynamic value) {
+    DateTime? dt;
+    if (value is Timestamp) {
+      dt = value.toDate();
+    } else if (value is String) {
+      dt = DateTime.tryParse(value);
+    }
+    if (dt == null) return '';
+    return DateFormat('d MMM, HH:mm').format(dt);
+  }
+
+  void _showMessageInfoSheet(
+    Message msg,
+    String otherUid,
+    bool isDelivered,
+    bool isRead,
+    String? deliveredAt,
+    String? readAt,
+  ) {
+    final chatData = ref.read(chatDataProvider(widget.chatId)).value;
+    final otherName = chatData?['name'] as String? ?? '';
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kBg2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Məlumat',
+                style: TextStyle(
+                  color: kText,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _buildInfoRow(
+                Icons.done,
+                'Göndərildi',
+                _formatInfoTime(msg.timestamp),
+              ),
+              if (isDelivered)
+                _buildInfoRow(
+                  Icons.done_all,
+                  'Çatdırıldı',
+                  _formatInfoTime(deliveredAt),
+                ),
+              if (isRead)
+                _buildInfoRow(
+                  Icons.done_all,
+                  otherName.isNotEmpty ? '$otherName oxudu' : 'Oxundu',
+                  _formatInfoTime(readAt),
+                  color: kReadBlue,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(
+    IconData icon,
+    String label,
+    String time, {
+    Color color = kMuted,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(color: kText, fontSize: 14),
+            ),
+          ),
+          Text(time, style: TextStyle(color: kMuted, fontSize: 12)),
+        ],
+      ),
+    );
   }
 
   void _reactToMessage(Message msg, String emoji) {
@@ -780,19 +897,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     String? otherUid,
     Map<String, dynamic> deliveredTo,
     Map<String, dynamic> lastReadMsgId,
+    Map<String, dynamic> lastReadAt,
   ) {
     final isMe = msg.senderId == currentUid;
     final time = msg.timestamp != null
         ? DateFormat('HH:mm').format(msg.timestamp!.toDate())
         : '';
     Widget? checkMark;
+    bool isRead = false;
+    bool isDelivered = false;
     if (isMe && otherUid != null) {
       final lastReadId = lastReadMsgId[otherUid] as String?;
       final lastReadIndex = lastReadId != null
           ? allMsgIds.indexOf(lastReadId)
           : -1;
-      final isRead = lastReadIndex >= index && index != -1;
-      final isDelivered = deliveredTo[otherUid] == true || isRead;
+      isRead = lastReadIndex >= index && index != -1;
+      isDelivered = deliveredTo[otherUid] != null || isRead;
       checkMark = Icon(
         isDelivered ? Icons.done_all : Icons.done,
         size: 14,
@@ -853,7 +973,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ),
       child: _SwipeableMessageBubble(
         onReply: () => _startReply(msg),
-        onLongPress: () => _showMessageOptionsSheet(msg, isMe),
+        onLongPress: () => _showMessageOptionsSheet(
+          msg,
+          isMe,
+          otherUid: otherUid,
+          isDelivered: isDelivered,
+          isRead: isRead,
+          deliveredAt: otherUid != null
+              ? deliveredTo[otherUid] as String?
+              : null,
+          readAt: otherUid != null ? lastReadAt[otherUid] as String? : null,
+        ),
         child: Align(
           alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
           child: Column(
@@ -1019,23 +1149,35 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     if (msg.type == 'audio' && msg.audioURL != null)
                       _VoiceMessagePlayer(audioURL: msg.audioURL!, isMe: isMe),
                     const SizedBox(height: 2),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          time,
-                          style: TextStyle(
-                            color: isMe
-                                ? const Color(0xFF1A0E00).withAlpha(150)
-                                : kMuted,
-                            fontSize: 10,
+                    GestureDetector(
+                      onTap: isMe && otherUid != null
+                          ? () => _showMessageInfoSheet(
+                              msg,
+                              otherUid,
+                              isDelivered,
+                              isRead,
+                              deliveredTo[otherUid] as String?,
+                              lastReadAt[otherUid] as String?,
+                            )
+                          : null,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            time,
+                            style: TextStyle(
+                              color: isMe
+                                  ? const Color(0xFF1A0E00).withAlpha(150)
+                                  : kMuted,
+                              fontSize: 10,
+                            ),
                           ),
-                        ),
-                        if (checkMark != null) ...[
-                          const SizedBox(width: 3),
-                          checkMark,
+                          if (checkMark != null) ...[
+                            const SizedBox(width: 3),
+                            checkMark,
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ],
                 ),
@@ -1130,6 +1272,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         chatMetaAsync.value?['deliveredTo'] as Map<String, dynamic>? ?? {};
     final lastReadMsgId =
         chatMetaAsync.value?['lastReadMsgId'] as Map<String, dynamic>? ?? {};
+    final lastReadAt =
+        chatMetaAsync.value?['lastReadAt'] as Map<String, dynamic>? ?? {};
     final members = (chatMetaAsync.value?['members'] as List?)?.cast<String>();
     final otherUid = members?.firstWhere(
       (m) => m != currentUid,
@@ -1214,6 +1358,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         otherUidResolved,
                         deliveredTo,
                         lastReadMsgId,
+                        lastReadAt,
                       ),
                     );
                   },

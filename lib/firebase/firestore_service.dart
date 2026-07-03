@@ -280,6 +280,7 @@ class FirestoreService {
         'members': List<String>.from(data['members'] ?? const []),
         'deliveredTo': Map<String, dynamic>.from(data['deliveredTo'] ?? {}),
         'lastReadMsgId': Map<String, dynamic>.from(data['lastReadMsgId'] ?? {}),
+        'lastReadAt': Map<String, dynamic>.from(data['lastReadAt'] ?? {}),
       };
     });
   }
@@ -290,7 +291,7 @@ class FirestoreService {
   }) async {
     try {
       await _db.collection('chats').doc(chatId).update({
-        'deliveredTo.$uid': true,
+        'deliveredTo.$uid': DateTime.now().toIso8601String(),
       });
     } catch (_) {}
   }
