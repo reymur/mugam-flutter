@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
 
@@ -98,7 +99,7 @@ class _TabContent extends StatelessWidget {
         1 => const _Placeholder(emoji: '🎬', text: 'Tezliklə əlavə olunacaq'),
         2 => const _Placeholder(emoji: '📅', text: 'Tezliklə əlavə olunacaq'),
         3 => const _Placeholder(emoji: '⭐', text: 'Tezliklə əlavə olunacaq'),
-        _ => const _Placeholder(emoji: '⚙️', text: 'Ayarlar tezliklə'),
+        _ => const _SettingsTab(),
       },
     );
   }
@@ -234,6 +235,29 @@ class _Placeholder extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Settings tab ──────────────────────────────────────────────────────────────
+
+class _SettingsTab extends StatelessWidget {
+  const _SettingsTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        ListTile(
+          leading: const Icon(Icons.star, color: kGold),
+          title: const Text(
+            'Seçilmiş mesajlar',
+            style: TextStyle(color: kText),
+          ),
+          trailing: const Icon(Icons.chevron_right, color: kMuted),
+          onTap: () => context.push('/starred'),
+        ),
+      ],
     );
   }
 }

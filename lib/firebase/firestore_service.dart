@@ -268,6 +268,55 @@ class FirestoreService {
         .delete();
   }
 
+  Future<void> starMessage({
+    required String uid,
+    required String chatId,
+    required String chatName,
+    required String senderName,
+    required Message message,
+  }) async {
+    await _db
+        .collection('users')
+        .doc(uid)
+        .collection('starred')
+        .doc(message.id)
+        .set({
+          'chatId': chatId,
+          'chatName': chatName,
+          'senderId': message.senderId,
+          'senderName': senderName,
+          'text': message.text,
+          'type': message.type,
+          'imageURL': message.imageURL,
+          'audioURL': message.audioURL,
+          'timestamp': message.timestamp,
+          'starredAt': FieldValue.serverTimestamp(),
+        });
+  }
+
+  Future<void> unstarMessage({required String uid, required String messageId}) {
+    return _db
+        .collection('users')
+        .doc(uid)
+        .collection('starred')
+        .doc(messageId)
+        .delete();
+  }
+
+  Stream<List<StarredMessage>> watchStarredMessages(String uid) {
+    return _db
+        .collection('users')
+        .doc(uid)
+        .collection('starred')
+        .orderBy('starredAt', descending: true)
+        .snapshots()
+        .map(
+          (snap) => snap.docs
+              .map((doc) => StarredMessage.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
+  }
+
   Future<Map<String, dynamic>?> fetchChatData(String chatId) async {
     final doc = await _db.collection('chats').doc(chatId).get();
     return doc.data();
@@ -447,3 +496,8 @@ final chatMetaProvider = StreamProvider.family<Map<String, dynamic>, String>((
 ) {
   return ref.watch(firestoreServiceProvider).watchChatMeta(chatId);
 });
+
+final starredMessagesProvider =
+    StreamProvider.family<List<StarredMessage>, String>((ref, uid) {
+      return ref.watch(firestoreServiceProvider).watchStarredMessages(uid);
+    });

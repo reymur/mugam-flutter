@@ -26,7 +26,14 @@ enum _SelectionPurpose { forward, delete }
 
 class ChatScreen extends ConsumerStatefulWidget {
   final String chatId;
-  const ChatScreen({super.key, required this.chatId});
+  // Set when opened from the Starred Messages list: scrolls to and briefly
+  // highlights this message on first load instead of jumping to the bottom.
+  final String? initialHighlightMessageId;
+  const ChatScreen({
+    super.key,
+    required this.chatId,
+    this.initialHighlightMessageId,
+  });
 
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
@@ -224,6 +231,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 title: const Text('Kopyala', style: TextStyle(color: kText)),
                 onTap: () => _copyMessageImage(msg),
               ),
+            ListTile(
+              leading: Icon(
+                _isMessageStarred(msg.id) ? Icons.star : Icons.star_border,
+                color: kGold,
+              ),
+              title: Text(
+                _isMessageStarred(msg.id) ? 'Ulduzu sil' : 'Ulduzla',
+                style: const TextStyle(color: kText),
+              ),
+              onTap: () => _toggleStarMessage(msg),
+            ),
             if (isMe && otherUid != null)
               ListTile(
                 leading: const Icon(Icons.info_outline, color: kGold),
@@ -299,6 +317,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       _showCopySnackBar('Xəta baş verdi');
       _restoreComposerFocusIfNeeded();
     }
+  }
+
+  bool _isMessageStarred(String messageId) {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final starred =
+        ref.read(starredMessagesProvider(currentUid)).value ?? const [];
+    return starred.any((m) => m.id == messageId);
+  }
+
+  Future<void> _toggleStarMessage(Message msg) async {
+    Navigator.of(context).pop();
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final service = ref.read(firestoreServiceProvider);
+    if (_isMessageStarred(msg.id)) {
+      await service.unstarMessage(uid: currentUid, messageId: msg.id);
+      if (mounted) _showCopySnackBar('Ulduzdan çıxarıldı');
+    } else {
+      final chatName =
+          ref.read(chatDataProvider(widget.chatId)).value?['name'] as String? ??
+          '';
+      await service.starMessage(
+        uid: currentUid,
+        chatId: widget.chatId,
+        chatName: chatName,
+        senderName: _replySenderName(msg, currentUid),
+        message: msg,
+      );
+      if (mounted) _showCopySnackBar('Ulduzlandı');
+    }
+    _restoreComposerFocusIfNeeded();
   }
 
   void _openForwardSheet(List<Message> messages) {
@@ -1561,6 +1609,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   Widget build(BuildContext context) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final chatDataAsync = ref.watch(chatDataProvider(widget.chatId));
+    // Keeps the starred-ids stream subscribed so _isMessageStarred's
+    // ref.read reflects live data in the message options sheet.
+    ref.watch(starredMessagesProvider(currentUid));
 
     ref.listen(messagesProvider(widget.chatId), (previous, next) {
       next.whenData((messages) {
@@ -1680,9 +1731,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       if (!_hasJumpedToBottomInitially &&
                           visibleMessages.isNotEmpty) {
                         _hasJumpedToBottomInitially = true;
-                        WidgetsBinding.instance.addPostFrameCallback(
-                          (_) => _jumpToBottom(),
-                        );
+                        final targetId = widget.initialHighlightMessageId;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (targetId != null) {
+                            _scrollToMessage(targetId);
+                          } else {
+                            _jumpToBottom();
+                          }
+                        });
                       }
                       final allMsgIds = visibleMessages
                           .map((m) => m.id)

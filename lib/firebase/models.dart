@@ -164,6 +164,50 @@ class Message {
   }
 }
 
+class StarredMessage {
+  final String id; // == original message id
+  final String chatId;
+  final String chatName;
+  final String senderId;
+  final String senderName;
+  final String text;
+  final String type; // 'text', 'image', 'audio'
+  final String? imageURL;
+  final String? audioURL;
+  final Timestamp? timestamp;
+  final Timestamp? starredAt;
+
+  const StarredMessage({
+    required this.id,
+    required this.chatId,
+    required this.chatName,
+    required this.senderId,
+    required this.senderName,
+    required this.text,
+    required this.type,
+    this.imageURL,
+    this.audioURL,
+    this.timestamp,
+    this.starredAt,
+  });
+
+  factory StarredMessage.fromFirestore(String id, Map<String, dynamic> data) {
+    return StarredMessage(
+      id: id,
+      chatId: data['chatId'] ?? '',
+      chatName: data['chatName'] ?? '',
+      senderId: data['senderId'] ?? '',
+      senderName: data['senderName'] ?? '',
+      text: data['text'] ?? '',
+      type: data['type'] ?? 'text',
+      imageURL: data['imageURL'] as String?,
+      audioURL: data['audioURL'] as String?,
+      timestamp: data['timestamp'] as Timestamp?,
+      starredAt: data['starredAt'] as Timestamp?,
+    );
+  }
+}
+
 class Event {
   final String id;
   final String day;

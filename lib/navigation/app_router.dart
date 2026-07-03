@@ -10,6 +10,7 @@ import '../features/home/screens/home_screen.dart';
 import '../features/market/screens/market_screen.dart';
 import '../features/profile/screens/profile_screen.dart';
 import '../features/search/screens/search_screen.dart';
+import '../features/starred/screens/starred_messages_screen.dart';
 import '../features/stories/screens/stories_screen.dart';
 import '../features/video/screens/video_screen.dart';
 import 'main_shell.dart';
@@ -31,7 +32,14 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: '/chat/:chatId',
-      builder: (c, s) => ChatScreen(chatId: s.pathParameters['chatId']!),
+      builder: (c, s) => ChatScreen(
+        chatId: s.pathParameters['chatId']!,
+        initialHighlightMessageId: s.extra as String?,
+      ),
+    ),
+    GoRoute(
+      path: '/starred',
+      builder: (c, s) => const StarredMessagesScreen(),
     ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) =>
