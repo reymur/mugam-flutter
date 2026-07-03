@@ -109,12 +109,14 @@ class Message {
   final String text;
   final String? imageURL;
   final String? audioURL;
+  final String? videoURL;
   final Timestamp? timestamp;
-  final String type; // 'text', 'image', 'audio'
+  final String type; // 'text', 'image', 'audio', 'video'
   final String? replyToId;
   final String? replyToText;
   final String? replyToSenderName;
   final String? replyToImageURL;
+  final String? replyToVideoURL;
   final bool deletedForAll;
   final List<String> deletedFor;
   final String? deletedAt;
@@ -126,12 +128,14 @@ class Message {
     required this.text,
     this.imageURL,
     this.audioURL,
+    this.videoURL,
     this.timestamp,
     required this.type,
     this.replyToId,
     this.replyToText,
     this.replyToSenderName,
     this.replyToImageURL,
+    this.replyToVideoURL,
     this.deletedForAll = false,
     this.deletedFor = const [],
     this.deletedAt,
@@ -147,12 +151,14 @@ class Message {
       text: data['text'] ?? '',
       imageURL: data['imageURL'],
       audioURL: data['audioURL'],
+      videoURL: data['videoURL'],
       timestamp: data['timestamp'] as Timestamp?,
       type: data['type'] ?? 'text',
       replyToId: replyTo?['id'] as String?,
       replyToText: replyTo?['text'] as String?,
       replyToSenderName: replyTo?['senderName'] as String?,
       replyToImageURL: replyTo?['imageURL'] as String?,
+      replyToVideoURL: replyTo?['videoURL'] as String?,
       deletedForAll: data['deletedForAll'] ?? false,
       deletedFor: List<String>.from(data['deletedFor'] as List? ?? const []),
       deletedAt: data['deletedAt'] as String?,
@@ -171,9 +177,10 @@ class StarredMessage {
   final String senderId;
   final String senderName;
   final String text;
-  final String type; // 'text', 'image', 'audio'
+  final String type; // 'text', 'image', 'audio', 'video'
   final String? imageURL;
   final String? audioURL;
+  final String? videoURL;
   final Timestamp? timestamp;
   final Timestamp? starredAt;
 
@@ -187,6 +194,7 @@ class StarredMessage {
     required this.type,
     this.imageURL,
     this.audioURL,
+    this.videoURL,
     this.timestamp,
     this.starredAt,
   });
@@ -202,6 +210,7 @@ class StarredMessage {
       type: data['type'] ?? 'text',
       imageURL: data['imageURL'] as String?,
       audioURL: data['audioURL'] as String?,
+      videoURL: data['videoURL'] as String?,
       timestamp: data['timestamp'] as Timestamp?,
       starredAt: data['starredAt'] as Timestamp?,
     );
