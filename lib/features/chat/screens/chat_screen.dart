@@ -87,9 +87,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     '🙏',
   ];
 
+  late final FirestoreService _firestoreService;
+
   @override
   void initState() {
     super.initState();
+    _firestoreService = ref.read(firestoreServiceProvider);
     _messageController.addListener(() {
       final hasText = _messageController.text.trim().isNotEmpty;
       if (hasText != _hasText) {
@@ -113,12 +116,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _initBeepPlayer();
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     if (currentUid != null && currentUid.isNotEmpty) {
-      ref
-          .read(firestoreServiceProvider)
-          .markChatAsDelivered(chatId: widget.chatId, uid: currentUid);
-      ref
-          .read(firestoreServiceProvider)
-          .addActiveUser(chatId: widget.chatId, uid: currentUid);
+      _firestoreService.markChatAsDelivered(
+        chatId: widget.chatId,
+        uid: currentUid,
+      );
+      _firestoreService.addActiveUser(chatId: widget.chatId, uid: currentUid);
     }
   }
 
@@ -136,9 +138,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   void dispose() {
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     if (currentUid != null && currentUid.isNotEmpty) {
-      ref
-          .read(firestoreServiceProvider)
-          .removeActiveUser(chatId: widget.chatId, uid: currentUid);
+      _firestoreService.removeActiveUser(
+        chatId: widget.chatId,
+        uid: currentUid,
+      );
     }
     _messageController.dispose();
     _messageFocusNode.dispose();
