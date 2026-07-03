@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../../shared/widgets/zoomable_image_viewer.dart';
 import 'edit_profile_screen.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -69,7 +70,13 @@ class _TabsRow extends StatelessWidget {
   final int activeIndex;
   final ValueChanged<int> onTap;
 
-  static const _tabs = ['Haqqında', 'Video', 'Tədbirlər', 'Rəylər', '⚙️ Ayarlar'];
+  static const _tabs = [
+    'Haqqında',
+    'Video',
+    'Tədbirlər',
+    'Rəylər',
+    '⚙️ Ayarlar',
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -85,7 +92,10 @@ class _TabsRow extends StatelessWidget {
               onTap: () => onTap(i),
               child: Container(
                 margin: EdgeInsets.only(right: i < _tabs.length - 1 ? 8 : 0),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: active ? kGold : Colors.transparent,
                   border: active ? null : Border.all(color: kBorder),
@@ -249,10 +259,7 @@ class _Placeholder extends StatelessWidget {
           children: [
             Text(emoji, style: const TextStyle(fontSize: 48)),
             const SizedBox(height: 12),
-            Text(
-              text,
-              style: const TextStyle(fontSize: 14, color: kMuted),
-            ),
+            Text(text, style: const TextStyle(fontSize: 14, color: kMuted)),
           ],
         ),
       ),
@@ -317,59 +324,64 @@ class _ProfileHeader extends StatelessWidget {
               children: [
                 // Avatar
                 Center(
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    child: Stack(
-                      children: [
-                        Container(
-                          width: 86,
-                          height: 86,
-                          decoration: BoxDecoration(
-                            color: kBg3,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: kGold, width: 3),
-                            image: musician.photoURL != null
-                                ? DecorationImage(
-                                    image: NetworkImage(musician.photoURL!),
-                                    fit: BoxFit.cover,
+                  child: GestureDetector(
+                    onTap: musician.photoURL != null
+                        ? () => showFullImage(context, musician.photoURL!)
+                        : null,
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: Stack(
+                        children: [
+                          Container(
+                            width: 86,
+                            height: 86,
+                            decoration: BoxDecoration(
+                              color: kBg3,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: kGold, width: 3),
+                              image: musician.photoURL != null
+                                  ? DecorationImage(
+                                      image: NetworkImage(musician.photoURL!),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : null,
+                            ),
+                            alignment: Alignment.center,
+                            child: musician.photoURL == null
+                                ? Text(
+                                    musician.emoji,
+                                    style: const TextStyle(fontSize: 38),
                                   )
                                 : null,
                           ),
-                          alignment: Alignment.center,
-                          child: musician.photoURL == null
-                              ? Text(
-                                  musician.emoji,
-                                  style: const TextStyle(fontSize: 38),
-                                )
-                              : null,
-                        ),
-                        if (musician.verified)
-                          Positioned(
-                            bottom: 0,
-                            right: 0,
-                            child: Container(
-                              width: 24,
-                              height: 24,
-                              decoration: BoxDecoration(
-                                color: kGold,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: const Color(0xFF15100A),
-                                  width: 2,
+                          if (musician.verified)
+                            Positioned(
+                              bottom: 0,
+                              right: 0,
+                              child: Container(
+                                width: 24,
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  color: kGold,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: const Color(0xFF15100A),
+                                    width: 2,
+                                  ),
                                 ),
-                              ),
-                              alignment: Alignment.center,
-                              child: const Text(
-                                '✓',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Color(0xFF1A0E00),
-                                  fontWeight: FontWeight.bold,
+                                alignment: Alignment.center,
+                                child: const Text(
+                                  '✓',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFF1A0E00),
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -455,7 +467,9 @@ class _ProfileHeader extends StatelessWidget {
                             borderRadius: BorderRadius.circular(24),
                           ),
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 20, vertical: 10),
+                            horizontal: 20,
+                            vertical: 10,
+                          ),
                           minimumSize: Size.zero,
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           elevation: 0,
@@ -463,7 +477,9 @@ class _ProfileHeader extends StatelessWidget {
                         child: const Text(
                           'Redaktə et',
                           style: TextStyle(
-                              fontSize: 13, fontWeight: FontWeight.bold),
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ),
@@ -486,7 +502,9 @@ class _ProfileHeader extends StatelessWidget {
                             borderRadius: BorderRadius.circular(24),
                           ),
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 20, vertical: 10),
+                            horizontal: 20,
+                            vertical: 10,
+                          ),
                           minimumSize: Size.zero,
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           foregroundColor: kText,
