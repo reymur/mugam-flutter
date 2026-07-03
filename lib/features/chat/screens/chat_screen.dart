@@ -466,6 +466,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _startReply(msg);
   }
 
+  // Legacy chat docs stored deliveredTo/lastReadAt as bool `true` before the
+  // timestamp migration; treat anything that isn't a String as "no exact
+  // time available" instead of throwing on the cast.
+  String? _asTimeString(dynamic value) {
+    return value is String ? value : null;
+  }
+
   String _formatInfoTime(dynamic value) {
     DateTime? dt;
     if (value is Timestamp) {
@@ -1015,9 +1022,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           isDelivered: isDelivered,
           isRead: isRead,
           deliveredAt: otherUid != null
-              ? deliveredTo[otherUid] as String?
+              ? _asTimeString(deliveredTo[otherUid])
               : null,
-          readAt: otherUid != null ? lastReadAt[otherUid] as String? : null,
+          readAt: otherUid != null ? _asTimeString(lastReadAt[otherUid]) : null,
         ),
         child: Align(
           alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -1191,8 +1198,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                               otherUid,
                               isDelivered,
                               isRead,
-                              deliveredTo[otherUid] as String?,
-                              lastReadAt[otherUid] as String?,
+                              _asTimeString(deliveredTo[otherUid]),
+                              _asTimeString(lastReadAt[otherUid]),
                             )
                           : null,
                       child: Row(
