@@ -66,6 +66,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _selectionMode = false;
   _SelectionPurpose _selectionPurpose = _SelectionPurpose.forward;
   final Set<String> _selectedMessageIds = {};
+  bool _hasJumpedToBottomInitially = false;
   static const List<String> _quickReactions = [
     '👍',
     '❤️',
@@ -82,6 +83,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final hasText = _messageController.text.trim().isNotEmpty;
       if (hasText != _hasText) {
         setState(() => _hasText = hasText);
+      }
+    });
+    // Keep the last message visible once the keyboard opens, matching
+    // WhatsApp's behavior of shifting content up rather than covering it.
+    _messageFocusNode.addListener(() {
+      if (_messageFocusNode.hasFocus) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
       }
     });
     _pulseController = AnimationController(
@@ -222,14 +230,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 title: const Text('Məlumat', style: TextStyle(color: kText)),
                 onTap: () {
                   Navigator.of(context).pop();
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => MessageInfoScreen(
-                        chatId: widget.chatId,
-                        message: msg,
-                      ),
-                    ),
-                  );
+                  _openMessageInfo(msg);
                 },
               ),
             ListTile(
@@ -518,6 +519,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
+  // Chats should open already at the bottom, no visible scrolling — unlike
+  // the animated _scrollToBottom used for new incoming/outgoing messages.
+  void _jumpToBottom() {
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+    }
+  }
+
   String _replyPreviewText(Message msg) {
     switch (msg.type) {
       case 'image':
@@ -543,6 +552,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   void _startReply(Message msg) {
     setState(() => _replyingTo = msg);
+  }
+
+  void _openMessageInfo(Message msg) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MessageInfoScreen(chatId: widget.chatId, message: msg),
+      ),
+    );
   }
 
   void _replyFromMenu(Message msg) {
@@ -1095,6 +1112,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         onReply: () => _startReply(msg),
         onLongPress: () =>
             _showMessageOptionsSheet(msg, isMe, otherUid: otherUid),
+        onInfo: isMe && otherUid != null ? () => _openMessageInfo(msg) : null,
         child: Align(
           alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
           child: Column(
@@ -1262,14 +1280,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     const SizedBox(height: 2),
                     GestureDetector(
                       onTap: isMe && otherUid != null
-                          ? () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => MessageInfoScreen(
-                                  chatId: widget.chatId,
-                                  message: msg,
-                                ),
-                              ),
-                            )
+                          ? () => _openMessageInfo(msg)
                           : null,
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -1519,42 +1530,55 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       body: Column(
         children: [
           Expanded(
-            child: ref
-                .watch(messagesProvider(widget.chatId))
-                .when(
-                  loading: () => const Center(
-                    child: CircularProgressIndicator(color: kGold),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => FocusScope.of(context).unfocus(),
+              child: ref
+                  .watch(messagesProvider(widget.chatId))
+                  .when(
+                    loading: () => const Center(
+                      child: CircularProgressIndicator(color: kGold),
+                    ),
+                    error: (err, stack) => const Center(
+                      child: Text('Xəta', style: TextStyle(color: kMuted)),
+                    ),
+                    data: (messages) {
+                      final visibleMessages = messages
+                          .where((m) => !m.deletedFor.contains(currentUid))
+                          .toList();
+                      _lastMessages = visibleMessages;
+                      _schedulePurgeTimers(visibleMessages);
+                      if (!_hasJumpedToBottomInitially &&
+                          visibleMessages.isNotEmpty) {
+                        _hasJumpedToBottomInitially = true;
+                        WidgetsBinding.instance.addPostFrameCallback(
+                          (_) => _jumpToBottom(),
+                        );
+                      }
+                      final allMsgIds = visibleMessages
+                          .map((m) => m.id)
+                          .toList();
+                      return ListView.builder(
+                        controller: _scrollController,
+                        reverse: false,
+                        itemCount: visibleMessages.length,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        itemBuilder: (ctx, i) => _buildMessageBubble(
+                          visibleMessages[i],
+                          i,
+                          allMsgIds,
+                          currentUid,
+                          otherUidResolved,
+                          deliveredTo,
+                          lastReadMsgId,
+                        ),
+                      );
+                    },
                   ),
-                  error: (err, stack) => const Center(
-                    child: Text('Xəta', style: TextStyle(color: kMuted)),
-                  ),
-                  data: (messages) {
-                    final visibleMessages = messages
-                        .where((m) => !m.deletedFor.contains(currentUid))
-                        .toList();
-                    _lastMessages = visibleMessages;
-                    _schedulePurgeTimers(visibleMessages);
-                    final allMsgIds = visibleMessages.map((m) => m.id).toList();
-                    return ListView.builder(
-                      controller: _scrollController,
-                      reverse: false,
-                      itemCount: visibleMessages.length,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      itemBuilder: (ctx, i) => _buildMessageBubble(
-                        visibleMessages[i],
-                        i,
-                        allMsgIds,
-                        currentUid,
-                        otherUidResolved,
-                        deliveredTo,
-                        lastReadMsgId,
-                      ),
-                    );
-                  },
-                ),
+            ),
           ),
           if (_replyingTo != null)
             Container(
@@ -1928,10 +1952,12 @@ class _SwipeableMessageBubble extends StatefulWidget {
   final Widget child;
   final VoidCallback onReply;
   final VoidCallback? onLongPress;
+  final VoidCallback? onInfo;
   const _SwipeableMessageBubble({
     required this.child,
     required this.onReply,
     this.onLongPress,
+    this.onInfo,
   });
 
   @override
@@ -1971,7 +1997,8 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
 
   @override
   Widget build(BuildContext context) {
-    final progress = (_dragX / _maxDrag).clamp(0.0, 1.0);
+    final rightProgress = (_dragX / _maxDrag).clamp(0.0, 1.0);
+    final leftProgress = (-_dragX / _maxDrag).clamp(0.0, 1.0);
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -1982,10 +2009,25 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
             bottom: 0,
             child: Center(
               child: Opacity(
-                opacity: progress,
+                opacity: rightProgress,
                 child: Transform.scale(
-                  scale: 0.5 + progress * 0.5,
+                  scale: 0.5 + rightProgress * 0.5,
                   child: const Icon(Icons.reply, color: kGold, size: 22),
+                ),
+              ),
+            ),
+          ),
+        if (_dragX < 0 && widget.onInfo != null)
+          Positioned(
+            right: 8,
+            top: 0,
+            bottom: 0,
+            child: Center(
+              child: Opacity(
+                opacity: leftProgress,
+                child: Transform.scale(
+                  scale: 0.5 + leftProgress * 0.5,
+                  child: const Icon(Icons.info_outline, color: kGold, size: 22),
                 ),
               ),
             ),
@@ -1993,12 +2035,15 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
         GestureDetector(
           onLongPress: widget.onLongPress,
           onHorizontalDragUpdate: (details) {
-            final next = (_dragX + details.delta.dx).clamp(0.0, _maxDrag);
+            final minDrag = widget.onInfo != null ? -_maxDrag : 0.0;
+            final next = (_dragX + details.delta.dx).clamp(minDrag, _maxDrag);
             if (next != _dragX) setState(() => _dragX = next);
           },
           onHorizontalDragEnd: (_) {
             if (_dragX >= _triggerThreshold) {
               widget.onReply();
+            } else if (_dragX <= -_triggerThreshold && widget.onInfo != null) {
+              widget.onInfo!();
             }
             _snapBack();
           },
