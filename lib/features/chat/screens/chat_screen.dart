@@ -31,6 +31,8 @@ class ChatScreen extends ConsumerStatefulWidget {
 class _ChatScreenState extends ConsumerState<ChatScreen>
     with SingleTickerProviderStateMixin {
   final TextEditingController _messageController = TextEditingController();
+  final FocusNode _messageFocusNode = FocusNode();
+  bool _composerHadFocusBeforeMenu = false;
   final ScrollController _scrollController = ScrollController();
   bool _sending = false;
   bool _uploadingImage = false;
@@ -104,6 +106,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   @override
   void dispose() {
     _messageController.dispose();
+    _messageFocusNode.dispose();
     _scrollController.dispose();
     _audioRecorder.dispose();
     _recordingTimer?.cancel();
@@ -141,6 +144,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   void _showMessageOptionsSheet(Message msg, bool isMe, {String? otherUid}) {
+    _composerHadFocusBeforeMenu = _messageFocusNode.hasFocus;
     showModalBottomSheet(
       context: context,
       backgroundColor: kBg2,
@@ -243,12 +247,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
+  // showModalBottomSheet doesn't restore focus to whatever had it before the
+  // sheet opened; without this the message composer silently loses focus
+  // (and dismisses the keyboard) after a Copy action.
+  void _restoreComposerFocusIfNeeded() {
+    if (_composerHadFocusBeforeMenu && mounted) {
+      _messageFocusNode.requestFocus();
+    }
+  }
+
   void _copyMessageText(Message msg) {
     Navigator.of(context).pop();
     Clipboard.setData(ClipboardData(text: msg.text));
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Kopyalandı')));
+    _restoreComposerFocusIfNeeded();
   }
 
   Future<void> _copyMessageImage(Message msg) async {
@@ -267,11 +281,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Kopyalandı')));
+      _restoreComposerFocusIfNeeded();
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Xəta baş verdi')));
+      _restoreComposerFocusIfNeeded();
     }
   }
 
@@ -1467,6 +1483,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         )
                       : TextField(
                           controller: _messageController,
+                          focusNode: _messageFocusNode,
                           style: const TextStyle(color: kText, fontSize: 14),
                           decoration: InputDecoration(
                             hintText: 'Mesaj yazın...',
