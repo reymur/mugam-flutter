@@ -597,6 +597,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         return '🖼 Şəkil';
       case 'audio':
         return '🎤 Səs mesajı';
+      case 'video':
+        return '🎥 Video';
       default:
         return msg.text;
     }
@@ -612,6 +614,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   String? _replyImageURL(Message msg) {
     return msg.type == 'image' ? msg.imageURL : null;
+  }
+
+  String? _replyVideoURL(Message msg) {
+    return msg.type == 'video' ? msg.videoURL : null;
   }
 
   void _startReply(Message msg) {
@@ -851,6 +857,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             replyToImageURL: replyingTo != null
                 ? _replyImageURL(replyingTo)
                 : null,
+            replyToVideoURL: replyingTo != null
+                ? _replyVideoURL(replyingTo)
+                : null,
           );
       _scrollToBottom();
     } finally {
@@ -899,6 +908,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 : null,
             replyToImageURL: replyingTo != null
                 ? _replyImageURL(replyingTo)
+                : null,
+            replyToVideoURL: replyingTo != null
+                ? _replyVideoURL(replyingTo)
                 : null,
           );
       _scrollToBottom();
@@ -953,6 +965,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 : null,
             replyToImageURL: replyingTo != null
                 ? _replyImageURL(replyingTo)
+                : null,
+            replyToVideoURL: replyingTo != null
+                ? _replyVideoURL(replyingTo)
                 : null,
           );
       _scrollToBottom();
@@ -1253,6 +1268,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             replyToImageURL: replyingTo != null
                 ? _replyImageURL(replyingTo)
                 : null,
+            replyToVideoURL: replyingTo != null
+                ? _replyVideoURL(replyingTo)
+                : null,
           );
       _scrollToBottom();
     } catch (e) {
@@ -1498,6 +1516,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                           size: 16,
                                         ),
                                       ),
+                                    ),
+                                  ),
+                                if (msg.replyToVideoURL != null)
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: VideoThumbnailImage(
+                                      videoURL: msg.replyToVideoURL!,
+                                      size: 60,
                                     ),
                                   ),
                               ],
@@ -1939,6 +1965,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                               size: 16,
                             ),
                           ),
+                        ),
+                      ),
+                    if (_replyingTo!.type == 'video' &&
+                        _replyingTo!.videoURL != null)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: VideoThumbnailImage(
+                          videoURL: _replyingTo!.videoURL!,
+                          size: 44,
                         ),
                       ),
                     Center(
