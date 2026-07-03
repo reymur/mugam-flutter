@@ -22,6 +22,8 @@ import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import 'message_info_screen.dart';
 
+enum _SelectionPurpose { forward, delete }
+
 class ChatScreen extends ConsumerStatefulWidget {
   final String chatId;
   const ChatScreen({super.key, required this.chatId});
@@ -62,6 +64,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   List<Message> _lastMessages = [];
   final Map<String, Timer> _purgeTimers = {};
   bool _selectionMode = false;
+  _SelectionPurpose _selectionPurpose = _SelectionPurpose.forward;
   final Set<String> _selectedMessageIds = {};
   static const List<String> _quickReactions = [
     '👍',
@@ -198,7 +201,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             ListTile(
               leading: const Icon(Icons.forward, color: kGold),
               title: const Text('Göndər', style: TextStyle(color: kText)),
-              onTap: () => _enterSelectionMode(msg),
+              onTap: () =>
+                  _enterSelectionMode(msg, purpose: _SelectionPurpose.forward),
             ),
             if (msg.text.isNotEmpty)
               ListTile(
@@ -229,22 +233,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 },
               ),
             ListTile(
-              leading: const Icon(Icons.delete_outline, color: kText),
-              title: const Text(
-                'Yalnız məndən sil',
-                style: TextStyle(color: kText),
-              ),
-              onTap: () => _deleteForMe(msg),
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text('Sil', style: TextStyle(color: Colors.red)),
+              onTap: () =>
+                  _enterSelectionMode(msg, purpose: _SelectionPurpose.delete),
             ),
-            if (isMe)
-              ListTile(
-                leading: const Icon(Icons.delete_forever, color: Colors.red),
-                title: const Text(
-                  'Hamıdan sil',
-                  style: TextStyle(color: Colors.red),
-                ),
-                onTap: () => _deleteForAll(msg),
-              ),
           ],
         ),
       ),
@@ -424,24 +417,95 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
-  Future<void> _deleteForMe(Message msg) async {
-    Navigator.of(context).pop();
+  Future<void> _deleteSelectedForMe() async {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     if (currentUid.isEmpty) return;
-    await ref
-        .read(firestoreServiceProvider)
-        .deleteMessageForMe(
-          chatId: widget.chatId,
-          messageId: msg.id,
-          uid: currentUid,
-        );
+    final service = ref.read(firestoreServiceProvider);
+    for (final msg in _selectedMessages) {
+      await service.deleteMessageForMe(
+        chatId: widget.chatId,
+        messageId: msg.id,
+        uid: currentUid,
+      );
+    }
+    _exitSelectionMode();
   }
 
-  Future<void> _deleteForAll(Message msg) async {
-    Navigator.of(context).pop();
-    await ref
-        .read(firestoreServiceProvider)
-        .deleteMessageForAll(chatId: widget.chatId, messageId: msg.id);
+  Future<void> _deleteSelectedForAll() async {
+    final service = ref.read(firestoreServiceProvider);
+    for (final msg in _selectedMessages) {
+      await service.deleteMessageForAll(
+        chatId: widget.chatId,
+        messageId: msg.id,
+      );
+    }
+    _exitSelectionMode();
+  }
+
+  void _showDeleteSelectedSheet() {
+    final messages = _selectedMessages;
+    if (messages.isEmpty) return;
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final allMine = messages.every((m) => m.senderId == currentUid);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kBg2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 8, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const SizedBox(width: 40),
+                  const Expanded(
+                    child: Text(
+                      'Mesajı silmək?',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: kText,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: kMuted),
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (allMine)
+                ListTile(
+                  title: const Text(
+                    'Hamıdan sil',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  onTap: () {
+                    Navigator.of(sheetContext).pop();
+                    _deleteSelectedForAll();
+                  },
+                ),
+              ListTile(
+                title: const Text(
+                  'Yalnız məndən sil',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _deleteSelectedForMe();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _scrollToBottom() {
@@ -486,10 +550,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _startReply(msg);
   }
 
-  void _enterSelectionMode(Message msg) {
+  void _enterSelectionMode(Message msg, {required _SelectionPurpose purpose}) {
     Navigator.of(context).pop();
     setState(() {
       _selectionMode = true;
+      _selectionPurpose = purpose;
       _selectedMessageIds
         ..clear()
         ..add(msg.id);
@@ -1246,14 +1311,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   Widget _buildSelectionBar() {
+    final isDelete = _selectionPurpose == _SelectionPurpose.delete;
     return Container(
       color: kBg2,
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
       child: Row(
         children: [
           GestureDetector(
-            onTap: _forwardSelected,
-            child: const Icon(Icons.forward, color: kGold),
+            onTap: isDelete ? _showDeleteSelectedSheet : _forwardSelected,
+            child: Icon(
+              isDelete ? Icons.delete_outline : Icons.forward,
+              color: kGold,
+            ),
           ),
           Expanded(
             child: Center(
@@ -1263,10 +1332,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               ),
             ),
           ),
-          GestureDetector(
-            onTap: _shareSelected,
-            child: const Icon(Icons.ios_share, color: kGold),
-          ),
+          if (!isDelete)
+            GestureDetector(
+              onTap: _shareSelected,
+              child: const Icon(Icons.ios_share, color: kGold),
+            ),
         ],
       ),
     );
