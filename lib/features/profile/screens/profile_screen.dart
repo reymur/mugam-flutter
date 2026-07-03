@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
+import '../../../firebase/auth_service.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
@@ -269,11 +270,11 @@ class _Placeholder extends StatelessWidget {
 
 // ── Settings tab ──────────────────────────────────────────────────────────────
 
-class _SettingsTab extends StatelessWidget {
+class _SettingsTab extends ConsumerWidget {
   const _SettingsTab();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Column(
       children: [
         ListTile(
@@ -285,8 +286,58 @@ class _SettingsTab extends StatelessWidget {
           trailing: const Icon(Icons.chevron_right, color: kMuted),
           onTap: () => context.push('/starred'),
         ),
+        ListTile(
+          leading: const Icon(Icons.logout, color: kRed),
+          title: const Text('Çıxış', style: TextStyle(color: kRed)),
+          onTap: () => _confirmLogout(context, ref),
+        ),
       ],
     );
+  }
+
+  Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        title: const Text('Çıxış', style: TextStyle(color: kText)),
+        content: const Text(
+          'Hesabdan çıxmaq istəyirsiniz?',
+          style: TextStyle(color: kMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Ləğv et', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Çıxış', style: TextStyle(color: kRed)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final service = ref.read(firestoreServiceProvider);
+    try {
+      if (uid != null && uid.isNotEmpty) {
+        await service.setUserOnline(uid, false);
+        await service.clearActiveUserFromAllChats(uid);
+      }
+      await AuthService().logout();
+      if (context.mounted) context.go('/login');
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Çıxış zamanı xəta baş verdi: $e'),
+            backgroundColor: kRed,
+          ),
+        );
+      }
+    }
   }
 }
 

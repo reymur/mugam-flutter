@@ -480,6 +480,30 @@ class FirestoreService {
     } catch (_) {}
   }
 
+  // Logout cleanup, mirroring mugam-v2's pre-signOut steps: mark the user
+  // offline and defensively strip their uid from every chat's activeUsers
+  // (in case they logged out without normally leaving a chat first, which
+  // would otherwise leave them permanently exempt from push notifications).
+  Future<void> setUserOnline(String uid, bool online) async {
+    try {
+      await _db.collection('users').doc(uid).update({'online': online});
+    } catch (_) {}
+  }
+
+  Future<void> clearActiveUserFromAllChats(String uid) async {
+    try {
+      final snap = await _db
+          .collection('chats')
+          .where('activeUsers', arrayContains: uid)
+          .get();
+      for (final doc in snap.docs) {
+        await doc.reference.update({
+          'activeUsers': FieldValue.arrayRemove([uid]),
+        });
+      }
+    } catch (_) {}
+  }
+
   Future<void> markChatAsReadBy({
     required String chatId,
     required String uid,
