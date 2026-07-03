@@ -20,6 +20,7 @@ import 'package:super_clipboard/super_clipboard.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import 'about_contact_screen.dart';
 import 'message_info_screen.dart';
 
 enum _SelectionPurpose { forward, delete }
@@ -237,7 +238,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 color: kGold,
               ),
               title: Text(
-                _isMessageStarred(msg.id) ? 'Ulduzu sil' : 'Ulduzla',
+                _isMessageStarred(msg.id)
+                    ? 'Seçilmişlərdən sil'
+                    : 'Seçilmişlər',
                 style: const TextStyle(color: kText),
               ),
               onTap: () => _toggleStarMessage(msg),
@@ -332,7 +335,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final service = ref.read(firestoreServiceProvider);
     if (_isMessageStarred(msg.id)) {
       await service.unstarMessage(uid: currentUid, messageId: msg.id);
-      if (mounted) _showCopySnackBar('Ulduzdan çıxarıldı');
+      if (mounted) _showCopySnackBar('Seçilmişlərdən silindi');
     } else {
       final chatName =
           ref.read(chatDataProvider(widget.chatId)).value?['name'] as String? ??
@@ -344,7 +347,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         senderName: _replySenderName(msg, currentUid),
         message: msg,
       );
-      if (mounted) _showCopySnackBar('Ulduzlandı');
+      if (mounted) _showCopySnackBar('Seçilmişlərə əlavə edildi');
     }
     _restoreComposerFocusIfNeeded();
   }
@@ -1675,26 +1678,45 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           },
         ),
         title: chatDataAsync.when(
-          data: (data) => Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                data?['name'] ?? 'Chat',
-                style: GoogleFonts.playfairDisplay(fontSize: 16, color: kText),
-              ),
-              if (data?['isGroup'] == false)
+          data: (data) {
+            final isGroup = data?['isGroup'] == true;
+            final titleColumn = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
                 Text(
-                  data?['online'] == true ? '● Onlayn' : '○ Oflayn',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: data?['online'] == true
-                        ? const Color(0xFF4CAF50)
-                        : kMuted,
+                  data?['name'] ?? 'Chat',
+                  style: GoogleFonts.playfairDisplay(fontSize: 16, color: kText),
+                ),
+                if (!isGroup)
+                  Text(
+                    data?['online'] == true ? '● Onlayn' : '○ Oflayn',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: data?['online'] == true
+                          ? const Color(0xFF4CAF50)
+                          : kMuted,
+                    ),
+                  ),
+              ],
+            );
+            // Group chats don't have a single "contact" to show info about —
+            // the About Contact screen is scoped to 1:1 chats for now.
+            if (isGroup || otherUidResolved == null) return titleColumn;
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AboutContactScreen(
+                    chatId: widget.chatId,
+                    contactUid: otherUidResolved,
                   ),
                 ),
-            ],
-          ),
+              ),
+              child: titleColumn,
+            );
+          },
           loading: () => const Text('...', style: TextStyle(color: kText)),
           error: (_, _) => const Text('Chat', style: TextStyle(color: kText)),
         ),
@@ -1975,7 +1997,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           ),
                   ),
 
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 4),
+
+                  // Camera — same slot/visibility as the mic button, matching
+                  // WhatsApp's camera-next-to-mic layout. "Kamera" stays in
+                  // the attach sheet too (WhatsApp keeps it in both places).
+                  if (!_hasText && !_isRecording)
+                    IconButton(
+                      icon: const Icon(Icons.camera_alt, color: kGold),
+                      onPressed: _uploadingImage
+                          ? null
+                          : () => _pickAndSendImage(ImageSource.camera),
+                    ),
+
+                  const SizedBox(width: 4),
 
                   // Right button — send (has text or locked recording) or mic (empty/recording)
                   if (_hasText && !_isRecording)

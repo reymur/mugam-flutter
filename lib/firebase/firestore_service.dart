@@ -8,6 +8,12 @@ import 'models.dart';
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
+  Future<Musician?> fetchUserById(String uid) async {
+    final doc = await _db.collection('users').doc(uid).get();
+    if (!doc.exists) return null;
+    return Musician.fromFirestore(doc.id, doc.data()!);
+  }
+
   Stream<List<Musician>> watchMusicians() {
     return _db
         .collection('users')
@@ -451,6 +457,13 @@ final firestoreServiceProvider = Provider<FirestoreService>(
 final musiciansProvider = StreamProvider<List<Musician>>(
   (ref) => ref.watch(firestoreServiceProvider).watchMusicians(),
 );
+
+final userByIdProvider = FutureProvider.family<Musician?, String>((
+  ref,
+  uid,
+) {
+  return ref.watch(firestoreServiceProvider).fetchUserById(uid);
+});
 
 final eventsProvider = FutureProvider<List<Event>>(
   (ref) => ref.watch(firestoreServiceProvider).fetchEvents(),

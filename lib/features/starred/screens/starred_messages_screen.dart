@@ -9,7 +9,13 @@ import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 
 class StarredMessagesScreen extends ConsumerWidget {
-  const StarredMessagesScreen({super.key});
+  // When set, only this chat's starred messages are shown (the per-chat
+  // "Seçilmişlər" view opened from About Contact) instead of every starred
+  // message across all chats (the global Profile → Settings view).
+  final String? chatId;
+  final String? title;
+
+  const StarredMessagesScreen({super.key, this.chatId, this.title});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -21,7 +27,7 @@ class StarredMessagesScreen extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: kBg2,
         title: Text(
-          'Seçilmiş mesajlar',
+          title ?? 'Seçilmiş mesajlar',
           style: GoogleFonts.playfairDisplay(fontSize: 20, color: kText),
         ),
       ),
@@ -34,7 +40,10 @@ class StarredMessagesScreen extends ConsumerWidget {
             style: const TextStyle(color: kRed, fontSize: 12),
           ),
         ),
-        data: (starred) {
+        data: (allStarred) {
+          final starred = chatId == null
+              ? allStarred
+              : allStarred.where((m) => m.chatId == chatId).toList();
           if (starred.isEmpty) {
             return Center(
               child: Padding(
@@ -54,7 +63,7 @@ class StarredMessagesScreen extends ConsumerWidget {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Mesaj üzərində uzun basıb "Ulduzla" seçin',
+                      'Mesaj üzərində uzun basıb "Seçilmişlər" seçin',
                       textAlign: TextAlign.center,
                       style: TextStyle(fontSize: 13, color: kMuted),
                     ),
