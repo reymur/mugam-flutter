@@ -111,6 +111,8 @@ class _StarredListItem extends StatelessWidget {
         return '🖼 Şəkil';
       case 'audio':
         return '🎤 Səs mesajı';
+      case 'video':
+        return '🎥 Video';
       default:
         return item.text;
     }

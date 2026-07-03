@@ -23,6 +23,7 @@ import '../../../firebase/models.dart';
 import 'about_contact_screen.dart';
 import 'camera_capture_screen.dart';
 import 'message_info_screen.dart';
+import 'video_message_widgets.dart';
 
 enum _SelectionPurpose { forward, delete }
 
@@ -1544,6 +1545,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       ),
                     if (msg.type == 'audio' && msg.audioURL != null)
                       _VoiceMessagePlayer(audioURL: msg.audioURL!, isMe: isMe),
+                    if (msg.type == 'video' && msg.videoURL != null)
+                      VideoMessageBubble(videoURL: msg.videoURL!),
                     const SizedBox(height: 2),
                     GestureDetector(
                       onTap: isMe && otherUid != null
