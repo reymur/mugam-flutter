@@ -72,5 +72,13 @@
 	<string>Qalereyanızdan şəkil seçmək üçün giriş lazımdır</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Səs mesajı göndərmək üçün mikrofona giriş lazımdır</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.mugam.mugamFlutter.pendingQueueRetry</string>
+	</array>
 </dict>
 </plist>

@@ -36,6 +36,7 @@ dependencies:
   share_plus: any
   device_info_plus: any
   connectivity_plus: ^7.2.0
+  workmanager: ^0.9.0+3
 
 dev_dependencies:
   flutter_test:

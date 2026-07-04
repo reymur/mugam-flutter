@@ -1,12 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../firebase/firestore_service.dart';
+import 'background_queue_processor.dart';
 import 'pending_media_message.dart';
 import 'pending_message_queue_service.dart';
 
@@ -45,9 +44,9 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
 
   static const int maxQueueSize = 50;
-  static const int maxAttempts = 8;
+  static const int maxAttempts = pendingQueueMaxAttempts;
   static const List<int> _baseBackoffSeconds = [1, 2, 4, 8, 16, 32, 60];
-  static const Duration uploadTimeout = Duration(seconds: 20);
+  static const Duration uploadTimeout = pendingQueueUploadTimeout;
 
   final Set<String> _activeChatProcessors = {};
   final Map<String, _CancelableWait> _pendingWaits = {};
@@ -219,81 +218,16 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
   // status is only ever used as a hint to retry sooner. The real arbiter of
   // success is this attempt itself; a captive-portal-style "connected but
   // no real internet" case simply times out like any other failure and
-  // flows into the same backoff/retry path.
-  Future<bool> _attemptSend(PendingMediaMessage item) async {
-    try {
-      if (!await File(item.filePath).exists()) {
-        debugPrint(
-          'PendingMessageQueueController: file missing for ${item.localId}',
-        );
-        return false;
-      }
-      switch (item.type) {
-        case 'image':
-          final url = await _firestoreService
-              .uploadChatImage(chatId: item.chatId, filePath: item.filePath)
-              .timeout(uploadTimeout);
-          await _firestoreService
-              .sendImageMessage(
-                chatId: item.chatId,
-                senderId: item.senderId,
-                imageURL: url,
-                messageId: item.messageId,
-                replyToId: item.replyToId,
-                replyToText: item.replyToText,
-                replyToSenderName: item.replyToSenderName,
-                replyToImageURL: item.replyToImageURL,
-                replyToVideoURL: item.replyToVideoURL,
-              )
-              .timeout(uploadTimeout);
-          return true;
-        case 'audio':
-          final url = await _firestoreService
-              .uploadChatAudio(chatId: item.chatId, filePath: item.filePath)
-              .timeout(uploadTimeout);
-          await _firestoreService
-              .sendAudioMessage(
-                chatId: item.chatId,
-                senderId: item.senderId,
-                audioURL: url,
-                messageId: item.messageId,
-                replyToId: item.replyToId,
-                replyToText: item.replyToText,
-                replyToSenderName: item.replyToSenderName,
-                replyToImageURL: item.replyToImageURL,
-                replyToVideoURL: item.replyToVideoURL,
-              )
-              .timeout(uploadTimeout);
-          return true;
-        case 'video':
-          final url = await _firestoreService
-              .uploadChatVideo(chatId: item.chatId, filePath: item.filePath)
-              .timeout(uploadTimeout);
-          await _firestoreService
-              .sendVideoMessage(
-                chatId: item.chatId,
-                senderId: item.senderId,
-                videoURL: url,
-                messageId: item.messageId,
-                replyToId: item.replyToId,
-                replyToText: item.replyToText,
-                replyToSenderName: item.replyToSenderName,
-                replyToImageURL: item.replyToImageURL,
-                replyToVideoURL: item.replyToVideoURL,
-              )
-              .timeout(uploadTimeout);
-          return true;
-        default:
-          return false;
-      }
-    } catch (e) {
-      debugPrint(
-        'PendingMessageQueueController: attempt failed for ${item.localId} ($e)',
-      );
-      return false;
-    }
+  // flows into the same backoff/retry path. Delegates to the same
+  // attemptSendPendingMessage() the background isolate uses (see
+  // background_queue_processor.dart) so the two never drift apart.
+  Future<bool> _attemptSend(PendingMediaMessage item) {
+    return attemptSendPendingMessage(
+      item,
+      _firestoreService,
+      timeout: uploadTimeout,
+    );
   }
-
 }
 
 final pendingMessageQueueServiceProvider =

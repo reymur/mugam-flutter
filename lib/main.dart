@@ -5,7 +5,9 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:workmanager/workmanager.dart';
 import 'core/cache/message_cache_service.dart';
+import 'core/queue/background_queue_processor.dart';
 import 'core/queue/pending_message_queue_controller.dart';
 import 'core/queue/pending_message_queue_service.dart';
 import 'core/theme/colors.dart';
@@ -18,6 +20,19 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   final prefs = await SharedPreferences.getInstance();
+  // Best-effort retry for the offline media-send queue while the app is
+  // backgrounded (but not fully killed — see background_queue_processor.dart
+  // for what's deliberately out of scope). registerPeriodicTask's frequency
+  // only takes effect on Android; iOS's actual schedule comes from the
+  // native registerPeriodicTask call in AppDelegate.swift.
+  await Workmanager().initialize(callbackDispatcher);
+  await Workmanager().registerPeriodicTask(
+    'pendingQueueRetry',
+    pendingQueueRetryTaskName,
+    frequency: const Duration(minutes: 15),
+    constraints: Constraints(networkType: NetworkType.connected),
+    existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+  );
   runApp(
     ProviderScope(
       overrides: [
