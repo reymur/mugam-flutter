@@ -24,7 +24,7 @@ class AboutContactScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final musicianAsync = ref.watch(userByIdProvider(contactUid));
+    final userAsync = ref.watch(userByIdProvider(contactUid));
 
     return Scaffold(
       backgroundColor: kBg,
@@ -41,14 +41,14 @@ class AboutContactScreen extends ConsumerWidget {
           style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText),
         ),
       ),
-      body: musicianAsync.when(
+      body: userAsync.when(
         loading: () =>
             const Center(child: CircularProgressIndicator(color: kGold)),
         error: (_, _) => const Center(
           child: Text('Xəta baş verdi', style: TextStyle(color: kMuted)),
         ),
-        data: (musician) {
-          if (musician == null) {
+        data: (user) {
+          if (user == null) {
             return const Center(
               child: Text('İstifadəçi tapılmadı', style: TextStyle(color: kMuted)),
             );
@@ -57,10 +57,10 @@ class AboutContactScreen extends ConsumerWidget {
             child: Column(
               children: [
                 const SizedBox(height: 28),
-                _ContactAvatar(musician: musician),
+                _ContactAvatar(user: user),
                 const SizedBox(height: 18),
                 Text(
-                  musician.name,
+                  user.name,
                   textAlign: TextAlign.center,
                   style: GoogleFonts.playfairDisplay(
                     fontSize: 24,
@@ -70,10 +70,10 @@ class AboutContactScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  musician.online ? '● Onlayn' : '○ Oflayn',
+                  user.online ? '● Onlayn' : '○ Oflayn',
                   style: TextStyle(
                     fontSize: 13,
-                    color: musician.online ? const Color(0xFF4CAF50) : kMuted,
+                    color: user.online ? const Color(0xFF4CAF50) : kMuted,
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -83,7 +83,7 @@ class AboutContactScreen extends ConsumerWidget {
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => MusicianProfileScreen(musician: musician),
+                        builder: (_) => MusicianProfileScreen(musician: user),
                       ),
                     ),
                   ),
@@ -136,8 +136,8 @@ class AboutContactScreen extends ConsumerWidget {
 }
 
 class _ContactAvatar extends StatelessWidget {
-  final User musician;
-  const _ContactAvatar({required this.musician});
+  final User user;
+  const _ContactAvatar({required this.user});
 
   @override
   Widget build(BuildContext context) {
@@ -148,16 +148,16 @@ class _ContactAvatar extends StatelessWidget {
         color: kBg3,
         shape: BoxShape.circle,
         border: Border.all(color: kBorder, width: 1),
-        image: musician.photoURL != null
+        image: user.photoURL != null
             ? DecorationImage(
-                image: NetworkImage(musician.photoURL!),
+                image: NetworkImage(user.photoURL!),
                 fit: BoxFit.cover,
               )
             : null,
       ),
-      child: musician.photoURL == null
+      child: user.photoURL == null
           ? Center(
-              child: Text(musician.emoji, style: const TextStyle(fontSize: 64)),
+              child: Text(user.emoji, style: const TextStyle(fontSize: 64)),
             )
           : null,
     );

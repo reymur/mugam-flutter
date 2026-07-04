@@ -23,19 +23,19 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final musicianAsync = ref.watch(currentUserProvider(currentUid));
+    final userAsync = ref.watch(currentUserProvider(currentUid));
 
     return Scaffold(
       backgroundColor: kBg,
       body: SafeArea(
-        child: musicianAsync.when(
+        child: userAsync.when(
           loading: () =>
               const Center(child: CircularProgressIndicator(color: kGold)),
           error: (_, _) => const Center(
             child: Text('Xəta baş verdi', style: TextStyle(color: kMuted)),
           ),
-          data: (musician) {
-            if (musician == null) {
+          data: (user) {
+            if (user == null) {
               return const Center(
                 child: Text(
                   'İstifadəçi tapılmadı',
@@ -47,12 +47,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _ProfileHeader(musician: musician),
+                  _ProfileHeader(user: user),
                   _TabsRow(
                     activeIndex: _activeTabIndex,
                     onTap: (i) => setState(() => _activeTabIndex = i),
                   ),
-                  _TabContent(activeIndex: _activeTabIndex, musician: musician),
+                  _TabContent(activeIndex: _activeTabIndex, user: user),
                 ],
               ),
             );
@@ -122,17 +122,17 @@ class _TabsRow extends StatelessWidget {
 // ── Tab content dispatcher ────────────────────────────────────────────────────
 
 class _TabContent extends StatelessWidget {
-  const _TabContent({required this.activeIndex, required this.musician});
+  const _TabContent({required this.activeIndex, required this.user});
 
   final int activeIndex;
-  final User musician;
+  final User user;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 30),
       child: switch (activeIndex) {
-        0 => _AboutTab(musician: musician),
+        0 => _AboutTab(user: user),
         1 => const _Placeholder(emoji: '🎬', text: 'Tezliklə əlavə olunacaq'),
         2 => const _Placeholder(emoji: '📅', text: 'Tezliklə əlavə olunacaq'),
         3 => const _Placeholder(emoji: '⭐', text: 'Tezliklə əlavə olunacaq'),
@@ -145,28 +145,28 @@ class _TabContent extends StatelessWidget {
 // ── About tab ─────────────────────────────────────────────────────────────────
 
 class _AboutTab extends StatelessWidget {
-  const _AboutTab({required this.musician});
+  const _AboutTab({required this.user});
 
-  final User musician;
+  final User user;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (musician.instrument.isNotEmpty)
+        if (user.instrument.isNotEmpty)
           _InfoCard(
             title: 'Bacarıqlar',
             child: Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: [_SkillTag(label: musician.instrument)],
+              children: [_SkillTag(label: user.instrument)],
             ),
           ),
         _InfoCard(
           title: 'Haqqında',
           child: Text(
-            musician.bio.isNotEmpty ? musician.bio : 'Məlumat yoxdur',
+            user.bio.isNotEmpty ? user.bio : 'Məlumat yoxdur',
             style: const TextStyle(
               fontSize: 13,
               color: kMuted,
@@ -344,13 +344,13 @@ class _SettingsTab extends ConsumerWidget {
 // ── Profile header ──────────────────────────────────────────────────────────
 
 class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader({required this.musician});
+  const _ProfileHeader({required this.user});
 
-  final User musician;
+  final User user;
 
   @override
   Widget build(BuildContext context) {
-    final isMusician = musician.role == 'musician';
+    final isMusician = user.role == 'musician';
     return Container(
       clipBehavior: Clip.hardEdge,
       decoration: const BoxDecoration(color: Color(0xFF15100A)),
@@ -376,8 +376,8 @@ class _ProfileHeader extends StatelessWidget {
                 // Avatar
                 Center(
                   child: GestureDetector(
-                    onTap: musician.photoURL != null
-                        ? () => showFullImage(context, musician.photoURL!)
+                    onTap: user.photoURL != null
+                        ? () => showFullImage(context, user.photoURL!)
                         : null,
                     child: Container(
                       margin: const EdgeInsets.only(bottom: 12),
@@ -390,22 +390,22 @@ class _ProfileHeader extends StatelessWidget {
                               color: kBg3,
                               shape: BoxShape.circle,
                               border: Border.all(color: kGold, width: 3),
-                              image: musician.photoURL != null
+                              image: user.photoURL != null
                                   ? DecorationImage(
-                                      image: NetworkImage(musician.photoURL!),
+                                      image: NetworkImage(user.photoURL!),
                                       fit: BoxFit.cover,
                                     )
                                   : null,
                             ),
                             alignment: Alignment.center,
-                            child: musician.photoURL == null
+                            child: user.photoURL == null
                                 ? Text(
-                                    musician.emoji,
+                                    user.emoji,
                                     style: const TextStyle(fontSize: 38),
                                   )
                                 : null,
                           ),
-                          if (musician.verified)
+                          if (user.verified)
                             Positioned(
                               bottom: 0,
                               right: 0,
@@ -438,7 +438,7 @@ class _ProfileHeader extends StatelessWidget {
                 ),
                 // Name
                 Text(
-                  musician.name,
+                  user.name,
                   textAlign: TextAlign.center,
                   style: GoogleFonts.playfairDisplay(
                     fontSize: 22,
@@ -448,7 +448,7 @@ class _ProfileHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 // Badges
-                if (isMusician || musician.verified)
+                if (isMusician || user.verified)
                   Wrap(
                     alignment: WrapAlignment.center,
                     spacing: 6,
@@ -461,7 +461,7 @@ class _ProfileHeader extends StatelessWidget {
                           bgColor: Color(0x26D4A03C),
                           borderColor: Color(0x4DD4A03C),
                         ),
-                      if (musician.verified)
+                      if (user.verified)
                         const _Badge(
                           label: '✅ Təsdiqlənmiş',
                           textColor: kGreen,
@@ -470,11 +470,11 @@ class _ProfileHeader extends StatelessWidget {
                         ),
                     ],
                   ),
-                if (musician.bio.isNotEmpty) ...[
+                if (user.bio.isNotEmpty) ...[
                   const SizedBox(height: 12),
                   // Bio
                   Text(
-                    musician.bio,
+                    user.bio,
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 13,
@@ -488,12 +488,12 @@ class _ProfileHeader extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    _StatItem(value: '${musician.gigs}', label: 'Gigs'),
+                    _StatItem(value: '${user.gigs}', label: 'Gigs'),
                     const SizedBox(width: 24),
-                    _StatItem(value: '${musician.reviews}', label: 'Rəy'),
+                    _StatItem(value: '${user.reviews}', label: 'Rəy'),
                     const SizedBox(width: 24),
                     _StatItem(
-                      value: musician.rating.toStringAsFixed(1),
+                      value: user.rating.toStringAsFixed(1),
                       label: 'Reytinq',
                     ),
                   ],
@@ -508,7 +508,7 @@ class _ProfileHeader extends StatelessWidget {
                           context,
                           MaterialPageRoute(
                             builder: (_) =>
-                                EditProfileScreen(musician: musician),
+                                EditProfileScreen(user: user),
                           ),
                         ),
                         style: ElevatedButton.styleFrom(

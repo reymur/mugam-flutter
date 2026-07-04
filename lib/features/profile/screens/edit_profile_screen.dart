@@ -11,9 +11,9 @@ import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 
 class EditProfileScreen extends ConsumerStatefulWidget {
-  final User musician;
+  final User user;
 
-  const EditProfileScreen({super.key, required this.musician});
+  const EditProfileScreen({super.key, required this.user});
 
   @override
   ConsumerState<EditProfileScreen> createState() => _EditProfileScreenState();
@@ -34,15 +34,15 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.musician.name);
-    _bioController = TextEditingController(text: widget.musician.bio);
+    _nameController = TextEditingController(text: widget.user.name);
+    _bioController = TextEditingController(text: widget.user.bio);
     _instrument = kInstruments.firstWhere(
-      (i) => i == widget.musician.instrument,
-      orElse: () => widget.musician.instrument,
+      (i) => i == widget.user.instrument,
+      orElse: () => widget.user.instrument,
     );
     if (_instrument != null && _instrument!.isEmpty) _instrument = null;
-    _city = widget.musician.city.isEmpty ? null : widget.musician.city;
-    _available = widget.musician.available;
+    _city = widget.user.city.isEmpty ? null : widget.user.city;
+    _available = widget.user.available;
   }
 
   @override
@@ -99,12 +99,12 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
       String? photoURL;
       if (_localAvatarPath != null) {
         photoURL = await service.uploadAvatar(
-          uid: widget.musician.id,
+          uid: widget.user.id,
           filePath: _localAvatarPath!,
         );
       }
       await service.updateUserProfile(
-        uid: widget.musician.id,
+        uid: widget.user.id,
         displayName: _nameController.text.trim(),
         bio: _bioController.text.trim(),
         instrument: _instrument ?? '',
@@ -213,8 +213,8 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     ImageProvider? image;
     if (_localAvatarPath != null) {
       image = FileImage(File(_localAvatarPath!));
-    } else if (widget.musician.photoURL != null) {
-      image = NetworkImage(widget.musician.photoURL!);
+    } else if (widget.user.photoURL != null) {
+      image = NetworkImage(widget.user.photoURL!);
     }
     return GestureDetector(
       onTap: _pickAvatar,
@@ -234,7 +234,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
             alignment: Alignment.center,
             child: image == null
                 ? Text(
-                    widget.musician.emoji,
+                    widget.user.emoji,
                     style: const TextStyle(fontSize: 40),
                   )
                 : null,
