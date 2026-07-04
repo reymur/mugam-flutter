@@ -665,7 +665,7 @@ final chatsProvider = StreamProvider.family<List<Chat>, String>((ref, uid) {
   return ref.watch(firestoreServiceProvider).watchChats(uid);
 });
 
-final messagesProvider = StreamProvider.family<List<Message>, String>((
+final messagesProvider = StreamProvider.autoDispose.family<List<Message>, String>((
   ref,
   chatId,
 ) {
