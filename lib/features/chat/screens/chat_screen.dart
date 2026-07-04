@@ -192,7 +192,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   void _showMessageOptionsSheet(Message msg, bool isMe, {String? otherUid}) {
-    _composerHadFocusBeforeMenu = _messageFocusNode.hasFocus;
     if (msg.localSendStatus == 'failed') {
       _showFailedMessageOptionsSheet(msg);
       return;
@@ -336,6 +335,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ),
       ),
     );
+  }
+
+  // Runs on every raw touch-down anywhere over the message list — the empty
+  // background, a plain message bubble, or the start of a long-press that's
+  // about to open the options sheet. A tap-based GestureDetector can't do
+  // this job: any descendant with its own tap or long-press recognizer
+  // (image preview, reaction chips, the reply-jump row, the options menu
+  // itself) wins the gesture arena and the outer onTap never fires, so only
+  // the few spots with no recognizer of their own would dismiss the
+  // keyboard. Listener sees the pointer-down before any recognizer resolves,
+  // so by the time a long-press's onLongPress actually fires and opens a
+  // menu, the composer has already lost focus — there is nothing left for
+  // Flutter's modal-route default behavior to restore once that menu closes.
+  // Captures whether the composer had focus first, since _messageFocusNode
+  // .unfocus() below makes hasFocus false for anything that reads it after.
+  void _dismissComposerFocusOnOutsideTap() {
+    _composerHadFocusBeforeMenu = _messageFocusNode.hasFocus;
+    _messageFocusNode.unfocus();
   }
 
   // showModalBottomSheet doesn't restore focus to whatever had it before the
@@ -1938,9 +1955,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       body: Column(
         children: [
           Expanded(
-            child: GestureDetector(
+            child: Listener(
               behavior: HitTestBehavior.opaque,
-              onTap: () => FocusScope.of(context).unfocus(),
+              onPointerDown: (_) => _dismissComposerFocusOnOutsideTap(),
               child: messagesAsync.when(
                     loading: () => const Center(
                       child: CircularProgressIndicator(color: kGold),
