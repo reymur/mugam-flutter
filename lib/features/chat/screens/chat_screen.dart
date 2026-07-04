@@ -192,8 +192,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   void _showMessageOptionsSheet(Message msg, bool isMe, {String? otherUid}) {
-    if (msg.localSendStatus == 'failed') {
-      _showFailedMessageOptionsSheet(msg);
+    if (msg.localSendStatus != null) {
+      _showPendingMessageOptionsSheet(msg);
       return;
     }
     showModalBottomSheet(
@@ -294,14 +294,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
-  // A failed pending-queue message has no Firestore document — reactions,
-  // reply, forward, copy, star and delivery info don't apply to it, so it
-  // gets its own minimal sheet instead of hiding items one by one in the
-  // main sheet above. "Yenidən göndər" above "Sil", matching the app's
-  // existing convention of destructive actions in red at the end (see the
-  // "Sil" ListTile above).
-  void _showFailedMessageOptionsSheet(Message msg) {
+  // A pending-queue message (queued/uploading/failed) has no Firestore
+  // document yet — reactions, reply, forward, copy, star and delivery info
+  // don't apply to it, so it gets its own minimal sheet instead of hiding
+  // items one by one in the main sheet above. "Sil" here must remove the
+  // item from the local queue (pendingMessageQueueProvider), not call the
+  // Firestore delete used by the main sheet — that path looks up msg.id,
+  // which for a synthetic queue message is 'local_<localId>' and matches no
+  // document, so it would silently do nothing. "Yenidən göndər" only makes
+  // sense once the item has actually failed — for queued/uploading the
+  // automatic per-chat loop is already retrying it.
+  void _showPendingMessageOptionsSheet(Message msg) {
     final localId = msg.id.replaceFirst('local_', '');
+    final isFailed = msg.localSendStatus == 'failed';
     showModalBottomSheet(
       context: context,
       backgroundColor: kBg2,
@@ -312,17 +317,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: const Icon(Icons.refresh, color: kGold),
-              title: const Text(
-                'Yenidən göndər',
-                style: TextStyle(color: kText),
+            if (isFailed)
+              ListTile(
+                leading: const Icon(Icons.refresh, color: kGold),
+                title: const Text(
+                  'Yenidən göndər',
+                  style: TextStyle(color: kText),
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  ref
+                      .read(pendingMessageQueueProvider.notifier)
+                      .retry(localId);
+                },
               ),
-              onTap: () {
-                Navigator.of(context).pop();
-                ref.read(pendingMessageQueueProvider.notifier).retry(localId);
-              },
-            ),
             ListTile(
               leading: const Icon(Icons.delete_outline, color: Colors.red),
               title: const Text('Sil', style: TextStyle(color: Colors.red)),

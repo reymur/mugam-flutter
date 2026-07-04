@@ -169,6 +169,10 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
     await _service.deleteFile(current.first.filePath);
     state = state.where((e) => e.localId != localId).toList();
     await _service.saveAll(state);
+    // If this chat's loop is mid-backoff (waiting to retry this or an
+    // earlier item), wake it now instead of leaving it to idle out the
+    // delay before re-checking candidates against the now-shorter queue.
+    _pendingWaits[current.first.chatId]?.completeNow();
   }
 
   void _updateItem(PendingMediaMessage updated) {
