@@ -135,6 +135,14 @@ class FirestoreService {
     return map;
   }
 
+  // Generates a message doc id client-side, up front, before any upload or
+  // send attempt — used by the pending-media queue so every retry of the
+  // same queued item writes to the same doc via sendXMessage's messageId
+  // param instead of creating a new document each time.
+  String generateMessageId(String chatId) {
+    return _db.collection('chats').doc(chatId).collection('messages').doc().id;
+  }
+
   Future<void> sendMessage({
     required String chatId,
     required String senderId,
@@ -192,6 +200,10 @@ class FirestoreService {
     String? replyToSenderName,
     String? replyToImageURL,
     String? replyToVideoURL,
+    // If provided, writes with .doc(messageId).set(...) instead of .add(...)
+    // — makes retries of this exact same send idempotent (same id = same
+    // document, no duplicate) instead of creating a new message each retry.
+    String? messageId,
   }) async {
     final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
@@ -201,7 +213,7 @@ class FirestoreService {
       replyToImageURL: replyToImageURL,
       replyToVideoURL: replyToVideoURL,
     );
-    await _db.collection('chats').doc(chatId).collection('messages').add({
+    final data = {
       'senderId': senderId,
       'text': '',
       'type': 'image',
@@ -210,7 +222,13 @@ class FirestoreService {
       'audioURL': null,
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
-    });
+    };
+    final messages = _db.collection('chats').doc(chatId).collection('messages');
+    if (messageId != null) {
+      await messages.doc(messageId).set(data);
+    } else {
+      await messages.add(data);
+    }
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🖼 Şəkil',
       'lastMessageTime': now,
@@ -241,6 +259,7 @@ class FirestoreService {
     String? replyToSenderName,
     String? replyToImageURL,
     String? replyToVideoURL,
+    String? messageId,
   }) async {
     final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
@@ -250,7 +269,7 @@ class FirestoreService {
       replyToImageURL: replyToImageURL,
       replyToVideoURL: replyToVideoURL,
     );
-    await _db.collection('chats').doc(chatId).collection('messages').add({
+    final data = {
       'senderId': senderId,
       'text': '',
       'type': 'video',
@@ -260,7 +279,13 @@ class FirestoreService {
       'audioURL': null,
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
-    });
+    };
+    final messages = _db.collection('chats').doc(chatId).collection('messages');
+    if (messageId != null) {
+      await messages.doc(messageId).set(data);
+    } else {
+      await messages.add(data);
+    }
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🎥 Video',
       'lastMessageTime': now,
@@ -290,6 +315,7 @@ class FirestoreService {
     String? replyToSenderName,
     String? replyToImageURL,
     String? replyToVideoURL,
+    String? messageId,
   }) async {
     final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
@@ -299,7 +325,7 @@ class FirestoreService {
       replyToImageURL: replyToImageURL,
       replyToVideoURL: replyToVideoURL,
     );
-    await _db.collection('chats').doc(chatId).collection('messages').add({
+    final data = {
       'senderId': senderId,
       'text': '',
       'type': 'audio',
@@ -308,7 +334,13 @@ class FirestoreService {
       'imageURL': null,
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
-    });
+    };
+    final messages = _db.collection('chats').doc(chatId).collection('messages');
+    if (messageId != null) {
+      await messages.doc(messageId).set(data);
+    } else {
+      await messages.add(data);
+    }
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🎤 Səs mesajı',
       'lastMessageTime': now,

@@ -137,6 +137,12 @@ class Message {
   final List<String> deletedFor;
   final String? deletedAt;
   final Map<String, List<String>> reactions;
+  // Client-only, never round-tripped through Firestore (fromFirestore never
+  // sets these) — used solely to render a not-yet-sent pending-queue item
+  // as a synthetic Message. localSendStatus is null for every real,
+  // server-confirmed message; 'queued' | 'uploading' | 'failed' otherwise.
+  final String? localFilePath;
+  final String? localSendStatus;
 
   const Message({
     required this.id,
@@ -156,6 +162,8 @@ class Message {
     this.deletedFor = const [],
     this.deletedAt,
     this.reactions = const {},
+    this.localFilePath,
+    this.localSendStatus,
   });
 
   factory Message.fromFirestore(String id, Map<String, dynamic> data) {
