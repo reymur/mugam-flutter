@@ -134,17 +134,28 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
   // Manual long-press retry: one immediate attempt outside the automatic
   // FIFO/backoff loop — never silently re-enters an 8-attempt wait cycle
   // after the user explicitly asked for this right now.
+  //
+  // Guarded against the automatic per-chat loop already being mid-attempt
+  // on this same item (status == 'uploading') — without this, a manual
+  // retry tapped right as connectivity returns could run concurrently with
+  // _processChatQueue's own attempt, each uploading its own copy of the
+  // file and racing to write the same Firestore message.
   Future<void> retry(String localId) async {
     final current = state.where((e) => e.localId == localId).toList();
     if (current.isEmpty) return;
     final item = current.first;
+    if (item.status == 'uploading') return;
     _updateItem(item.copyWith(status: 'uploading'));
-    final success = await _attemptSend(item);
+    final (success, uploadedUrl) = await _attemptSend(item);
     if (success) {
       await _removeInternal(localId);
     } else {
       _updateItem(
-        item.copyWith(status: 'failed', attemptCount: item.attemptCount + 1),
+        item.copyWith(
+          status: 'failed',
+          attemptCount: item.attemptCount + 1,
+          uploadedUrl: uploadedUrl,
+        ),
       );
       await _service.saveAll(state);
     }
@@ -177,20 +188,32 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
         if (candidates.isEmpty) break;
         final next = candidates.first;
         _updateItem(next.copyWith(status: 'uploading'));
-        final success = await _attemptSend(next);
+        final (success, uploadedUrl) = await _attemptSend(next);
         if (success) {
           await _removeInternal(next.localId);
           continue;
         }
         final newAttemptCount = next.attemptCount + 1;
         if (newAttemptCount >= maxAttempts) {
-          _updateItem(next.copyWith(status: 'failed', attemptCount: newAttemptCount));
+          _updateItem(
+            next.copyWith(
+              status: 'failed',
+              attemptCount: newAttemptCount,
+              uploadedUrl: uploadedUrl,
+            ),
+          );
           await _service.saveAll(state);
           // A permanently-failed item must not block the rest of this
           // chat's queue forever — move on.
           continue;
         }
-        _updateItem(next.copyWith(status: 'queued', attemptCount: newAttemptCount));
+        _updateItem(
+          next.copyWith(
+            status: 'queued',
+            attemptCount: newAttemptCount,
+            uploadedUrl: uploadedUrl,
+          ),
+        );
         await _service.saveAll(state);
         await _cancelableBackoffDelay(chatId, newAttemptCount);
       }
@@ -221,12 +244,21 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
   // flows into the same backoff/retry path. Delegates to the same
   // attemptSendPendingMessage() the background isolate uses (see
   // background_queue_processor.dart) so the two never drift apart.
-  Future<bool> _attemptSend(PendingMediaMessage item) {
-    return attemptSendPendingMessage(
+  //
+  // Reports back the uploaded URL (if the upload step got that far) so the
+  // caller can persist it on the item even when the overall attempt still
+  // counts as failed — see PendingMediaMessage.uploadedUrl.
+  Future<(bool success, String? uploadedUrl)> _attemptSend(
+    PendingMediaMessage item,
+  ) async {
+    String? uploadedUrl;
+    final success = await attemptSendPendingMessage(
       item,
       _firestoreService,
       timeout: uploadTimeout,
+      onUploaded: (url) => uploadedUrl = url,
     );
+    return (success, uploadedUrl);
   }
 }
 

@@ -143,6 +143,33 @@ class FirestoreService {
     return _db.collection('chats').doc(chatId).collection('messages').doc().id;
   }
 
+  // Used by sendImageMessage/sendAudioMessage/sendVideoMessage when a
+  // messageId is provided (i.e. a queued offline media send). The offline
+  // queue's retry() and its automatic per-chat loop — or the foreground
+  // queue and the WorkManager background task — can end up both attempting
+  // the same queued item at once, each with its own freshly uploaded file
+  // URL. A plain .set() would let whichever write lands last silently
+  // overwrite the other's videoURL/imageURL/audioURL. Wrapping it in a
+  // transaction that only writes if the document doesn't exist yet makes
+  // the second, racing write a no-op instead of a corruption.
+  Future<bool> _writeMessageIfAbsent({
+    required String chatId,
+    required String messageId,
+    required Map<String, dynamic> data,
+  }) {
+    final ref = _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .doc(messageId);
+    return _db.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      if (snap.exists) return false;
+      tx.set(ref, data);
+      return true;
+    });
+  }
+
   Future<void> sendMessage({
     required String chatId,
     required String senderId,
@@ -223,12 +250,21 @@ class FirestoreService {
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
     };
-    final messages = _db.collection('chats').doc(chatId).collection('messages');
+    bool wrote = true;
     if (messageId != null) {
-      await messages.doc(messageId).set(data);
+      wrote = await _writeMessageIfAbsent(
+        chatId: chatId,
+        messageId: messageId,
+        data: data,
+      );
     } else {
-      await messages.add(data);
+      await _db
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add(data);
     }
+    if (!wrote) return;
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🖼 Şəkil',
       'lastMessageTime': now,
@@ -280,12 +316,21 @@ class FirestoreService {
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
     };
-    final messages = _db.collection('chats').doc(chatId).collection('messages');
+    bool wrote = true;
     if (messageId != null) {
-      await messages.doc(messageId).set(data);
+      wrote = await _writeMessageIfAbsent(
+        chatId: chatId,
+        messageId: messageId,
+        data: data,
+      );
     } else {
-      await messages.add(data);
+      await _db
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add(data);
     }
+    if (!wrote) return;
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🎥 Video',
       'lastMessageTime': now,
@@ -335,12 +380,21 @@ class FirestoreService {
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
     };
-    final messages = _db.collection('chats').doc(chatId).collection('messages');
+    bool wrote = true;
     if (messageId != null) {
-      await messages.doc(messageId).set(data);
+      wrote = await _writeMessageIfAbsent(
+        chatId: chatId,
+        messageId: messageId,
+        data: data,
+      );
     } else {
-      await messages.add(data);
+      await _db
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add(data);
     }
+    if (!wrote) return;
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🎤 Səs mesajı',
       'lastMessageTime': now,

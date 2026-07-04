@@ -25,6 +25,11 @@ class PendingMediaMessage {
   final String? replyToSenderName;
   final String? replyToImageURL;
   final String? replyToVideoURL;
+  // Set once a prior attempt's upload step succeeded but the Firestore write
+  // that followed it didn't (timeout/error) — the next attempt reuses this
+  // instead of re-uploading the whole file again, which both wastes data and
+  // widens the window in which two attempts can race to write the message.
+  final String? uploadedUrl;
 
   const PendingMediaMessage({
     required this.localId,
@@ -41,6 +46,7 @@ class PendingMediaMessage {
     this.replyToSenderName,
     this.replyToImageURL,
     this.replyToVideoURL,
+    this.uploadedUrl,
   });
 
   static String generateLocalId() {
@@ -52,6 +58,7 @@ class PendingMediaMessage {
     String? filePath,
     int? attemptCount,
     String? status,
+    String? uploadedUrl,
   }) {
     return PendingMediaMessage(
       localId: localId,
@@ -68,6 +75,7 @@ class PendingMediaMessage {
       replyToSenderName: replyToSenderName,
       replyToImageURL: replyToImageURL,
       replyToVideoURL: replyToVideoURL,
+      uploadedUrl: uploadedUrl ?? this.uploadedUrl,
     );
   }
 
@@ -86,6 +94,7 @@ class PendingMediaMessage {
     'replyToSenderName': replyToSenderName,
     'replyToImageURL': replyToImageURL,
     'replyToVideoURL': replyToVideoURL,
+    'uploadedUrl': uploadedUrl,
   };
 
   factory PendingMediaMessage.fromJson(Map<String, dynamic> json) {
@@ -104,6 +113,7 @@ class PendingMediaMessage {
       replyToSenderName: json['replyToSenderName'] as String?,
       replyToImageURL: json['replyToImageURL'] as String?,
       replyToVideoURL: json['replyToVideoURL'] as String?,
+      uploadedUrl: json['uploadedUrl'] as String?,
     );
   }
 

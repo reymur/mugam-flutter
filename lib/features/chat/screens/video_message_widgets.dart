@@ -43,6 +43,20 @@ class _VideoThumbnailImageState extends State<VideoThumbnailImage> {
     _loadThumb();
   }
 
+  @override
+  void didUpdateWidget(VideoThumbnailImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A message's videoURL can change under an already-mounted bubble (e.g.
+    // a queued send's synthetic localFilePath being replaced by the real
+    // uploaded URL) — reload instead of leaving a stale/never-resolving
+    // thumbnail for the new source.
+    final oldSource = oldWidget.localFilePath ?? oldWidget.videoURL ?? '';
+    if (oldSource != _source) {
+      setState(() => _thumb = null);
+      _loadThumb();
+    }
+  }
+
   Future<void> _loadThumb() async {
     final source = _source;
     if (source.isEmpty) return;

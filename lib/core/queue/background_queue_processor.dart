@@ -18,10 +18,26 @@ const Duration pendingQueueUploadTimeout = Duration(seconds: 20);
 // background isolate spawned by BGTaskScheduler/WorkManager — a single
 // attempt at uploading+sending one queued item, idempotent via its
 // pre-generated messageId.
+//
+// Reuses item.uploadedUrl instead of re-uploading when a previous attempt's
+// upload step succeeded but the Firestore write after it didn't (timeout on
+// a slow reconnect, etc.) — re-uploading the whole file on every retry was
+// both wasteful and, worse, left a real duplicate-write race: two attempts
+// for the same messageId (manual retry() firing alongside the automatic
+// per-chat loop, or the foreground queue racing the WorkManager background
+// task) could each upload their own copy and then both call
+// sendXMessage(messageId: ...), with the later Firestore write silently
+// clobbering the earlier one's videoURL/imageURL/audioURL. onUploaded lets
+// the caller persist the URL the moment it's obtained, before the send step
+// that might still fail. The remaining half of the fix — sendXMessage only
+// writing if the document doesn't already exist — lives in
+// FirestoreService, so even if two attempts still race to call it, only one
+// write survives.
 Future<bool> attemptSendPendingMessage(
   PendingMediaMessage item,
   FirestoreService firestoreService, {
   Duration timeout = pendingQueueUploadTimeout,
+  void Function(String url)? onUploaded,
 }) async {
   try {
     if (!await File(item.filePath).exists()) {
@@ -30,9 +46,12 @@ Future<bool> attemptSendPendingMessage(
     }
     switch (item.type) {
       case 'image':
-        final url = await firestoreService
-            .uploadChatImage(chatId: item.chatId, filePath: item.filePath)
-            .timeout(timeout);
+        final url =
+            item.uploadedUrl ??
+            await firestoreService
+                .uploadChatImage(chatId: item.chatId, filePath: item.filePath)
+                .timeout(timeout);
+        if (item.uploadedUrl == null) onUploaded?.call(url);
         await firestoreService
             .sendImageMessage(
               chatId: item.chatId,
@@ -48,9 +67,12 @@ Future<bool> attemptSendPendingMessage(
             .timeout(timeout);
         return true;
       case 'audio':
-        final url = await firestoreService
-            .uploadChatAudio(chatId: item.chatId, filePath: item.filePath)
-            .timeout(timeout);
+        final url =
+            item.uploadedUrl ??
+            await firestoreService
+                .uploadChatAudio(chatId: item.chatId, filePath: item.filePath)
+                .timeout(timeout);
+        if (item.uploadedUrl == null) onUploaded?.call(url);
         await firestoreService
             .sendAudioMessage(
               chatId: item.chatId,
@@ -66,9 +88,12 @@ Future<bool> attemptSendPendingMessage(
             .timeout(timeout);
         return true;
       case 'video':
-        final url = await firestoreService
-            .uploadChatVideo(chatId: item.chatId, filePath: item.filePath)
-            .timeout(timeout);
+        final url =
+            item.uploadedUrl ??
+            await firestoreService
+                .uploadChatVideo(chatId: item.chatId, filePath: item.filePath)
+                .timeout(timeout);
+        if (item.uploadedUrl == null) onUploaded?.call(url);
         await firestoreService
             .sendVideoMessage(
               chatId: item.chatId,
@@ -124,7 +149,12 @@ Future<void> processPendingQueueOnce() async {
       final current = result.where((e) => e.localId == item.localId).toList();
       if (current.isEmpty || current.first.status != 'queued') continue;
 
-      final success = await attemptSendPendingMessage(item, firestoreService);
+      String? uploadedUrl;
+      final success = await attemptSendPendingMessage(
+        item,
+        firestoreService,
+        onUploaded: (url) => uploadedUrl = url,
+      );
       if (success) {
         await service.deleteFile(item.filePath);
         result.removeWhere((e) => e.localId == item.localId);
@@ -135,9 +165,17 @@ Future<void> processPendingQueueOnce() async {
       final newAttemptCount = item.attemptCount + 1;
       final index = result.indexWhere((e) => e.localId == item.localId);
       if (newAttemptCount >= pendingQueueMaxAttempts) {
-        result[index] = item.copyWith(status: 'failed', attemptCount: newAttemptCount);
+        result[index] = item.copyWith(
+          status: 'failed',
+          attemptCount: newAttemptCount,
+          uploadedUrl: uploadedUrl,
+        );
       } else {
-        result[index] = item.copyWith(status: 'queued', attemptCount: newAttemptCount);
+        result[index] = item.copyWith(
+          status: 'queued',
+          attemptCount: newAttemptCount,
+          uploadedUrl: uploadedUrl,
+        );
       }
       await service.saveAll(result);
       // Stop processing the rest of this chat's queue for this run — the

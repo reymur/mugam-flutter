@@ -62,6 +62,37 @@ class MessageInfoScreen extends ConsumerWidget {
           child: Text('Xəta', style: TextStyle(color: kMuted)),
         ),
         data: (messages) {
+          // A message still in the offline queue has no Firestore document
+          // yet, so it can't have a real deliveredTo/lastReadMsgId entry —
+          // any value found for those below would belong to a different,
+          // already-sent message. Show the local queue state instead.
+          if (message.localSendStatus == 'queued' ||
+              message.localSendStatus == 'uploading' ||
+              message.localSendStatus == 'failed') {
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (message.localSendStatus == 'failed')
+                    _buildInfoRow(
+                      Icons.error_outline,
+                      'Göndərilmədi',
+                      '',
+                      color: kRed,
+                    )
+                  else
+                    _buildInfoRow(
+                      Icons.access_time,
+                      message.localSendStatus == 'uploading'
+                          ? 'Göndərilir'
+                          : 'Gözləyir',
+                      '',
+                    ),
+                ],
+              ),
+            );
+          }
           final members = (chatMeta['members'] as List?)?.cast<String>();
           final otherUid = members?.firstWhere(
             (m) => m != message.senderId,
