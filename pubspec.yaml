@@ -35,6 +35,7 @@ dependencies:
   flutter_cache_manager: any
   share_plus: any
   device_info_plus: any
+  connectivity_plus: ^7.2.0
 
 dev_dependencies:
   flutter_test:

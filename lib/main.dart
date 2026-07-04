@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/cache/message_cache_service.dart';
+import 'core/queue/pending_message_queue_controller.dart';
+import 'core/queue/pending_message_queue_service.dart';
 import 'core/theme/colors.dart';
 import 'core/theme/typography.dart';
 import 'firebase/push_notification_service.dart';
@@ -20,20 +22,23 @@ Future<void> main() async {
     ProviderScope(
       overrides: [
         messageCacheServiceProvider.overrideWithValue(MessageCacheService(prefs)),
+        pendingMessageQueueServiceProvider.overrideWithValue(
+          PendingMessageQueueService(prefs),
+        ),
       ],
       child: const MugamApp(),
     ),
   );
 }
 
-class MugamApp extends StatefulWidget {
+class MugamApp extends ConsumerStatefulWidget {
   const MugamApp({super.key});
 
   @override
-  State<MugamApp> createState() => _MugamAppState();
+  ConsumerState<MugamApp> createState() => _MugamAppState();
 }
 
-class _MugamAppState extends State<MugamApp> {
+class _MugamAppState extends ConsumerState<MugamApp> {
   StreamSubscription<User?>? _authSub;
 
   @override
@@ -51,6 +56,10 @@ class _MugamAppState extends State<MugamApp> {
         appRouter.push('/chat/$chatId');
       }
     });
+    // Eagerly instantiate the offline media-send queue at startup (not
+    // lazily on first chat screen open) so a queue hydrated from a previous
+    // session resumes retrying immediately, app-wide.
+    ref.read(pendingMessageQueueProvider);
   }
 
   @override
