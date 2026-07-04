@@ -18,6 +18,7 @@ import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 import '../../../core/cache/message_cache_service.dart';
+import '../../../core/queue/pending_message_queue_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -192,6 +193,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   void _showMessageOptionsSheet(Message msg, bool isMe, {String? otherUid}) {
     _composerHadFocusBeforeMenu = _messageFocusNode.hasFocus;
+    if (msg.localSendStatus == 'failed') {
+      _showFailedMessageOptionsSheet(msg);
+      return;
+    }
     showModalBottomSheet(
       context: context,
       backgroundColor: kBg2,
@@ -283,6 +288,49 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               title: const Text('Sil', style: TextStyle(color: Colors.red)),
               onTap: () =>
                   _enterSelectionMode(msg, purpose: _SelectionPurpose.delete),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // A failed pending-queue message has no Firestore document — reactions,
+  // reply, forward, copy, star and delivery info don't apply to it, so it
+  // gets its own minimal sheet instead of hiding items one by one in the
+  // main sheet above. "Yenidən göndər" above "Sil", matching the app's
+  // existing convention of destructive actions in red at the end (see the
+  // "Sil" ListTile above).
+  void _showFailedMessageOptionsSheet(Message msg) {
+    final localId = msg.id.replaceFirst('local_', '');
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kBg2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.refresh, color: kGold),
+              title: const Text(
+                'Yenidən göndər',
+                style: TextStyle(color: kText),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                ref.read(pendingMessageQueueProvider.notifier).retry(localId);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text('Sil', style: TextStyle(color: Colors.red)),
+              onTap: () {
+                Navigator.of(context).pop();
+                ref.read(pendingMessageQueueProvider.notifier).remove(localId);
+              },
             ),
           ],
         ),
@@ -904,48 +952,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
+  // Hands the file to the offline-aware pending-send queue instead of
+  // uploading inline — enqueue() only fails synchronously if the queue is
+  // full; the actual upload/retry/backoff happens in the background and is
+  // reflected per-message (clock/error icon), not blocked on here.
   Future<void> _uploadAndSendVideoFile(String filePath) async {
     if (!mounted) return;
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final replyingTo = _replyingTo;
     setState(() => _uploadingVideo = true);
     _cancelReply();
-    try {
-      final videoURL = await ref
-          .read(firestoreServiceProvider)
-          .uploadChatVideo(chatId: widget.chatId, filePath: filePath);
-      await ref
-          .read(firestoreServiceProvider)
-          .sendVideoMessage(
-            chatId: widget.chatId,
-            senderId: currentUid,
-            videoURL: videoURL,
-            replyToId: replyingTo?.id,
-            replyToText: replyingTo != null
-                ? _replyPreviewText(replyingTo)
-                : null,
-            replyToSenderName: replyingTo != null
-                ? _replySenderName(replyingTo, currentUid)
-                : null,
-            replyToImageURL: replyingTo != null
-                ? _replyImageURL(replyingTo)
-                : null,
-            replyToVideoURL: replyingTo != null
-                ? _replyVideoURL(replyingTo)
-                : null,
-          );
-      _scrollToBottom();
-    } catch (e) {
+    final error = await ref
+        .read(pendingMessageQueueProvider.notifier)
+        .enqueue(
+          chatId: widget.chatId,
+          senderId: currentUid,
+          type: 'video',
+          sourceFilePath: filePath,
+          replyToId: replyingTo?.id,
+          replyToText: replyingTo != null
+              ? _replyPreviewText(replyingTo)
+              : null,
+          replyToSenderName: replyingTo != null
+              ? _replySenderName(replyingTo, currentUid)
+              : null,
+          replyToImageURL: replyingTo != null
+              ? _replyImageURL(replyingTo)
+              : null,
+          replyToVideoURL: replyingTo != null
+              ? _replyVideoURL(replyingTo)
+              : null,
+        );
+    if (mounted) setState(() => _uploadingVideo = false);
+    if (error != null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Video göndərilmədi: $e'),
-            backgroundColor: kRed,
-          ),
+          SnackBar(content: Text(error), backgroundColor: kRed),
         );
       }
-    } finally {
-      if (mounted) setState(() => _uploadingVideo = false);
+    } else {
+      _scrollToBottom();
     }
   }
 
@@ -961,48 +1007,44 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   // Shared by the gallery/camera picker and by clipboard image paste.
+  // Hands the file to the offline-aware pending-send queue — see
+  // _uploadAndSendVideoFile for why this doesn't upload inline anymore.
   Future<void> _uploadAndSendImageFile(String filePath) async {
     if (!mounted) return;
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final replyingTo = _replyingTo;
     setState(() => _uploadingImage = true);
     _cancelReply();
-    try {
-      final imageURL = await ref
-          .read(firestoreServiceProvider)
-          .uploadChatImage(chatId: widget.chatId, filePath: filePath);
-      await ref
-          .read(firestoreServiceProvider)
-          .sendImageMessage(
-            chatId: widget.chatId,
-            senderId: currentUid,
-            imageURL: imageURL,
-            replyToId: replyingTo?.id,
-            replyToText: replyingTo != null
-                ? _replyPreviewText(replyingTo)
-                : null,
-            replyToSenderName: replyingTo != null
-                ? _replySenderName(replyingTo, currentUid)
-                : null,
-            replyToImageURL: replyingTo != null
-                ? _replyImageURL(replyingTo)
-                : null,
-            replyToVideoURL: replyingTo != null
-                ? _replyVideoURL(replyingTo)
-                : null,
-          );
-      _scrollToBottom();
-    } catch (e) {
+    final error = await ref
+        .read(pendingMessageQueueProvider.notifier)
+        .enqueue(
+          chatId: widget.chatId,
+          senderId: currentUid,
+          type: 'image',
+          sourceFilePath: filePath,
+          replyToId: replyingTo?.id,
+          replyToText: replyingTo != null
+              ? _replyPreviewText(replyingTo)
+              : null,
+          replyToSenderName: replyingTo != null
+              ? _replySenderName(replyingTo, currentUid)
+              : null,
+          replyToImageURL: replyingTo != null
+              ? _replyImageURL(replyingTo)
+              : null,
+          replyToVideoURL: replyingTo != null
+              ? _replyVideoURL(replyingTo)
+              : null,
+        );
+    if (mounted) setState(() => _uploadingImage = false);
+    if (error != null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Şəkil göndərilmədi: $e'),
-            backgroundColor: kRed,
-          ),
+          SnackBar(content: Text(error), backgroundColor: kRed),
         );
       }
-    } finally {
-      if (mounted) setState(() => _uploadingImage = false);
+    } else {
+      _scrollToBottom();
     }
   }
 
@@ -1244,42 +1286,38 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final replyingTo = _replyingTo;
     _cancelReply();
-    try {
-      final audioURL = await ref
-          .read(firestoreServiceProvider)
-          .uploadChatAudio(chatId: widget.chatId, filePath: path);
-      await ref
-          .read(firestoreServiceProvider)
-          .sendAudioMessage(
-            chatId: widget.chatId,
-            senderId: currentUid,
-            audioURL: audioURL,
-            replyToId: replyingTo?.id,
-            replyToText: replyingTo != null
-                ? _replyPreviewText(replyingTo)
-                : null,
-            replyToSenderName: replyingTo != null
-                ? _replySenderName(replyingTo, currentUid)
-                : null,
-            replyToImageURL: replyingTo != null
-                ? _replyImageURL(replyingTo)
-                : null,
-            replyToVideoURL: replyingTo != null
-                ? _replyVideoURL(replyingTo)
-                : null,
-          );
-      _scrollToBottom();
-    } catch (e) {
+    // Hands the file to the offline-aware pending-send queue — see
+    // _uploadAndSendVideoFile for why this doesn't upload inline anymore.
+    final error = await ref
+        .read(pendingMessageQueueProvider.notifier)
+        .enqueue(
+          chatId: widget.chatId,
+          senderId: currentUid,
+          type: 'audio',
+          sourceFilePath: path,
+          replyToId: replyingTo?.id,
+          replyToText: replyingTo != null
+              ? _replyPreviewText(replyingTo)
+              : null,
+          replyToSenderName: replyingTo != null
+              ? _replySenderName(replyingTo, currentUid)
+              : null,
+          replyToImageURL: replyingTo != null
+              ? _replyImageURL(replyingTo)
+              : null,
+          replyToVideoURL: replyingTo != null
+              ? _replyVideoURL(replyingTo)
+              : null,
+        );
+    if (mounted) setState(() => _uploadingAudio = false);
+    if (error != null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Səs mesajı göndərilmədi: $e'),
-            backgroundColor: kRed,
-          ),
+          SnackBar(content: Text(error), backgroundColor: kRed),
         );
       }
-    } finally {
-      if (mounted) setState(() => _uploadingAudio = false);
+    } else {
+      _scrollToBottom();
     }
   }
 
@@ -1324,7 +1362,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     Widget? checkMark;
     bool isRead = false;
     bool isDelivered = false;
-    if (isMe && otherUid != null) {
+    if (msg.localSendStatus == 'queued' || msg.localSendStatus == 'uploading') {
+      checkMark = const Icon(
+        Icons.access_time,
+        size: 14,
+        color: Color(0xFF1A0E00),
+      );
+    } else if (msg.localSendStatus == 'failed') {
+      checkMark = const Icon(Icons.error_outline, size: 14, color: kRed);
+    } else if (isMe && otherUid != null) {
       final lastReadId = lastReadMsgId[otherUid] as String?;
       final lastReadIndex = lastReadId != null
           ? allMsgIds.indexOf(lastReadId)
@@ -1535,40 +1581,61 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           fontSize: 14,
                         ),
                       ),
-                    if (msg.type == 'image' && msg.imageURL != null)
+                    if (msg.type == 'image' &&
+                        (msg.imageURL != null || msg.localFilePath != null))
                       GestureDetector(
-                        onTap: () => showFullImage(context, msg.imageURL!),
+                        onTap: msg.imageURL != null
+                            ? () => showFullImage(context, msg.imageURL!)
+                            : null,
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(10),
-                          child: CachedNetworkImage(
-                            imageUrl: msg.imageURL!,
-                            width: 200,
-                            height: 200,
-                            fit: BoxFit.cover,
-                            placeholder: (ctx, url) => Container(
-                              width: 200,
-                              height: 200,
-                              color: kBg3,
-                              child: const Center(
-                                child: CircularProgressIndicator(color: kGold),
-                              ),
-                            ),
-                            errorWidget: (ctx, url, err) => Container(
-                              width: 200,
-                              height: 200,
-                              color: kBg3,
-                              child: const Icon(
-                                Icons.broken_image,
-                                color: kMuted,
-                              ),
-                            ),
-                          ),
+                          child: msg.localFilePath != null
+                              ? Image.file(
+                                  File(msg.localFilePath!),
+                                  width: 200,
+                                  height: 200,
+                                  fit: BoxFit.cover,
+                                )
+                              : CachedNetworkImage(
+                                  imageUrl: msg.imageURL!,
+                                  width: 200,
+                                  height: 200,
+                                  fit: BoxFit.cover,
+                                  placeholder: (ctx, url) => Container(
+                                    width: 200,
+                                    height: 200,
+                                    color: kBg3,
+                                    child: const Center(
+                                      child: CircularProgressIndicator(
+                                        color: kGold,
+                                      ),
+                                    ),
+                                  ),
+                                  errorWidget: (ctx, url, err) => Container(
+                                    width: 200,
+                                    height: 200,
+                                    color: kBg3,
+                                    child: const Icon(
+                                      Icons.broken_image,
+                                      color: kMuted,
+                                    ),
+                                  ),
+                                ),
                         ),
                       ),
-                    if (msg.type == 'audio' && msg.audioURL != null)
-                      _VoiceMessagePlayer(audioURL: msg.audioURL!, isMe: isMe),
-                    if (msg.type == 'video' && msg.videoURL != null)
-                      VideoMessageBubble(videoURL: msg.videoURL!),
+                    if (msg.type == 'audio' &&
+                        (msg.audioURL != null || msg.localFilePath != null))
+                      _VoiceMessagePlayer(
+                        audioURL: msg.audioURL,
+                        localFilePath: msg.localFilePath,
+                        isMe: isMe,
+                      ),
+                    if (msg.type == 'video' &&
+                        (msg.videoURL != null || msg.localFilePath != null))
+                      VideoMessageBubble(
+                        videoURL: msg.videoURL,
+                        localFilePath: msg.localFilePath,
+                      ),
                     const SizedBox(height: 2),
                     GestureDetector(
                       onTap: isMe && otherUid != null
@@ -1885,10 +1952,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       final visibleMessages = messages
                           .where((m) => !m.deletedFor.contains(currentUid))
                           .toList();
-                      _lastMessages = visibleMessages;
+                      // Not-yet-sent photo/voice/video messages, rendered as
+                      // synthetic Messages through the same bubble/checkmark
+                      // pipeline — always after every confirmed message,
+                      // matching how an outgoing send-in-progress sits at
+                      // the bottom until it's confirmed.
+                      final pendingForChat = ref.watch(
+                        pendingMessagesForChatProvider(widget.chatId),
+                      );
+                      final combinedMessages = [
+                        ...visibleMessages,
+                        ...pendingForChat.map((p) => p.toSyntheticMessage()),
+                      ];
+                      _lastMessages = combinedMessages;
                       _schedulePurgeTimers(visibleMessages);
                       if (!_hasJumpedToBottomInitially &&
-                          visibleMessages.isNotEmpty) {
+                          combinedMessages.isNotEmpty) {
                         _hasJumpedToBottomInitially = true;
                         final targetId = widget.initialHighlightMessageId;
                         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1899,19 +1978,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           }
                         });
                       }
-                      final allMsgIds = visibleMessages
+                      final allMsgIds = combinedMessages
                           .map((m) => m.id)
                           .toList();
                       return ListView.builder(
                         controller: _scrollController,
                         reverse: false,
-                        itemCount: visibleMessages.length,
+                        itemCount: combinedMessages.length,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 12,
                           vertical: 8,
                         ),
                         itemBuilder: (ctx, i) => _buildMessageBubble(
-                          visibleMessages[i],
+                          combinedMessages[i],
                           i,
                           allMsgIds,
                           currentUid,
@@ -2425,9 +2504,14 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
 }
 
 class _VoiceMessagePlayer extends StatefulWidget {
-  final String audioURL;
+  final String? audioURL;
+  final String? localFilePath;
   final bool isMe;
-  const _VoiceMessagePlayer({required this.audioURL, required this.isMe});
+  const _VoiceMessagePlayer({
+    this.audioURL,
+    this.localFilePath,
+    required this.isMe,
+  });
 
   @override
   State<_VoiceMessagePlayer> createState() => _VoiceMessagePlayerState();
@@ -2458,7 +2542,12 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
         }
       }
     });
-    _player.setUrl(widget.audioURL);
+    final localPath = widget.localFilePath;
+    if (localPath != null) {
+      _player.setFilePath(localPath);
+    } else if (widget.audioURL != null) {
+      _player.setUrl(widget.audioURL!);
+    }
   }
 
   @override

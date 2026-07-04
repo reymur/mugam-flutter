@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -12,13 +13,18 @@ final Map<String, Uint8List> _thumbnailCache = {};
 // Plain thumbnail frame, no tap handler and no play icon — used both by the
 // full-size chat bubble (wrapped with a play icon by VideoMessageBubble) and
 // by the small quote-card previews, which don't need a play affordance.
+// VideoThumbnail.thumbnailData's `video` param accepts either a network URL
+// or a local file path, so a not-yet-uploaded pending video's thumbnail
+// renders exactly the same way as a sent one.
 class VideoThumbnailImage extends StatefulWidget {
-  final String videoURL;
+  final String? videoURL;
+  final String? localFilePath;
   final double size;
 
   const VideoThumbnailImage({
     super.key,
-    required this.videoURL,
+    this.videoURL,
+    this.localFilePath,
     required this.size,
   });
 
@@ -29,6 +35,8 @@ class VideoThumbnailImage extends StatefulWidget {
 class _VideoThumbnailImageState extends State<VideoThumbnailImage> {
   Uint8List? _thumb;
 
+  String get _source => widget.localFilePath ?? widget.videoURL ?? '';
+
   @override
   void initState() {
     super.initState();
@@ -36,20 +44,22 @@ class _VideoThumbnailImageState extends State<VideoThumbnailImage> {
   }
 
   Future<void> _loadThumb() async {
-    final cached = _thumbnailCache[widget.videoURL];
+    final source = _source;
+    if (source.isEmpty) return;
+    final cached = _thumbnailCache[source];
     if (cached != null) {
       if (mounted) setState(() => _thumb = cached);
       return;
     }
     try {
       final data = await VideoThumbnail.thumbnailData(
-        video: widget.videoURL,
+        video: source,
         imageFormat: ImageFormat.JPEG,
         maxWidth: 400,
         quality: 60,
       );
       if (data != null) {
-        _thumbnailCache[widget.videoURL] = data;
+        _thumbnailCache[source] = data;
         if (mounted) setState(() => _thumb = data);
       }
     } catch (_) {}
@@ -76,16 +86,23 @@ class _VideoThumbnailImageState extends State<VideoThumbnailImage> {
 }
 
 // Full chat-bubble video message: thumbnail + play icon, tap opens playback.
+// Works identically for an already-sent video (videoURL) or one still
+// queued/uploading (localFilePath) — tapping either previews the video, a
+// message doesn't have to finish sending before it can be watched.
 class VideoMessageBubble extends StatelessWidget {
-  final String videoURL;
+  final String? videoURL;
+  final String? localFilePath;
 
-  const VideoMessageBubble({super.key, required this.videoURL});
+  const VideoMessageBubble({super.key, this.videoURL, this.localFilePath});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => VideoPlayerScreen(videoURL: videoURL)),
+        MaterialPageRoute(
+          builder: (_) =>
+              VideoPlayerScreen(videoURL: videoURL, localFilePath: localFilePath),
+        ),
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
@@ -95,7 +112,11 @@ class VideoMessageBubble extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              VideoThumbnailImage(videoURL: videoURL, size: 200),
+              VideoThumbnailImage(
+                videoURL: videoURL,
+                localFilePath: localFilePath,
+                size: 200,
+              ),
               Center(
                 child: Container(
                   decoration: const BoxDecoration(
@@ -123,9 +144,10 @@ class VideoMessageBubble extends StatelessWidget {
 // voice-message player over just_audio) rather than pulling in a full
 // player-UI package.
 class VideoPlayerScreen extends StatefulWidget {
-  final String videoURL;
+  final String? videoURL;
+  final String? localFilePath;
 
-  const VideoPlayerScreen({super.key, required this.videoURL});
+  const VideoPlayerScreen({super.key, this.videoURL, this.localFilePath});
 
   @override
   State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
@@ -139,7 +161,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.videoURL));
+    final localPath = widget.localFilePath;
+    _controller = localPath != null
+        ? VideoPlayerController.file(File(localPath))
+        : VideoPlayerController.networkUrl(Uri.parse(widget.videoURL!));
     _controller
         .initialize()
         .then((_) {
