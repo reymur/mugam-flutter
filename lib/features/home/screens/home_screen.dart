@@ -5,7 +5,7 @@ import '../../../core/theme/colors.dart';
 import '../../../shared/widgets/topbar.dart';
 import '../../../firebase/models.dart';
 import '../../../firebase/firestore_service.dart';
-import '../../musician/screens/musician_profile_screen.dart';
+import '../../user/screens/user_profile_screen.dart';
 
 // ── Fallback mock data ────────────────────────────────────────────────────────
 
@@ -390,7 +390,7 @@ class _MusicianCard extends StatelessWidget {
       onTap: () => Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => MusicianProfileScreen(musician: musician),
+          builder: (_) => UserProfileScreen(user: musician),
         ),
       ),
       child: Container(

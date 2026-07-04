@@ -5,7 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
-import '../../musician/screens/musician_profile_screen.dart';
+import '../../user/screens/user_profile_screen.dart';
 import '../../starred/screens/starred_messages_screen.dart';
 
 // Matches WhatsApp's "About Contact" screen layout. The User model has
@@ -83,7 +83,7 @@ class AboutContactScreen extends ConsumerWidget {
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => MusicianProfileScreen(musician: user),
+                        builder: (_) => UserProfileScreen(user: user),
                       ),
                     ),
                   ),

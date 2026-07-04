@@ -9,22 +9,22 @@ import '../../../firebase/models.dart';
 
 const Color _kHeroBg = Color(0xFF15100A);
 
-class MusicianProfileScreen extends ConsumerWidget {
-  final User musician;
+class UserProfileScreen extends ConsumerWidget {
+  final User user;
 
-  const MusicianProfileScreen({super.key, required this.musician});
+  const UserProfileScreen({super.key, required this.user});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final isOwnProfile = musician.id.isNotEmpty && musician.id == currentUid;
+    final isOwnProfile = user.id.isNotEmpty && user.id == currentUid;
 
     final eventsAsync = ref.watch(personalEventsProvider(currentUid));
     final agreementCount = eventsAsync.asData?.value
             .where((e) =>
                 e.isAgree &&
-                ((e.ownerUid == currentUid && e.partnerUid == musician.id) ||
-                    (e.ownerUid == musician.id && e.partnerUid == currentUid)))
+                ((e.ownerUid == currentUid && e.partnerUid == user.id) ||
+                    (e.ownerUid == user.id && e.partnerUid == currentUid)))
             .length ??
         0;
 
@@ -60,7 +60,7 @@ class MusicianProfileScreen extends ConsumerWidget {
                   const SizedBox(height: 10),
                   _buildServices(),
                   const SizedBox(height: 24),
-                  _sectionTitle('Rəylər (${musician.reviews})'),
+                  _sectionTitle('Rəylər (${user.reviews})'),
                   const SizedBox(height: 10),
                   _buildReviews(),
                   const SizedBox(height: 40),
@@ -77,7 +77,7 @@ class MusicianProfileScreen extends ConsumerWidget {
   // Hero section
   // ---------------------------------------------------------------------------
   Widget _buildHero(BuildContext context, bool isOwnProfile, int agreementCount) {
-    final starCount = musician.rating.round().clamp(0, 5);
+    final starCount = user.rating.round().clamp(0, 5);
     final starsStr =
         List.filled(starCount, '★').join() + List.filled(5 - starCount, '☆').join();
 
@@ -100,12 +100,12 @@ class MusicianProfileScreen extends ConsumerWidget {
                     color: kBg3,
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: musician.goldRing ? kGold : kBorder,
+                      color: user.goldRing ? kGold : kBorder,
                       width: 3,
                     ),
                   ),
                   child: Center(
-                    child: Text(musician.emoji, style: const TextStyle(fontSize: 48)),
+                    child: Text(user.emoji, style: const TextStyle(fontSize: 48)),
                   ),
                 ),
                 Positioned(
@@ -115,7 +115,7 @@ class MusicianProfileScreen extends ConsumerWidget {
                     width: 18,
                     height: 18,
                     decoration: BoxDecoration(
-                      color: musician.online ? kGreen : kMuted,
+                      color: user.online ? kGreen : kMuted,
                       shape: BoxShape.circle,
                       border: Border.all(color: _kHeroBg, width: 3),
                     ),
@@ -127,7 +127,7 @@ class MusicianProfileScreen extends ConsumerWidget {
           const SizedBox(height: 12),
           // Name
           Text(
-            musician.name,
+            user.name,
             textAlign: TextAlign.center,
             style: GoogleFonts.playfairDisplay(
               fontSize: 24,
@@ -138,7 +138,7 @@ class MusicianProfileScreen extends ConsumerWidget {
           const SizedBox(height: 4),
           // Instrument
           Text(
-            musician.instrument,
+            user.instrument,
             textAlign: TextAlign.center,
             style: const TextStyle(fontSize: 15, color: kGold, fontWeight: FontWeight.bold),
           ),
@@ -150,11 +150,11 @@ class MusicianProfileScreen extends ConsumerWidget {
             runSpacing: 6,
             children: [
               Text(
-                '📍 ${musician.city}',
+                '📍 ${user.city}',
                 style: const TextStyle(fontSize: 13, color: kMuted),
               ),
-              _onlineBadge(musician.online),
-              if (musician.available) _availableBadge(),
+              _onlineBadge(user.online),
+              if (user.available) _availableBadge(),
             ],
           ),
           const SizedBox(height: 10),
@@ -165,7 +165,7 @@ class MusicianProfileScreen extends ConsumerWidget {
               Text(starsStr, style: const TextStyle(fontSize: 16, color: kGold)),
               const SizedBox(width: 6),
               Text(
-                '${musician.reviews} rəy',
+                '${user.reviews} rəy',
                 style: const TextStyle(fontSize: 12, color: kMuted),
               ),
             ],
@@ -182,13 +182,13 @@ class MusicianProfileScreen extends ConsumerWidget {
               child: Row(
                 children: [
                   Expanded(
-                    child: _StatColumn(label: 'Tədbirlər', value: '${musician.reviews}'),
+                    child: _StatColumn(label: 'Tədbirlər', value: '${user.reviews}'),
                   ),
                   Container(width: 1, color: kBorder),
                   Expanded(
                     child: _StatColumn(
                       label: 'Reytinq',
-                      value: musician.rating.toStringAsFixed(1),
+                      value: user.rating.toStringAsFixed(1),
                     ),
                   ),
                   Container(width: 1, color: kBorder),
@@ -329,10 +329,10 @@ class MusicianProfileScreen extends ConsumerWidget {
   // About section
   // ---------------------------------------------------------------------------
   Widget _buildAbout() {
-    final bio = musician.bio.isNotEmpty
-        ? musician.bio
-        : '${musician.city} şəhərindən professional '
-            '${musician.instrument.toLowerCase()} musiqiçi. '
+    final bio = user.bio.isNotEmpty
+        ? user.bio
+        : '${user.city} şəhərindən professional '
+            '${user.instrument.toLowerCase()} musiqiçi. '
             '10+ il səhnə təcrübəsi.';
     return Text(
       bio,
