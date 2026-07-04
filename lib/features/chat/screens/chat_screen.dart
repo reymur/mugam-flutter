@@ -1790,6 +1790,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final otherUidResolved = (otherUid != null && otherUid.isNotEmpty)
         ? otherUid
         : null;
+    // mugam-v2 writes a 1:1 chat's `name` field from the initiator's
+    // perspective at creation time (the other participant's name) and never
+    // updates it — the recipient reading it back sees their OWN name
+    // instead of the initiator's (same root cause fixed for the chat list
+    // in _ChatListItem; the AppBar title here was never updated to match).
+    final otherUser = otherUidResolved != null
+        ? ref.watch(userByIdProvider(otherUidResolved)).value
+        : null;
 
     return Scaffold(
       appBar: AppBar(
@@ -1808,12 +1816,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         title: chatDataAsync.when(
           data: (data) {
             final isGroup = data?['isGroup'] == true;
+            final displayName = (!isGroup && otherUser != null)
+                ? otherUser.name
+                : (data?['name'] ?? 'Chat');
             final titleColumn = Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  data?['name'] ?? 'Chat',
+                  displayName,
                   style: GoogleFonts.playfairDisplay(fontSize: 16, color: kText),
                 ),
                 if (!isGroup)
