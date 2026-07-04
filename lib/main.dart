@@ -4,6 +4,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'core/cache/message_cache_service.dart';
 import 'core/theme/colors.dart';
 import 'core/theme/typography.dart';
 import 'firebase/push_notification_service.dart';
@@ -13,7 +15,15 @@ import 'navigation/app_router.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  runApp(const ProviderScope(child: MugamApp()));
+  final prefs = await SharedPreferences.getInstance();
+  runApp(
+    ProviderScope(
+      overrides: [
+        messageCacheServiceProvider.overrideWithValue(MessageCacheService(prefs)),
+      ],
+      child: const MugamApp(),
+    ),
+  );
 }
 
 class MugamApp extends StatefulWidget {

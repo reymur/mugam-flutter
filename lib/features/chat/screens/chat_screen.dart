@@ -17,6 +17,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:super_clipboard/super_clipboard.dart';
+import '../../../core/cache/message_cache_service.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -74,6 +75,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   String? _highlightedMessageId;
   Timer? _highlightTimer;
   List<Message> _lastMessages = [];
+  List<Message>? _messagesPendingCacheFlush;
   final Map<String, Timer> _purgeTimers = {};
   bool _selectionMode = false;
   _SelectionPurpose _selectionPurpose = _SelectionPurpose.forward;
@@ -89,11 +91,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   ];
 
   late final FirestoreService _firestoreService;
+  late final MessageCacheService _messageCacheService;
 
   @override
   void initState() {
     super.initState();
     _firestoreService = ref.read(firestoreServiceProvider);
+    _messageCacheService = ref.read(messageCacheServiceProvider);
     _messageController.addListener(() {
       final hasText = _messageController.text.trim().isNotEmpty;
       if (hasText != _hasText) {
@@ -143,6 +147,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         chatId: widget.chatId,
         uid: currentUid,
       );
+    }
+    final pendingMessages = _messagesPendingCacheFlush;
+    if (pendingMessages != null) {
+      _messageCacheService.flush(widget.chatId, pendingMessages);
     }
     _messageController.dispose();
     _messageFocusNode.dispose();
@@ -1715,6 +1723,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   @override
   Widget build(BuildContext context) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final liveMessagesAsync = ref.watch(messagesProvider(widget.chatId));
+    // Before the live stream has delivered its first snapshot (cold start,
+    // or currently offline), fall back to the last cached messages so the
+    // screen doesn't just show a spinner. The live stream always wins once
+    // it has data — this never overrides it.
+    AsyncValue<List<Message>> messagesAsync = liveMessagesAsync;
+    if (!liveMessagesAsync.hasValue) {
+      final cachedMessages = ref.watch(cachedMessagesProvider(widget.chatId));
+      if (cachedMessages != null) {
+        messagesAsync = AsyncValue.data(cachedMessages);
+      }
+    }
     final chatDataAsync = ref.watch(chatDataProvider(widget.chatId));
     // Keeps the starred-ids stream subscribed so _isMessageStarred's
     // ref.read reflects live data in the message options sheet.
@@ -1750,6 +1770,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 lastMsgId: lastOtherMsg.id,
               );
         }
+      });
+      next.whenData((messages) {
+        _messagesPendingCacheFlush = messages;
+        _messageCacheService.writeDebounced(widget.chatId, messages);
       });
     });
 
@@ -1839,9 +1863,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => FocusScope.of(context).unfocus(),
-              child: ref
-                  .watch(messagesProvider(widget.chatId))
-                  .when(
+              child: messagesAsync.when(
                     loading: () => const Center(
                       child: CircularProgressIndicator(color: kGold),
                     ),
