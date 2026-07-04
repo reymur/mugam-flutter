@@ -1,4 +1,4 @@
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -10,7 +10,7 @@ import '../../../firebase/models.dart';
 const Color _kHeroBg = Color(0xFF15100A);
 
 class MusicianProfileScreen extends ConsumerWidget {
-  final Musician musician;
+  final User musician;
 
   const MusicianProfileScreen({super.key, required this.musician});
 

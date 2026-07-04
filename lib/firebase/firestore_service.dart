@@ -8,15 +8,15 @@ import 'models.dart';
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  Future<Musician?> fetchUserById(String uid) async {
+  Future<User?> fetchUserById(String uid) async {
     final doc = await _db.collection('users').doc(uid).get();
     if (!doc.exists) return null;
-    return Musician.fromFirestore(doc.id, doc.data()!);
+    return User.fromFirestore(doc.id, doc.data()!);
   }
 
-  Stream<Musician?> watchUserById(String uid) {
+  Stream<User?> watchUserById(String uid) {
     return _db.collection('users').doc(uid).snapshots().map(
-      (doc) => doc.exists ? Musician.fromFirestore(doc.id, doc.data()!) : null,
+      (doc) => doc.exists ? User.fromFirestore(doc.id, doc.data()!) : null,
     );
   }
 
@@ -53,7 +53,7 @@ class FirestoreService {
     });
   }
 
-  Stream<List<Musician>> watchMusicians() {
+  Stream<List<User>> watchMusicians() {
     return _db
         .collection('users')
         .where('role', isEqualTo: 'musician')
@@ -61,7 +61,7 @@ class FirestoreService {
         .snapshots()
         .map(
           (snap) => snap.docs
-              .map((doc) => Musician.fromFirestore(doc.id, doc.data()))
+              .map((doc) => User.fromFirestore(doc.id, doc.data()))
               .toList(),
         );
   }
@@ -551,7 +551,7 @@ class FirestoreService {
         );
   }
 
-  Stream<List<PersonalEvent>> watchEventsAsMusician(String uid) {
+  Stream<List<PersonalEvent>> watchEventsAsParticipant(String uid) {
     return _db
         .collection('personalEvents')
         .where('musicians', arrayContains: uid)
@@ -614,18 +614,18 @@ final firestoreServiceProvider = Provider<FirestoreService>(
   (_) => FirestoreService(),
 );
 
-final musiciansProvider = StreamProvider<List<Musician>>(
+final musiciansProvider = StreamProvider<List<User>>(
   (ref) => ref.watch(firestoreServiceProvider).watchMusicians(),
 );
 
-final userByIdProvider = FutureProvider.family<Musician?, String>((
+final userByIdProvider = FutureProvider.family<User?, String>((
   ref,
   uid,
 ) {
   return ref.watch(firestoreServiceProvider).fetchUserById(uid);
 });
 
-final currentUserProvider = StreamProvider.family<Musician?, String>((
+final currentUserProvider = StreamProvider.family<User?, String>((
   ref,
   uid,
 ) {
@@ -646,10 +646,10 @@ final personalEventsProvider =
           ref.watch(firestoreServiceProvider).watchPersonalEvents(uid),
     );
 
-final eventsAsMusicianProvider =
+final eventsAsParticipantProvider =
     StreamProvider.family<List<PersonalEvent>, String>(
       (ref, uid) =>
-          ref.watch(firestoreServiceProvider).watchEventsAsMusician(uid),
+          ref.watch(firestoreServiceProvider).watchEventsAsParticipant(uid),
     );
 
 final chatsProvider = StreamProvider.family<List<Chat>, String>((ref, uid) {

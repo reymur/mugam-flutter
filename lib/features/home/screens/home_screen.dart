@@ -9,8 +9,8 @@ import '../../musician/screens/musician_profile_screen.dart';
 
 // ── Fallback mock data ────────────────────────────────────────────────────────
 
-const List<Musician> _fallbackMusicians = [
-  Musician(
+const List<User> _fallbackMusicians = [
+  User(
     id: '',
     name: 'Anar Musayev',
     instrument: 'Kaman',
@@ -23,7 +23,7 @@ const List<Musician> _fallbackMusicians = [
     reviews: 31,
     bio: '',
   ),
-  Musician(
+  User(
     id: '',
     name: 'Leyla Həsənova',
     instrument: 'Tar',
@@ -36,7 +36,7 @@ const List<Musician> _fallbackMusicians = [
     reviews: 18,
     bio: '',
   ),
-  Musician(
+  User(
     id: '',
     name: 'Rəşad Əliyev',
     instrument: 'Nağara',
@@ -49,7 +49,7 @@ const List<Musician> _fallbackMusicians = [
     reviews: 25,
     bio: '',
   ),
-  Musician(
+  User(
     id: '',
     name: 'Günel Vəliyeva',
     instrument: 'Vokal',
@@ -62,7 +62,7 @@ const List<Musician> _fallbackMusicians = [
     reviews: 12,
     bio: '',
   ),
-  Musician(
+  User(
     id: '',
     name: 'Tural Quliyev',
     instrument: 'Qarmon',
@@ -380,7 +380,7 @@ class _MusiciansSection extends ConsumerWidget {
 }
 
 class _MusicianCard extends StatelessWidget {
-  final Musician musician;
+  final User musician;
 
   const _MusicianCard({required this.musician});
 

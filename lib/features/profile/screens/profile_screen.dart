@@ -1,4 +1,4 @@
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -125,7 +125,7 @@ class _TabContent extends StatelessWidget {
   const _TabContent({required this.activeIndex, required this.musician});
 
   final int activeIndex;
-  final Musician musician;
+  final User musician;
 
   @override
   Widget build(BuildContext context) {
@@ -147,7 +147,7 @@ class _TabContent extends StatelessWidget {
 class _AboutTab extends StatelessWidget {
   const _AboutTab({required this.musician});
 
-  final Musician musician;
+  final User musician;
 
   @override
   Widget build(BuildContext context) {
@@ -346,7 +346,7 @@ class _SettingsTab extends ConsumerWidget {
 class _ProfileHeader extends StatelessWidget {
   const _ProfileHeader({required this.musician});
 
-  final Musician musician;
+  final User musician;
 
   @override
   Widget build(BuildContext context) {

@@ -1,4 +1,4 @@
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -8,7 +8,7 @@ import '../../../firebase/models.dart';
 import '../../musician/screens/musician_profile_screen.dart';
 import '../../starred/screens/starred_messages_screen.dart';
 
-// Matches WhatsApp's "About Contact" screen layout. The Musician model has
+// Matches WhatsApp's "About Contact" screen layout. The User model has
 // no phone number field (checked across the whole schema), so the contact's
 // name takes the large primary text slot that WhatsApp uses for the phone
 // number, with online status as the secondary muted line underneath.
@@ -136,7 +136,7 @@ class AboutContactScreen extends ConsumerWidget {
 }
 
 class _ContactAvatar extends StatelessWidget {
-  final Musician musician;
+  final User musician;
   const _ContactAvatar({required this.musician});
 
   @override

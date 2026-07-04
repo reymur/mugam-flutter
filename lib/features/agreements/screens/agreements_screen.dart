@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -182,7 +182,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   Widget build(BuildContext context) {
     final uid = _uid;
     final personalEventsAsync = ref.watch(personalEventsProvider(uid));
-    final eventsAsMusicianAsync = ref.watch(eventsAsMusicianProvider(uid));
+    final eventsAsMusicianAsync = ref.watch(eventsAsParticipantProvider(uid));
 
     final personalEvents = personalEventsAsync.asData?.value ?? [];
     final eventsAsMusician = eventsAsMusicianAsync.asData?.value ?? [];
@@ -582,7 +582,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   Widget _buildCalendarTab(
     List<PersonalEvent> personalEvents,
     List<PersonalEvent> eventsAsMusician,
-    List<Musician> allMusicians,
+    List<User> allMusicians,
   ) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -688,7 +688,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   Widget _buildCalendarPageView(
     List<PersonalEvent> personalEvents,
     List<PersonalEvent> eventsAsMusician,
-    List<Musician> allMusicians,
+    List<User> allMusicians,
   ) {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -720,7 +720,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     required DateTime month,
     required List<PersonalEvent> personalEvents,
     required List<PersonalEvent> eventsAsMusician,
-    required List<Musician> allMusicians,
+    required List<User> allMusicians,
   }) {
     final allEvents = [...personalEvents, ...eventsAsMusician];
     final year = month.year;
@@ -882,7 +882,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     DateTime dayDate,
     List<PersonalEvent> personalEvents,
     List<PersonalEvent> eventsAsMusician,
-    List<Musician> allMusicians,
+    List<User> allMusicians,
   ) {
     setState(() => _selectedCalendarDay = day);
     final initialDate = DateTime(dayDate.year, dayDate.month, dayDate.day, 12);
@@ -901,7 +901,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     required DateTime initialDate,
     required List<PersonalEvent> personalEvents,
     required List<PersonalEvent> eventsAsMusician,
-    required List<Musician> allMusicians,
+    required List<User> allMusicians,
     PersonalEvent? existingEvent,
     String mode = 'time-only',
   }) async {
@@ -933,7 +933,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   Widget _buildTedbirlerTab(
     List<PersonalEvent> personalEvents,
     List<PersonalEvent> eventsAsMusician,
-    List<Musician> allMusicians,
+    List<User> allMusicians,
   ) {
     List<_TaggedEvent> tagged = [];
     final ownEvents = personalEvents.where((e) => e.ownerUid == _uid).map((e) => _TaggedEvent(e, true)).toList();
@@ -1100,7 +1100,7 @@ class _EventCard extends StatelessWidget {
   final PersonalEvent event;
   final bool isOwn;
   final String currentUid;
-  final List<Musician> allMusicians;
+  final List<User> allMusicians;
   final VoidCallback onTap;
 
   const _EventCard({
@@ -1111,7 +1111,7 @@ class _EventCard extends StatelessWidget {
     required this.onTap,
   });
 
-  Musician? _findMusician(String uid) {
+  User? _findMusician(String uid) {
     try {
       return allMusicians.firstWhere((m) => m.id == uid);
     } catch (_) {
@@ -1357,7 +1357,7 @@ class _AgreementDetailScreen extends StatelessWidget {
   final String currentUid;
   final List<PersonalEvent> personalEvents;
   final List<PersonalEvent> eventsAsMusician;
-  final List<Musician> allMusicians;
+  final List<User> allMusicians;
   final FirestoreService firestoreService;
   final VoidCallback onBack;
 
@@ -1558,7 +1558,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
   final String currentUid;
   final List<PersonalEvent> personalEvents;
   final List<PersonalEvent> eventsAsMusician;
-  final List<Musician> allMusicians;
+  final List<User> allMusicians;
   final FirestoreService firestoreService;
   final VoidCallback onBack;
 
@@ -1572,7 +1572,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
     required this.onBack,
   });
 
-  Musician? _findMusician(String uid) {
+  User? _findMusician(String uid) {
     try {
       return allMusicians.firstWhere((m) => m.id == uid);
     } catch (_) {
@@ -1753,7 +1753,7 @@ class _ConflictEventScreen extends StatefulWidget {
   final String currentUid;
   final List<PersonalEvent> personalEvents;
   final List<PersonalEvent> eventsAsMusician;
-  final List<Musician> allMusicians;
+  final List<User> allMusicians;
   final FirestoreService firestoreService;
 
   const _ConflictEventScreen({
@@ -2049,7 +2049,7 @@ class _EventFormModal extends StatefulWidget {
   final String initialLocation;
   final String initialNotes;
   final List<String> initialMusicians;
-  final List<Musician> allMusicians;
+  final List<User> allMusicians;
   final PersonalEvent? existingEvent;
   final List<PersonalEvent> allCombinedEvents;
   final String currentUid;
@@ -2401,7 +2401,7 @@ class _EventFormModalState extends State<_EventFormModal> {
                 runSpacing: 6,
                 children: [
                   ..._selectedMusicianUids.map((uid) {
-                    Musician? m;
+                    User? m;
                     try {
                       m = widget.allMusicians.firstWhere((x) => x.id == uid);
                     } catch (_) {}
@@ -2872,7 +2872,7 @@ class _ConflictDialog extends StatelessWidget {
 // _MusicianPickerDialog
 // ---------------------------------------------------------------------------
 class _MusicianPickerDialog extends StatefulWidget {
-  final List<Musician> allMusicians;
+  final List<User> allMusicians;
   final List<String> selectedUids;
   final ValueChanged<List<String>> onChanged;
 

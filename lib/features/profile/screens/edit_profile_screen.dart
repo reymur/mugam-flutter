@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -11,7 +11,7 @@ import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 
 class EditProfileScreen extends ConsumerStatefulWidget {
-  final Musician musician;
+  final User musician;
 
   const EditProfileScreen({super.key, required this.musician});
 

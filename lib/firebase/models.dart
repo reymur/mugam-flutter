@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-class Musician {
+class User {
   final String id;
   final String name;
   final String emoji;
@@ -17,7 +17,7 @@ class Musician {
   final bool verified;
   final String role;
 
-  const Musician({
+  const User({
     required this.id,
     required this.name,
     required this.emoji,
@@ -35,8 +35,8 @@ class Musician {
     this.role = 'user',
   });
 
-  factory Musician.fromFirestore(String id, Map<String, dynamic> data) {
-    return Musician(
+  factory User.fromFirestore(String id, Map<String, dynamic> data) {
+    return User(
       id: id,
       name: (data['name'] ?? data['displayName'] ?? 'İstifadəçi') as String,
       emoji: (data['emoji'] ?? '🎵') as String,
