@@ -66,6 +66,21 @@ class FirestoreService {
         );
   }
 
+  // Unfiltered by role — used where any registered user can be picked
+  // (e.g. tagging event participants), unlike watchMusicians() above which
+  // powers the home screen's musician-only feed.
+  Stream<List<User>> watchAllUsers() {
+    return _db
+        .collection('users')
+        .limit(50)
+        .snapshots()
+        .map(
+          (snap) => snap.docs
+              .map((doc) => User.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
+  }
+
   Stream<List<Chat>> watchChats(String uid) {
     return _db
         .collection('chats')
@@ -616,6 +631,10 @@ final firestoreServiceProvider = Provider<FirestoreService>(
 
 final musiciansProvider = StreamProvider<List<User>>(
   (ref) => ref.watch(firestoreServiceProvider).watchMusicians(),
+);
+
+final allUsersProvider = StreamProvider<List<User>>(
+  (ref) => ref.watch(firestoreServiceProvider).watchAllUsers(),
 );
 
 final userByIdProvider = FutureProvider.family<User?, String>((

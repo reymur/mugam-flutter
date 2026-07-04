@@ -182,11 +182,11 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   Widget build(BuildContext context) {
     final uid = _uid;
     final personalEventsAsync = ref.watch(personalEventsProvider(uid));
-    final eventsAsMusicianAsync = ref.watch(eventsAsParticipantProvider(uid));
+    final eventsAsParticipantAsync = ref.watch(eventsAsParticipantProvider(uid));
 
     final personalEvents = personalEventsAsync.asData?.value ?? [];
-    final eventsAsMusician = eventsAsMusicianAsync.asData?.value ?? [];
-    final allMusicians = ref.watch(musiciansProvider).asData?.value ?? [];
+    final eventsAsParticipant = eventsAsParticipantAsync.asData?.value ?? [];
+    final allUsers = ref.watch(allUsersProvider).asData?.value ?? [];
 
     final agreeEvents = _agreeEvents(personalEvents);
     final hasUnread = agreeEvents.any(_isUnread);
@@ -197,8 +197,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         event: _selectedAgreement!,
         currentUid: uid,
         personalEvents: personalEvents,
-        eventsAsMusician: eventsAsMusician,
-        allMusicians: allMusicians,
+        eventsAsParticipant: eventsAsParticipant,
+        allUsers: allUsers,
         firestoreService: ref.read(firestoreServiceProvider),
         onBack: () => setState(() => _selectedAgreement = null),
       );
@@ -208,8 +208,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         event: _tedbirDetail!,
         currentUid: uid,
         personalEvents: personalEvents,
-        eventsAsMusician: eventsAsMusician,
-        allMusicians: allMusicians,
+        eventsAsParticipant: eventsAsParticipant,
+        allUsers: allUsers,
         firestoreService: ref.read(firestoreServiceProvider),
         onBack: () => setState(() => _tedbirDetail = null),
       );
@@ -225,8 +225,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
               child: _mainView == 'agreements'
                   ? _buildAgreementsTab(agreeEvents)
                   : _mainView == 'calendar'
-                      ? _buildCalendarTab(personalEvents, eventsAsMusician, allMusicians)
-                      : _buildTedbirlerTab(personalEvents, eventsAsMusician, allMusicians),
+                      ? _buildCalendarTab(personalEvents, eventsAsParticipant, allUsers)
+                      : _buildTedbirlerTab(personalEvents, eventsAsParticipant, allUsers),
             ),
           ],
         ),
@@ -241,8 +241,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                     ? DateTime.now()
                     : DateTime(_currentCalendarMonth.year, _currentCalendarMonth.month, 1, 12),
                 personalEvents: personalEvents,
-                eventsAsMusician: eventsAsMusician,
-                allMusicians: allMusicians,
+                eventsAsParticipant: eventsAsParticipant,
+                allUsers: allUsers,
                 mode: 'time-only',
               ),
               child: const Icon(Icons.add),
@@ -581,8 +581,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   // =========================================================================
   Widget _buildCalendarTab(
     List<PersonalEvent> personalEvents,
-    List<PersonalEvent> eventsAsMusician,
-    List<User> allMusicians,
+    List<PersonalEvent> eventsAsParticipant,
+    List<User> allUsers,
   ) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -592,7 +592,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           const SizedBox(height: 16),
           _buildDayOfWeekRow(),
           const SizedBox(height: 8),
-          _buildCalendarPageView(personalEvents, eventsAsMusician, allMusicians),
+          _buildCalendarPageView(personalEvents, eventsAsParticipant, allUsers),
           const SizedBox(height: 80),
         ],
       ),
@@ -687,8 +687,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
 
   Widget _buildCalendarPageView(
     List<PersonalEvent> personalEvents,
-    List<PersonalEvent> eventsAsMusician,
-    List<User> allMusicians,
+    List<PersonalEvent> eventsAsParticipant,
+    List<User> allUsers,
   ) {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -707,8 +707,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
             itemBuilder: (_, page) => _buildCalendarGridForMonth(
               month: _monthForPage(page),
               personalEvents: personalEvents,
-              eventsAsMusician: eventsAsMusician,
-              allMusicians: allMusicians,
+              eventsAsParticipant: eventsAsParticipant,
+              allUsers: allUsers,
             ),
           ),
         );
@@ -719,10 +719,10 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   Widget _buildCalendarGridForMonth({
     required DateTime month,
     required List<PersonalEvent> personalEvents,
-    required List<PersonalEvent> eventsAsMusician,
-    required List<User> allMusicians,
+    required List<PersonalEvent> eventsAsParticipant,
+    required List<User> allUsers,
   }) {
-    final allEvents = [...personalEvents, ...eventsAsMusician];
+    final allEvents = [...personalEvents, ...eventsAsParticipant];
     final year = month.year;
     final monthNum = month.month;
     final firstWeekday = DateTime(year, monthNum, 1).weekday; // 1=Mon
@@ -757,8 +757,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         isToday: isToday,
         hasEvents: hasEvents,
         eventCount: dayEvents.length,
-        onTap: () => _onDayTap(day, dayDate, dayEvents, personalEvents, eventsAsMusician),
-        onLongPress: () => _onDayLongPress(day, dayDate, personalEvents, eventsAsMusician, allMusicians),
+        onTap: () => _onDayTap(day, dayDate, dayEvents, personalEvents, eventsAsParticipant),
+        onLongPress: () => _onDayLongPress(day, dayDate, personalEvents, eventsAsParticipant, allUsers),
       ));
     }
 
@@ -851,7 +851,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     DateTime dayDate,
     List<PersonalEvent> dayEvents,
     List<PersonalEvent> personalEvents,
-    List<PersonalEvent> eventsAsMusician,
+    List<PersonalEvent> eventsAsParticipant,
   ) {
     if (_selectedCalendarDay == day) {
       setState(() => _selectedCalendarDay = null);
@@ -881,8 +881,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     int day,
     DateTime dayDate,
     List<PersonalEvent> personalEvents,
-    List<PersonalEvent> eventsAsMusician,
-    List<User> allMusicians,
+    List<PersonalEvent> eventsAsParticipant,
+    List<User> allUsers,
   ) {
     setState(() => _selectedCalendarDay = day);
     final initialDate = DateTime(dayDate.year, dayDate.month, dayDate.day, 12);
@@ -890,8 +890,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       context,
       initialDate: initialDate,
       personalEvents: personalEvents,
-      eventsAsMusician: eventsAsMusician,
-      allMusicians: allMusicians,
+      eventsAsParticipant: eventsAsParticipant,
+      allUsers: allUsers,
       mode: 'time-only',
     );
   }
@@ -900,12 +900,12 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     BuildContext context, {
     required DateTime initialDate,
     required List<PersonalEvent> personalEvents,
-    required List<PersonalEvent> eventsAsMusician,
-    required List<User> allMusicians,
+    required List<PersonalEvent> eventsAsParticipant,
+    required List<User> allUsers,
     PersonalEvent? existingEvent,
     String mode = 'time-only',
   }) async {
-    final allCombined = [...personalEvents, ...eventsAsMusician];
+    final allCombined = [...personalEvents, ...eventsAsParticipant];
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -916,8 +916,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         initialType: existingEvent?.type ?? '',
         initialLocation: existingEvent?.location ?? '',
         initialNotes: existingEvent?.notes ?? '',
-        initialMusicians: existingEvent?.musicians ?? [],
-        allMusicians: allMusicians,
+        initialParticipantUids: existingEvent?.musicians ?? [],
+        allUsers: allUsers,
         existingEvent: existingEvent,
         allCombinedEvents: allCombined,
         currentUid: _uid,
@@ -932,12 +932,12 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   // =========================================================================
   Widget _buildTedbirlerTab(
     List<PersonalEvent> personalEvents,
-    List<PersonalEvent> eventsAsMusician,
-    List<User> allMusicians,
+    List<PersonalEvent> eventsAsParticipant,
+    List<User> allUsers,
   ) {
     List<_TaggedEvent> tagged = [];
     final ownEvents = personalEvents.where((e) => e.ownerUid == _uid).map((e) => _TaggedEvent(e, true)).toList();
-    final invitedEvents = eventsAsMusician.where((e) => e.ownerUid != _uid).map((e) => _TaggedEvent(e, false)).toList();
+    final invitedEvents = eventsAsParticipant.where((e) => e.ownerUid != _uid).map((e) => _TaggedEvent(e, false)).toList();
 
     switch (_tedbirTab) {
       case 'sexsi':
@@ -974,7 +974,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       }
     });
 
-    final isEmpty = personalEvents.isEmpty && eventsAsMusician.isEmpty;
+    final isEmpty = personalEvents.isEmpty && eventsAsParticipant.isEmpty;
 
     return Column(
       children: [
@@ -994,14 +994,14 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                       itemCount: tagged.length,
                       itemBuilder: (_, i) {
                         final t = tagged[i];
-                        final musicians = ref.watch(musiciansProvider).asData?.value ?? [];
+                        final allUsersList = ref.watch(allUsersProvider).asData?.value ?? [];
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 12),
                           child: _EventCard(
                             event: t.event,
                             isOwn: t.isOwn,
                             currentUid: _uid,
-                            allMusicians: musicians,
+                            allUsers: allUsersList,
                             onTap: () => setState(() => _tedbirDetail = t.event),
                           ),
                         );
@@ -1100,20 +1100,20 @@ class _EventCard extends StatelessWidget {
   final PersonalEvent event;
   final bool isOwn;
   final String currentUid;
-  final List<User> allMusicians;
+  final List<User> allUsers;
   final VoidCallback onTap;
 
   const _EventCard({
     required this.event,
     required this.isOwn,
     required this.currentUid,
-    required this.allMusicians,
+    required this.allUsers,
     required this.onTap,
   });
 
-  User? _findMusician(String uid) {
+  User? _findUser(String uid) {
     try {
-      return allMusicians.firstWhere((m) => m.id == uid);
+      return allUsers.firstWhere((m) => m.id == uid);
     } catch (_) {
       return null;
     }
@@ -1122,7 +1122,7 @@ class _EventCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final initiatorUid = isOwn ? currentUid : event.ownerUid;
-    final initiator = _findMusician(initiatorUid);
+    final initiator = _findUser(initiatorUid);
     final initiatorName = initiator?.name ?? (isOwn ? 'Siz' : event.partnerName ?? 'Naməlum');
     final initiatorInstrument = initiator?.instrument ?? '';
 
@@ -1142,8 +1142,8 @@ class _EventCard extends StatelessWidget {
             Center(
               child: GestureDetector(
                 onTap: () {
-                  // TODO: Open MusicianProfileScreen for initiatorUid
-                  debugPrint('TODO: Open musician profile for $initiatorUid');
+                  // TODO: Open UserProfileScreen for initiatorUid
+                  debugPrint('TODO: Open user profile for $initiatorUid');
                 },
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -1210,7 +1210,7 @@ class _EventCard extends StatelessWidget {
                 style: const TextStyle(fontSize: 12, color: kMuted),
               ),
             ],
-            // Musicians chips
+            // Participant chips
             if (event.musicians.isNotEmpty) ...[
               const SizedBox(height: 10),
               const Divider(color: kBorder, height: 1),
@@ -1219,14 +1219,14 @@ class _EventCard extends StatelessWidget {
                 spacing: 6,
                 runSpacing: 6,
                 children: event.musicians.map((mUid) {
-                  final m = _findMusician(mUid);
+                  final m = _findUser(mUid);
                   final name = m?.name ?? mUid;
                   final instr = m?.instrument ?? '';
                   final isMe = mUid == currentUid;
                   return GestureDetector(
                     onTap: () {
-                      // TODO: Open MusicianProfileScreen for mUid
-                      debugPrint('TODO: Open musician profile for $mUid');
+                      // TODO: Open UserProfileScreen for mUid
+                      debugPrint('TODO: Open user profile for $mUid');
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -1356,8 +1356,8 @@ class _AgreementDetailScreen extends StatelessWidget {
   final PersonalEvent event;
   final String currentUid;
   final List<PersonalEvent> personalEvents;
-  final List<PersonalEvent> eventsAsMusician;
-  final List<User> allMusicians;
+  final List<PersonalEvent> eventsAsParticipant;
+  final List<User> allUsers;
   final FirestoreService firestoreService;
   final VoidCallback onBack;
 
@@ -1365,8 +1365,8 @@ class _AgreementDetailScreen extends StatelessWidget {
     required this.event,
     required this.currentUid,
     required this.personalEvents,
-    required this.eventsAsMusician,
-    required this.allMusicians,
+    required this.eventsAsParticipant,
+    required this.allUsers,
     required this.firestoreService,
     required this.onBack,
   });
@@ -1435,10 +1435,10 @@ class _AgreementDetailScreen extends StatelessWidget {
                     initialType: event.type,
                     initialLocation: event.location,
                     initialNotes: event.notes,
-                    initialMusicians: event.musicians,
-                    allMusicians: allMusicians,
+                    initialParticipantUids: event.musicians,
+                    allUsers: allUsers,
                     existingEvent: event,
-                    allCombinedEvents: [...personalEvents, ...eventsAsMusician],
+                    allCombinedEvents: [...personalEvents, ...eventsAsParticipant],
                     currentUid: currentUid,
                     firestoreService: firestoreService,
                     onSaved: () {},
@@ -1503,8 +1503,8 @@ class _AgreementDetailScreen extends StatelessWidget {
                         : 'Göndərən (Təklif edən)',
                     highlighted: event.ownerUid == currentUid,
                     onTap: () {
-                      // TODO: Open MusicianProfileScreen for event.ownerUid
-                      debugPrint('TODO: Open musician profile for ${event.ownerUid}');
+                      // TODO: Open UserProfileScreen for event.ownerUid
+                      debugPrint('TODO: Open user profile for ${event.ownerUid}');
                     },
                   ),
                   const Divider(color: kBorder, height: 1),
@@ -1515,8 +1515,8 @@ class _AgreementDetailScreen extends StatelessWidget {
                         : 'Qəbul edən',
                     highlighted: event.ownerUid != currentUid,
                     onTap: () {
-                      // TODO: Open MusicianProfileScreen for event.partnerUid
-                      debugPrint('TODO: Open musician profile for ${event.partnerUid}');
+                      // TODO: Open UserProfileScreen for event.partnerUid
+                      debugPrint('TODO: Open user profile for ${event.partnerUid}');
                     },
                   ),
                 ],
@@ -1557,8 +1557,8 @@ class _PersonalEventDetailScreen extends StatelessWidget {
   final PersonalEvent event;
   final String currentUid;
   final List<PersonalEvent> personalEvents;
-  final List<PersonalEvent> eventsAsMusician;
-  final List<User> allMusicians;
+  final List<PersonalEvent> eventsAsParticipant;
+  final List<User> allUsers;
   final FirestoreService firestoreService;
   final VoidCallback onBack;
 
@@ -1566,15 +1566,15 @@ class _PersonalEventDetailScreen extends StatelessWidget {
     required this.event,
     required this.currentUid,
     required this.personalEvents,
-    required this.eventsAsMusician,
-    required this.allMusicians,
+    required this.eventsAsParticipant,
+    required this.allUsers,
     required this.firestoreService,
     required this.onBack,
   });
 
-  User? _findMusician(String uid) {
+  User? _findUser(String uid) {
     try {
-      return allMusicians.firstWhere((m) => m.id == uid);
+      return allUsers.firstWhere((m) => m.id == uid);
     } catch (_) {
       return null;
     }
@@ -1584,7 +1584,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final isOwner = event.ownerUid == currentUid;
     final initiatorUid = isOwner ? currentUid : event.ownerUid;
-    final initiator = _findMusician(initiatorUid);
+    final initiator = _findUser(initiatorUid);
     final initiatorName = initiator?.name ?? (isOwner ? 'Siz' : event.partnerName ?? 'Naməlum');
     final initiatorInstrument = initiator?.instrument ?? '';
 
@@ -1619,10 +1619,10 @@ class _PersonalEventDetailScreen extends StatelessWidget {
                     initialType: event.type,
                     initialLocation: event.location,
                     initialNotes: event.notes,
-                    initialMusicians: event.musicians,
-                    allMusicians: allMusicians,
+                    initialParticipantUids: event.musicians,
+                    allUsers: allUsers,
                     existingEvent: event,
-                    allCombinedEvents: [...personalEvents, ...eventsAsMusician],
+                    allCombinedEvents: [...personalEvents, ...eventsAsParticipant],
                     currentUid: currentUid,
                     firestoreService: firestoreService,
                     onSaved: () {},
@@ -1641,8 +1641,8 @@ class _PersonalEventDetailScreen extends StatelessWidget {
             Center(
               child: GestureDetector(
                 onTap: () {
-                  // TODO: Open MusicianProfileScreen for initiatorUid
-                  debugPrint('TODO: Open musician profile for $initiatorUid');
+                  // TODO: Open UserProfileScreen for initiatorUid
+                  debugPrint('TODO: Open user profile for $initiatorUid');
                 },
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -1695,20 +1695,20 @@ class _PersonalEventDetailScreen extends StatelessWidget {
                   border: Border.all(color: kBorder),
                 ),
                 child: _PartyRow(
-                  name: _findMusician(event.ownerUid)?.name ?? event.partnerName ?? 'Naməlum',
+                  name: _findUser(event.ownerUid)?.name ?? event.partnerName ?? 'Naməlum',
                   label: 'Təşkilatçı',
                   highlighted: false,
                   onTap: () {
-                    // TODO: Open MusicianProfileScreen for event.ownerUid
-                    debugPrint('TODO: Open musician profile for ${event.ownerUid}');
+                    // TODO: Open UserProfileScreen for event.ownerUid
+                    debugPrint('TODO: Open user profile for ${event.ownerUid}');
                   },
                 ),
               ),
             ],
-            // Musicians card
+            // Participants card
             if (event.musicians.isNotEmpty) ...[
               const SizedBox(height: 20),
-              Text('Musiqiçilər',
+              Text('İştirakçılar',
                   style: GoogleFonts.playfairDisplay(
                       fontSize: 16, fontWeight: FontWeight.bold, color: kText)),
               const SizedBox(height: 8),
@@ -1723,12 +1723,12 @@ class _PersonalEventDetailScreen extends StatelessWidget {
                     for (int i = 0; i < event.musicians.length; i++) ...[
                       if (i > 0) const Divider(color: kBorder, height: 1),
                       _PartyRow(
-                        name: _findMusician(event.musicians[i])?.name ?? event.musicians[i],
-                        label: _findMusician(event.musicians[i])?.instrument ?? 'Musiqiçi',
+                        name: _findUser(event.musicians[i])?.name ?? event.musicians[i],
+                        label: _findUser(event.musicians[i])?.instrument ?? 'İştirakçı',
                         highlighted: event.musicians[i] == currentUid,
                         onTap: () {
-                          // TODO: Open MusicianProfileScreen for event.musicians[i]
-                          debugPrint('TODO: Open musician profile for ${event.musicians[i]}');
+                          // TODO: Open UserProfileScreen for event.musicians[i]
+                          debugPrint('TODO: Open user profile for ${event.musicians[i]}');
                         },
                       ),
                     ],
@@ -1752,8 +1752,8 @@ class _ConflictEventScreen extends StatefulWidget {
   final String categoryTitle;
   final String currentUid;
   final List<PersonalEvent> personalEvents;
-  final List<PersonalEvent> eventsAsMusician;
-  final List<User> allMusicians;
+  final List<PersonalEvent> eventsAsParticipant;
+  final List<User> allUsers;
   final FirestoreService firestoreService;
 
   const _ConflictEventScreen({
@@ -1761,8 +1761,8 @@ class _ConflictEventScreen extends StatefulWidget {
     required this.categoryTitle,
     required this.currentUid,
     required this.personalEvents,
-    required this.eventsAsMusician,
-    required this.allMusicians,
+    required this.eventsAsParticipant,
+    required this.allUsers,
     required this.firestoreService,
   });
 
@@ -1839,15 +1839,15 @@ class _ConflictEventScreenState extends State<_ConflictEventScreen> {
                   event: widget.event,
                   isOwn: widget.event.ownerUid == widget.currentUid,
                   currentUid: widget.currentUid,
-                  allMusicians: widget.allMusicians,
+                  allUsers: widget.allUsers,
                   onTap: () {
                     Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => _PersonalEventDetailScreen(
                         event: widget.event,
                         currentUid: widget.currentUid,
                         personalEvents: widget.personalEvents,
-                        eventsAsMusician: widget.eventsAsMusician,
-                        allMusicians: widget.allMusicians,
+                        eventsAsParticipant: widget.eventsAsParticipant,
+                        allUsers: widget.allUsers,
                         firestoreService: widget.firestoreService,
                         onBack: () => Navigator.of(context).pop(),
                       ),
@@ -2048,8 +2048,8 @@ class _EventFormModal extends StatefulWidget {
   final String initialType;
   final String initialLocation;
   final String initialNotes;
-  final List<String> initialMusicians;
-  final List<User> allMusicians;
+  final List<String> initialParticipantUids;
+  final List<User> allUsers;
   final PersonalEvent? existingEvent;
   final List<PersonalEvent> allCombinedEvents;
   final String currentUid;
@@ -2062,8 +2062,8 @@ class _EventFormModal extends StatefulWidget {
     required this.initialType,
     required this.initialLocation,
     required this.initialNotes,
-    required this.initialMusicians,
-    required this.allMusicians,
+    required this.initialParticipantUids,
+    required this.allUsers,
     required this.existingEvent,
     required this.allCombinedEvents,
     required this.currentUid,
@@ -2079,7 +2079,7 @@ class _EventFormModalState extends State<_EventFormModal> {
   late String _type;
   late DateTime _selectedDate;
   late String _location;
-  late List<String> _selectedMusicianUids;
+  late List<String> _selectedParticipantUids;
   late List<String> _noteOptions;
   String _otherNote = '';
   bool _otherExpanded = false;
@@ -2104,7 +2104,7 @@ class _EventFormModalState extends State<_EventFormModal> {
   final _locationController = TextEditingController();
   final _otherNoteController = TextEditingController();
   final _freeNoteController = TextEditingController();
-  final _musicianSearchController = TextEditingController();
+  final _participantSearchController = TextEditingController();
 
   @override
   void initState() {
@@ -2113,7 +2113,7 @@ class _EventFormModalState extends State<_EventFormModal> {
     _selectedDate = widget.initialDate;
     _location = widget.initialLocation;
     _locationController.text = _location;
-    _selectedMusicianUids = List<String>.from(widget.initialMusicians);
+    _selectedParticipantUids = List<String>.from(widget.initialParticipantUids);
 
     // Parse existing notes into checkboxes + free text
     _noteOptions = [];
@@ -2136,7 +2136,7 @@ class _EventFormModalState extends State<_EventFormModal> {
     _locationController.dispose();
     _otherNoteController.dispose();
     _freeNoteController.dispose();
-    _musicianSearchController.dispose();
+    _participantSearchController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -2178,10 +2178,10 @@ class _EventFormModalState extends State<_EventFormModal> {
           personalEvents: widget.allCombinedEvents
               .where((e) => e.ownerUid == widget.currentUid)
               .toList(),
-          eventsAsMusician: widget.allCombinedEvents
+          eventsAsParticipant: widget.allCombinedEvents
               .where((e) => e.ownerUid != widget.currentUid)
               .toList(),
-          allMusicians: widget.allMusicians,
+          allUsers: widget.allUsers,
           firestoreService: widget.firestoreService,
         ),
       ));
@@ -2251,7 +2251,7 @@ class _EventFormModalState extends State<_EventFormModal> {
           'type': _type,
           'location': _location,
           'notes': notes,
-          'musicians': _selectedMusicianUids,
+          'musicians': _selectedParticipantUids,
         });
       } else {
         await widget.firestoreService.addPersonalEvent(
@@ -2260,7 +2260,7 @@ class _EventFormModalState extends State<_EventFormModal> {
           type: _type,
           location: _location,
           notes: notes,
-          musicians: _selectedMusicianUids,
+          musicians: _selectedParticipantUids,
         );
       }
       widget.onSaved();
@@ -2276,13 +2276,13 @@ class _EventFormModalState extends State<_EventFormModal> {
     }
   }
 
-  Future<void> _openMusicianPicker() async {
+  Future<void> _openParticipantPicker() async {
     await showDialog(
       context: context,
-      builder: (_) => _MusicianPickerDialog(
-        allMusicians: widget.allMusicians,
-        selectedUids: _selectedMusicianUids,
-        onChanged: (uids) => setState(() => _selectedMusicianUids = uids),
+      builder: (_) => _ParticipantPickerDialog(
+        allUsers: widget.allUsers,
+        selectedUids: _selectedParticipantUids,
+        onChanged: (uids) => setState(() => _selectedParticipantUids = uids),
       ),
     );
   }
@@ -2388,8 +2388,8 @@ class _EventFormModalState extends State<_EventFormModal> {
             ],
             if (widget.mode == 'time-only') ...[
               const SizedBox(height: 16),
-              // Musicians
-              const Text('MUSİQİÇİLƏR',
+              // Participants
+              const Text('İŞTİRAKÇILAR',
                   style: TextStyle(
                       fontSize: 11,
                       letterSpacing: 0.8,
@@ -2400,10 +2400,10 @@ class _EventFormModalState extends State<_EventFormModal> {
                 spacing: 6,
                 runSpacing: 6,
                 children: [
-                  ..._selectedMusicianUids.map((uid) {
+                  ..._selectedParticipantUids.map((uid) {
                     User? m;
                     try {
-                      m = widget.allMusicians.firstWhere((x) => x.id == uid);
+                      m = widget.allUsers.firstWhere((x) => x.id == uid);
                     } catch (_) {}
                     return Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -2422,7 +2422,7 @@ class _EventFormModalState extends State<_EventFormModal> {
                           const SizedBox(width: 6),
                           GestureDetector(
                             onTap: () => setState(
-                                () => _selectedMusicianUids.remove(uid)),
+                                () => _selectedParticipantUids.remove(uid)),
                             child: const Text('×',
                                 style: TextStyle(color: kRed, fontSize: 16)),
                           ),
@@ -2431,7 +2431,7 @@ class _EventFormModalState extends State<_EventFormModal> {
                     );
                   }),
                   GestureDetector(
-                    onTap: _openMusicianPicker,
+                    onTap: _openParticipantPicker,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
@@ -2869,24 +2869,24 @@ class _ConflictDialog extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// _MusicianPickerDialog
+// _ParticipantPickerDialog
 // ---------------------------------------------------------------------------
-class _MusicianPickerDialog extends StatefulWidget {
-  final List<User> allMusicians;
+class _ParticipantPickerDialog extends StatefulWidget {
+  final List<User> allUsers;
   final List<String> selectedUids;
   final ValueChanged<List<String>> onChanged;
 
-  const _MusicianPickerDialog({
-    required this.allMusicians,
+  const _ParticipantPickerDialog({
+    required this.allUsers,
     required this.selectedUids,
     required this.onChanged,
   });
 
   @override
-  State<_MusicianPickerDialog> createState() => _MusicianPickerDialogState();
+  State<_ParticipantPickerDialog> createState() => _ParticipantPickerDialogState();
 }
 
-class _MusicianPickerDialogState extends State<_MusicianPickerDialog> {
+class _ParticipantPickerDialogState extends State<_ParticipantPickerDialog> {
   late List<String> _selected;
   String _search = '';
   final _searchController = TextEditingController();
@@ -2905,7 +2905,7 @@ class _MusicianPickerDialogState extends State<_MusicianPickerDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final filtered = widget.allMusicians
+    final filtered = widget.allUsers
         .where((m) =>
             _search.isEmpty ||
             m.name.toLowerCase().contains(_search.toLowerCase()) ||
