@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -316,6 +317,7 @@ class _MusiciansSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final asyncMusicians = ref.watch(musiciansProvider);
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -347,7 +349,8 @@ class _MusiciansSection extends ConsumerWidget {
           height: 240,
           child: asyncMusicians.when(
             data: (list) {
-              final musicians = list.isEmpty ? _fallbackMusicians : list;
+              final visible = list.excludingUid(currentUid);
+              final musicians = visible.isEmpty ? _fallbackMusicians : visible;
               return ListView.builder(
                 scrollDirection: Axis.horizontal,
                 itemCount: musicians.length,

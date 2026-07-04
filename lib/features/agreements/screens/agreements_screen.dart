@@ -2280,7 +2280,7 @@ class _EventFormModalState extends State<_EventFormModal> {
     await showDialog(
       context: context,
       builder: (_) => _ParticipantPickerDialog(
-        allUsers: widget.allUsers,
+        allUsers: widget.allUsers.excludingUid(widget.currentUid),
         selectedUids: _selectedParticipantUids,
         onChanged: (uids) => setState(() => _selectedParticipantUids = uids),
       ),

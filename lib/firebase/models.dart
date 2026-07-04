@@ -1,5 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+extension UserListFiltering on List<User> {
+  List<User> excludingUid(String uid) => where((u) => u.id != uid).toList();
+}
+
 class User {
   final String id;
   final String name;

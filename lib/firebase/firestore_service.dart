@@ -53,32 +53,22 @@ class FirestoreService {
     });
   }
 
-  Stream<List<User>> watchMusicians() {
-    return _db
-        .collection('users')
-        .where('role', isEqualTo: 'musician')
-        .limit(50)
-        .snapshots()
-        .map(
-          (snap) => snap.docs
-              .map((doc) => User.fromFirestore(doc.id, doc.data()))
-              .toList(),
-        );
+  Stream<List<User>> _watchUsers(Query<Map<String, dynamic>> query) {
+    return query.snapshots().map(
+      (snap) =>
+          snap.docs.map((doc) => User.fromFirestore(doc.id, doc.data())).toList(),
+    );
   }
 
-  // Unfiltered by role — used where any registered user can be picked
-  // (e.g. tagging event participants), unlike watchMusicians() above which
-  // powers the home screen's musician-only feed.
+  Stream<List<User>> watchMusicians() {
+    return _watchUsers(_db.collection('users').where('role', isEqualTo: 'musician'));
+  }
+
+  // Unfiltered by role — screens that need to pick from any registered
+  // user (e.g. tagging event participants), unlike watchMusicians() above
+  // which powers the home screen's musician-only feed.
   Stream<List<User>> watchAllUsers() {
-    return _db
-        .collection('users')
-        .limit(50)
-        .snapshots()
-        .map(
-          (snap) => snap.docs
-              .map((doc) => User.fromFirestore(doc.id, doc.data()))
-              .toList(),
-        );
+    return _watchUsers(_db.collection('users'));
   }
 
   Stream<List<Chat>> watchChats(String uid) {
