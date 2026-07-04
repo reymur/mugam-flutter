@@ -916,7 +916,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         initialType: existingEvent?.type ?? '',
         initialLocation: existingEvent?.location ?? '',
         initialNotes: existingEvent?.notes ?? '',
-        initialParticipantUids: existingEvent?.musicians ?? [],
+        initialParticipantUids: existingEvent?.participantUids ?? [],
         allUsers: allUsers,
         existingEvent: existingEvent,
         allCombinedEvents: allCombined,
@@ -1211,14 +1211,14 @@ class _EventCard extends StatelessWidget {
               ),
             ],
             // Participant chips
-            if (event.musicians.isNotEmpty) ...[
+            if (event.participantUids.isNotEmpty) ...[
               const SizedBox(height: 10),
               const Divider(color: kBorder, height: 1),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 6,
                 runSpacing: 6,
-                children: event.musicians.map((mUid) {
+                children: event.participantUids.map((mUid) {
                   final m = _findUser(mUid);
                   final name = m?.name ?? mUid;
                   final instr = m?.instrument ?? '';
@@ -1435,7 +1435,7 @@ class _AgreementDetailScreen extends StatelessWidget {
                     initialType: event.type,
                     initialLocation: event.location,
                     initialNotes: event.notes,
-                    initialParticipantUids: event.musicians,
+                    initialParticipantUids: event.participantUids,
                     allUsers: allUsers,
                     existingEvent: event,
                     allCombinedEvents: [...personalEvents, ...eventsAsParticipant],
@@ -1619,7 +1619,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
                     initialType: event.type,
                     initialLocation: event.location,
                     initialNotes: event.notes,
-                    initialParticipantUids: event.musicians,
+                    initialParticipantUids: event.participantUids,
                     allUsers: allUsers,
                     existingEvent: event,
                     allCombinedEvents: [...personalEvents, ...eventsAsParticipant],
@@ -1706,7 +1706,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
               ),
             ],
             // Participants card
-            if (event.musicians.isNotEmpty) ...[
+            if (event.participantUids.isNotEmpty) ...[
               const SizedBox(height: 20),
               Text('İştirakçılar',
                   style: GoogleFonts.playfairDisplay(
@@ -1720,15 +1720,15 @@ class _PersonalEventDetailScreen extends StatelessWidget {
                 ),
                 child: Column(
                   children: [
-                    for (int i = 0; i < event.musicians.length; i++) ...[
+                    for (int i = 0; i < event.participantUids.length; i++) ...[
                       if (i > 0) const Divider(color: kBorder, height: 1),
                       _PartyRow(
-                        name: _findUser(event.musicians[i])?.name ?? event.musicians[i],
-                        label: _findUser(event.musicians[i])?.instrument ?? 'İştirakçı',
-                        highlighted: event.musicians[i] == currentUid,
+                        name: _findUser(event.participantUids[i])?.name ?? event.participantUids[i],
+                        label: _findUser(event.participantUids[i])?.instrument ?? 'İştirakçı',
+                        highlighted: event.participantUids[i] == currentUid,
                         onTap: () {
-                          // TODO: Open UserProfileScreen for event.musicians[i]
-                          debugPrint('TODO: Open user profile for ${event.musicians[i]}');
+                          // TODO: Open UserProfileScreen for event.participantUids[i]
+                          debugPrint('TODO: Open user profile for ${event.participantUids[i]}');
                         },
                       ),
                     ],
@@ -2260,7 +2260,7 @@ class _EventFormModalState extends State<_EventFormModal> {
           type: _type,
           location: _location,
           notes: notes,
-          musicians: _selectedParticipantUids,
+          participantUids: _selectedParticipantUids,
         );
       }
       widget.onSaved();

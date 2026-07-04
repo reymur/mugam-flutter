@@ -303,7 +303,7 @@ class PersonalEvent {
   final String type;
   final String location;
   final String notes;
-  final List<String> musicians;
+  final List<String> participantUids;
   final bool isAgree;
   final String? agreementChatId;
   final String? partnerUid;
@@ -319,7 +319,7 @@ class PersonalEvent {
     required this.type,
     required this.location,
     required this.notes,
-    required this.musicians,
+    required this.participantUids,
     required this.isAgree,
     this.agreementChatId,
     this.partnerUid,
@@ -337,7 +337,7 @@ class PersonalEvent {
       type: (data['type'] ?? '') as String,
       location: (data['location'] ?? '') as String,
       notes: (data['notes'] ?? '') as String,
-      musicians: List<String>.from(data['musicians'] as List? ?? const []),
+      participantUids: List<String>.from(data['musicians'] as List? ?? const []),
       isAgree: (data['isAgree'] ?? false) as bool,
       agreementChatId: data['agreementChatId'] as String?,
       partnerUid: data['partnerUid'] as String?,

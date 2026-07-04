@@ -584,7 +584,7 @@ class FirestoreService {
     required String type,
     required String location,
     required String notes,
-    required List<String> musicians,
+    required List<String> participantUids,
   }) async {
     final ref = await _db.collection('personalEvents').add({
       'ownerUid': ownerUid,
@@ -592,7 +592,7 @@ class FirestoreService {
       'type': type,
       'location': location,
       'notes': notes,
-      'musicians': musicians,
+      'musicians': participantUids,
       'isAgree': false,
       'agreementChatId': null,
       'partnerUid': null,
