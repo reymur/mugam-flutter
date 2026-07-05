@@ -30,6 +30,18 @@ class PendingMediaMessage {
   // instead of re-uploading the whole file again, which both wastes data and
   // widens the window in which two attempts can race to write the message.
   final String? uploadedUrl;
+  // Read from the local file's own metadata at enqueue time (see
+  // flutter_video_info in chat_screen.dart) — null if the probe failed or
+  // this is an older item queued before the field existed.
+  final int? videoDurationMs;
+  // As-displayed (orientation-corrected) pixel size, read at the same time
+  // as videoDurationMs. Carried as plain data instead of being derived from
+  // a decoded thumbnail so the bubble sizes identically before and after
+  // the pending item is replaced by the real sent message (they'd otherwise
+  // resolve through different thumbnail-cache keys — local file path vs.
+  // uploaded URL — causing a visible resize jump at that transition).
+  final int? videoWidth;
+  final int? videoHeight;
 
   const PendingMediaMessage({
     required this.localId,
@@ -47,6 +59,9 @@ class PendingMediaMessage {
     this.replyToImageURL,
     this.replyToVideoURL,
     this.uploadedUrl,
+    this.videoDurationMs,
+    this.videoWidth,
+    this.videoHeight,
   });
 
   static String generateLocalId() {
@@ -76,6 +91,9 @@ class PendingMediaMessage {
       replyToImageURL: replyToImageURL,
       replyToVideoURL: replyToVideoURL,
       uploadedUrl: uploadedUrl ?? this.uploadedUrl,
+      videoDurationMs: videoDurationMs,
+      videoWidth: videoWidth,
+      videoHeight: videoHeight,
     );
   }
 
@@ -95,6 +113,9 @@ class PendingMediaMessage {
     'replyToImageURL': replyToImageURL,
     'replyToVideoURL': replyToVideoURL,
     'uploadedUrl': uploadedUrl,
+    'videoDurationMs': videoDurationMs,
+    'videoWidth': videoWidth,
+    'videoHeight': videoHeight,
   };
 
   factory PendingMediaMessage.fromJson(Map<String, dynamic> json) {
@@ -114,6 +135,9 @@ class PendingMediaMessage {
       replyToImageURL: json['replyToImageURL'] as String?,
       replyToVideoURL: json['replyToVideoURL'] as String?,
       uploadedUrl: json['uploadedUrl'] as String?,
+      videoDurationMs: json['videoDurationMs'] as int?,
+      videoWidth: json['videoWidth'] as int?,
+      videoHeight: json['videoHeight'] as int?,
     );
   }
 
@@ -137,6 +161,9 @@ class PendingMediaMessage {
       replyToVideoURL: replyToVideoURL,
       localFilePath: filePath,
       localSendStatus: status,
+      videoDurationMs: videoDurationMs,
+      videoWidth: videoWidth,
+      videoHeight: videoHeight,
     );
   }
 }

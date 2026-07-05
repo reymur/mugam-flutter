@@ -126,6 +126,15 @@ class Message {
   final String? imageURL;
   final String? audioURL;
   final String? videoURL;
+  // Real duration/as-displayed pixel size read from the source file's own
+  // metadata at send time (flutter_video_info) — null for messages sent
+  // before these fields existed. width/height are carried as plain data
+  // (not derived from a decoded thumbnail) so the video bubble sizes
+  // identically before and after a pending item is replaced by the real
+  // sent message.
+  final int? videoDurationMs;
+  final int? videoWidth;
+  final int? videoHeight;
   final Timestamp? timestamp;
   final String type; // 'text', 'image', 'audio', 'video'
   final String? replyToId;
@@ -151,6 +160,9 @@ class Message {
     this.imageURL,
     this.audioURL,
     this.videoURL,
+    this.videoDurationMs,
+    this.videoWidth,
+    this.videoHeight,
     this.timestamp,
     required this.type,
     this.replyToId,
@@ -176,6 +188,9 @@ class Message {
       imageURL: data['imageURL'],
       audioURL: data['audioURL'],
       videoURL: data['videoURL'],
+      videoDurationMs: data['videoDurationMs'] as int?,
+      videoWidth: data['videoWidth'] as int?,
+      videoHeight: data['videoHeight'] as int?,
       timestamp: data['timestamp'] as Timestamp?,
       type: data['type'] ?? 'text',
       replyToId: replyTo?['id'] as String?,

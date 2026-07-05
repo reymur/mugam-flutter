@@ -52,13 +52,17 @@ Future<void> _cacheVideoInBackground(String url) async {
 class VideoThumbnailImage extends StatefulWidget {
   final String? videoURL;
   final String? localFilePath;
-  final double size;
+  // Null for VideoMessageBubble's chat-bubble usage, which sizes its own
+  // ancestor to the video's real aspect ratio and lets this widget fill it
+  // (see StackFit.expand there). Non-null for the fixed-square quote-card/
+  // replying-to-bar previews, unaffected by this change.
+  final double? size;
 
   const VideoThumbnailImage({
     super.key,
     this.videoURL,
     this.localFilePath,
-    required this.size,
+    this.size,
   });
 
   @override
@@ -132,18 +136,94 @@ class _VideoThumbnailImageState extends State<VideoThumbnailImage> {
   }
 }
 
+String _formatDuration(int ms) {
+  final total = Duration(milliseconds: ms);
+  final m = total.inMinutes.remainder(60);
+  final s = total.inSeconds.remainder(60).toString().padLeft(2, '0');
+  return '$m:$s';
+}
+
 // Full chat-bubble video message: thumbnail + play icon, tap opens playback.
 // Works identically for an already-sent video (videoURL) or one still
 // queued/uploading (localFilePath) — tapping either previews the video, a
 // message doesn't have to finish sending before it can be watched.
+//
+// Sized to the video's own as-displayed aspect ratio (width/height read
+// from the file's metadata at send time, see flutter_video_info in
+// chat_screen.dart — NOT derived from decoding the generated thumbnail),
+// clamped between a min (so an extremely wide/tall video doesn't become
+// unreadable or too small to tap) and a max (so it doesn't blow out the
+// chat layout) — matching WhatsApp's media bubbles. width/height are the
+// same plain message data in both the pending (queued/uploading synthetic
+// message) and sent (real Firestore message) states, so the bubble is a
+// stable size across that transition — no resize flicker, unlike an
+// earlier version of this that derived size from the thumbnail image,
+// which is fetched under a different cache key (local file path vs.
+// uploaded URL) in each state. Falls back to a fixed square when
+// width/height are unknown (probe failed, or an older message sent before
+// this field existed) — stable in both states either way.
 class VideoMessageBubble extends StatelessWidget {
+  static const double _minSide = 120;
+  static const double _maxWidth = 260;
+  static const double _maxHeight = 340;
+  static const double _fallbackSide = 200;
+
   final String? videoURL;
   final String? localFilePath;
+  final int? durationMs;
+  final int? videoWidth;
+  final int? videoHeight;
+  final double bubbleRadius;
+  final Widget timeCheckmarkOverlay;
 
-  const VideoMessageBubble({super.key, this.videoURL, this.localFilePath});
+  const VideoMessageBubble({
+    super.key,
+    this.videoURL,
+    this.localFilePath,
+    this.durationMs,
+    this.videoWidth,
+    this.videoHeight,
+    required this.bubbleRadius,
+    required this.timeCheckmarkOverlay,
+  });
+
+  Size _boundedSize() {
+    final w0 = videoWidth;
+    final h0 = videoHeight;
+    if (w0 == null || h0 == null || w0 <= 0 || h0 <= 0) {
+      return const Size(_fallbackSide, _fallbackSide);
+    }
+    final ratio = w0 / h0;
+    var w = _maxWidth;
+    var h = w / ratio;
+    if (h > _maxHeight) {
+      h = _maxHeight;
+      w = h * ratio;
+    }
+    if (h < _minSide) {
+      h = _minSide;
+      w = h * ratio;
+    }
+    if (w < _minSide) {
+      w = _minSide;
+      h = w / ratio;
+    }
+    // Re-clamp in case the min-side correction above pushed the other
+    // dimension back past its own max (very thin/wide aspect ratios).
+    if (w > _maxWidth) {
+      w = _maxWidth;
+      h = w / ratio;
+    }
+    if (h > _maxHeight) {
+      h = _maxHeight;
+      w = h * ratio;
+    }
+    return Size(w, h);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final size = _boundedSize();
     return GestureDetector(
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(
@@ -152,36 +232,82 @@ class VideoMessageBubble extends StatelessWidget {
         ),
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(bubbleRadius),
         child: SizedBox(
-          width: 200,
-          height: 200,
+          width: size.width,
+          height: size.height,
           child: Stack(
             fit: StackFit.expand,
             children: [
-              VideoThumbnailImage(
-                videoURL: videoURL,
-                localFilePath: localFilePath,
-                size: 200,
-              ),
+              VideoThumbnailImage(videoURL: videoURL, localFilePath: localFilePath),
               Center(
                 child: Container(
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.black45,
+                    color: Colors.white.withAlpha(200),
                   ),
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(14),
                   child: const Icon(
                     Icons.play_arrow,
-                    color: Colors.white,
+                    color: Colors.black87,
                     size: 32,
                   ),
                 ),
+              ),
+              Positioned(
+                left: 8,
+                bottom: 8,
+                child: _MediaOverlayChip(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.videocam,
+                        color: Colors.white,
+                        size: 13,
+                      ),
+                      if (durationMs != null) ...[
+                        const SizedBox(width: 4),
+                        Text(
+                          _formatDuration(durationMs!),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              Positioned(
+                right: 8,
+                bottom: 8,
+                child: _MediaOverlayChip(child: timeCheckmarkOverlay),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+// Small translucent dark backdrop so white overlay text/icons stay legible
+// over arbitrary video content, whatever its own colors happen to be.
+class _MediaOverlayChip extends StatelessWidget {
+  final Widget child;
+  const _MediaOverlayChip({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(110),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: child,
     );
   }
 }

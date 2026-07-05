@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_video_info/flutter_video_info.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
@@ -990,6 +991,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final replyingTo = _replyingTo;
     setState(() => _uploadingVideo = true);
     _cancelReply();
+    // Reads duration and dimensions straight from the file's own container
+    // metadata (AVAsset.duration/naturalSize / MediaMetadataRetriever under
+    // the hood) — no player/texture setup, near-instant for a local file.
+    // width/height are the raw encoded buffer size, not the as-displayed
+    // one — orientation 90/270 (portrait recordings) means the buffer is
+    // actually rotated 90°, so the visual width/height are swapped relative
+    // to what's reported. Null on failure just means the bubble falls back
+    // to its fixed-square placeholder, same as an old message queued before
+    // this field existed.
+    int? videoDurationMs;
+    int? videoWidth;
+    int? videoHeight;
+    try {
+      final info = await FlutterVideoInfo().getVideoInfo(filePath);
+      final durationMs = info?.duration;
+      if (durationMs != null) videoDurationMs = durationMs.round();
+      final rawWidth = info?.width;
+      final rawHeight = info?.height;
+      final rotated = info?.orientation == 90 || info?.orientation == 270;
+      if (rawWidth != null && rawHeight != null) {
+        videoWidth = rotated ? rawHeight : rawWidth;
+        videoHeight = rotated ? rawWidth : rawHeight;
+      }
+    } catch (_) {}
     final error = await ref
         .read(pendingMessageQueueProvider.notifier)
         .enqueue(
@@ -997,6 +1022,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           senderId: currentUid,
           type: 'video',
           sourceFilePath: filePath,
+          videoDurationMs: videoDurationMs,
+          videoWidth: videoWidth,
+          videoHeight: videoHeight,
           replyToId: replyingTo?.id,
           replyToText: replyingTo != null
               ? _replyPreviewText(replyingTo)
@@ -1393,17 +1421,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final time = msg.timestamp != null
         ? DateFormat('HH:mm').format(msg.timestamp!.toDate())
         : '';
-    Widget? checkMark;
+    // checkIconData/isRead/isDelivered are the single source of truth for
+    // delivery status — checkMark renders it in the bubble's own text color
+    // (for text/audio/image bubbles), overlayCheckMark in a white-friendly
+    // color for the video bubble's overlay atop arbitrary video content
+    // (see VideoMessageBubble). Same status, two color treatments.
+    IconData? checkIconData;
+    Color checkColor = kMuted;
+    Color overlayCheckColor = Colors.white70;
     bool isRead = false;
     bool isDelivered = false;
     if (msg.localSendStatus == 'queued' || msg.localSendStatus == 'uploading') {
-      checkMark = const Icon(
-        Icons.access_time,
-        size: 14,
-        color: Color(0xFF1A0E00),
-      );
+      checkIconData = Icons.access_time;
+      checkColor = const Color(0xFF1A0E00);
+      overlayCheckColor = Colors.white70;
     } else if (msg.localSendStatus == 'failed') {
-      checkMark = const Icon(Icons.error_outline, size: 14, color: kRed);
+      checkIconData = Icons.error_outline;
+      checkColor = kRed;
+      overlayCheckColor = kRed;
     } else if (isMe && otherUid != null) {
       final lastReadId = lastReadMsgId[otherUid] as String?;
       final lastReadIndex = lastReadId != null
@@ -1411,12 +1446,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           : -1;
       isRead = lastReadIndex >= index && index != -1;
       isDelivered = deliveredTo[otherUid] != null || isRead;
-      checkMark = Icon(
-        isDelivered ? Icons.done_all : Icons.done,
-        size: 14,
-        color: isRead ? kReadBlue : const Color(0xFF1A0E00).withAlpha(128),
-      );
+      checkIconData = isDelivered ? Icons.done_all : Icons.done;
+      checkColor = isRead ? kReadBlue : const Color(0xFF1A0E00).withAlpha(128);
+      overlayCheckColor = isRead ? kReadBlue : Colors.white70;
     }
+    final checkMark = checkIconData != null
+        ? Icon(checkIconData, size: 14, color: checkColor)
+        : null;
+    final overlayCheckMark = checkIconData != null
+        ? Icon(checkIconData, size: 14, color: overlayCheckColor)
+        : null;
     final messageKey = _messageKeys.putIfAbsent(msg.id, () => GlobalKey());
     final isHighlighted = _highlightedMessageId == msg.id;
     if (msg.deletedForAll) {
@@ -1483,10 +1522,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   left: isMe ? 60 : 0,
                   right: isMe ? 0 : 60,
                 ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 8,
-                ),
+                // Video fills the bubble edge-to-edge, like WhatsApp's media
+                // bubbles — no inset chrome around it. Only when there's no
+                // reply-to-quote card sharing the bubble; with one present,
+                // the video keeps the normal padded chrome so the quote card
+                // above it still reads correctly (a chromeless-media-plus-
+                // quote layout is a separate, not-yet-designed case).
+                padding: (msg.type == 'video' && msg.replyToId == null)
+                    ? EdgeInsets.zero
+                    : const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 8,
+                      ),
                 decoration: BoxDecoration(
                   color: isMe ? kGold : kBg3,
                   borderRadius: BorderRadius.circular(_kBubbleRadius),
@@ -1678,8 +1725,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       VideoMessageBubble(
                         videoURL: msg.videoURL,
                         localFilePath: msg.localFilePath,
+                        durationMs: msg.videoDurationMs,
+                        videoWidth: msg.videoWidth,
+                        videoHeight: msg.videoHeight,
+                        bubbleRadius: _kBubbleRadius,
+                        timeCheckmarkOverlay: _timeCheckmarkRow(
+                          isMe,
+                          otherUid,
+                          msg,
+                          time,
+                          overlayCheckMark,
+                          textColor: Colors.white,
+                        ),
                       ),
-                    if (msg.type != 'text') ...[
+                    if (msg.type != 'text' && msg.type != 'video') ...[
                       const SizedBox(height: 2),
                       _timeCheckmarkRow(isMe, otherUid, msg, time, checkMark),
                     ],
@@ -1706,14 +1765,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // Shared by every bubble type's time+checkmark display — text renders it
   // inline via a WidgetSpan (see _buildMessageBubble), every other type
   // renders it as its own row. checkMark/time are passed in already computed
-  // so this stays pure layout, no duplicated status logic.
+  // so this stays pure layout, no duplicated status logic. textColor
+  // defaults to the normal bubble-background-aware color; the video bubble
+  // overrides it to white since this row sits as an overlay atop arbitrary
+  // video content there instead of the bubble's flat background.
   Widget _timeCheckmarkRow(
     bool isMe,
     String? otherUid,
     Message msg,
     String time,
-    Widget? checkMark,
-  ) {
+    Widget? checkMark, {
+    Color? textColor,
+  }) {
     return GestureDetector(
       onTap: isMe && otherUid != null ? () => _openMessageInfo(msg) : null,
       child: Row(
@@ -1722,7 +1785,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           Text(
             time,
             style: TextStyle(
-              color: isMe ? const Color(0xFF1A0E00).withAlpha(150) : kMuted,
+              color:
+                  textColor ??
+                  (isMe ? const Color(0xFF1A0E00).withAlpha(150) : kMuted),
               fontSize: 10,
             ),
           ),

@@ -1299,6 +1299,8 @@ PODS:
     - GoogleUtilities/Environment (~> 8.1)
     - GTMSessionFetcher/Core (< 6.0, >= 3.4)
   - Flutter (1.0.0)
+  - flutter_video_info (1.1.0):
+    - Flutter
   - GoogleDataTransport (10.1.0):
     - nanopb (~> 3.30910.0)
     - PromisesObjC (~> 2.4)
@@ -1479,6 +1481,7 @@ DEPENDENCIES:
   - firebase_messaging (from `.symlinks/plugins/firebase_messaging/ios`)
   - firebase_storage (from `.symlinks/plugins/firebase_storage/ios`)
   - Flutter (from `Flutter`)
+  - flutter_video_info (from `.symlinks/plugins/flutter_video_info/ios`)
   - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
   - irondash_engine_context (from `.symlinks/plugins/irondash_engine_context/ios`)
   - just_audio (from `.symlinks/plugins/just_audio/darwin`)
@@ -1542,6 +1545,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/firebase_storage/ios"
   Flutter:
     :path: Flutter
+  flutter_video_info:
+    :path: ".symlinks/plugins/flutter_video_info/ios"
   image_picker_ios:
     :path: ".symlinks/plugins/image_picker_ios/ios"
   irondash_engine_context:
@@ -1592,6 +1597,7 @@ SPEC CHECKSUMS:
   FirebaseSharedSwift: 3f5c2758484d32099d693f269f110d3249c3f7e3
   FirebaseStorage: 949f0a5a8d8a77fff68ec8733057dc76a0e08179
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  flutter_video_info: 1b1e50c79c7f38e19c887c6d1babdc5eac5af858
   GoogleDataTransport: aae35b7ea0c09004c3797d53c8c41f66f219d6a7
   GoogleUtilities: 4f2618a4a1e762a1ee134a1e2323bba9843e06da
   "gRPC-C++": cc207623316fb041a7a3e774c252cf68a058b9e8
