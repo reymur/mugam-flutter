@@ -3008,7 +3008,17 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
                 ),
               ),
               const Spacer(),
-              widget.timeCheckmarkRow,
+              // Mirrors positionIndent above: !isMe's avatar sits flush at
+              // the row's right edge (see `row` above), so without this
+              // the time+checkmark ends up right underneath it with no
+              // gap. isMe doesn't need this — its avatar is at the left,
+              // nowhere near this right-aligned element.
+              Padding(
+                padding: EdgeInsets.only(
+                  right: widget.isMe ? 0 : _avatarSize + 8,
+                ),
+                child: widget.timeCheckmarkRow,
+              ),
             ],
           ),
         ],
