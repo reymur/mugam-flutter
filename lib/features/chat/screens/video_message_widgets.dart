@@ -2,11 +2,19 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import '../../../core/theme/colors.dart';
+
+Future<void> _deactivateAudioSession() async {
+  try {
+    final session = await AudioSession.instance;
+    await session.setActive(false);
+  } catch (_) {}
+}
 
 // In-memory only — good enough to avoid regenerating a thumbnail every time
 // a message scrolls back into view within the same session.
@@ -335,6 +343,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   VideoPlayerController? _controller;
   bool _initialized = false;
   bool _disposed = false;
+  bool _wasPlaying = false;
   String? _error;
 
   @override
@@ -362,6 +371,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       return;
     }
     setState(() => _controller = controller);
+    controller.addListener(_onControllerTick);
     try {
       await controller.initialize();
       if (_disposed) return;
@@ -372,10 +382,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
+  // video_player never sends AVAudioSession the explicit "I'm done" signal
+  // that lets iOS un-duck other apps' audio — it only engages ducking as a
+  // side effect of actually outputting sound. Watching for isPlaying's
+  // true->false edge here catches pause, natural end-of-video, and (via
+  // dispose below) navigating away mid-playback — all the ways playback
+  // can stop short of the app itself being backgrounded, which is the only
+  // thing that was incidentally clearing the ducked state before this.
+  void _onControllerTick() {
+    final isPlaying = _controller?.value.isPlaying ?? false;
+    if (_wasPlaying && !isPlaying) {
+      unawaited(_deactivateAudioSession());
+    }
+    _wasPlaying = isPlaying;
+  }
+
   @override
   void dispose() {
     _disposed = true;
+    _controller?.removeListener(_onControllerTick);
     _controller?.dispose();
+    if (_wasPlaying) unawaited(_deactivateAudioSession());
     super.dispose();
   }
 

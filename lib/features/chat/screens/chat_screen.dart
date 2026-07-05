@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -44,6 +45,21 @@ class ChatScreen extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
+}
+
+// Neither `record` nor `just_audio` ever sends AVAudioSession the explicit
+// "I'm done" signal on stop/pause — they set category/options and activate
+// on start, but never deactivate. Without this, background audio (Spotify
+// etc.) stays ducked until the app is backgrounded/foregrounded, which
+// happens to force a session reset as a side effect. Calling this
+// ourselves right after stop/pause releases ducking immediately instead of
+// relying on that incidental reset. Shared by _ChatScreenState (recording)
+// and _VoiceMessagePlayerState (playback) below.
+Future<void> _deactivateAudioSession() async {
+  try {
+    final session = await AudioSession.instance;
+    await session.setActive(false);
+  } catch (_) {}
 }
 
 class _ChatScreenState extends ConsumerState<ChatScreen>
@@ -1301,6 +1317,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         encoder: AudioEncoder.aacLc,
         bitRate: 128000,
         sampleRate: 44100,
+        // record sets its own AVAudioSessionCategoryOptions outright
+        // (replacing, not merging with, whatever main.dart's shared
+        // audio_session config set) — duckOthers has to be requested here
+        // explicitly too, alongside the package's existing defaults, or
+        // background audio wouldn't duck during recording specifically.
+        iosConfig: const IosRecordConfig(
+          categoryOptions: [
+            IosAudioCategoryOption.defaultToSpeaker,
+            IosAudioCategoryOption.allowBluetooth,
+            IosAudioCategoryOption.allowBluetoothA2DP,
+            IosAudioCategoryOption.duckOthers,
+          ],
+        ),
       ),
       path: _recordingPath!,
     );
@@ -1337,6 +1366,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     await _amplitudeSub?.cancel();
     setState(() => _recordingDuration = '0:00');
     final path = await _audioRecorder.stop();
+    unawaited(_deactivateAudioSession());
     if (mounted) {
       setState(() {
         _isRecording = false;
@@ -1392,6 +1422,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _recordingTimer?.cancel();
     await _amplitudeSub?.cancel();
     await _audioRecorder.stop();
+    unawaited(_deactivateAudioSession());
     if (mounted) {
       setState(() {
         _isRecording = false;
@@ -1404,6 +1435,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _pulseController.stop();
     _pulseController.reset();
   }
+
 
   // Collapses the raw dBFS samples captured during recording (one every
   // 100ms via onAmplitudeChanged) into a fixed number of bars for the
@@ -1758,6 +1790,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         isMe: isMe,
                         waveform: msg.waveform,
                         senderId: msg.senderId,
+                        // Sender-side "did they actually listen" status —
+                        // only meaningful for a 1-1 chat's own sent
+                        // message, same gating as the checkmarks above.
+                        showListenedStatus: isMe && otherUid != null,
+                        isRead: isRead,
+                        listenedByOther:
+                            otherUid != null &&
+                            msg.listenedBy.contains(otherUid),
+                        onListened:
+                            msg.type == 'audio' &&
+                                msg.senderId != currentUid &&
+                                msg.localSendStatus == null &&
+                                !msg.listenedBy.contains(currentUid)
+                            ? () => ref
+                                  .read(firestoreServiceProvider)
+                                  .markVoiceMessageListened(
+                                    chatId: widget.chatId,
+                                    messageId: msg.id,
+                                    uid: currentUid,
+                                  )
+                            : null,
                         timeCheckmarkRow: _timeCheckmarkRow(
                           isMe,
                           otherUid,
@@ -2676,6 +2729,14 @@ class _VoiceMessagePlayer extends StatefulWidget {
   final List<int>? waveform;
   final String senderId;
   final Widget timeCheckmarkRow;
+  // Sender-side "did the recipient actually listen" status — see
+  // markVoiceMessageListened. Only meaningful (and only passed as true)
+  // for a 1-1 chat's own sent message; group chats/incoming bubbles get
+  // showListenedStatus: false and render exactly as before.
+  final bool showListenedStatus;
+  final bool isRead;
+  final bool listenedByOther;
+  final VoidCallback? onListened;
   const _VoiceMessagePlayer({
     this.audioURL,
     this.localFilePath,
@@ -2683,6 +2744,10 @@ class _VoiceMessagePlayer extends StatefulWidget {
     this.waveform,
     required this.senderId,
     required this.timeCheckmarkRow,
+    this.showListenedStatus = false,
+    this.isRead = false,
+    this.listenedByOther = false,
+    this.onListened,
   });
 
   @override
@@ -2690,10 +2755,14 @@ class _VoiceMessagePlayer extends StatefulWidget {
 }
 
 class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
+  // +30% over the previous 44, per feedback that the avatar read too
+  // small next to the play button/waveform.
+  static const double _avatarSize = 57;
   late final AudioPlayer _player;
   bool _isPlaying = false;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
+  bool _listenedFired = false;
 
   @override
   void initState() {
@@ -2707,7 +2776,21 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
     });
     _player.playerStateStream.listen((state) {
       if (mounted) {
+        // just_audio's audio_session integration handles responding to
+        // interruptions (calls, etc.) but never sends the explicit "I'm
+        // done" signal that lets iOS un-duck other apps on pause — same
+        // gap already fixed for recording and video playback elsewhere in
+        // this file/video_message_widgets.dart. Catch the true->false
+        // edge here before overwriting _isPlaying below.
+        final wasPlaying = _isPlaying;
         setState(() => _isPlaying = state.playing);
+        if (wasPlaying && !state.playing) {
+          unawaited(_deactivateAudioSession());
+        }
+        if (state.playing && !_listenedFired) {
+          _listenedFired = true;
+          widget.onListened?.call();
+        }
         if (state.processingState == ProcessingState.completed) {
           _player.seek(Duration.zero);
           setState(() => _isPlaying = false);
@@ -2724,6 +2807,7 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
 
   @override
   void dispose() {
+    if (_isPlaying) unawaited(_deactivateAudioSession());
     _player.dispose();
     super.dispose();
   }
@@ -2759,17 +2843,45 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
       ),
     );
 
+    // Sender-only listened-status coloring — same three states as
+    // WhatsApp's own read receipts, layered on top of (not replacing) the
+    // existing isRead/isDelivered checkmark logic: not read yet (dark
+    // gray — kUnreadGray, not kMuted, which is too close to the gold
+    // bubble's own brightness to read as "unread"), read but not listened
+    // to (blue dot, kMuted wave — deliberately a different, lighter gray
+    // than kUnreadGray so the two states don't look the same), read and
+    // listened to (blue dot and wave). Incoming bubbles and group chats
+    // keep today's plain accent/blue look untouched.
+    Color dotColor = kReadBlue;
+    Color playedColor = accentColor;
+    if (widget.showListenedStatus) {
+      if (!widget.isRead) {
+        dotColor = kUnreadGray;
+        playedColor = kUnreadGray;
+      } else if (!widget.listenedByOther) {
+        dotColor = kReadBlue;
+        playedColor = kMuted;
+      } else {
+        dotColor = kReadBlue;
+        playedColor = kReadBlue;
+      }
+    }
+
     final wave = Expanded(
       child: _WaveformSeekBar(
         levels: widget.waveform,
         playedFraction: playedFraction,
-        color: accentColor,
+        playedColor: playedColor,
+        dotColor: dotColor,
         onSeek: (fraction) =>
             _player.seek(Duration(milliseconds: (fraction * total).round())),
       ),
     );
 
-    final avatar = _VoiceSenderAvatar(senderId: widget.senderId);
+    final avatar = _VoiceSenderAvatar(
+      senderId: widget.senderId,
+      size: _avatarSize,
+    );
 
     // Avatar sits toward the middle of the screen in both cases — right of
     // the wave for an incoming (left-aligned) bubble, left of it for an
@@ -2777,6 +2889,13 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
     final row = widget.isMe
         ? [avatar, const SizedBox(width: 8), playButton, const SizedBox(width: 6), wave]
         : [playButton, const SizedBox(width: 6), wave, const SizedBox(width: 8), avatar];
+
+    // Position label always sits under the play button specifically, not
+    // just at the row's leading edge — when isMe puts the avatar first,
+    // it needs a leading indent matching the avatar's width + spacing to
+    // land in the same place it already does for the !isMe case (where
+    // the play button already is the leading element).
+    final positionIndent = widget.isMe ? _avatarSize + 8 : 0.0;
 
     return SizedBox(
       width: 230,
@@ -2788,9 +2907,15 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
           const SizedBox(height: 2),
           Row(
             children: [
-              Text(
-                _fmt(_position),
-                style: TextStyle(color: labelColor.withAlpha(150), fontSize: 10),
+              Padding(
+                padding: EdgeInsets.only(left: positionIndent),
+                child: Text(
+                  _fmt(_position),
+                  style: TextStyle(
+                    color: labelColor.withAlpha(150),
+                    fontSize: 10,
+                  ),
+                ),
               ),
               const Spacer(),
               widget.timeCheckmarkRow,
@@ -2811,13 +2936,15 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
 class _WaveformSeekBar extends StatefulWidget {
   final List<int>? levels;
   final double playedFraction;
-  final Color color;
+  final Color playedColor;
+  final Color dotColor;
   final ValueChanged<double> onSeek;
 
   const _WaveformSeekBar({
     required this.levels,
     required this.playedFraction,
-    required this.color,
+    required this.playedColor,
+    required this.dotColor,
     required this.onSeek,
   });
 
@@ -2881,9 +3008,14 @@ class _WaveformSeekBarState extends State<_WaveformSeekBar> {
                                 (bars[i].clamp(0, 100) / 100) *
                                     (_barAreaHeight - _minBarHeight),
                             decoration: BoxDecoration(
+                              // 150 rather than the previous 70 — at
+                              // position 0 (not yet playing), every bar is
+                              // "unplayed" and was rendering the whole
+                              // wave at low alpha, making it barely
+                              // visible before playback starts.
                               color: (i / bars.length) <= widget.playedFraction
-                                  ? widget.color
-                                  : widget.color.withAlpha(70),
+                                  ? widget.playedColor
+                                  : widget.playedColor.withAlpha(150),
                               borderRadius: BorderRadius.circular(2),
                             ),
                           ),
@@ -2916,8 +3048,8 @@ class _WaveformSeekBarState extends State<_WaveformSeekBar> {
                     child: Container(
                       width: _dotVisualSize,
                       height: _dotVisualSize,
-                      decoration: const BoxDecoration(
-                        color: kReadBlue,
+                      decoration: BoxDecoration(
+                        color: widget.dotColor,
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -2939,23 +3071,22 @@ class _WaveformSeekBarState extends State<_WaveformSeekBar> {
 // voice messages from the same sender share one fetch.
 class _VoiceSenderAvatar extends ConsumerWidget {
   final String senderId;
-  const _VoiceSenderAvatar({required this.senderId});
-
-  static const double _size = 44;
+  final double size;
+  const _VoiceSenderAvatar({required this.senderId, required this.size});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(userByIdProvider(senderId)).value;
     final photoURL = user?.photoURL;
     return SizedBox(
-      width: _size,
-      height: _size,
+      width: size,
+      height: size,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
           Container(
-            width: _size,
-            height: _size,
+            width: size,
+            height: size,
             decoration: BoxDecoration(
               color: kBg3,
               shape: BoxShape.circle,
@@ -2970,7 +3101,7 @@ class _VoiceSenderAvatar extends ConsumerWidget {
                 ? Center(
                     child: Text(
                       user?.emoji ?? '🎵',
-                      style: const TextStyle(fontSize: 18),
+                      style: const TextStyle(fontSize: 22),
                     ),
                   )
                 : null,
@@ -2979,12 +3110,12 @@ class _VoiceSenderAvatar extends ConsumerWidget {
             right: -2,
             bottom: -2,
             child: Container(
-              padding: const EdgeInsets.all(4),
+              padding: const EdgeInsets.all(5),
               decoration: const BoxDecoration(
                 color: kBg2,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.mic, size: 12, color: kReadBlue),
+              child: const Icon(Icons.mic, size: 14, color: kReadBlue),
             ),
           ),
         ],

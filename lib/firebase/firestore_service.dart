@@ -409,6 +409,26 @@ class FirestoreService {
     });
   }
 
+  // Distinct from the chat-level lastReadMsgId (which only means the
+  // recipient scrolled past this message) — this records that `uid`
+  // actually started playback at least once. arrayUnion is idempotent and
+  // creates the field if it doesn't exist yet, so this is safe to call on
+  // messages sent before this field existed too.
+  Future<void> markVoiceMessageListened({
+    required String chatId,
+    required String messageId,
+    required String uid,
+  }) {
+    return _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .doc(messageId)
+        .update({
+          'listenedBy': FieldValue.arrayUnion([uid]),
+        });
+  }
+
   Future<void> deleteMessageForAll({
     required String chatId,
     required String messageId,

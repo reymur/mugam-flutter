@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -19,6 +20,27 @@ import 'navigation/app_router.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // Ducks background audio (Spotify, etc.) while this app plays or records
+  // voice/video message audio — video_player and camera's own iOS audio
+  // session setup both merge into (rather than overwrite) whatever's
+  // already configured, so this one call covers voice/video playback and
+  // video recording; voice recording's own session setup (record package)
+  // overwrites its options outright, so that path sets duckOthers
+  // explicitly too — see _startRecording in chat_screen.dart.
+  final audioSession = await AudioSession.instance;
+  await audioSession.configure(
+    const AudioSessionConfiguration(
+      avAudioSessionCategory: AVAudioSessionCategory.playback,
+      avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.duckOthers,
+      avAudioSessionMode: AVAudioSessionMode.defaultMode,
+      androidAudioAttributes: AndroidAudioAttributes(
+        contentType: AndroidAudioContentType.music,
+        usage: AndroidAudioUsage.media,
+      ),
+      androidAudioFocusGainType: AndroidAudioFocusGainType.gainTransientMayDuck,
+      androidWillPauseWhenDucked: false,
+    ),
+  );
   final prefs = await SharedPreferences.getInstance();
   // Best-effort retry for the offline media-send queue while the app is
   // backgrounded (but not fully killed — see background_queue_processor.dart

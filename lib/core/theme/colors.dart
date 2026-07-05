@@ -12,6 +12,12 @@ const Color kRed = Color(0xFFC0392B);
 const Color kGreen = Color(0xFF27AE60);
 const Color kText = Color(0xFFF5EAD8);
 const Color kMuted = Color(0xFF8A7A60);
+// Darker and clearly distinct from kMuted — used for the voice message
+// "not read yet" cursor/wave state, which needs to stay visible against
+// the light gold outgoing-bubble background (kMuted is too close to gold
+// in brightness there) while remaining unmistakably different from
+// kMuted's own "read but not listened to" wave state.
+const Color kUnreadGray = Color(0xFF4A4A4A);
 const Color kReadBlue = Color(0xFF1A6B9E);
 
 const double kRadius = 18.0;

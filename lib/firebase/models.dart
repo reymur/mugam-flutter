@@ -138,6 +138,11 @@ class Message {
   // Fixed-length (40) 0-100 normalized amplitude bars captured live during
   // recording — null for messages sent before this field existed.
   final List<int>? waveform;
+  // Uids who have actually started playback of this voice message at
+  // least once — distinct from chat-level read receipts (lastReadMsgId),
+  // which only mean the recipient scrolled past it. Written via
+  // FirestoreService.markVoiceMessageListened.
+  final List<String> listenedBy;
   final Timestamp? timestamp;
   final String type; // 'text', 'image', 'audio', 'video'
   final String? replyToId;
@@ -167,6 +172,7 @@ class Message {
     this.videoWidth,
     this.videoHeight,
     this.waveform,
+    this.listenedBy = const [],
     this.timestamp,
     required this.type,
     this.replyToId,
@@ -196,6 +202,7 @@ class Message {
       videoWidth: data['videoWidth'] as int?,
       videoHeight: data['videoHeight'] as int?,
       waveform: (data['waveform'] as List?)?.cast<int>(),
+      listenedBy: List<String>.from(data['listenedBy'] as List? ?? const []),
       timestamp: data['timestamp'] as Timestamp?,
       type: data['type'] ?? 'text',
       replyToId: replyTo?['id'] as String?,
