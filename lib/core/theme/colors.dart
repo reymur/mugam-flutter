@@ -19,6 +19,13 @@ const Color kMuted = Color(0xFF8A7A60);
 // kMuted's own "read but not listened to" wave state.
 const Color kUnreadGray = Color(0xFF4A4A4A);
 const Color kReadBlue = Color(0xFF1A6B9E);
+// Brighter/more saturated than kReadBlue — kReadBlue's luminance is too
+// close to kMuted's (the "read but not listened" wave color) to read as
+// a clearly different state at a glance on a thin waveform bar. This is
+// WhatsApp's own read-tick blue, picked specifically for its strong
+// luminance/saturation gap from kMuted. Used only for the voice message
+// "listened" wave color, not the dot or checkmarks (which keep kReadBlue).
+const Color kListenedBlue = Color(0xFF2D9DCF);
 
 const double kRadius = 18.0;
 const double kNavH = 68.0;

@@ -2863,9 +2863,12 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
         playedColor = kMuted;
       } else {
         dotColor = kReadBlue;
-        playedColor = kReadBlue;
+        playedColor = kListenedBlue;
       }
     }
+    final isListened = widget.showListenedStatus &&
+        widget.isRead &&
+        widget.listenedByOther;
 
     final wave = Expanded(
       child: _WaveformSeekBar(
@@ -2873,6 +2876,7 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
         playedFraction: playedFraction,
         playedColor: playedColor,
         dotColor: dotColor,
+        thick: isListened,
         onSeek: (fraction) =>
             _player.seek(Duration(milliseconds: (fraction * total).round())),
       ),
@@ -2938,6 +2942,10 @@ class _WaveformSeekBar extends StatefulWidget {
   final double playedFraction;
   final Color playedColor;
   final Color dotColor;
+  // Widens every bar (played and unplayed alike) once the recipient has
+  // listened — independent of the played/unplayed color split below, which
+  // stays keyed off playedFraction regardless of this flag.
+  final bool thick;
   final ValueChanged<double> onSeek;
 
   const _WaveformSeekBar({
@@ -2945,6 +2953,7 @@ class _WaveformSeekBar extends StatefulWidget {
     required this.playedFraction,
     required this.playedColor,
     required this.dotColor,
+    required this.thick,
     required this.onSeek,
   });
 
@@ -3001,7 +3010,9 @@ class _WaveformSeekBarState extends State<_WaveformSeekBar> {
                     for (var i = 0; i < bars.length; i++)
                       Expanded(
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 1),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: widget.thick ? 0.5 : 1,
+                          ),
                           child: Container(
                             height:
                                 _minBarHeight +
