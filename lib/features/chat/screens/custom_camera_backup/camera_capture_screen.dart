@@ -7,7 +7,7 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:native_device_orientation/native_device_orientation.dart';
 import 'package:path_provider/path_provider.dart';
-import '../../../core/theme/colors.dart';
+import '../../../../core/theme/colors.dart';
 
 class CapturedMedia {
   final String path;
@@ -19,11 +19,19 @@ enum _CameraMode { video, photo }
 
 const List<double> _zoomSteps = [1.0, 2.0, 3.0];
 
-// WhatsApp-style camera screen: a Video/Photo mode switcher at the bottom
-// picks what the single shutter button does (tap = photo in Photo mode,
-// tap = start/stop recording in Video mode). Returns the captured file via
-// Navigator.pop instead of sending anything itself; the caller decides what
-// to do with it.
+// WhatsApp-style camera screen: live preview, Video/Photo mode switcher,
+// flash/zoom/camera-switch. Capture itself now hands off to the system
+// camera on shutter tap (see _onShutterTap) rather than using
+// _controller.takePicture()/startVideoRecording() directly — system
+// capture quality (HDR, processing) was judged more important than a
+// fully custom in-app camera UI. flash/zoom/camera-switch here only
+// affect this screen's own live preview; they don't carry over to the
+// system camera's actual capture, which opens its own fresh session.
+// _takePhoto/_startVideoRecording/_stopVideoRecording/orientation-baking
+// below are unused dead code now, kept for a possible future full revert
+// to capturing directly through this screen's own CameraController.
+// Returns the captured file via Navigator.pop instead of sending anything
+// itself; the caller decides what to do with it.
 class CameraCaptureScreen extends StatefulWidget {
   const CameraCaptureScreen({super.key});
 
@@ -40,6 +48,19 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
   bool _isRecordingVideo = false;
   bool _processingPhoto = false;
   String? _error;
+  // Kept warm for the whole screen's lifetime via a continuous
+  // onOrientationChanged(useSensor: true) subscription (see initState) —
+  // a fresh one-shot .orientation(useSensor: true) call per photo was
+  // measured to reliably take longer than 500ms, since it spins up a
+  // brand new CMMotionManager from cold each time (real sensor-fusion
+  // warm-up latency, not a "device is flat" case). Reading this cached
+  // value at shutter time is instant. It also naturally holds the last
+  // known-good reading while the phone is lying flat — the native sensor
+  // listener simply stops emitting new events in that case (see
+  // SensorListener.swift), so this field just doesn't get overwritten,
+  // no separate flat-device handling needed.
+  NativeDeviceOrientation? _liveSensorOrientation;
+  StreamSubscription<NativeDeviceOrientation>? _orientationSub;
   _CameraMode _mode = _CameraMode.photo;
   FlashMode _flashMode = FlashMode.auto;
   double _zoom = 1.0;
@@ -67,6 +88,9 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
     _pulseAnimation = Tween<double>(begin: 0.3, end: 1.0).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+    _orientationSub = NativeDeviceOrientationCommunicator()
+        .onOrientationChanged(useSensor: true)
+        .listen((orientation) => _liveSensorOrientation = orientation);
     _initCamera();
   }
 
@@ -180,6 +204,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
 
   @override
   void dispose() {
+    _orientationSub?.cancel();
     _controller?.dispose();
     _recordingTimer?.cancel();
     _pulseController.dispose();
@@ -221,6 +246,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
     }
   }
 
+  // ignore: unused_element
   Future<void> _takePhoto() async {
     final controller = _controller;
     if (!_ready || controller == null) return;
@@ -234,14 +260,20 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
       // rotate-then-shoot. native_device_orientation's sensor mode reads
       // CMMotionManager's raw gravity vector directly instead — a genuinely
       // different mechanism, independent of both the rotation lock and
-      // that notification's staleness. Locking capture orientation to this
-      // fresh reading right before every shot (not once, not via a
-      // long-lived listener chasing camera's own unreliable value — see
-      // the abandoned attempt above this method's git history) keeps the
-      // native capture connection's tag accurate regardless of how the
-      // phone was held or whether the lock was on.
-      final sensorOrientation = await NativeDeviceOrientationCommunicator()
-          .orientation(useSensor: true);
+      // that notification's staleness. Reading the cached
+      // _liveSensorOrientation here (kept warm by the subscription started
+      // in initState) rather than doing a fresh one-shot read per shot —
+      // a fresh .orientation(useSensor: true) call spins up a brand new
+      // CMMotionManager from cold each time, and its first sample was
+      // measured to reliably take longer than 500ms. portraitUp only gets
+      // used on the very first shot of a session if the phone was already
+      // lying flat before the subscription ever got a single reading.
+      final sensorOrientation =
+          _liveSensorOrientation ?? NativeDeviceOrientation.portraitUp;
+      debugPrint(
+        '📸 orientation: using $sensorOrientation'
+        '${_liveSensorOrientation == null ? " (no live reading yet, default)" : ""}',
+      );
       final mapped = sensorOrientation.deviceOrientation;
       if (mapped != null) {
         await controller.lockCaptureOrientation(mapped);
@@ -264,6 +296,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
     }
   }
 
+  // ignore: unused_element
   Future<void> _startVideoRecording() async {
     final controller = _controller;
     if (!_ready || controller == null) return;
@@ -297,6 +330,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
     _recordingDuration = '0:00';
   }
 
+  // ignore: unused_element
   Future<void> _stopVideoRecording() async {
     final controller = _controller;
     if (controller == null || !controller.value.isRecordingVideo) return;
@@ -325,15 +359,43 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
     }
   }
 
-  void _onShutterTap() {
+  // This screen is now a live-preview + mode-picker front end only — the
+  // actual capture hands off to the system camera (see _openCamera in
+  // chat_screen.dart's doc comment for why: HDR/processing quality). A
+  // single tap, in either mode, releases our own CameraController (the
+  // hardware capture session can't be held by two consumers at once) and
+  // opens the system camera in the matching mode. _takePhoto/
+  // _startVideoRecording/_stopVideoRecording below are now unused, kept
+  // only in case of a future full revert back to capturing through our
+  // own controller — see the class doc comment.
+  //
+  // Nulling _controller (not just disposing it) makes _ready false
+  // immediately, which doubles as re-entrancy protection against a second
+  // tap while the handoff is in flight — the build method's `!_ready`
+  // branch shows the existing loading spinner for that brief gap rather
+  // than a dead/blank preview.
+  Future<void> _onShutterTap() async {
     if (!_ready) return;
-    if (_mode == _CameraMode.photo) {
-      _takePhoto();
-    } else if (_isRecordingVideo) {
-      _stopVideoRecording();
-    } else {
-      _startVideoRecording();
+    final isVideo = _mode == _CameraMode.video;
+    final controller = _controller;
+    if (mounted) setState(() => _controller = null);
+    await controller?.dispose();
+    if (!mounted) return;
+    final picker = ImagePicker();
+    final picked = isVideo
+        ? await picker.pickVideo(source: ImageSource.camera)
+        : await picker.pickImage(source: ImageSource.camera);
+    if (!mounted) return;
+    if (picked == null) {
+      // Cancelled in the system camera. Our own controller is already
+      // gone (nothing to resume), so close this screen outright instead
+      // of leaving the user stranded on a dead preview.
+      Navigator.of(context).pop();
+      return;
     }
+    Navigator.of(
+      context,
+    ).pop(CapturedMedia(path: picked.path, isVideo: isVideo));
   }
 
   void _setMode(_CameraMode mode) {

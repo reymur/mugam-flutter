@@ -28,7 +28,7 @@ import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import 'about_contact_screen.dart';
-import 'camera_capture_screen.dart';
+import 'custom_camera_backup/camera_capture_screen.dart';
 import 'message_info_screen.dart';
 import 'video_message_widgets.dart';
 
@@ -986,9 +986,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
-  // Opens the unified photo/video camera screen and routes the captured
-  // file to the matching upload+send helper.
-  Future<void> _openCameraCapture() async {
+  // Opens the custom camera screen (live preview + Video/Photo mode
+  // switcher) as a front end, but the actual capture now hands off to the
+  // system camera on shutter tap — see CameraCaptureScreen's own class doc
+  // comment (lib/features/chat/screens/custom_camera_backup/) for why:
+  // system capture quality (HDR, processing) matters more here than a
+  // fully custom capture path. Routes the result to the matching
+  // upload+send helper exactly as before, regardless of which camera UI
+  // actually produced the file.
+  Future<void> _openCamera() async {
     final result = await Navigator.push<CapturedMedia>(
       context,
       MaterialPageRoute(builder: (_) => const CameraCaptureScreen()),
@@ -1327,7 +1333,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               title: const Text('Kamera', style: TextStyle(color: kText)),
               onTap: () {
                 Navigator.of(context).pop();
-                _openCameraCapture();
+                _openCamera();
               },
             ),
           ],
@@ -2482,7 +2488,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       icon: const Icon(Icons.camera_alt, color: kGold),
                       onPressed: (_uploadingImage || _uploadingVideo)
                           ? null
-                          : _openCameraCapture,
+                          : _openCamera,
                     ),
 
                   const SizedBox(width: 4),
