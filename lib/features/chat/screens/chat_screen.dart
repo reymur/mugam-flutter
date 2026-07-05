@@ -1832,6 +1832,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         listenedByOther:
                             otherUid != null &&
                             msg.listenedBy.contains(otherUid),
+                        listenedByMe: msg.listenedBy.contains(currentUid),
                         onListened:
                             msg.type == 'audio' &&
                                 msg.senderId != currentUid &&
@@ -2771,6 +2772,11 @@ class _VoiceMessagePlayer extends StatefulWidget {
   final bool showListenedStatus;
   final bool isRead;
   final bool listenedByOther;
+  // Recipient-side "have I (the current user) listened to this incoming
+  // message" status — mirrors listenedByOther but checks currentUid
+  // instead of otherUid against the same listenedBy array. Only
+  // meaningful for !isMe; harmless (unused) otherwise.
+  final bool listenedByMe;
   final VoidCallback? onListened;
   const _VoiceMessagePlayer({
     this.audioURL,
@@ -2782,6 +2788,7 @@ class _VoiceMessagePlayer extends StatefulWidget {
     this.showListenedStatus = false,
     this.isRead = false,
     this.listenedByOther = false,
+    this.listenedByMe = false,
     this.onListened,
   });
 
@@ -2936,8 +2943,8 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
     // bubble's own brightness to read as "unread"), read but not listened
     // to (blue dot, kMuted wave — deliberately a different, lighter gray
     // than kUnreadGray so the two states don't look the same), read and
-    // listened to (blue dot and wave). Incoming bubbles and group chats
-    // keep today's plain accent/blue look untouched.
+    // listened to (blue dot and wave). Group chats (no otherUid) keep
+    // today's plain accent look untouched.
     Color dotColor = kReadBlue;
     Color playedColor = accentColor;
     if (widget.showListenedStatus) {
@@ -2951,10 +2958,24 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
         dotColor = kReadBlue;
         playedColor = kListenedBlue;
       }
+    } else if (!widget.isMe) {
+      // Recipient-side status for an incoming message: bold saturated
+      // blue (same kListenedBlue as the sender-side "listened" state)
+      // while I haven't played it yet — attention-grabbing, "new" — then
+      // dark gray once I have, same listenedBy array as showListenedStatus
+      // above, just checked against currentUid (listenedByMe) instead of
+      // otherUid.
+      dotColor = widget.listenedByMe ? kUnreadGray : kListenedBlue;
+      playedColor = widget.listenedByMe ? kUnreadGray : kListenedBlue;
     }
-    final isListened = widget.showListenedStatus &&
-        widget.isRead &&
-        widget.listenedByOther;
+    // Widens the wave's bars — same "listened" signal as the color above,
+    // just inverted for the incoming case: sender-side thick means the
+    // recipient already listened (settled), incoming-side thick means I
+    // HAVEN'T yet (still demanding attention) and reverts to normal width
+    // once I have.
+    final isThickWave = widget.showListenedStatus
+        ? (widget.isRead && widget.listenedByOther)
+        : (!widget.isMe && !widget.listenedByMe);
 
     final wave = Expanded(
       child: _WaveformSeekBar(
@@ -2962,7 +2983,7 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
         playedFraction: playedFraction,
         playedColor: playedColor,
         dotColor: dotColor,
-        thick: isListened,
+        thick: isThickWave,
         onSeek: (fraction) =>
             _player.seek(Duration(milliseconds: (fraction * total).round())),
       ),
