@@ -2754,6 +2754,30 @@ class _VoiceMessagePlayer extends StatefulWidget {
   State<_VoiceMessagePlayer> createState() => _VoiceMessagePlayerState();
 }
 
+// Ensures only one voice message plays at a time app-wide, mirroring
+// WhatsApp: starting a new one pauses whatever was previously playing,
+// regardless of which chat it's in. A plain singleton rather than Riverpod
+// state — this coordinates transient in-memory playback, not app data, and
+// only ever has at most one interested reader (the currently active
+// player) at a time.
+class _VoiceMessageCoordinator {
+  _VoiceMessageCoordinator._();
+  static final instance = _VoiceMessageCoordinator._();
+
+  _VoiceMessagePlayerState? _active;
+
+  void starting(_VoiceMessagePlayerState player) {
+    if (_active != null && _active != player) {
+      _active!._pauseFromCoordinator();
+    }
+    _active = player;
+  }
+
+  void stopped(_VoiceMessagePlayerState player) {
+    if (_active == player) _active = null;
+  }
+}
+
 class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
   // +30% over the previous 44, per feedback that the avatar read too
   // small next to the play button/waveform.
@@ -2763,6 +2787,14 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _listenedFired = false;
+  // Set right before the coordinator pauses this player to hand off to a
+  // different message. Suppresses the deactivateAudioSession() call below
+  // for that one transition — the incoming player is about to activate the
+  // shared session again immediately, and racing our own deactivate against
+  // its activate was silencing audio while still visually "playing" (same
+  // race as the loop/alternation bug, triggered here by fast play-switching
+  // between messages instead of natural completion).
+  bool _pausedByCoordinator = false;
 
   @override
   void initState() {
@@ -2785,7 +2817,11 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
         final wasPlaying = _isPlaying;
         setState(() => _isPlaying = state.playing);
         if (wasPlaying && !state.playing) {
-          unawaited(_deactivateAudioSession());
+          if (_pausedByCoordinator) {
+            _pausedByCoordinator = false;
+          } else {
+            unawaited(_deactivateAudioSession());
+          }
         }
         if (state.playing && !_listenedFired) {
           _listenedFired = true;
@@ -2811,9 +2847,17 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
     }
   }
 
+  void _pauseFromCoordinator() {
+    if (mounted) {
+      _pausedByCoordinator = true;
+      _player.pause();
+    }
+  }
+
   @override
   void dispose() {
     if (_isPlaying) unawaited(_deactivateAudioSession());
+    _VoiceMessageCoordinator.instance.stopped(this);
     _player.dispose();
     super.dispose();
   }
@@ -2839,6 +2883,7 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
         if (_isPlaying) {
           await _player.pause();
         } else {
+          _VoiceMessageCoordinator.instance.starting(this);
           await _player.play();
         }
       },
