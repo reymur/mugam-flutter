@@ -2792,6 +2792,12 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
           widget.onListened?.call();
         }
         if (state.processingState == ProcessingState.completed) {
+          // just_audio doesn't clear its own `playing` flag on completion —
+          // only pause()/stop() do. Without an explicit pause() here,
+          // seeking back to zero while `playing` is still true makes the
+          // player resume from the new position, i.e. loop forever instead
+          // of stopping.
+          unawaited(_player.pause());
           _player.seek(Duration.zero);
           setState(() => _isPlaying = false);
         }
