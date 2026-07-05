@@ -68,6 +68,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   double _dragY = 0.0;
   static const double _cancelThreshold = -80.0;
   static const double _lockThreshold = -60.0;
+  // Uniform on all four corners for every bubble type (text/image/audio/
+  // video) and both senders — WhatsApp's current bubbles have no tail.
+  static const double _kBubbleRadius = 12.0;
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
   final AudioPlayer _beepPlayer = AudioPlayer();
@@ -1379,8 +1382,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     String? otherUid,
     Map<String, dynamic> deliveredTo,
     Map<String, dynamic> lastReadMsgId,
+    String? prevSenderId,
   ) {
     final isMe = msg.senderId == currentUid;
+    // Tight vertical gap within a run of consecutive messages from the same
+    // sender, wider gap when the sender changes — matches WhatsApp's
+    // grouping. Controlled entirely by top margin so it only depends on the
+    // relationship with the previous message, not the next.
+    final isFirstInGroup = prevSenderId != msg.senderId;
     final time = msg.timestamp != null
         ? DateFormat('HH:mm').format(msg.timestamp!.toDate())
         : '';
@@ -1424,8 +1433,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
             child: Container(
               margin: EdgeInsets.only(
-                top: 4,
-                bottom: 4,
+                top: isFirstInGroup ? 8 : 2,
                 left: isMe ? 60 : 0,
                 right: isMe ? 0 : 60,
               ),
@@ -1433,12 +1441,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               decoration: BoxDecoration(
                 color: kBg3,
                 border: Border.all(color: kBorder),
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(18),
-                  topRight: Radius.circular(18),
-                  bottomLeft: Radius.circular(4),
-                  bottomRight: Radius.circular(18),
-                ),
+                borderRadius: BorderRadius.circular(_kBubbleRadius),
               ),
               child: const Text(
                 '🚫 Bu mesaj silindi',
@@ -1476,8 +1479,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             children: [
               Container(
                 margin: EdgeInsets.only(
-                  top: 4,
-                  bottom: 4,
+                  top: isFirstInGroup ? 8 : 2,
                   left: isMe ? 60 : 0,
                   right: isMe ? 0 : 60,
                 ),
@@ -1487,12 +1489,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 ),
                 decoration: BoxDecoration(
                   color: isMe ? kGold : kBg3,
-                  borderRadius: BorderRadius.only(
-                    topLeft: const Radius.circular(18),
-                    topRight: const Radius.circular(18),
-                    bottomLeft: Radius.circular(isMe ? 18 : 4),
-                    bottomRight: Radius.circular(isMe ? 4 : 18),
-                  ),
+                  borderRadius: BorderRadius.circular(_kBubbleRadius),
                 ),
                 child: Column(
                   crossAxisAlignment: isMe
@@ -1599,11 +1596,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         ),
                       ),
                     if (msg.type == 'text')
-                      Text(
-                        msg.text,
-                        style: TextStyle(
-                          color: isMe ? const Color(0xFF1A0E00) : kText,
-                          fontSize: 14,
+                      Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(
+                              text: msg.text,
+                              style: TextStyle(
+                                color: isMe
+                                    ? const Color(0xFF1A0E00)
+                                    : kText,
+                                fontSize: 14,
+                              ),
+                            ),
+                            WidgetSpan(
+                              alignment: PlaceholderAlignment.middle,
+                              child: Padding(
+                                padding: const EdgeInsets.only(left: 6),
+                                child: _timeCheckmarkRow(
+                                  isMe,
+                                  otherUid,
+                                  msg,
+                                  time,
+                                  checkMark,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     if (msg.type == 'image' &&
@@ -1661,30 +1679,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         videoURL: msg.videoURL,
                         localFilePath: msg.localFilePath,
                       ),
-                    const SizedBox(height: 2),
-                    GestureDetector(
-                      onTap: isMe && otherUid != null
-                          ? () => _openMessageInfo(msg)
-                          : null,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            time,
-                            style: TextStyle(
-                              color: isMe
-                                  ? const Color(0xFF1A0E00).withAlpha(150)
-                                  : kMuted,
-                              fontSize: 10,
-                            ),
-                          ),
-                          if (checkMark != null) ...[
-                            const SizedBox(width: 3),
-                            checkMark,
-                          ],
-                        ],
-                      ),
-                    ),
+                    if (msg.type != 'text') ...[
+                      const SizedBox(height: 2),
+                      _timeCheckmarkRow(isMe, otherUid, msg, time, checkMark),
+                    ],
                   ],
                 ),
               ),
@@ -1703,6 +1701,35 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ),
     );
     return _wrapSelectableMessage(msg, content);
+  }
+
+  // Shared by every bubble type's time+checkmark display — text renders it
+  // inline via a WidgetSpan (see _buildMessageBubble), every other type
+  // renders it as its own row. checkMark/time are passed in already computed
+  // so this stays pure layout, no duplicated status logic.
+  Widget _timeCheckmarkRow(
+    bool isMe,
+    String? otherUid,
+    Message msg,
+    String time,
+    Widget? checkMark,
+  ) {
+    return GestureDetector(
+      onTap: isMe && otherUid != null ? () => _openMessageInfo(msg) : null,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            time,
+            style: TextStyle(
+              color: isMe ? const Color(0xFF1A0E00).withAlpha(150) : kMuted,
+              fontSize: 10,
+            ),
+          ),
+          if (checkMark != null) ...[const SizedBox(width: 3), checkMark],
+        ],
+      ),
+    );
   }
 
   Widget _buildSelectionBar() {
@@ -2022,6 +2049,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           otherUidResolved,
                           deliveredTo,
                           lastReadMsgId,
+                          i > 0 ? combinedMessages[i - 1].senderId : null,
                         ),
                       );
                     },
