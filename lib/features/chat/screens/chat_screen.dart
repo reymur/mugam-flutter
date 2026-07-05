@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:audio_session/audio_session.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:exif/exif.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -1081,6 +1083,48 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     await _uploadAndSendImageFile(picked.path);
   }
 
+  // Reads the picked file's own pixel dimensions via a real (if cheap,
+  // since image_picker already downsizes to maxWidth 1200) decode via
+  // dart:ui — but that decode reports the RAW stored buffer size, not the
+  // as-displayed one: confirmed on-device that a landscape photo decodes
+  // as e.g. 720x1280 (portrait-shaped raw buffer) with EXIF Orientation 6
+  // ("rotate 90° CW to display correctly"), which the Image/
+  // CachedNetworkImage widgets used to actually render it DO apply, but
+  // dart:ui's raw decode does not. Reading EXIF Orientation separately
+  // (via the exif package — metadata-only parse, no extra decode cost)
+  // and swapping width/height for the four orientation values that
+  // involve a 90/270 transpose (5, 6, 7, 8) gives the true as-displayed
+  // size, matching how the photo actually renders. Same rationale as
+  // _uploadAndSendVideoFile's own rotated-swap for videoWidth/
+  // videoHeight, just sourced from EXIF instead of container metadata.
+  // Null on failure just means the bubble falls back to its fixed-square
+  // placeholder, same as an old message queued before this field existed.
+  Future<(int, int)?> _probeImageSize(String filePath) async {
+    try {
+      final bytes = await File(filePath).readAsBytes();
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      var width = frame.image.width;
+      var height = frame.image.height;
+      frame.image.dispose();
+      try {
+        final tags = await readExifFromBytes(bytes);
+        final orientation = tags['Image Orientation']?.values.firstAsInt();
+        if (orientation != null && {5, 6, 7, 8}.contains(orientation)) {
+          final w = width;
+          width = height;
+          height = w;
+        }
+      } catch (_) {
+        // No/unreadable EXIF just means we keep the raw decoded size —
+        // correct for the common case of an image with no rotation tag.
+      }
+      return (width, height);
+    } catch (_) {
+      return null;
+    }
+  }
+
   // Shared by the gallery/camera picker and by clipboard image paste.
   // Hands the file to the offline-aware pending-send queue — see
   // _uploadAndSendVideoFile for why this doesn't upload inline anymore.
@@ -1090,6 +1134,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final replyingTo = _replyingTo;
     setState(() => _uploadingImage = true);
     _cancelReply();
+    final imageSize = await _probeImageSize(filePath);
     final error = await ref
         .read(pendingMessageQueueProvider.notifier)
         .enqueue(
@@ -1097,6 +1142,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           senderId: currentUid,
           type: 'image',
           sourceFilePath: filePath,
+          imageWidth: imageSize?.$1,
+          imageHeight: imageSize?.$2,
           replyToId: replyingTo?.id,
           replyToText: replyingTo != null
               ? _replyPreviewText(replyingTo)
@@ -1591,13 +1638,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   left: isMe ? 60 : 0,
                   right: isMe ? 0 : 60,
                 ),
-                // Video fills the bubble edge-to-edge, like WhatsApp's media
-                // bubbles — no inset chrome around it. Only when there's no
-                // reply-to-quote card sharing the bubble; with one present,
-                // the video keeps the normal padded chrome so the quote card
-                // above it still reads correctly (a chromeless-media-plus-
-                // quote layout is a separate, not-yet-designed case).
-                padding: (msg.type == 'video' && msg.replyToId == null)
+                // Video/photo fill the bubble edge-to-edge, like WhatsApp's
+                // media bubbles — no inset chrome around them. Only when
+                // there's no reply-to-quote card sharing the bubble; with
+                // one present, the media keeps the normal padded chrome so
+                // the quote card above it still reads correctly (a
+                // chromeless-media-plus-quote layout is a separate,
+                // not-yet-designed case).
+                padding:
+                    ((msg.type == 'video' || msg.type == 'image') &&
+                        msg.replyToId == null)
                     ? EdgeInsets.zero
                     : const EdgeInsets.symmetric(
                         horizontal: 14,
@@ -1742,44 +1792,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       ),
                     if (msg.type == 'image' &&
                         (msg.imageURL != null || msg.localFilePath != null))
-                      GestureDetector(
+                      ImageMessageBubble(
+                        imageURL: msg.imageURL,
+                        localFilePath: msg.localFilePath,
+                        imageWidth: msg.imageWidth,
+                        imageHeight: msg.imageHeight,
+                        bubbleRadius: _kBubbleRadius,
                         onTap: msg.imageURL != null
                             ? () => showFullImage(context, msg.imageURL!)
                             : null,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: msg.localFilePath != null
-                              ? Image.file(
-                                  File(msg.localFilePath!),
-                                  width: 200,
-                                  height: 200,
-                                  fit: BoxFit.cover,
-                                )
-                              : CachedNetworkImage(
-                                  imageUrl: msg.imageURL!,
-                                  width: 200,
-                                  height: 200,
-                                  fit: BoxFit.cover,
-                                  placeholder: (ctx, url) => Container(
-                                    width: 200,
-                                    height: 200,
-                                    color: kBg3,
-                                    child: const Center(
-                                      child: CircularProgressIndicator(
-                                        color: kGold,
-                                      ),
-                                    ),
-                                  ),
-                                  errorWidget: (ctx, url, err) => Container(
-                                    width: 200,
-                                    height: 200,
-                                    color: kBg3,
-                                    child: const Icon(
-                                      Icons.broken_image,
-                                      color: kMuted,
-                                    ),
-                                  ),
-                                ),
+                        timeCheckmarkOverlay: _timeCheckmarkRow(
+                          isMe,
+                          otherUid,
+                          msg,
+                          time,
+                          overlayCheckMark,
+                          textColor: Colors.white,
                         ),
                       ),
                     if (msg.type == 'audio' &&
@@ -1839,6 +1867,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       ),
                     if (msg.type != 'text' &&
                         msg.type != 'video' &&
+                        msg.type != 'image' &&
                         msg.type != 'audio') ...[
                       const SizedBox(height: 2),
                       _timeCheckmarkRow(isMe, otherUid, msg, time, checkMark),

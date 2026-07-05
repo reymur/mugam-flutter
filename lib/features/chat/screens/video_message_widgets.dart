@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:audio_session/audio_session.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:video_player/video_player.dart';
@@ -265,7 +266,7 @@ class VideoMessageBubble extends StatelessWidget {
               Positioned(
                 left: 8,
                 bottom: 8,
-                child: _MediaOverlayChip(
+                child: MediaOverlayChip(
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -291,7 +292,117 @@ class VideoMessageBubble extends StatelessWidget {
               Positioned(
                 right: 8,
                 bottom: 8,
-                child: _MediaOverlayChip(child: timeCheckmarkOverlay),
+                child: MediaOverlayChip(child: timeCheckmarkOverlay),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Full chat-bubble photo message: real image, no bubble padding, time+
+// checkmark overlaid bottom-right — same treatment as VideoMessageBubble
+// above, just without a play affordance or duration chip since a photo has
+// neither. Sized to the photo's own as-displayed aspect ratio the same way
+// (width/height read at send time, see _probeImageSize in chat_screen.dart
+// — NOT derived from the CachedNetworkImage/Image.file widget itself, for
+// the same before/after-upload stability reason as video), falling back to
+// a fixed square when unknown (probe failed, or an older message sent
+// before this field existed).
+class ImageMessageBubble extends StatelessWidget {
+  static const double _minSide = 120;
+  static const double _maxWidth = 260;
+  static const double _maxHeight = 340;
+  static const double _fallbackSide = 200;
+
+  final String? imageURL;
+  final String? localFilePath;
+  final int? imageWidth;
+  final int? imageHeight;
+  final double bubbleRadius;
+  final Widget timeCheckmarkOverlay;
+  final VoidCallback? onTap;
+
+  const ImageMessageBubble({
+    super.key,
+    this.imageURL,
+    this.localFilePath,
+    this.imageWidth,
+    this.imageHeight,
+    required this.bubbleRadius,
+    required this.timeCheckmarkOverlay,
+    this.onTap,
+  });
+
+  Size _boundedSize() {
+    final w0 = imageWidth;
+    final h0 = imageHeight;
+    if (w0 == null || h0 == null || w0 <= 0 || h0 <= 0) {
+      return const Size(_fallbackSide, _fallbackSide);
+    }
+    final ratio = w0 / h0;
+    var w = _maxWidth;
+    var h = w / ratio;
+    if (h > _maxHeight) {
+      h = _maxHeight;
+      w = h * ratio;
+    }
+    if (h < _minSide) {
+      h = _minSide;
+      w = h * ratio;
+    }
+    if (w < _minSide) {
+      w = _minSide;
+      h = w / ratio;
+    }
+    // Re-clamp in case the min-side correction above pushed the other
+    // dimension back past its own max (very thin/wide aspect ratios).
+    if (w > _maxWidth) {
+      w = _maxWidth;
+      h = w / ratio;
+    }
+    if (h > _maxHeight) {
+      h = _maxHeight;
+      w = h * ratio;
+    }
+    return Size(w, h);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = _boundedSize();
+    return GestureDetector(
+      onTap: onTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(bubbleRadius),
+        child: SizedBox(
+          width: size.width,
+          height: size.height,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              localFilePath != null
+                  ? Image.file(File(localFilePath!), fit: BoxFit.cover)
+                  : CachedNetworkImage(
+                      imageUrl: imageURL!,
+                      fit: BoxFit.cover,
+                      placeholder: (ctx, url) => Container(
+                        color: kBg3,
+                        child: const Center(
+                          child: CircularProgressIndicator(color: kGold),
+                        ),
+                      ),
+                      errorWidget: (ctx, url, err) => Container(
+                        color: kBg3,
+                        child: const Icon(Icons.broken_image, color: kMuted),
+                      ),
+                    ),
+              Positioned(
+                right: 8,
+                bottom: 8,
+                child: MediaOverlayChip(child: timeCheckmarkOverlay),
               ),
             ],
           ),
@@ -303,9 +414,9 @@ class VideoMessageBubble extends StatelessWidget {
 
 // Small translucent dark backdrop so white overlay text/icons stay legible
 // over arbitrary video content, whatever its own colors happen to be.
-class _MediaOverlayChip extends StatelessWidget {
+class MediaOverlayChip extends StatelessWidget {
   final Widget child;
-  const _MediaOverlayChip({required this.child});
+  const MediaOverlayChip({super.key, required this.child});
 
   @override
   Widget build(BuildContext context) {

@@ -135,6 +135,13 @@ class Message {
   final int? videoDurationMs;
   final int? videoWidth;
   final int? videoHeight;
+  // As-displayed pixel size read from the picked file at send time (see
+  // _probeImageSize in chat_screen.dart) — null for messages sent before
+  // this field existed. Same rationale as videoWidth/videoHeight: carried
+  // as plain data so the photo bubble sizes identically before and after a
+  // pending item is replaced by the real sent message.
+  final int? imageWidth;
+  final int? imageHeight;
   // Fixed-length (40) 0-100 normalized amplitude bars captured live during
   // recording — null for messages sent before this field existed.
   final List<int>? waveform;
@@ -171,6 +178,8 @@ class Message {
     this.videoDurationMs,
     this.videoWidth,
     this.videoHeight,
+    this.imageWidth,
+    this.imageHeight,
     this.waveform,
     this.listenedBy = const [],
     this.timestamp,
@@ -201,6 +210,8 @@ class Message {
       videoDurationMs: data['videoDurationMs'] as int?,
       videoWidth: data['videoWidth'] as int?,
       videoHeight: data['videoHeight'] as int?,
+      imageWidth: data['imageWidth'] as int?,
+      imageHeight: data['imageHeight'] as int?,
       waveform: (data['waveform'] as List?)?.cast<int>(),
       listenedBy: List<String>.from(data['listenedBy'] as List? ?? const []),
       timestamp: data['timestamp'] as Timestamp?,

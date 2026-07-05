@@ -57,6 +57,8 @@ Future<bool> attemptSendPendingMessage(
               chatId: item.chatId,
               senderId: item.senderId,
               imageURL: url,
+              imageWidth: item.imageWidth,
+              imageHeight: item.imageHeight,
               messageId: item.messageId,
               replyToId: item.replyToId,
               replyToText: item.replyToText,

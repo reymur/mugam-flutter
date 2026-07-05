@@ -107,6 +107,8 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
     int? videoDurationMs,
     int? videoWidth,
     int? videoHeight,
+    int? imageWidth,
+    int? imageHeight,
     List<int>? waveform,
   }) async {
     if (state.length >= maxQueueSize) {
@@ -131,6 +133,8 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
       videoDurationMs: videoDurationMs,
       videoWidth: videoWidth,
       videoHeight: videoHeight,
+      imageWidth: imageWidth,
+      imageHeight: imageHeight,
       waveform: waveform,
     );
     state = [...state, item];

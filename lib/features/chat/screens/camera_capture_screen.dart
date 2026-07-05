@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
+import 'package:native_device_orientation/native_device_orientation.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../../core/theme/colors.dart';
 
 class CapturedMedia {
@@ -34,6 +38,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
   int _cameraIndex = 0;
   bool _initializing = true;
   bool _isRecordingVideo = false;
+  bool _processingPhoto = false;
   String? _error;
   _CameraMode _mode = _CameraMode.photo;
   FlashMode _flashMode = FlashMode.auto;
@@ -108,6 +113,25 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
         _initializing = false;
         _error = null;
       });
+      // Deliberately NOT calling lockCaptureOrientation here. The native
+      // plugin (camera_avfoundation) already tracks the phone's real
+      // physical rotation on its own, continuously and with no Dart
+      // round-trip: it calls UIDevice.beginGeneratingDeviceOrientation
+      // Notifications() once at plugin attach time and reacts to every
+      // UIDeviceOrientationDidChangeNotification by updating the capture
+      // connection's videoOrientation directly (see DefaultCamera.swift's
+      // deviceOrientation didSet -> updateOrientation()). That native
+      // updateOrientation() only falls back to this live value when
+      // lockedCaptureOrientation == .unknown — i.e. when
+      // lockCaptureOrientation has never been called. Calling it (even
+      // repeatedly, chasing every orientation change from the Dart side)
+      // switches capture to the LOCKED value permanently until explicitly
+      // unlocked, and is a strictly worse, laggier proxy for the same
+      // thing the native side already does directly from the accelerometer
+      // — an earlier attempt at this (re-locking on every Dart-side
+      // deviceOrientation change) caused every photo to freeze at
+      // whichever orientation was captured first, regardless of how the
+      // phone was actually being held for later shots.
     } catch (e) {
       await controller.dispose();
       if (mounted) {
@@ -162,20 +186,81 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
     super.dispose();
   }
 
+  // AVCaptureConnection.videoOrientation (what camera_avfoundation uses to
+  // tag capture orientation) is deprecated since iOS 17 and, per Apple's
+  // own developer forums, unreliable on newer hardware regardless of how
+  // it's driven from the Dart side — confirmed the hard way: two earlier
+  // attempts at steering it via lockCaptureOrientation (in both directions)
+  // made no difference at all. Sidesteps the native capture-orientation
+  // machinery entirely instead of trying to fix it: reads whatever EXIF
+  // orientation actually ended up on the captured file and physically
+  // rotates/flips the pixels to match via the `image` package's
+  // bakeOrientation (handles all 8 EXIF orientation values, including the
+  // flip+rotate combinations — 2, 4, 5, 7 — that front-camera/mirrored
+  // shots typically carry). bakeOrientation clears the orientation tag as
+  // part of the same operation, before any pixel transform runs, so
+  // nothing downstream (our own bubble-sizing EXIF read, Skia's decode)
+  // can ever re-apply a rotation on top of this — no double-rotation risk
+  // regardless of which camera or physical orientation produced the file.
+  // Returns the original path unchanged if anything here fails — a
+  // best-effort normalization, not a hard requirement for sending to work.
+  Future<String> _normalizeImageOrientation(String path) async {
+    try {
+      final bytes = await File(path).readAsBytes();
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) return path;
+      final baked = img.bakeOrientation(decoded);
+      final dir = await getTemporaryDirectory();
+      final outPath =
+          '${dir.path}/oriented_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      await File(outPath).writeAsBytes(img.encodeJpg(baked, quality: 90));
+      return outPath;
+    } catch (e) {
+      debugPrint('📸 Orientation bake failed, using original file: $e');
+      return path;
+    }
+  }
+
   Future<void> _takePhoto() async {
     final controller = _controller;
     if (!_ready || controller == null) return;
     if (controller.value.isTakingPicture) return;
     try {
+      // controller.value.deviceOrientation (fed by the camera plugin's own
+      // UIDeviceOrientationDidChangeNotification tracking) was confirmed on
+      // real devices to go stale — frozen at whatever it read when the
+      // controller was created, unaffected by later physical rotation,
+      // especially with the system rotation-lock engaged or a quick
+      // rotate-then-shoot. native_device_orientation's sensor mode reads
+      // CMMotionManager's raw gravity vector directly instead — a genuinely
+      // different mechanism, independent of both the rotation lock and
+      // that notification's staleness. Locking capture orientation to this
+      // fresh reading right before every shot (not once, not via a
+      // long-lived listener chasing camera's own unreliable value — see
+      // the abandoned attempt above this method's git history) keeps the
+      // native capture connection's tag accurate regardless of how the
+      // phone was held or whether the lock was on.
+      final sensorOrientation = await NativeDeviceOrientationCommunicator()
+          .orientation(useSensor: true);
+      final mapped = sensorOrientation.deviceOrientation;
+      if (mapped != null) {
+        await controller.lockCaptureOrientation(mapped);
+      }
       final file = await controller.takePicture();
-      debugPrint('📸 Photo captured: ${file.path}');
+      debugPrint(
+        '📸 Photo captured: ${file.path} (sensorOrientation=$sensorOrientation)',
+      );
+      if (mounted) setState(() => _processingPhoto = true);
+      final orientedPath = await _normalizeImageOrientation(file.path);
       if (mounted) {
+        setState(() => _processingPhoto = false);
         Navigator.of(
           context,
-        ).pop(CapturedMedia(path: file.path, isVideo: false));
+        ).pop(CapturedMedia(path: orientedPath, isVideo: false));
       }
     } catch (e) {
       debugPrint('📸 Photo capture error: $e');
+      if (mounted) setState(() => _processingPhoto = false);
     }
   }
 
@@ -328,6 +413,20 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
               const Center(child: CircularProgressIndicator(color: kGold))
             else
               Positioned.fill(child: CameraPreview(_controller!)),
+
+            // Brief overlay while the just-captured photo's orientation is
+            // being normalized (see _normalizeImageOrientation) — a real
+            // pure-Dart decode/rotate/re-encode, not instant, so the screen
+            // would otherwise look frozen for that stretch.
+            if (_processingPhoto)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black54,
+                  child: const Center(
+                    child: CircularProgressIndicator(color: kGold),
+                  ),
+                ),
+              ),
 
             // Top bar: close, aspect-ratio (stub), flash.
             Positioned(

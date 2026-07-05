@@ -42,6 +42,12 @@ class PendingMediaMessage {
   // uploaded URL — causing a visible resize jump at that transition).
   final int? videoWidth;
   final int? videoHeight;
+  // As-displayed pixel size read from the picked file at enqueue time (see
+  // _probeImageSize in chat_screen.dart) — same rationale as
+  // videoWidth/videoHeight above (plain data, not derived from a decoded
+  // preview, so the bubble sizes identically before/after upload).
+  final int? imageWidth;
+  final int? imageHeight;
   // Fixed-length (40) 0-100 normalized amplitude bars captured live during
   // recording (see _downsampleWaveform in chat_screen.dart) — null for
   // non-audio items or ones queued before this field existed.
@@ -66,6 +72,8 @@ class PendingMediaMessage {
     this.videoDurationMs,
     this.videoWidth,
     this.videoHeight,
+    this.imageWidth,
+    this.imageHeight,
     this.waveform,
   });
 
@@ -99,6 +107,8 @@ class PendingMediaMessage {
       videoDurationMs: videoDurationMs,
       videoWidth: videoWidth,
       videoHeight: videoHeight,
+      imageWidth: imageWidth,
+      imageHeight: imageHeight,
       waveform: waveform,
     );
   }
@@ -122,6 +132,8 @@ class PendingMediaMessage {
     'videoDurationMs': videoDurationMs,
     'videoWidth': videoWidth,
     'videoHeight': videoHeight,
+    'imageWidth': imageWidth,
+    'imageHeight': imageHeight,
     'waveform': waveform,
   };
 
@@ -145,6 +157,8 @@ class PendingMediaMessage {
       videoDurationMs: json['videoDurationMs'] as int?,
       videoWidth: json['videoWidth'] as int?,
       videoHeight: json['videoHeight'] as int?,
+      imageWidth: json['imageWidth'] as int?,
+      imageHeight: json['imageHeight'] as int?,
       waveform: (json['waveform'] as List?)?.cast<int>(),
     );
   }
@@ -172,6 +186,8 @@ class PendingMediaMessage {
       videoDurationMs: videoDurationMs,
       videoWidth: videoWidth,
       videoHeight: videoHeight,
+      imageWidth: imageWidth,
+      imageHeight: imageHeight,
       waveform: waveform,
     );
   }
