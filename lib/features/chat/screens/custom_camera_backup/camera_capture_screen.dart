@@ -61,6 +61,11 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
   // no separate flat-device handling needed.
   NativeDeviceOrientation? _liveSensorOrientation;
   StreamSubscription<NativeDeviceOrientation>? _orientationSub;
+  // Tracks which half of the mode segmented control renders highlighted
+  // (gold). Defaults to photo to match the reference design. Tapping
+  // either half both updates this (brief visual feedback during the
+  // handoff gap) and immediately triggers _handleModeTap — there's no
+  // separate "confirm" step, so this is cosmetic rather than a real gate.
   _CameraMode _mode = _CameraMode.photo;
   FlashMode _flashMode = FlashMode.auto;
   double _zoom = 1.0;
@@ -374,11 +379,16 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
   // tap while the handoff is in flight — the build method's `!_ready`
   // branch shows the existing loading spinner for that brief gap rather
   // than a dead/blank preview.
-  Future<void> _onShutterTap() async {
+  Future<void> _handleModeTap(_CameraMode mode) async {
     if (!_ready) return;
-    final isVideo = _mode == _CameraMode.video;
+    final isVideo = mode == _CameraMode.video;
     final controller = _controller;
-    if (mounted) setState(() => _controller = null);
+    if (mounted) {
+      setState(() {
+        _mode = mode;
+        _controller = null;
+      });
+    }
     await controller?.dispose();
     if (!mounted) return;
     final picker = ImagePicker();
@@ -396,11 +406,6 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
     Navigator.of(
       context,
     ).pop(CapturedMedia(path: picked.path, isVideo: isVideo));
-  }
-
-  void _setMode(_CameraMode mode) {
-    if (_isRecordingVideo) return;
-    setState(() => _mode = mode);
   }
 
   Future<void> _pickFromGallery() async {
@@ -564,7 +569,9 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
                 ),
               ),
 
-            // Bottom controls: gallery, zoom, shutter, flip — then mode switch.
+            // Bottom controls: gallery, zoom, flip — then the mode
+            // segmented control, which doubles as the shutter (tapping a
+            // mode immediately hands off to the system camera).
             Positioned(
               bottom: 16,
               left: 0,
@@ -588,41 +595,6 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
                           ),
                           onTap: _cycleZoom,
                         ),
-                        GestureDetector(
-                          onTap: _onShutterTap,
-                          child: Container(
-                            width: 76,
-                            height: 76,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: Colors.white,
-                                width: 4,
-                              ),
-                            ),
-                            child: Center(
-                              // Standard record-button affordance: a full
-                              // white disc normally, shrinking down to a
-                              // small rounded red square (stop icon) while
-                              // recording — same idea as iOS/Material stop
-                              // buttons, instead of a square filling the
-                              // whole ring.
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 150),
-                                width: _isRecordingVideo ? 28 : 60,
-                                height: _isRecordingVideo ? 28 : 60,
-                                decoration: BoxDecoration(
-                                  color: _isRecordingVideo
-                                      ? kRed
-                                      : (_ready ? Colors.white : Colors.white38),
-                                  borderRadius: BorderRadius.circular(
-                                    _isRecordingVideo ? 8 : 30,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
                         _RoundIconButton(
                           icon: Icons.cameraswitch,
                           onTap: (_ready && _cameras.length > 1)
@@ -632,22 +604,14 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
                       ],
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _ModeLabel(
-                        label: 'VİDEO',
-                        selected: _mode == _CameraMode.video,
-                        onTap: () => _setMode(_CameraMode.video),
-                      ),
-                      const SizedBox(width: 28),
-                      _ModeLabel(
-                        label: 'ŞƏKİL',
-                        selected: _mode == _CameraMode.photo,
-                        onTap: () => _setMode(_CameraMode.photo),
-                      ),
-                    ],
+                  const SizedBox(height: 16),
+                  // Tapping either half both picks the mode and
+                  // immediately hands off to the system camera — see
+                  // _handleModeTap. There's no separate shutter step.
+                  _ModeSegmentedControl(
+                    mode: _mode,
+                    enabled: _ready,
+                    onSelect: _handleModeTap,
                   ),
                 ],
               ),
@@ -731,30 +695,71 @@ class _ZoomButton extends StatelessWidget {
   }
 }
 
-class _ModeLabel extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
+// Single pill-shaped segmented control (VİDEO / ŞƏKİL) — not two separate
+// buttons. Tapping a half calls onSelect immediately (there's no
+// separate confirm/shutter step); the active half just gets a lighter
+// inset background + gold text so the tap has some visual feedback
+// during the brief handoff gap before the system camera takes over.
+class _ModeSegmentedControl extends StatelessWidget {
+  final _CameraMode mode;
+  final bool enabled;
+  final ValueChanged<_CameraMode> onSelect;
 
-  const _ModeLabel({
-    required this.label,
-    required this.selected,
-    required this.onTap,
+  const _ModeSegmentedControl({
+    required this.mode,
+    required this.enabled,
+    required this.onSelect,
   });
 
   @override
   Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        width: 240,
+        height: 46,
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(23),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: _segment(context, label: 'VİDEO', segmentMode: _CameraMode.video),
+            ),
+            Expanded(
+              child: _segment(context, label: 'ŞƏKİL', segmentMode: _CameraMode.photo),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _segment(
+    BuildContext context, {
+    required String label,
+    required _CameraMode segmentMode,
+  }) {
+    final selected = mode == segmentMode;
     return GestureDetector(
-      onTap: onTap,
+      onTap: enabled ? () => onSelect(segmentMode) : null,
       behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        decoration: BoxDecoration(
+          color: selected ? Colors.white.withValues(alpha: 0.14) : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        alignment: Alignment.center,
         child: Text(
           label,
           style: TextStyle(
-            color: selected ? kGold : Colors.white70,
+            color: !enabled
+                ? Colors.white30
+                : (selected ? kGold : Colors.white),
             fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-            fontSize: 13,
+            fontSize: 14,
             letterSpacing: 0.5,
           ),
         ),
