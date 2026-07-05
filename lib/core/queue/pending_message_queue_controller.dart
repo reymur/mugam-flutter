@@ -107,6 +107,7 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
     int? videoDurationMs,
     int? videoWidth,
     int? videoHeight,
+    List<int>? waveform,
   }) async {
     if (state.length >= maxQueueSize) {
       return 'Növbə doludur, gözləyin';
@@ -130,6 +131,7 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
       videoDurationMs: videoDurationMs,
       videoWidth: videoWidth,
       videoHeight: videoHeight,
+      waveform: waveform,
     );
     state = [...state, item];
     await _service.saveAll(state);

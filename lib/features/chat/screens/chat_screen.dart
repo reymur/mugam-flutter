@@ -64,6 +64,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   final Stopwatch _recordingStopwatch = Stopwatch();
   Timer? _recordingTimer;
   String _recordingDuration = '0:00';
+  StreamSubscription<Amplitude>? _amplitudeSub;
+  final List<double> _rawAmplitudes = [];
   bool _isLocked = false;
   double _dragX = 0.0;
   double _dragY = 0.0;
@@ -162,6 +164,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _scrollController.dispose();
     _audioRecorder.dispose();
     _recordingTimer?.cancel();
+    _amplitudeSub?.cancel();
     _pulseController.dispose();
     _beepPlayer.dispose();
     _highlightTimer?.cancel();
@@ -1305,6 +1308,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _pulseController.repeat(reverse: true);
     _recordingStopwatch.reset();
     _recordingStopwatch.start();
+    _rawAmplitudes.clear();
+    _amplitudeSub = _audioRecorder
+        .onAmplitudeChanged(const Duration(milliseconds: 100))
+        .listen((amp) => _rawAmplitudes.add(amp.current));
     _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
         final s = _recordingStopwatch.elapsed.inSeconds;
@@ -1327,6 +1334,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (!_isRecording) return;
     _recordingStopwatch.stop();
     _recordingTimer?.cancel();
+    await _amplitudeSub?.cancel();
     setState(() => _recordingDuration = '0:00');
     final path = await _audioRecorder.stop();
     if (mounted) {
@@ -1339,6 +1347,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (mounted) setState(() => _uploadingAudio = false);
       return;
     }
+    final waveform = _downsampleWaveform(_rawAmplitudes, 40);
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final replyingTo = _replyingTo;
     _cancelReply();
@@ -1351,6 +1360,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           senderId: currentUid,
           type: 'audio',
           sourceFilePath: path,
+          waveform: waveform,
           replyToId: replyingTo?.id,
           replyToText: replyingTo != null
               ? _replyPreviewText(replyingTo)
@@ -1380,6 +1390,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   Future<void> _cancelRecording() async {
     _recordingStopwatch.stop();
     _recordingTimer?.cancel();
+    await _amplitudeSub?.cancel();
     await _audioRecorder.stop();
     if (mounted) {
       setState(() {
@@ -1392,6 +1403,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
     _pulseController.stop();
     _pulseController.reset();
+  }
+
+  // Collapses the raw dBFS samples captured during recording (one every
+  // 100ms via onAmplitudeChanged) into a fixed number of bars for the
+  // waveform display — WhatsApp shows the same bar count regardless of
+  // clip length. Takes the peak within each bucket rather than the
+  // average, matching how a waveform visually reads (loud transients
+  // stay visible instead of getting smoothed away). floorDb/ceilDb are a
+  // rough estimate of quiet-room/loud-speech mic levels; tune after
+  // checking real recordings on-device.
+  List<int> _downsampleWaveform(List<double> raw, int targetCount) {
+    if (raw.isEmpty) return List.filled(targetCount, 0);
+    const floorDb = -50.0;
+    const ceilDb = -5.0;
+    return List.generate(targetCount, (b) {
+      final start = (b * raw.length / targetCount).floor();
+      final end = (((b + 1) * raw.length / targetCount).ceil()).clamp(
+        start + 1,
+        raw.length,
+      );
+      final peak = raw.sublist(start, end).reduce((x, y) => x > y ? x : y);
+      final norm =
+          ((peak.clamp(floorDb, ceilDb) - floorDb) / (ceilDb - floorDb) * 100)
+              .round();
+      return norm.clamp(0, 100);
+    });
   }
 
   void _lockRecording() {
@@ -1719,6 +1756,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         audioURL: msg.audioURL,
                         localFilePath: msg.localFilePath,
                         isMe: isMe,
+                        waveform: msg.waveform,
+                        senderId: msg.senderId,
+                        timeCheckmarkRow: _timeCheckmarkRow(
+                          isMe,
+                          otherUid,
+                          msg,
+                          time,
+                          checkMark,
+                        ),
                       ),
                     if (msg.type == 'video' &&
                         (msg.videoURL != null || msg.localFilePath != null))
@@ -1738,7 +1784,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           textColor: Colors.white,
                         ),
                       ),
-                    if (msg.type != 'text' && msg.type != 'video') ...[
+                    if (msg.type != 'text' &&
+                        msg.type != 'video' &&
+                        msg.type != 'audio') ...[
                       const SizedBox(height: 2),
                       _timeCheckmarkRow(isMe, otherUid, msg, time, checkMark),
                     ],
@@ -2625,10 +2673,16 @@ class _VoiceMessagePlayer extends StatefulWidget {
   final String? audioURL;
   final String? localFilePath;
   final bool isMe;
+  final List<int>? waveform;
+  final String senderId;
+  final Widget timeCheckmarkRow;
   const _VoiceMessagePlayer({
     this.audioURL,
     this.localFilePath,
     required this.isMe,
+    this.waveform,
+    required this.senderId,
+    required this.timeCheckmarkRow,
   });
 
   @override
@@ -2682,70 +2736,255 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
 
   @override
   Widget build(BuildContext context) {
-    final color = widget.isMe ? const Color(0xFF1A0E00) : kText;
-    final sliderColor = widget.isMe ? const Color(0xFF1A0E00) : kGold;
+    final labelColor = widget.isMe ? const Color(0xFF1A0E00) : kText;
+    final accentColor = widget.isMe ? const Color(0xFF1A0E00) : kGold;
     final total = _duration.inMilliseconds > 0
         ? _duration.inMilliseconds.toDouble()
         : 1.0;
     final current = _position.inMilliseconds.toDouble().clamp(0.0, total);
+    final playedFraction = (current / total).clamp(0.0, 1.0);
+
+    final playButton = GestureDetector(
+      onTap: () async {
+        if (_isPlaying) {
+          await _player.pause();
+        } else {
+          await _player.play();
+        }
+      },
+      child: Icon(
+        _isPlaying ? Icons.pause : Icons.play_arrow,
+        color: accentColor,
+        size: 32,
+      ),
+    );
+
+    final wave = Expanded(
+      child: _WaveformSeekBar(
+        levels: widget.waveform,
+        playedFraction: playedFraction,
+        color: accentColor,
+        onSeek: (fraction) =>
+            _player.seek(Duration(milliseconds: (fraction * total).round())),
+      ),
+    );
+
+    final avatar = _VoiceSenderAvatar(senderId: widget.senderId);
+
+    // Avatar sits toward the middle of the screen in both cases — right of
+    // the wave for an incoming (left-aligned) bubble, left of it for an
+    // outgoing (right-aligned) one — matching the reference screenshots.
+    final row = widget.isMe
+        ? [avatar, const SizedBox(width: 8), playButton, const SizedBox(width: 6), wave]
+        : [playButton, const SizedBox(width: 6), wave, const SizedBox(width: 8), avatar];
 
     return SizedBox(
-      width: 200,
+      width: 230,
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.center, children: row),
+          const SizedBox(height: 2),
           Row(
             children: [
-              GestureDetector(
-                onTap: () async {
-                  if (_isPlaying) {
-                    await _player.pause();
-                  } else {
-                    await _player.play();
-                  }
-                },
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: sliderColor.withAlpha(30),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    _isPlaying ? Icons.pause : Icons.play_arrow,
-                    color: sliderColor,
-                    size: 22,
-                  ),
-                ),
+              Text(
+                _fmt(_position),
+                style: TextStyle(color: labelColor.withAlpha(150), fontSize: 10),
               ),
-              Expanded(
-                child: SliderTheme(
-                  data: SliderThemeData(
-                    trackHeight: 2,
-                    thumbShape: const RoundSliderThumbShape(
-                      enabledThumbRadius: 6,
-                    ),
-                    overlayShape: SliderComponentShape.noOverlay,
-                    activeTrackColor: sliderColor,
-                    inactiveTrackColor: sliderColor.withAlpha(60),
-                    thumbColor: sliderColor,
-                  ),
-                  child: Slider(
-                    value: current,
-                    min: 0,
-                    max: total,
-                    onChanged: (v) =>
-                        _player.seek(Duration(milliseconds: v.toInt())),
-                  ),
-                ),
-              ),
+              const Spacer(),
+              widget.timeCheckmarkRow,
             ],
           ),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Text(
-              '${_fmt(_position)} / ${_fmt(_duration)}',
-              style: TextStyle(color: color.withAlpha(150), fontSize: 10),
+        ],
+      ),
+    );
+  }
+}
+
+// Static bars + draggable position dot, replacing the old continuous
+// Slider — matches WhatsApp's segmented-waveform look. levels is the
+// 0-100 normalized amplitude captured during recording (see
+// _downsampleWaveform); null (message sent before that field existed)
+// falls back to a flat, honest "no data" bar pattern rather than
+// pretending to show a real waveform.
+class _WaveformSeekBar extends StatefulWidget {
+  final List<int>? levels;
+  final double playedFraction;
+  final Color color;
+  final ValueChanged<double> onSeek;
+
+  const _WaveformSeekBar({
+    required this.levels,
+    required this.playedFraction,
+    required this.color,
+    required this.onSeek,
+  });
+
+  @override
+  State<_WaveformSeekBar> createState() => _WaveformSeekBarState();
+}
+
+class _WaveformSeekBarState extends State<_WaveformSeekBar> {
+  static const double _barAreaHeight = 22;
+  static const double _minBarHeight = 3;
+  static const double _dotVisualSize = 14;
+  // Bigger than the visual dot, per Apple/Material minimum-touch-target
+  // guidance — the drawn circle stays small so it doesn't dominate the
+  // waveform, but the draggable hit region around it is generous.
+  static const double _dotHitSize = 44;
+
+  // Absolute bar-local x of the dot while a drag on it is in progress —
+  // set on drag start and accumulated by delta.dx on each update (rather
+  // than derived from widget.playedFraction, which only updates once the
+  // async player.seek()'s position-stream round trip lands, too slow to
+  // track a fast finger movement 1:1). Null when not mid-drag on the dot.
+  double? _dragX;
+
+  @override
+  Widget build(BuildContext context) {
+    final bars = widget.levels ?? List.filled(28, 35);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        void seekAtX(double dx) {
+          widget.onSeek((dx / constraints.maxWidth).clamp(0.0, 1.0));
+        }
+
+        final dotCenterX =
+            _dragX ?? widget.playedFraction * constraints.maxWidth;
+        return Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.centerLeft,
+          children: [
+            // Tap/drag anywhere on the bar seeks there — this is the
+            // OUTER detector; the dot below gets its own nested one so
+            // grabbing the dot specifically is a Flutter gesture-arena
+            // child, which takes priority over both this bar detector and
+            // the ancestor bubble's long-press/swipe-to-reply detectors,
+            // isolating a dot-drag from triggering either of those.
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (d) => seekAtX(d.localPosition.dx),
+              onHorizontalDragUpdate: (d) => seekAtX(d.localPosition.dx),
+              child: SizedBox(
+                height: _barAreaHeight,
+                width: double.infinity,
+                child: Row(
+                  children: [
+                    for (var i = 0; i < bars.length; i++)
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 1),
+                          child: Container(
+                            height:
+                                _minBarHeight +
+                                (bars[i].clamp(0, 100) / 100) *
+                                    (_barAreaHeight - _minBarHeight),
+                            decoration: BoxDecoration(
+                              color: (i / bars.length) <= widget.playedFraction
+                                  ? widget.color
+                                  : widget.color.withAlpha(70),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: (dotCenterX - _dotHitSize / 2).clamp(
+                -_dotHitSize / 2,
+                constraints.maxWidth - _dotHitSize / 2,
+              ),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragStart: (_) =>
+                    setState(() => _dragX = dotCenterX),
+                onHorizontalDragUpdate: (d) {
+                  final next = (_dragX ?? dotCenterX) + d.delta.dx;
+                  setState(() => _dragX = next);
+                  seekAtX(next);
+                },
+                onHorizontalDragEnd: (_) => setState(() => _dragX = null),
+                onHorizontalDragCancel: () => setState(() => _dragX = null),
+                child: SizedBox(
+                  width: _dotHitSize,
+                  height: _dotHitSize,
+                  child: Center(
+                    child: Container(
+                      width: _dotVisualSize,
+                      height: _dotVisualSize,
+                      decoration: const BoxDecoration(
+                        color: kReadBlue,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+// Sender's avatar with a small mic badge, matching the reference. Uses
+// userByIdProvider(senderId) uniformly for every sender — own messages,
+// 1-1 chat partners, and group members alike — so group chats need no
+// special-casing here; the provider already memoizes per uid, so repeated
+// voice messages from the same sender share one fetch.
+class _VoiceSenderAvatar extends ConsumerWidget {
+  final String senderId;
+  const _VoiceSenderAvatar({required this.senderId});
+
+  static const double _size = 44;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(userByIdProvider(senderId)).value;
+    final photoURL = user?.photoURL;
+    return SizedBox(
+      width: _size,
+      height: _size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Container(
+            width: _size,
+            height: _size,
+            decoration: BoxDecoration(
+              color: kBg3,
+              shape: BoxShape.circle,
+              image: photoURL != null
+                  ? DecorationImage(
+                      image: NetworkImage(photoURL),
+                      fit: BoxFit.cover,
+                    )
+                  : null,
+            ),
+            child: photoURL == null
+                ? Center(
+                    child: Text(
+                      user?.emoji ?? '🎵',
+                      style: const TextStyle(fontSize: 18),
+                    ),
+                  )
+                : null,
+          ),
+          Positioned(
+            right: -2,
+            bottom: -2,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: const BoxDecoration(
+                color: kBg2,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.mic, size: 12, color: kReadBlue),
             ),
           ),
         ],

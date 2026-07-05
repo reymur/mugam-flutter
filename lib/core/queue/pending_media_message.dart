@@ -42,6 +42,10 @@ class PendingMediaMessage {
   // uploaded URL — causing a visible resize jump at that transition).
   final int? videoWidth;
   final int? videoHeight;
+  // Fixed-length (40) 0-100 normalized amplitude bars captured live during
+  // recording (see _downsampleWaveform in chat_screen.dart) — null for
+  // non-audio items or ones queued before this field existed.
+  final List<int>? waveform;
 
   const PendingMediaMessage({
     required this.localId,
@@ -62,6 +66,7 @@ class PendingMediaMessage {
     this.videoDurationMs,
     this.videoWidth,
     this.videoHeight,
+    this.waveform,
   });
 
   static String generateLocalId() {
@@ -94,6 +99,7 @@ class PendingMediaMessage {
       videoDurationMs: videoDurationMs,
       videoWidth: videoWidth,
       videoHeight: videoHeight,
+      waveform: waveform,
     );
   }
 
@@ -116,6 +122,7 @@ class PendingMediaMessage {
     'videoDurationMs': videoDurationMs,
     'videoWidth': videoWidth,
     'videoHeight': videoHeight,
+    'waveform': waveform,
   };
 
   factory PendingMediaMessage.fromJson(Map<String, dynamic> json) {
@@ -138,6 +145,7 @@ class PendingMediaMessage {
       videoDurationMs: json['videoDurationMs'] as int?,
       videoWidth: json['videoWidth'] as int?,
       videoHeight: json['videoHeight'] as int?,
+      waveform: (json['waveform'] as List?)?.cast<int>(),
     );
   }
 
@@ -164,6 +172,7 @@ class PendingMediaMessage {
       videoDurationMs: videoDurationMs,
       videoWidth: videoWidth,
       videoHeight: videoHeight,
+      waveform: waveform,
     );
   }
 }

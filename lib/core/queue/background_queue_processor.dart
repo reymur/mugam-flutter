@@ -78,6 +78,7 @@ Future<bool> attemptSendPendingMessage(
               chatId: item.chatId,
               senderId: item.senderId,
               audioURL: url,
+              waveform: item.waveform,
               messageId: item.messageId,
               replyToId: item.replyToId,
               replyToText: item.replyToText,

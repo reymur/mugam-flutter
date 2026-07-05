@@ -135,6 +135,9 @@ class Message {
   final int? videoDurationMs;
   final int? videoWidth;
   final int? videoHeight;
+  // Fixed-length (40) 0-100 normalized amplitude bars captured live during
+  // recording — null for messages sent before this field existed.
+  final List<int>? waveform;
   final Timestamp? timestamp;
   final String type; // 'text', 'image', 'audio', 'video'
   final String? replyToId;
@@ -163,6 +166,7 @@ class Message {
     this.videoDurationMs,
     this.videoWidth,
     this.videoHeight,
+    this.waveform,
     this.timestamp,
     required this.type,
     this.replyToId,
@@ -191,6 +195,7 @@ class Message {
       videoDurationMs: data['videoDurationMs'] as int?,
       videoWidth: data['videoWidth'] as int?,
       videoHeight: data['videoHeight'] as int?,
+      waveform: (data['waveform'] as List?)?.cast<int>(),
       timestamp: data['timestamp'] as Timestamp?,
       type: data['type'] ?? 'text',
       replyToId: replyTo?['id'] as String?,
