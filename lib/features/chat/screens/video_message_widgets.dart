@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import '../../../core/theme/colors.dart';
@@ -9,6 +11,37 @@ import '../../../core/theme/colors.dart';
 // In-memory only — good enough to avoid regenerating a thumbnail every time
 // a message scrolls back into view within the same session.
 final Map<String, Uint8List> _thumbnailCache = {};
+
+// Separate from the DefaultCacheManager used for images — videos are much
+// larger, so they get their own bounded store instead of competing with (or
+// bloating past) the image cache's own size/age limits.
+class VideoCacheManager {
+  static const key = 'mugamVideoCache';
+  static final CacheManager instance = CacheManager(
+    Config(key, stalePeriod: const Duration(days: 7), maxNrOfCacheObjects: 30),
+  );
+}
+
+// Playback always starts immediately via network stream (see
+// _VideoPlayerScreenState) — this just warms the cache in the background so
+// a later open of the same video can skip the network entirely. Guarded
+// against piling up duplicate downloads if the same video is opened/closed
+// several times before the first download finishes.
+final Set<String> _videoCachingInFlight = {};
+
+Future<void> _cacheVideoInBackground(String url) async {
+  if (url.isEmpty || _videoCachingInFlight.contains(url)) return;
+  if (await VideoCacheManager.instance.getFileFromCache(url) != null) return;
+  _videoCachingInFlight.add(url);
+  try {
+    await VideoCacheManager.instance.downloadFile(url);
+  } catch (_) {
+    // A failed background cache attempt must not surface as a playback
+    // error — the next open just tries again from scratch.
+  } finally {
+    _videoCachingInFlight.remove(url);
+  }
+}
 
 // Plain thumbnail frame, no tap handler and no play icon — used both by the
 // full-size chat bubble (wrapped with a play icon by VideoMessageBubble) and
@@ -168,40 +201,65 @@ class VideoPlayerScreen extends StatefulWidget {
 }
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
-  late final VideoPlayerController _controller;
+  // Nullable — building the controller now takes an async cache-lookup step
+  // before it exists, so a fast back-navigation can dispose this screen
+  // before _setup() ever assigns one. _disposed guards every await
+  // resumption in _setup() so it never touches state (or leaks a controller
+  // nothing will ever dispose) after that happens.
+  VideoPlayerController? _controller;
   bool _initialized = false;
+  bool _disposed = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    _setup();
+  }
+
+  Future<void> _setup() async {
     final localPath = widget.localFilePath;
-    _controller = localPath != null
-        ? VideoPlayerController.file(File(localPath))
-        : VideoPlayerController.networkUrl(Uri.parse(widget.videoURL!));
-    _controller
-        .initialize()
-        .then((_) {
-          if (!mounted) return;
-          setState(() => _initialized = true);
-          _controller.play();
-        })
-        .catchError((e) {
-          if (mounted) setState(() => _error = 'Video açıla bilmədi: $e');
-        });
+    VideoPlayerController controller;
+    if (localPath != null) {
+      controller = VideoPlayerController.file(File(localPath));
+    } else {
+      final url = widget.videoURL!;
+      unawaited(_cacheVideoInBackground(url));
+      final cached = await VideoCacheManager.instance.getFileFromCache(url);
+      if (_disposed) return;
+      controller = cached != null
+          ? VideoPlayerController.file(cached.file)
+          : VideoPlayerController.networkUrl(Uri.parse(url));
+    }
+    if (_disposed) {
+      controller.dispose();
+      return;
+    }
+    setState(() => _controller = controller);
+    try {
+      await controller.initialize();
+      if (_disposed) return;
+      setState(() => _initialized = true);
+      controller.play();
+    } catch (e) {
+      if (!_disposed) setState(() => _error = 'Video açıla bilmədi: $e');
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _disposed = true;
+    _controller?.dispose();
     super.dispose();
   }
 
   void _togglePlay() {
-    if (_controller.value.isPlaying) {
-      _controller.pause();
+    final controller = _controller;
+    if (controller == null) return;
+    if (controller.value.isPlaying) {
+      controller.pause();
     } else {
-      _controller.play();
+      controller.play();
     }
   }
 
@@ -227,7 +285,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
               const Center(child: CircularProgressIndicator(color: kGold))
             else
               AnimatedBuilder(
-                animation: _controller,
+                animation: _controller!,
                 builder: (context, _) => Center(
                   child: GestureDetector(
                     onTap: _togglePlay,
@@ -235,11 +293,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                       alignment: Alignment.center,
                       children: [
                         AspectRatio(
-                          aspectRatio: _controller.value.aspectRatio,
-                          child: VideoPlayer(_controller),
+                          aspectRatio: _controller!.value.aspectRatio,
+                          child: VideoPlayer(_controller!),
                         ),
                         AnimatedOpacity(
-                          opacity: _controller.value.isPlaying ? 0 : 1,
+                          opacity: _controller!.value.isPlaying ? 0 : 1,
                           duration: const Duration(milliseconds: 200),
                           child: Container(
                             decoration: const BoxDecoration(
@@ -273,7 +331,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 right: 0,
                 bottom: 0,
                 child: VideoProgressIndicator(
-                  _controller,
+                  _controller!,
                   allowScrubbing: true,
                   padding: const EdgeInsets.all(12),
                   colors: const VideoProgressColors(
