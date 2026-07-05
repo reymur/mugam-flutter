@@ -2980,7 +2980,11 @@ class _WaveformSeekBarState extends State<_WaveformSeekBar> {
   // set on drag start and accumulated by delta.dx on each update (rather
   // than derived from widget.playedFraction, which only updates once the
   // async player.seek()'s position-stream round trip lands, too slow to
-  // track a fast finger movement 1:1). Null when not mid-drag on the dot.
+  // track a fast finger movement 1:1). Stays set after the finger lifts,
+  // too — cleared below once the real position stream catches up, rather
+  // than immediately on release, so the dot doesn't snap back to the
+  // stale pre-seek position and then jump forward again once the seek
+  // resolves. Null when not mid-drag and not waiting on a catch-up.
   double? _dragX;
 
   @override
@@ -2992,8 +2996,20 @@ class _WaveformSeekBarState extends State<_WaveformSeekBar> {
           widget.onSeek((dx / constraints.maxWidth).clamp(0.0, 1.0));
         }
 
+        if (_dragX != null &&
+            (widget.playedFraction * constraints.maxWidth - _dragX!).abs() <
+                3) {
+          _dragX = null;
+        }
         final dotCenterX =
             _dragX ?? widget.playedFraction * constraints.maxWidth;
+        // Same visual-vs-real split as the dot above, applied to the
+        // played/unplayed bar coloring too — without this the bars' fill
+        // boundary was still driven straight off widget.playedFraction (the
+        // real, stream-lagged position), so the wave's own color edge kept
+        // jumping/lagging behind the finger even after the dot itself
+        // started following it immediately.
+        final visualFraction = dotCenterX / constraints.maxWidth;
         return Stack(
           clipBehavior: Clip.none,
           alignment: Alignment.centerLeft,
@@ -3006,8 +3022,31 @@ class _WaveformSeekBarState extends State<_WaveformSeekBar> {
             // isolating a dot-drag from triggering either of those.
             GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTapDown: (d) => seekAtX(d.localPosition.dx),
-              onHorizontalDragUpdate: (d) => seekAtX(d.localPosition.dx),
+              onTapDown: (d) {
+                // A tap has no separate "end" event, so commit the real
+                // seek right away — this is a single discrete action, not
+                // a per-frame stream of them, so there's no jank risk here.
+                setState(() => _dragX = d.localPosition.dx);
+                seekAtX(d.localPosition.dx);
+              },
+              onHorizontalDragUpdate: (d) {
+                // Visual only during the drag itself — move the dot/wave
+                // immediately, in step with the touch. The real seek() is
+                // deliberately NOT called per-frame here: firing it dozens
+                // of times a second was hammering the native audio engine
+                // via the platform channel, which was the actual source of
+                // the stutter/hesitation, not the visual state update
+                // itself. It fires once, on release, in onHorizontalDragEnd
+                // below — matching WhatsApp's own scrub behavior (silent
+                // while dragging, seeks once on release).
+                setState(() => _dragX = d.localPosition.dx);
+              },
+              onHorizontalDragEnd: (_) {
+                if (_dragX != null) seekAtX(_dragX!);
+              },
+              onHorizontalDragCancel: () {
+                if (_dragX != null) seekAtX(_dragX!);
+              },
               child: SizedBox(
                 height: _barAreaHeight,
                 width: double.infinity,
@@ -3030,7 +3069,7 @@ class _WaveformSeekBarState extends State<_WaveformSeekBar> {
                               // "unplayed" and was rendering the whole
                               // wave at low alpha, making it barely
                               // visible before playback starts.
-                              color: (i / bars.length) <= widget.playedFraction
+                              color: (i / bars.length) <= visualFraction
                                   ? widget.playedColor
                                   : widget.playedColor.withAlpha(150),
                               borderRadius: BorderRadius.circular(2),
@@ -3052,12 +3091,23 @@ class _WaveformSeekBarState extends State<_WaveformSeekBar> {
                 onHorizontalDragStart: (_) =>
                     setState(() => _dragX = dotCenterX),
                 onHorizontalDragUpdate: (d) {
+                  // Visual only, same reasoning as the outer detector above
+                  // — no per-frame seek() call, just the local dot/wave
+                  // position, to keep dragging jank-free.
                   final next = (_dragX ?? dotCenterX) + d.delta.dx;
                   setState(() => _dragX = next);
-                  seekAtX(next);
                 },
-                onHorizontalDragEnd: (_) => setState(() => _dragX = null),
-                onHorizontalDragCancel: () => setState(() => _dragX = null),
+                // Deliberately NOT clearing _dragX here — see the field's
+                // doc comment. It's released once widget.playedFraction
+                // (driven by the player's position stream) catches up to
+                // wherever the finger let go, in the build method above.
+                // The real seek() fires exactly once here, on release.
+                onHorizontalDragEnd: (_) {
+                  if (_dragX != null) seekAtX(_dragX!);
+                },
+                onHorizontalDragCancel: () {
+                  if (_dragX != null) seekAtX(_dragX!);
+                },
                 child: SizedBox(
                   width: _dotHitSize,
                   height: _dotHitSize,
