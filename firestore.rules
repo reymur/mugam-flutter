@@ -1,0 +1,311 @@
+rules_version = '2';
+
+// mugam-club Firestore rules — shared by two client apps against the same
+// project: mugam-flutter (this repo) and mugam-v2 (Expo/React Native,
+// frozen reference app, source at ../mugam-v2, cannot be modified). Every
+// rule below was derived from reading BOTH apps' actual Firestore write
+// call sites, not just this repo's — see the audit report / commit message
+// this file was introduced with for the full field-by-field justification.
+//
+// Collections with a precise, deliberately-scoped rule below: users (+
+// pushTokens, starred subcollections), chats (+ messages subcollection),
+// personalEvents, agreements, invites.
+//
+// Collections below given a "signed-in only" holding rule (unchanged from
+// today's behavior) because neither app's owner/actor field for them could
+// be confirmed with full confidence from a read-only audit: gigs, board,
+// market, stories, videos, events, rooms, musicians, notifications,
+// locations. Tightening these is tracked as follow-up work, not done here,
+// specifically to avoid guessing a wrong field name and breaking a
+// mugam-v2 feature this project can't test directly.
+//
+// Anything not matched by any rule below is denied by default (Firestore's
+// standard behavior) rather than falling through to an open catch-all —
+// if a real feature breaks because its collection isn't listed here, that
+// will surface immediately as a permission-denied error, not a silent gap.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // ---------------------------------------------------------------
+    // users/{userId}
+    // ---------------------------------------------------------------
+    match /users/{userId} {
+      // Public profile directory: home feed, musician picker, About
+      // Contact, participant tagging — every one of these reads another
+      // user's doc. This was already effectively true (open rules), and
+      // nothing in either app treats a user doc as private, so read stays
+      // open to any signed-in user.
+      allow read: if isSignedIn();
+
+      // Registration (both apps): the new doc's own id must equal the
+      // creator's uid — you can only ever create your own profile doc.
+      allow create: if isSignedIn() && request.auth.uid == userId;
+
+      // Profile edits: only the owner, and — regardless of what else the
+      // update touches — role/verified/goldRing/rating/reviews/gigs/
+      // followers may never change value via a client update. They're
+      // set once at registration (create, above) and from then on are
+      // either permanently fixed (verified/goldRing/role in both apps'
+      // actual code) or reserved for a future server-managed feature
+      // (rating/reviews/followers/gigs — no client in either app writes
+      // these post-creation today). Comparing request.resource.data.X to
+      // resource.data.X passes automatically for any update that doesn't
+      // touch X at all (a plain .update() call preserves untouched
+      // fields), so this never blocks the real profile-edit flows
+      // (updateUserProfile, setUserOnline, saveReadAgreementId).
+      allow update: if isSignedIn() && request.auth.uid == userId
+        && request.resource.data.get('role', null) == resource.data.get('role', null)
+        && request.resource.data.get('verified', null) == resource.data.get('verified', null)
+        && request.resource.data.get('goldRing', null) == resource.data.get('goldRing', null)
+        && request.resource.data.get('rating', null) == resource.data.get('rating', null)
+        && request.resource.data.get('reviews', null) == resource.data.get('reviews', null)
+        && request.resource.data.get('gigs', null) == resource.data.get('gigs', null)
+        && request.resource.data.get('followers', null) == resource.data.get('followers', null);
+
+      allow delete: if false;
+
+      // users/{uid}/pushTokens/{deviceId} — mugam-v2's client reads
+      // another user's tokens directly to send an Expo push itself, so
+      // read must stay open to any signed-in user; only the owning
+      // device/uid may register or remove its own token.
+      match /pushTokens/{deviceId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() && request.auth.uid == userId;
+      }
+
+      // users/{uid}/starred/{messageId} — mugam-flutter only, a private
+      // per-user bookmark list. Owner-only in both directions.
+      match /starred/{starredId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // chats/{chatId}  (+ messages/{messageId})
+    // ---------------------------------------------------------------
+    match /chats/{chatId} {
+      function isMember() {
+        return isSignedIn() && request.auth.uid in resource.data.members;
+      }
+      function willBeMember() {
+        return isSignedIn() && request.auth.uid in request.resource.data.members;
+      }
+      function isAdminOrCreator() {
+        return isSignedIn() && (
+          request.auth.uid == resource.data.get('createdBy', null) ||
+          request.auth.uid in resource.data.get('admins', [])
+        );
+      }
+      // "Leaving a group" removes exactly your own uid from a list and
+      // adds nobody — this is the one members/admins mutation a non-admin
+      // is allowed to make. Anything else touching members/admins
+      // (adding anyone, or removing someone who isn't you) requires
+      // isAdminOrCreator() instead.
+      function isSelfRemovalOnly(oldList, newList) {
+        return oldList.hasAll(newList)
+          && newList.size() == oldList.size() - 1
+          && !(request.auth.uid in newList)
+          && request.auth.uid in oldList;
+      }
+      function isSafeMembershipChange() {
+        return isAdminOrCreator() || (
+          (!('members' in changedKeys()) ||
+            isSelfRemovalOnly(resource.data.members, request.resource.data.members)) &&
+          (!('admins' in changedKeys()) ||
+            isSelfRemovalOnly(resource.data.get('admins', []), request.resource.data.get('admins', [])))
+        );
+      }
+
+      // Only current members can see a chat — this is the core fix: no
+      // more "any signed-in user reads any chat."
+      allow read: if isMember();
+
+      // Chat creation is exclusively a mugam-v2 flow (mugam-flutter never
+      // creates a chats/ doc) — the creator must be listed in the members
+      // array they're writing.
+      allow create: if willBeMember();
+
+      // Every ordinary field on a chat doc (lastMessage, lastMessageTime,
+      // deliveredTo.{uid}, readBy, lastReadAt.{uid}, lastReadMsgId.{uid},
+      // unreadCount.{uid}, activeUsers, typing.{uid}, clearedBy.{uid},
+      // name, photoURL, completed, cancelledBy, closedBy, jobOfferBy,
+      // eventDate/Type/Location/Notes, waitingForDate, preview, ...) is
+      // writable by ANY current member, including writes keyed by a
+      // DIFFERENT member's uid — this is real, confirmed behavior in both
+      // apps (e.g. the sender writes the recipient's deliveredTo/
+      // unreadCount entry), not a hole to close. members/admins are the
+      // one pair of fields that need the extra isSafeMembershipChange()
+      // gate above everything else.
+      allow update: if isMember() && (
+        !changedKeys().hasAny(['members', 'admins']) || isSafeMembershipChange()
+      );
+
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        function parentMembers() {
+          return get(/databases/$(database)/documents/chats/$(chatId)).data.members;
+        }
+        function isChatMember() {
+          return isSignedIn() && request.auth.uid in parentMembers();
+        }
+        function isSender() {
+          return isSignedIn() && request.auth.uid == resource.data.senderId;
+        }
+
+        // Firestore rules can't see into Storage, so a media message's
+        // imageURL/videoURL/audioURL string can't be trusted on its own —
+        // it could be an arbitrary external URL, or a real file from a
+        // chat the sender was never in. mediaOriginChatId/mediaFileName
+        // point at a validatedUploads marker that only the
+        // onChatMediaUploaded Storage trigger can write (Admin SDK,
+        // bypasses rules), and the sender must additionally still be a
+        // member of THAT chat — this is what makes forwarding a message
+        // from an earlier chat safe: the file doesn't need to be
+        // re-uploaded, but the forwarder must have had legitimate access
+        // to it.
+        function isValidatedMedia() {
+          let originChatId = request.resource.data.get('mediaOriginChatId', null);
+          let fileName = request.resource.data.get('mediaFileName', null);
+          return originChatId != null && fileName != null &&
+            request.auth.uid in
+              get(/databases/$(database)/documents/chats/$(originChatId)).data.members &&
+            exists(
+              /databases/$(database)/documents/validatedUploads/$(originChatId)/files/$(fileName)
+            );
+        }
+        // Scoped to mugam-flutter's own messages only (clientPlatform is a
+        // field only this app sets) — mugam-v2 can't be modified to supply
+        // mediaOriginChatId/mediaFileName, so its media messages keep the
+        // sender+membership check below without the extra validation.
+        function needsValidatedMedia() {
+          return request.resource.data.get('clientPlatform', null) == 'flutter' &&
+            request.resource.data.type in ['image', 'video', 'audio'];
+        }
+
+        allow read: if isChatMember();
+
+        // A message's senderId must be the writer's own uid — except
+        // mugam-v2's system messages (group created/left/member added/
+        // removed), which are always written with the literal string
+        // 'system' regardless of which member triggered the action.
+        allow create: if isChatMember() && (
+          request.resource.data.senderId == request.auth.uid ||
+          request.resource.data.senderId == 'system'
+        ) && (!needsValidatedMedia() || isValidatedMedia());
+
+        // Two legitimate non-sender update shapes, plus one sender-only
+        // shape. Reactions are NOT listed here on purpose: they're written
+        // exclusively by the toggleMessageReaction Cloud Function (Admin
+        // SDK, bypasses rules) — a direct client write to `reactions`
+        // can't be validated at the field-content level (rules see "the
+        // map changed", not "only the caller's own uid moved within it"),
+        // so it's blocked here entirely rather than trusted.
+        //  - listenedBy: any member marks their own uid as having played
+        //    a voice note (mugam-flutter).
+        //  - deletedFor: any member hides a message (any sender) for
+        //    themself only.
+        //  - text / deletedForAll / deletedAt / imageURL / videoURL /
+        //    audioURL: only the original sender may touch these (message
+        //    edit, delete-for-everyone, or mugam-v2's post-send CDN-URL
+        //    swap-in).
+        allow update: if isChatMember() && (
+          changedKeys().hasOnly(['listenedBy']) ||
+          changedKeys().hasOnly(['deletedFor']) ||
+          (isSender() && changedKeys().hasOnly(
+            ['text', 'deletedForAll', 'deletedAt', 'imageURL', 'videoURL', 'audioURL']
+          ))
+        );
+
+        // Deliberately NOT sender-restricted: mugam-v2's GroupChat lets
+        // any member permanently delete any message via swipe with no
+        // ownership check at all (confirmed by reading its source — this
+        // is that frozen app's existing behavior, not something
+        // introduced here). Restricting this to sender-only would break
+        // that already-working GroupChat feature. mugam-flutter only ever
+        // calls this after deletedForAll is already true, so it never
+        // relies on the extra latitude this grants.
+        allow delete: if isChatMember();
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // personalEvents/{eventId}  (mugam-flutter's calendar/agreements)
+    // ---------------------------------------------------------------
+    match /personalEvents/{eventId} {
+      allow read: if isSignedIn() && (
+        resource.data.ownerUid == request.auth.uid ||
+        request.auth.uid in resource.data.get('musicians', [])
+      );
+      allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // ---------------------------------------------------------------
+    // agreements/{agreementId}  (mugam-v2 only)
+    // ---------------------------------------------------------------
+    match /agreements/{agreementId} {
+      allow read: if isSignedIn() && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.get('toUid', null) == request.auth.uid
+      );
+      allow create: if isSignedIn() && request.resource.data.fromUid == request.auth.uid;
+      // mugam-v2's own update call site has no fromUid/toUid check today;
+      // this rule already tightens it to "one of the two named parties"
+      // rather than reproducing that gap verbatim.
+      allow update: if isSignedIn() && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.get('toUid', null) == request.auth.uid
+      );
+      allow delete: if false;
+    }
+
+    // ---------------------------------------------------------------
+    // invites/{inviteId}  (mugam-v2 only)
+    // ---------------------------------------------------------------
+    match /invites/{inviteId} {
+      allow read: if isSignedIn() && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.get('musicianId', null) == request.auth.uid
+      );
+      allow create: if isSignedIn() && request.resource.data.fromUid == request.auth.uid;
+      // Recipient (musicianId) accepts/declines; creator can also change
+      // status. Either party is restricted to touching status only.
+      allow update: if isSignedIn() && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.get('musicianId', null) == request.auth.uid
+      ) && changedKeys().hasOnly(['status']);
+      allow delete: if isSignedIn() && resource.data.fromUid == request.auth.uid;
+    }
+
+    // ---------------------------------------------------------------
+    // Not fully scoped this pass — held at today's "signed-in only"
+    // behavior deliberately, see file header. No regression from today,
+    // but no improvement either; tracked as explicit follow-up.
+    // ---------------------------------------------------------------
+    match /gigs/{id} { allow read, write: if isSignedIn(); }
+    match /board/{id} { allow read, write: if isSignedIn(); }
+    match /market/{id} { allow read, write: if isSignedIn(); }
+    match /stories/{id} { allow read, write: if isSignedIn(); }
+    match /videos/{id} { allow read, write: if isSignedIn(); }
+    match /events/{id} { allow read, write: if isSignedIn(); }
+    match /rooms/{id} { allow read, write: if isSignedIn(); }
+    match /musicians/{id} { allow read, write: if isSignedIn(); }
+    match /notifications/{id} { allow read, write: if isSignedIn(); }
+    match /locations/{cityId} {
+      allow read, write: if isSignedIn();
+      match /districts/{districtId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+  }
+}

@@ -1,0 +1,75 @@
+rules_version = '2';
+
+// mugam-club Storage rules — see firestore.rules for the companion
+// Firestore rules and the full rationale. Chat-media access is gated by
+// cross-referencing the parent chat's `members` array in Firestore, so a
+// user who was never in a chat can't read or write its files even with a
+// guessed/leaked download URL.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isChatMember(chatId) {
+      return isSignedIn() &&
+        request.auth.uid in
+          firestore.get(/databases/(default)/documents/chats/$(chatId)).data.members;
+    }
+
+    // avatars/{uid}.jpg — mugam-flutter's uploadAvatar() writes exactly
+    // this filename shape (mugam-v2's own avatar upload is a dead stub
+    // that always throws, so only this shape is live traffic today).
+    // Readable by anyone signed in (avatars are public profile data,
+    // matching users/{uid} read access) — writable only by the uid the
+    // filename names.
+    match /avatars/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && fileName.split('.')[0] == request.auth.uid;
+    }
+
+    // chats/{chatId}/{fileName} — mugam-flutter's flat upload shape
+    // (exactly one segment under the chat, e.g. chats/{chatId}/{messageId}.
+    // jpg). Beyond chat membership, the write must carry customMetadata
+    // naming the real uploader/chat — this is what makes that metadata
+    // trustworthy by the time onChatMediaUploaded's onFinalize trigger
+    // reads it back to write a validatedUploads marker (see
+    // firestore.rules): a lying client's upload is rejected here, before
+    // the object ever reaches Storage, rather than after.
+    match /chats/{chatId}/{fileName} {
+      allow read: if isChatMember(chatId);
+      allow write: if isChatMember(chatId) &&
+        request.resource.metadata.uploaderUid == request.auth.uid &&
+        request.resource.metadata.chatId == chatId;
+    }
+
+    // chats/{chatId}/images|voice/{fileName} — mugam-v2's nested upload
+    // shape. That app is frozen and can't be updated to attach the same
+    // customMetadata, so this stays at the membership-only check it
+    // already had; mugam-flutter never writes under this shape at all.
+    match /chats/{chatId}/{subfolder}/{fileName} {
+      allow read, write: if isChatMember(chatId);
+    }
+
+    // groups/{chatId}/avatar.jpg — mugam-v2's group photo. Chat
+    // membership is required to read or write; mugam-v2 additionally
+    // gates the upload UI to admins client-side, which this rule doesn't
+    // re-enforce (would need the same isSafeMembershipChange-style admin
+    // check as firestore.rules — deferred since a non-admin member
+    // overwriting the group photo is a low-severity nuisance, not a data
+    // exposure, and mugam-flutter never touches this path at all).
+    match /groups/{chatId}/{allPaths=**} {
+      allow read, write: if isChatMember(chatId);
+    }
+
+    // market_images/, videos/ — defined as constants in mugam-v2 but
+    // confirmed unused (its upload functions are dead stubs); left at
+    // today's signed-in-only behavior since nothing currently depends on
+    // a tighter rule and there's no confirmed owner field to key off.
+    match /{allPaths=**} {
+      allow read, write: if isSignedIn();
+    }
+  }
+}
