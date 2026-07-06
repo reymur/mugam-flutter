@@ -239,6 +239,23 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
+    // validatedUploads/{chatId}/files/{fileName}
+    // ---------------------------------------------------------------
+    // Written exclusively by onChatMediaUploaded via Admin SDK (bypasses
+    // rules — no `allow write` here is intentional, a client write is
+    // never legitimate). Read access is still required: the client's
+    // waitForValidatedUpload() polls/listens to this exact document
+    // directly to know when it's safe to create the message doc — an
+    // internal get()/exists() call from WITHIN another rule (like
+    // messages' isValidatedMedia()) does not need this, only a real
+    // client-facing read does.
+    match /validatedUploads/{chatId}/files/{fileName} {
+      allow read: if isSignedIn() &&
+        request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.members;
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------
     // personalEvents/{eventId}  (mugam-flutter's calendar/agreements)
     // ---------------------------------------------------------------
     match /personalEvents/{eventId} {
