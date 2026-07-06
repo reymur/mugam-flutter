@@ -1,12 +1,17 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'models.dart';
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
+    region: 'europe-west3',
+  );
 
   Future<User?> fetchUserById(String uid) async {
     final doc = await _db.collection('users').doc(uid).get();
@@ -204,17 +209,31 @@ class FirestoreService {
     });
   }
 
+  // customMetadata is enforced by storage.rules (uploaderUid/chatId must
+  // match the real request.auth.uid and the path's chatId, or the write is
+  // rejected outright) — by the time onChatMediaUploaded's onFinalize
+  // trigger reads it back, it's guaranteed authentic, not just
+  // self-reported. fileName is caller-provided (derived from the
+  // already-idempotent messageId, not DateTime.now()) so retries of the
+  // same queued item always target the same Storage object instead of
+  // orphaning a fresh one on every attempt.
   Future<String> uploadChatImage({
     required String chatId,
     required String filePath,
+    required String senderId,
+    required String fileName,
   }) async {
-    final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
     final ref = FirebaseStorage.instance
         .ref()
         .child('chats')
         .child(chatId)
         .child(fileName);
-    await ref.putFile(File(filePath));
+    await ref.putFile(
+      File(filePath),
+      SettableMetadata(
+        customMetadata: {'uploaderUid': senderId, 'chatId': chatId},
+      ),
+    );
     return await ref.getDownloadURL();
   }
 
@@ -224,6 +243,12 @@ class FirestoreService {
     required String imageURL,
     int? imageWidth,
     int? imageHeight,
+    // Which validated upload this image actually is: mediaOriginChatId ==
+    // chatId for a fresh send, or an earlier chat's id when forwarding an
+    // existing message's photo. Required (by firestore.rules) for every
+    // flutter-sent image message — see Message.mediaOriginChatId.
+    String? mediaOriginChatId,
+    String? mediaFileName,
     String? replyToId,
     String? replyToText,
     String? replyToSenderName,
@@ -231,7 +256,7 @@ class FirestoreService {
     String? replyToVideoURL,
     // If provided, writes with .doc(messageId).set(...) instead of .add(...)
     // — makes retries of this exact same send idempotent (same id = same
-    // document, no duplicate) instead of creating a new message each retry.
+    // document, no duplicate) instead of creating a new document each retry.
     String? messageId,
   }) async {
     final now = FieldValue.serverTimestamp();
@@ -250,6 +275,8 @@ class FirestoreService {
       'imageURL': imageURL,
       if (imageWidth != null) 'imageWidth': imageWidth,
       if (imageHeight != null) 'imageHeight': imageHeight,
+      if (mediaOriginChatId != null) 'mediaOriginChatId': mediaOriginChatId,
+      if (mediaFileName != null) 'mediaFileName': mediaFileName,
       'audioURL': null,
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
@@ -278,15 +305,20 @@ class FirestoreService {
   Future<String> uploadChatVideo({
     required String chatId,
     required String filePath,
+    required String senderId,
+    required String fileName,
   }) async {
-    final ext = filePath.contains('.') ? filePath.split('.').last : 'mp4';
-    final fileName = 'video_${DateTime.now().millisecondsSinceEpoch}.$ext';
     final ref = FirebaseStorage.instance
         .ref()
         .child('chats')
         .child(chatId)
         .child(fileName);
-    await ref.putFile(File(filePath));
+    await ref.putFile(
+      File(filePath),
+      SettableMetadata(
+        customMetadata: {'uploaderUid': senderId, 'chatId': chatId},
+      ),
+    );
     return await ref.getDownloadURL();
   }
 
@@ -297,6 +329,8 @@ class FirestoreService {
     int? videoDurationMs,
     int? videoWidth,
     int? videoHeight,
+    String? mediaOriginChatId,
+    String? mediaFileName,
     String? replyToId,
     String? replyToText,
     String? replyToSenderName,
@@ -321,6 +355,8 @@ class FirestoreService {
       if (videoDurationMs != null) 'videoDurationMs': videoDurationMs,
       if (videoWidth != null) 'videoWidth': videoWidth,
       if (videoHeight != null) 'videoHeight': videoHeight,
+      if (mediaOriginChatId != null) 'mediaOriginChatId': mediaOriginChatId,
+      if (mediaFileName != null) 'mediaFileName': mediaFileName,
       'imageURL': null,
       'audioURL': null,
       'timestamp': now,
@@ -350,14 +386,20 @@ class FirestoreService {
   Future<String> uploadChatAudio({
     required String chatId,
     required String filePath,
+    required String senderId,
+    required String fileName,
   }) async {
-    final fileName = 'audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
     final ref = FirebaseStorage.instance
         .ref()
         .child('chats')
         .child(chatId)
         .child(fileName);
-    await ref.putFile(File(filePath));
+    await ref.putFile(
+      File(filePath),
+      SettableMetadata(
+        customMetadata: {'uploaderUid': senderId, 'chatId': chatId},
+      ),
+    );
     return await ref.getDownloadURL();
   }
 
@@ -366,6 +408,8 @@ class FirestoreService {
     required String senderId,
     required String audioURL,
     List<int>? waveform,
+    String? mediaOriginChatId,
+    String? mediaFileName,
     String? replyToId,
     String? replyToText,
     String? replyToSenderName,
@@ -388,6 +432,8 @@ class FirestoreService {
       'clientPlatform': 'flutter',
       'audioURL': audioURL,
       if (waveform != null) 'waveform': waveform,
+      if (mediaOriginChatId != null) 'mediaOriginChatId': mediaOriginChatId,
+      if (mediaFileName != null) 'mediaFileName': mediaFileName,
       'imageURL': null,
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
@@ -411,6 +457,46 @@ class FirestoreService {
       'lastMessage': '🎤 Səs mesajı',
       'lastMessageTime': now,
     });
+  }
+
+  // Waits for the onChatMediaUploaded Storage trigger to write its
+  // validatedUploads marker for a just-uploaded file — without this, the
+  // caller's next step (creating the message doc) would race the trigger
+  // and fail firestore.rules' validation check most of the time, since the
+  // trigger typically takes a second or more to fire. Uses a snapshot
+  // listener rather than blindly retrying the message-doc write itself, so
+  // a normal-latency wait never produces a doomed write attempt. Returns
+  // false (not an exception) on timeout so the caller can fold it into its
+  // own existing retry/backoff cycle rather than treating it as a distinct
+  // error class.
+  Future<bool> waitForValidatedUpload({
+    required String chatId,
+    required String fileName,
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final ref = _db
+        .collection('validatedUploads')
+        .doc(chatId)
+        .collection('files')
+        .doc(fileName);
+    final existing = await ref.get();
+    if (existing.exists) return true;
+
+    final completer = Completer<bool>();
+    final sub = ref.snapshots().listen((snap) {
+      if (snap.exists && !completer.isCompleted) {
+        completer.complete(true);
+      }
+    });
+    final timer = Timer(timeout, () {
+      if (!completer.isCompleted) completer.complete(false);
+    });
+    try {
+      return await completer.future;
+    } finally {
+      timer.cancel();
+      await sub.cancel();
+    }
   }
 
   // Distinct from the chat-level lastReadMsgId (which only means the
@@ -464,33 +550,22 @@ class FirestoreService {
         });
   }
 
+  // Reactions are written exclusively by the toggleMessageReaction Cloud
+  // Function — a client-side transaction can't be validated by Firestore
+  // rules at the field-content level (rules see "reactions changed", not
+  // "only the caller's own uid moved within it"), so a modified client
+  // could otherwise forge another user's reaction. `uid` is no longer
+  // taken as a parameter here: the function derives it from the caller's
+  // own auth token, which is the whole point.
   Future<void> toggleReaction({
     required String chatId,
     required String messageId,
-    required String uid,
     required String emoji,
   }) async {
-    final docRef = _db
-        .collection('chats')
-        .doc(chatId)
-        .collection('messages')
-        .doc(messageId);
-    await _db.runTransaction((transaction) async {
-      final snap = await transaction.get(docRef);
-      final raw = snap.data()?['reactions'] as Map<String, dynamic>? ?? {};
-      final reactions = <String, List<String>>{
-        for (final entry in raw.entries)
-          entry.key: List<String>.from(entry.value as List? ?? const []),
-      };
-      final hadThisEmoji = reactions[emoji]?.contains(uid) ?? false;
-      for (final key in reactions.keys.toList()) {
-        reactions[key]!.remove(uid);
-        if (reactions[key]!.isEmpty) reactions.remove(key);
-      }
-      if (!hadThisEmoji) {
-        reactions.putIfAbsent(emoji, () => []).add(uid);
-      }
-      transaction.update(docRef, {'reactions': reactions});
+    await _functions.httpsCallable('toggleMessageReaction').call({
+      'chatId': chatId,
+      'messageId': messageId,
+      'emoji': emoji,
     });
   }
 

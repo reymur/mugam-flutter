@@ -46,74 +46,122 @@ Future<bool> attemptSendPendingMessage(
     }
     switch (item.type) {
       case 'image':
-        final url =
-            item.uploadedUrl ??
-            await firestoreService
-                .uploadChatImage(chatId: item.chatId, filePath: item.filePath)
-                .timeout(timeout);
-        if (item.uploadedUrl == null) onUploaded?.call(url);
-        await firestoreService
-            .sendImageMessage(
-              chatId: item.chatId,
-              senderId: item.senderId,
-              imageURL: url,
-              imageWidth: item.imageWidth,
-              imageHeight: item.imageHeight,
-              messageId: item.messageId,
-              replyToId: item.replyToId,
-              replyToText: item.replyToText,
-              replyToSenderName: item.replyToSenderName,
-              replyToImageURL: item.replyToImageURL,
-              replyToVideoURL: item.replyToVideoURL,
-            )
-            .timeout(timeout);
-        return true;
+        {
+          final fileName = '${item.messageId}.jpg';
+          final url =
+              item.uploadedUrl ??
+              await firestoreService
+                  .uploadChatImage(
+                    chatId: item.chatId,
+                    filePath: item.filePath,
+                    senderId: item.senderId,
+                    fileName: fileName,
+                  )
+                  .timeout(timeout);
+          if (item.uploadedUrl == null) onUploaded?.call(url);
+          final validated = await firestoreService.waitForValidatedUpload(
+            chatId: item.chatId,
+            fileName: fileName,
+          );
+          if (!validated) return false;
+          await firestoreService
+              .sendImageMessage(
+                chatId: item.chatId,
+                senderId: item.senderId,
+                imageURL: url,
+                imageWidth: item.imageWidth,
+                imageHeight: item.imageHeight,
+                mediaOriginChatId: item.chatId,
+                mediaFileName: fileName,
+                messageId: item.messageId,
+                replyToId: item.replyToId,
+                replyToText: item.replyToText,
+                replyToSenderName: item.replyToSenderName,
+                replyToImageURL: item.replyToImageURL,
+                replyToVideoURL: item.replyToVideoURL,
+              )
+              .timeout(timeout);
+          return true;
+        }
       case 'audio':
-        final url =
-            item.uploadedUrl ??
-            await firestoreService
-                .uploadChatAudio(chatId: item.chatId, filePath: item.filePath)
-                .timeout(timeout);
-        if (item.uploadedUrl == null) onUploaded?.call(url);
-        await firestoreService
-            .sendAudioMessage(
-              chatId: item.chatId,
-              senderId: item.senderId,
-              audioURL: url,
-              waveform: item.waveform,
-              messageId: item.messageId,
-              replyToId: item.replyToId,
-              replyToText: item.replyToText,
-              replyToSenderName: item.replyToSenderName,
-              replyToImageURL: item.replyToImageURL,
-              replyToVideoURL: item.replyToVideoURL,
-            )
-            .timeout(timeout);
-        return true;
+        {
+          final fileName = '${item.messageId}.m4a';
+          final url =
+              item.uploadedUrl ??
+              await firestoreService
+                  .uploadChatAudio(
+                    chatId: item.chatId,
+                    filePath: item.filePath,
+                    senderId: item.senderId,
+                    fileName: fileName,
+                  )
+                  .timeout(timeout);
+          if (item.uploadedUrl == null) onUploaded?.call(url);
+          final validated = await firestoreService.waitForValidatedUpload(
+            chatId: item.chatId,
+            fileName: fileName,
+          );
+          if (!validated) return false;
+          await firestoreService
+              .sendAudioMessage(
+                chatId: item.chatId,
+                senderId: item.senderId,
+                audioURL: url,
+                waveform: item.waveform,
+                mediaOriginChatId: item.chatId,
+                mediaFileName: fileName,
+                messageId: item.messageId,
+                replyToId: item.replyToId,
+                replyToText: item.replyToText,
+                replyToSenderName: item.replyToSenderName,
+                replyToImageURL: item.replyToImageURL,
+                replyToVideoURL: item.replyToVideoURL,
+              )
+              .timeout(timeout);
+          return true;
+        }
       case 'video':
-        final url =
-            item.uploadedUrl ??
-            await firestoreService
-                .uploadChatVideo(chatId: item.chatId, filePath: item.filePath)
-                .timeout(timeout);
-        if (item.uploadedUrl == null) onUploaded?.call(url);
-        await firestoreService
-            .sendVideoMessage(
-              chatId: item.chatId,
-              senderId: item.senderId,
-              videoURL: url,
-              videoDurationMs: item.videoDurationMs,
-              videoWidth: item.videoWidth,
-              videoHeight: item.videoHeight,
-              messageId: item.messageId,
-              replyToId: item.replyToId,
-              replyToText: item.replyToText,
-              replyToSenderName: item.replyToSenderName,
-              replyToImageURL: item.replyToImageURL,
-              replyToVideoURL: item.replyToVideoURL,
-            )
-            .timeout(timeout);
-        return true;
+        {
+          final ext = item.filePath.contains('.')
+              ? item.filePath.split('.').last
+              : 'mp4';
+          final fileName = '${item.messageId}.$ext';
+          final url =
+              item.uploadedUrl ??
+              await firestoreService
+                  .uploadChatVideo(
+                    chatId: item.chatId,
+                    filePath: item.filePath,
+                    senderId: item.senderId,
+                    fileName: fileName,
+                  )
+                  .timeout(timeout);
+          if (item.uploadedUrl == null) onUploaded?.call(url);
+          final validated = await firestoreService.waitForValidatedUpload(
+            chatId: item.chatId,
+            fileName: fileName,
+          );
+          if (!validated) return false;
+          await firestoreService
+              .sendVideoMessage(
+                chatId: item.chatId,
+                senderId: item.senderId,
+                videoURL: url,
+                videoDurationMs: item.videoDurationMs,
+                videoWidth: item.videoWidth,
+                videoHeight: item.videoHeight,
+                mediaOriginChatId: item.chatId,
+                mediaFileName: fileName,
+                messageId: item.messageId,
+                replyToId: item.replyToId,
+                replyToText: item.replyToText,
+                replyToSenderName: item.replyToSenderName,
+                replyToImageURL: item.replyToImageURL,
+                replyToVideoURL: item.replyToVideoURL,
+              )
+              .timeout(timeout);
+          return true;
+        }
       default:
         return false;
     }

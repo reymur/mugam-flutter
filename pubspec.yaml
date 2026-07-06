@@ -16,6 +16,7 @@ dependencies:
   cloud_firestore: any
   firebase_storage: any
   firebase_messaging: any
+  cloud_functions: any
   go_router: any
   flutter_riverpod: any
   riverpod: any

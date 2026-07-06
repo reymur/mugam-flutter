@@ -142,6 +142,17 @@ class Message {
   // pending item is replaced by the real sent message.
   final int? imageWidth;
   final int? imageHeight;
+  // Identify exactly which validated Storage upload this message's media
+  // came from — mediaOriginChatId is the chat the file was actually
+  // uploaded into (equals this message's own chat for a fresh send, or an
+  // earlier chat's id when this message is a forward), mediaFileName is
+  // the object name under chats/{mediaOriginChatId}/. Together they let
+  // firestore.rules confirm a validatedUploads marker exists rather than
+  // trusting the imageURL/videoURL/audioURL string outright. Null for any
+  // message sent before this field existed — such messages can no longer
+  // be forwarded (see toggleReaction/onChatMediaUploaded security pass).
+  final String? mediaOriginChatId;
+  final String? mediaFileName;
   // Fixed-length (40) 0-100 normalized amplitude bars captured live during
   // recording — null for messages sent before this field existed.
   final List<int>? waveform;
@@ -180,6 +191,8 @@ class Message {
     this.videoHeight,
     this.imageWidth,
     this.imageHeight,
+    this.mediaOriginChatId,
+    this.mediaFileName,
     this.waveform,
     this.listenedBy = const [],
     this.timestamp,
@@ -212,6 +225,8 @@ class Message {
       videoHeight: data['videoHeight'] as int?,
       imageWidth: data['imageWidth'] as int?,
       imageHeight: data['imageHeight'] as int?,
+      mediaOriginChatId: data['mediaOriginChatId'] as String?,
+      mediaFileName: data['mediaFileName'] as String?,
       waveform: (data['waveform'] as List?)?.cast<int>(),
       listenedBy: List<String>.from(data['listenedBy'] as List? ?? const []),
       timestamp: data['timestamp'] as Timestamp?,

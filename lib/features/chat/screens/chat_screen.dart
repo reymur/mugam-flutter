@@ -546,6 +546,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   ) async {
     final service = ref.read(firestoreServiceProvider);
     try {
+      // mediaOriginChatId/mediaFileName let firestore.rules confirm this
+      // media really was a validated upload (see onChatMediaUploaded)
+      // rather than trusting the URL string alone — a forward has to carry
+      // them through from the original message, not just its URL. Messages
+      // sent before this field existed don't have them and can no longer
+      // be forwarded; surfaced as the same generic forward-failed error
+      // below rather than attempting a write the server will reject
+      // anyway.
+      final isMedia =
+          msg.type == 'image' || msg.type == 'audio' || msg.type == 'video';
+      if (isMedia &&
+          (msg.mediaOriginChatId == null || msg.mediaFileName == null)) {
+        throw Exception('Media message predates forward-validation fields');
+      }
       switch (msg.type) {
         case 'image':
           final imageURL = msg.imageURL;
@@ -554,6 +568,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               chatId: targetChatId,
               senderId: currentUid,
               imageURL: imageURL,
+              mediaOriginChatId: msg.mediaOriginChatId,
+              mediaFileName: msg.mediaFileName,
             );
           }
           break;
@@ -564,6 +580,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               chatId: targetChatId,
               senderId: currentUid,
               audioURL: audioURL,
+              mediaOriginChatId: msg.mediaOriginChatId,
+              mediaFileName: msg.mediaFileName,
             );
           }
           break;
@@ -574,6 +592,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               chatId: targetChatId,
               senderId: currentUid,
               videoURL: videoURL,
+              mediaOriginChatId: msg.mediaOriginChatId,
+              mediaFileName: msg.mediaFileName,
             );
           }
           break;
@@ -886,17 +906,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
-  void _toggleReaction(Message msg, String emoji) {
+  void _toggleReaction(Message msg, String emoji) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null || uid.isEmpty) return;
-    ref
-        .read(firestoreServiceProvider)
-        .toggleReaction(
-          chatId: widget.chatId,
-          messageId: msg.id,
-          uid: uid,
-          emoji: emoji,
-        );
+    try {
+      await ref
+          .read(firestoreServiceProvider)
+          .toggleReaction(chatId: widget.chatId, messageId: msg.id, emoji: emoji);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Reaksiya əlavə edilmədi'),
+          backgroundColor: kRed,
+        ),
+      );
+    }
   }
 
   void _cancelReply() {
