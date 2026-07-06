@@ -1,12 +1,15 @@
 import { initializeApp } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getMessaging } from "firebase-admin/messaging";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onObjectFinalized } from "firebase-functions/v2/storage";
 import { logger } from "firebase-functions";
 
 initializeApp();
 const db = getFirestore();
 const messaging = getMessaging();
+const FUNCTIONS_REGION = "europe-west3";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -125,5 +128,135 @@ export const onNewMessage = onDocumentCreated(
         );
       }),
     );
+  },
+);
+
+// Reactions must be written server-side only — a direct client write to a
+// message's `reactions` map can't be validated by Firestore rules (rules
+// see the field-level diff, not "did this transaction only touch the
+// caller's own uid within the map"), so a modified client could otherwise
+// forge another user's reaction. This callable is the ONLY writer of
+// `reactions`; firestore.rules denies clients any direct write to it.
+export const toggleMessageReaction = onCall(
+  { region: FUNCTIONS_REGION },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const { chatId, messageId, emoji } = (request.data ?? {}) as {
+      chatId?: string;
+      messageId?: string;
+      emoji?: string;
+    };
+    if (!chatId || !messageId || !emoji) {
+      throw new HttpsError(
+        "invalid-argument",
+        "chatId, messageId and emoji are required.",
+      );
+    }
+
+    const chatSnap = await db.collection("chats").doc(chatId).get();
+    if (!chatSnap.exists) {
+      throw new HttpsError("not-found", "Chat not found.");
+    }
+    const members: string[] = chatSnap.data()?.members ?? [];
+    if (!members.includes(uid)) {
+      throw new HttpsError("permission-denied", "Not a member of this chat.");
+    }
+
+    const msgRef = db
+      .collection("chats")
+      .doc(chatId)
+      .collection("messages")
+      .doc(messageId);
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(msgRef);
+      if (!snap.exists) {
+        throw new HttpsError("not-found", "Message not found.");
+      }
+      const raw = (snap.data()?.reactions ?? {}) as Record<string, string[]>;
+      const reactions: Record<string, string[]> = {};
+      for (const [key, uids] of Object.entries(raw)) {
+        reactions[key] = Array.isArray(uids) ? [...uids] : [];
+      }
+      // Same toggle semantics as the old client-side transaction: a user
+      // holds at most one reaction per message. Re-tapping the same emoji
+      // clears it; tapping a different one moves it.
+      const hadThisEmoji = reactions[emoji]?.includes(uid) ?? false;
+      for (const key of Object.keys(reactions)) {
+        reactions[key] = reactions[key].filter((u) => u !== uid);
+        if (reactions[key].length === 0) delete reactions[key];
+      }
+      if (!hadThisEmoji) {
+        reactions[emoji] = [...(reactions[emoji] ?? []), uid];
+      }
+      tx.update(msgRef, { reactions });
+    });
+
+    return { ok: true };
+  },
+);
+
+// Closes the gap between "a file landed in Storage" and "a message doc
+// claims to point at it" — Firestore rules can't inspect Storage state
+// directly, so without this, a client could write an arbitrary/external
+// URL (or another chat's real file) into imageURL/videoURL/audioURL and
+// the message-create rule would have no way to tell. This trigger is the
+// only writer of `validatedUploads/{chatId}/files/{fileName}`; the
+// firestore.rules message-create rule requires that marker to exist
+// (scoped to clientPlatform=='flutter' messages only — see the rules file
+// for why mugam-v2 isn't and can't be covered by this).
+//
+// Only validates mugam-flutter's flat upload shape (chats/{chatId}/
+// {fileName}) — mugam-v2's nested chats/{chatId}/images|voice/{fileName}
+// paths are intentionally left alone (3 vs 4 path segments below).
+export const onChatMediaUploaded = onObjectFinalized(
+  { region: FUNCTIONS_REGION, bucket: "mugam-club.firebasestorage.app" },
+  async (event) => {
+    const object = event.data;
+    const filePath = object.name;
+    if (!filePath || !filePath.startsWith("chats/")) return;
+
+    const parts = filePath.split("/");
+    if (parts.length !== 3) return;
+    const [, chatId, fileName] = parts;
+
+    const uploaderUid = object.metadata?.uploaderUid;
+    const metaChatId = object.metadata?.chatId;
+    if (!uploaderUid || !metaChatId || metaChatId !== chatId) {
+      logger.warn("onChatMediaUploaded: missing/mismatched metadata", {
+        filePath,
+        metadata: object.metadata,
+      });
+      return;
+    }
+
+    const chatSnap = await db.collection("chats").doc(chatId).get();
+    if (!chatSnap.exists) {
+      logger.warn("onChatMediaUploaded: chat not found", { filePath, chatId });
+      return;
+    }
+    const members: string[] = chatSnap.data()?.members ?? [];
+    if (!members.includes(uploaderUid)) {
+      logger.warn("onChatMediaUploaded: uploader not a chat member", {
+        filePath,
+        uploaderUid,
+      });
+      return;
+    }
+
+    await db
+      .collection("validatedUploads")
+      .doc(chatId)
+      .collection("files")
+      .doc(fileName)
+      .set({
+        uploaderUid,
+        contentType: object.contentType ?? null,
+        size: object.size ? Number(object.size) : null,
+        validatedAt: FieldValue.serverTimestamp(),
+      });
   },
 );
