@@ -21,6 +21,7 @@ import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 import '../../../core/cache/message_cache_service.dart';
+import '../../../core/native_sound_effect.dart';
 import '../../../core/queue/pending_message_queue_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
@@ -94,6 +95,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _isRecording = false;
   bool _uploadingAudio = false;
   String? _recordingPath;
+  // Resolves once the native recorder has actually started — stop/cancel
+  // must await this before calling _audioRecorder.stop(), since the real
+  // start is deliberately deferred past the start-beep's length (see
+  // _recordStartBeepGuard) while the recording UI itself already shows
+  // instantly.
+  Future<void>? _recorderStartFuture;
   bool _hasText = false;
   final Stopwatch _recordingStopwatch = Stopwatch();
   Timer? _recordingTimer;
@@ -105,12 +112,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   double _dragY = 0.0;
   static const double _cancelThreshold = -80.0;
   static const double _lockThreshold = -60.0;
+  // Raw pointer position at press-down for the record button (see the
+  // Listener below) — needed to compute drag deltas manually since raw
+  // PointerMoveEvents report absolute position, not an offset-from-origin
+  // like LongPressMoveUpdateDetails used to.
+  Offset? _recordPointerStart;
   // Uniform on all four corners for every bubble type (text/image/audio/
   // video) and both senders — WhatsApp's current bubbles have no tail.
   static const double _kBubbleRadius = 12.0;
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
-  final AudioPlayer _beepPlayer = AudioPlayer();
   Message? _replyingTo;
   final Map<String, GlobalKey> _messageKeys = {};
   String? _highlightedMessageId;
@@ -172,8 +183,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   void _initBeepPlayer() async {
     try {
-      await _beepPlayer.setAsset('assets/sounds/record_start.wav');
-      await _beepPlayer.setVolume(1.0);
+      await NativeSoundEffect.load(
+        'record_start',
+        'assets/sounds/record_start.wav',
+      );
+      await NativeSoundEffect.load(
+        'record_stop',
+        'assets/sounds/record_stop.wav',
+      );
       debugPrint('🔊 Beep player initialized');
     } catch (e) {
       debugPrint('🔊 Beep init error: $e');
@@ -200,7 +217,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _recordingTimer?.cancel();
     _amplitudeSub?.cancel();
     _pulseController.dispose();
-    _beepPlayer.dispose();
     _highlightTimer?.cancel();
     for (final timer in _purgeTimers.values) {
       timer.cancel();
@@ -1387,7 +1403,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
+  // record_start.wav's own real length (measured: 500ms) plus a small
+  // margin for the audio session's category switch (playback -> record)
+  // and the speaker's acoustic tail — the actual native recorder doesn't
+  // start until this elapses, so the mic can never physically pick up the
+  // start beep. The recording UI itself (see _startRecording) shows
+  // instantly regardless, matching WhatsApp's snappy feel; only the real
+  // capture is deferred.
+  static const Duration _recordStartBeepGuard = Duration(milliseconds: 550);
+
   Future<void> _startRecording() async {
+    // Fires before anything else, including the permission check below —
+    // a tactile response the instant the finger presses down reinforces
+    // the immediate visual feedback, same idea as WhatsApp's own haptic tap
+    // on record start.
+    unawaited(HapticFeedback.mediumImpact());
     // hasPermission() also requests permission on first call on iOS
     final hasPermission = await _audioRecorder.hasPermission();
     if (!hasPermission) {
@@ -1401,15 +1431,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
       return;
     }
+    // Instant visual feedback — matches WhatsApp's immediate response.
+    // The real _audioRecorder.start() below is deferred past the start
+    // beep's own length so recording never captures it; nothing here
+    // depends on that having happened yet.
+    if (mounted) setState(() => _isRecording = true);
+    _pulseController.repeat(reverse: true);
+    _recordingStopwatch.reset();
+    _recordingStopwatch.start();
+    _rawAmplitudes.clear();
+    _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) {
+        final s = _recordingStopwatch.elapsed.inSeconds;
+        setState(
+          () => _recordingDuration =
+              '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}',
+        );
+      }
+    });
+    unawaited(NativeSoundEffect.play('record_start'));
+    _recorderStartFuture = _reallyStartRecorder();
+    await _recorderStartFuture;
+  }
+
+  // Split out of _startRecording so _stopAndSendRecording/_cancelRecording
+  // can await this specific step (via _recorderStartFuture) before asking
+  // the native recorder to stop — without that guard, a very quick tap
+  // (shorter than _recordStartBeepGuard) could call stop() before start()
+  // has actually run.
+  Future<void> _reallyStartRecorder() async {
     final dir = await getTemporaryDirectory();
     _recordingPath =
         '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
-    // Play beep BEFORE recorder (recorder changes audio session to record mode)
-    try {
-      await _beepPlayer.setAsset('assets/sounds/record_start.wav');
-      await _beepPlayer.play();
-    } catch (_) {}
-    await Future.delayed(const Duration(milliseconds: 150));
+    await Future.delayed(_recordStartBeepGuard);
+    if (!mounted || !_isRecording) return;
     await _audioRecorder.start(
       RecordConfig(
         encoder: AudioEncoder.aacLc,
@@ -1431,26 +1486,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ),
       path: _recordingPath!,
     );
-    if (mounted) setState(() => _isRecording = true);
-    _pulseController.repeat(reverse: true);
-    _recordingStopwatch.reset();
-    _recordingStopwatch.start();
-    _rawAmplitudes.clear();
     _amplitudeSub = _audioRecorder
         .onAmplitudeChanged(const Duration(milliseconds: 100))
         .listen((amp) => _rawAmplitudes.add(amp.current));
-    _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        final s = _recordingStopwatch.elapsed.inSeconds;
-        setState(
-          () => _recordingDuration =
-              '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}',
-        );
-      }
-    });
   }
 
   Future<void> _stopAndSendRecording() async {
+    // Lighter than the start haptic — a distinct "released" feel, fired
+    // before anything else for the same instant-response reason.
+    unawaited(HapticFeedback.lightImpact());
     setState(() {
       _dragX = 0.0;
       _dragY = 0.0;
@@ -1459,10 +1503,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _pulseController.stop();
     _pulseController.reset();
     if (!_isRecording) return;
+    // The native recorder itself may not have actually started yet (see
+    // _recordStartBeepGuard) if this is a very quick tap — wait for that
+    // before asking it to stop.
+    await _recorderStartFuture;
     _recordingStopwatch.stop();
     _recordingTimer?.cancel();
     await _amplitudeSub?.cancel();
     setState(() => _recordingDuration = '0:00');
+    // Fired before awaiting stop() below, not after — the mic itself stops
+    // capturing the instant .stop() is called; the Future only resolves
+    // once the encoder finishes finalizing the file on disk, which can
+    // take a perceptible moment and would otherwise delay this sound well
+    // past the actual button release.
+    unawaited(NativeSoundEffect.play('record_stop'));
     final path = await _audioRecorder.stop();
     unawaited(_deactivateAudioSession());
     if (mounted) {
@@ -1516,6 +1570,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   Future<void> _cancelRecording() async {
+    // Same guard as _stopAndSendRecording — see _recordStartBeepGuard.
+    await _recorderStartFuture;
     _recordingStopwatch.stop();
     _recordingTimer?.cancel();
     await _amplitudeSub?.cancel();
@@ -2642,14 +2698,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     Stack(
                       clipBehavior: Clip.none,
                       children: [
-                        GestureDetector(
+                        Listener(
                           behavior: HitTestBehavior.opaque,
-                          onLongPressStart: (_) => _startRecording(),
-                          onLongPressMoveUpdate: (details) {
-                            if (!_isRecording || _isLocked) return;
+                          // Raw pointer events, not a GestureDetector/
+                          // LongPressGestureRecognizer — any gesture
+                          // recognizer (even with a short duration) still
+                          // has to go through gesture-arena resolution
+                          // before firing, which is itself a perceptible
+                          // delay on top of whatever duration is configured
+                          // (confirmed on-device: shortening the recognizer's
+                          // duration to 120ms still felt laggy). Listener
+                          // fires directly on the hardware touch-down/up
+                          // with no recognition/arena step at all, matching
+                          // WhatsApp's true-instant response — and there's
+                          // no competing gesture to disambiguate against
+                          // here anyway, since this button only ever does
+                          // one thing on press and one thing on release.
+                          onPointerDown: (event) {
+                            _recordPointerStart = event.position;
+                            _startRecording();
+                          },
+                          onPointerMove: (event) {
+                            if (!_isRecording ||
+                                _isLocked ||
+                                _recordPointerStart == null) {
+                              return;
+                            }
+                            final delta = event.position - _recordPointerStart!;
                             setState(() {
-                              _dragX = details.offsetFromOrigin.dx;
-                              _dragY = details.offsetFromOrigin.dy;
+                              _dragX = delta.dx;
+                              _dragY = delta.dy;
                             });
                             if (_dragX < _cancelThreshold) {
                               _cancelRecording();
@@ -2657,38 +2735,53 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                               _lockRecording();
                             }
                           },
-                          onLongPressEnd: (_) {
+                          onPointerUp: (event) {
                             if (_isLocked) return;
                             if (_isRecording) _stopAndSendRecording();
                           },
-                          onLongPressCancel: () {
+                          onPointerCancel: (event) {
                             if (_isLocked) return;
                             if (_isRecording) _cancelRecording();
                           },
                           child: Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                              color: _isRecording ? kRed : kBg3,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: _isRecording ? kRed : kBorder,
+                            // Bigger than the visual circle, per Apple/Material
+                            // minimum-touch-target guidance — same pattern as
+                            // the voice-message seek bar's dot (visual stays
+                            // small, the tappable region around it is
+                            // generous). Kept modest (not larger) since the
+                            // camera button sits only 4px away.
+                            width: 52,
+                            height: 52,
+                            alignment: Alignment.center,
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 100),
+                              curve: Curves.easeOut,
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: _isRecording ? kRed : kBg3,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: _isRecording ? kRed : kBorder,
+                                ),
                               ),
-                            ),
-                            child: _uploadingAudio
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: kGold,
+                              child: _uploadingAudio
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: kGold,
+                                      ),
+                                    )
+                                  : Icon(
+                                      Icons.mic,
+                                      color: _isRecording
+                                          ? Colors.white
+                                          : kGold,
+                                      size: 22,
                                     ),
-                                  )
-                                : Icon(
-                                    Icons.mic,
-                                    color: _isRecording ? Colors.white : kGold,
-                                    size: 22,
-                                  ),
+                            ),
                           ),
                         ),
                         // Lock icon above mic button — only shown during unlocked recording
@@ -3027,23 +3120,25 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
         } else {
           _VoiceMessageCoordinator.instance.starting(this);
           await _activateAudioSession();
-          // just_audio's play() Future only resolves at the NEXT stop/
-          // pause/completion, not when playback actually starts — so it
-          // can't be awaited here without blocking the nudge-seek below
-          // until this whole playback later ends.
-          unawaited(_player.play());
           if (_hasCompletedAtLeastOnce) {
             // Replicates the manual seek-bar drag that reliably restored
             // sound during a silent replay on-device — a known just_audio/
             // iOS quirk where resuming playback after a natural completion
             // reports a fully normal playing state but produces no actual
-            // audio until any seek happens. Small delay lets play() actually
-            // start before nudging it.
-            await Future.delayed(const Duration(milliseconds: 150));
+            // audio until any seek happens. Done here, before play() and
+            // while still paused, rather than shortly after starting
+            // playback (an earlier version of this fix did that, but
+            // skipped/lost whatever content played during the delay before
+            // the nudge landed). Forward-then-back-to-zero forces a genuine
+            // position change — seeking to the same position it's already
+            // at can be a no-op that doesn't trigger the same fix.
+            await _player.seek(const Duration(milliseconds: 50));
+            await _player.seek(Duration.zero);
             if (!mounted) return;
-            final nudgeFrom = _player.position;
-            await _player.seek(nudgeFrom + const Duration(milliseconds: 50));
           }
+          // just_audio's play() Future only resolves at the NEXT stop/
+          // pause/completion, not when playback actually starts.
+          unawaited(_player.play());
         }
       },
       child: Icon(

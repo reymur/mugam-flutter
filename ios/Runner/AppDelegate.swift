@@ -22,5 +22,8 @@ import workmanager_apple
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    NativeSoundEffectPlugin.register(
+      with: engineBridge.pluginRegistry.registrar(forPlugin: "NativeSoundEffectPlugin")!
+    )
   }
 }
