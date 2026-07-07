@@ -175,16 +175,25 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
 
   Future<void> remove(String localId) => _removeInternal(localId);
 
+  // State is updated (hiding the synthetic pending bubble) BEFORE the local
+  // file cleanup, not after — by the time this runs, the real Firestore
+  // document this item's send() call just wrote is already visible to the
+  // live message stream, so leaving the pending item in `state` during a
+  // slow disk delete meant both the synthetic and the real message rendered
+  // at once for however long that delete took (confirmed on-device: a
+  // visible duplicate-then-jump when sending photo/video/voice, never for
+  // text since it has no pending phase). File deletion is a pure cleanup
+  // side effect and doesn't need to block that.
   Future<void> _removeInternal(String localId) async {
     final current = state.where((e) => e.localId == localId).toList();
     if (current.isEmpty) return;
-    await _service.deleteFile(current.first.filePath);
     state = state.where((e) => e.localId != localId).toList();
     await _service.saveAll(state);
     // If this chat's loop is mid-backoff (waiting to retry this or an
     // earlier item), wake it now instead of leaving it to idle out the
     // delay before re-checking candidates against the now-shorter queue.
     _pendingWaits[current.first.chatId]?.completeNow();
+    await _service.deleteFile(current.first.filePath);
   }
 
   void _updateItem(PendingMediaMessage updated) {

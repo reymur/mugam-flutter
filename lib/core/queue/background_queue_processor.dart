@@ -210,9 +210,16 @@ Future<void> processPendingQueueOnce() async {
         onUploaded: (url) => uploadedUrl = url,
       );
       if (success) {
-        await service.deleteFile(item.filePath);
+        // Persisted queue state is updated before the file cleanup (see the
+        // matching reorder in PendingMessageQueueController._removeInternal)
+        // — if the app is foregrounded while this background task is mid-
+        // flight, its own queue provider reads the same SharedPreferences
+        // state, so a stale "still pending" entry lingering behind a slow
+        // disk delete could show a synthetic bubble for an already-sent
+        // message there too.
         result.removeWhere((e) => e.localId == item.localId);
         await service.saveAll(result);
+        await service.deleteFile(item.filePath);
         continue;
       }
 

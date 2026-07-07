@@ -4,7 +4,6 @@ import 'dart:ui' as ui;
 
 import 'package:audio_session/audio_session.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:exif/exif.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -61,6 +60,23 @@ Future<void> _deactivateAudioSession() async {
   try {
     final session = await AudioSession.instance;
     await session.setActive(false);
+  } catch (_) {}
+}
+
+// Paired with _deactivateAudioSession above — needed because that manual
+// deactivate (on pause/natural-completion) isn't reliably followed by an
+// equally explicit reactivation anywhere: just_audio's own implicit
+// activate-on-start covers a message's first-ever play, but replaying an
+// already-completed voice message (play -> complete -> our deactivate ->
+// play again) hit the exact same silent-while-visually-playing race as the
+// loop/message-switch bugs fixed earlier — just triggered by replay instead
+// of looping or switching. Called explicitly (and awaited, unlike the
+// fire-and-forget deactivate calls) right before play() so the session is
+// genuinely active before playback starts producing audio.
+Future<void> _activateAudioSession() async {
+  try {
+    final session = await AudioSession.instance;
+    await session.setActive(true);
   } catch (_) {}
 }
 
@@ -1132,20 +1148,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     await _uploadAndSendImageFile(picked.path);
   }
 
-  // Reads the picked file's own pixel dimensions via a real (if cheap,
-  // since image_picker already downsizes to maxWidth 1200) decode via
-  // dart:ui — but that decode reports the RAW stored buffer size, not the
-  // as-displayed one: confirmed on-device that a landscape photo decodes
-  // as e.g. 720x1280 (portrait-shaped raw buffer) with EXIF Orientation 6
-  // ("rotate 90° CW to display correctly"), which the Image/
-  // CachedNetworkImage widgets used to actually render it DO apply, but
-  // dart:ui's raw decode does not. Reading EXIF Orientation separately
-  // (via the exif package — metadata-only parse, no extra decode cost)
-  // and swapping width/height for the four orientation values that
-  // involve a 90/270 transpose (5, 6, 7, 8) gives the true as-displayed
-  // size, matching how the photo actually renders. Same rationale as
-  // _uploadAndSendVideoFile's own rotated-swap for videoWidth/
-  // videoHeight, just sourced from EXIF instead of container metadata.
+  // Reads the picked file's own pixel dimensions via a decode through
+  // dart:ui. On this Flutter/iOS combination, ui.instantiateImageCodec
+  // already returns dimensions in the as-displayed (EXIF-orientation-aware)
+  // order — confirmed on-device: a portrait shot with EXIF Orientation 6
+  // decoded directly to the correct portrait size (width < height). An
+  // earlier version of this function additionally swapped width/height
+  // based on a separate manual EXIF read, which double-corrected already-
+  // oriented dimensions and produced a landscape-shaped size for every
+  // portrait photo taken via the system-camera handoff (_handleModeTap in
+  // camera_capture_screen.dart) — that path never went through the
+  // resize-triggered re-encode gallery picks get, which is what reset
+  // those files' EXIF tag to 1 and made the old double-correction a no-op.
   // Null on failure just means the bubble falls back to its fixed-square
   // placeholder, same as an old message queued before this field existed.
   Future<(int, int)?> _probeImageSize(String filePath) async {
@@ -1153,21 +1167,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final bytes = await File(filePath).readAsBytes();
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
-      var width = frame.image.width;
-      var height = frame.image.height;
+      final width = frame.image.width;
+      final height = frame.image.height;
       frame.image.dispose();
-      try {
-        final tags = await readExifFromBytes(bytes);
-        final orientation = tags['Image Orientation']?.values.firstAsInt();
-        if (orientation != null && {5, 6, 7, 8}.contains(orientation)) {
-          final w = width;
-          width = height;
-          height = w;
-        }
-      } catch (_) {
-        // No/unreadable EXIF just means we keep the raw decoded size —
-        // correct for the common case of an image with no rotation tag.
-      }
       return (width, height);
     } catch (_) {
       return null;
@@ -2281,8 +2283,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       final pendingForChat = ref.watch(
                         pendingMessagesForChatProvider(widget.chatId),
                       );
+                      // Defensive dedup: a pending item's real Firestore
+                      // document can become visible in visibleMessages
+                      // slightly before the queue controller removes the
+                      // item from pendingMessageQueueProvider's state (the
+                      // two are separate, independently-updated providers) —
+                      // without this filter, that brief window renders both
+                      // the synthetic and the real bubble for the same
+                      // logical message at once.
+                      final dedupedPendingForChat = pendingForChat
+                          .where(
+                            (p) => !visibleMessages.any(
+                              (m) => m.id == p.messageId,
+                            ),
+                          )
+                          .toList();
                       final combinedMessages = [
-                        ...pendingForChat.reversed.map(
+                        ...dedupedPendingForChat.reversed.map(
                           (p) => p.toSyntheticMessage(),
                         ),
                         ...visibleMessages.reversed,
@@ -2910,6 +2927,15 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
   // race as the loop/alternation bug, triggered here by fast play-switching
   // between messages instead of natural completion).
   bool _pausedByCoordinator = false;
+  // Set once this player has reached natural completion at least once.
+  // iOS just_audio has a known quirk (confirmed on-device, matching a
+  // documented package issue) where resuming playback after completion
+  // reports a fully normal playing state but produces no actual audio —
+  // manually dragging the seek bar during that silent playback reliably
+  // restores sound immediately. Used to gate a one-time replicated "nudge"
+  // seek right after play() on any attempt following a completion, without
+  // touching the always-worked-fine first playback.
+  bool _hasCompletedAtLeastOnce = false;
 
   @override
   void initState() {
@@ -2950,6 +2976,7 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
           // of stopping.
           unawaited(_player.pause());
           _player.seek(Duration.zero);
+          _hasCompletedAtLeastOnce = true;
           setState(() => _isPlaying = false);
         }
       }
@@ -2999,7 +3026,24 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
           await _player.pause();
         } else {
           _VoiceMessageCoordinator.instance.starting(this);
-          await _player.play();
+          await _activateAudioSession();
+          // just_audio's play() Future only resolves at the NEXT stop/
+          // pause/completion, not when playback actually starts — so it
+          // can't be awaited here without blocking the nudge-seek below
+          // until this whole playback later ends.
+          unawaited(_player.play());
+          if (_hasCompletedAtLeastOnce) {
+            // Replicates the manual seek-bar drag that reliably restored
+            // sound during a silent replay on-device — a known just_audio/
+            // iOS quirk where resuming playback after a natural completion
+            // reports a fully normal playing state but produces no actual
+            // audio until any seek happens. Small delay lets play() actually
+            // start before nudging it.
+            await Future.delayed(const Duration(milliseconds: 150));
+            if (!mounted) return;
+            final nudgeFrom = _player.position;
+            await _player.seek(nudgeFrom + const Duration(milliseconds: 50));
+          }
         }
       },
       child: Icon(
