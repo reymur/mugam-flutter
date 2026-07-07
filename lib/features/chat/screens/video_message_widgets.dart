@@ -9,6 +9,56 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import '../../../core/theme/colors.dart';
+import '../../../firebase/models.dart';
+import 'media_thumbnail_cache.dart';
+
+// Single source of truth for "what state is this message visually in" —
+// computed once per message in chat_screen.dart's _buildMessageBubble and
+// consumed by BOTH the corner checkmark AND the photo/video upload-progress
+// ring, instead of each independently re-deriving its own interpretation
+// of msg.localSendStatus/deliveredTo/lastReadMsgId. Confirmed on-device
+// that those two previously-separate branches could visibly disagree for
+// several seconds (checkmarks already showing delivered while the video's
+// progress ring was still up) — not a timing bug in either branch
+// specifically, but the structural risk of having two independent
+// decisions about the same underlying state at all. This doesn't reduce
+// the number of underlying data sources (pending queue vs. Firestore
+// messages vs. Firestore chat-meta genuinely are different, necessarily
+// separate providers) — it just guarantees every widget reads the one
+// already-computed answer instead of asking its own version of the
+// question.
+enum MessageDeliveryStatus { queued, uploading, failed, sentUnconfirmed, delivered, read }
+
+// isMe/otherUid gate the delivered/read computation the same way the old
+// inline logic did (group chats / other people's messages have no
+// meaningful otherUid-keyed receipt to check) — anything that isn't
+// queued/uploading/failed and doesn't qualify for that check is
+// sentUnconfirmed, matching the prior fallback behavior exactly.
+MessageDeliveryStatus deliveryStatusFor({
+  required Message msg,
+  required bool isMe,
+  required String? otherUid,
+  required Map<String, dynamic> deliveredTo,
+  required Map<String, dynamic> lastReadMsgId,
+  required List<String> allMsgIds,
+  required int index,
+}) {
+  switch (msg.localSendStatus) {
+    case 'queued':
+      return MessageDeliveryStatus.queued;
+    case 'uploading':
+      return MessageDeliveryStatus.uploading;
+    case 'failed':
+      return MessageDeliveryStatus.failed;
+  }
+  if (!isMe || otherUid == null) return MessageDeliveryStatus.sentUnconfirmed;
+  final lastReadId = lastReadMsgId[otherUid] as String?;
+  final lastReadIndex = lastReadId != null ? allMsgIds.indexOf(lastReadId) : -1;
+  final isRead = lastReadIndex != -1 && index >= lastReadIndex;
+  if (isRead) return MessageDeliveryStatus.read;
+  if (deliveredTo[otherUid] != null) return MessageDeliveryStatus.delivered;
+  return MessageDeliveryStatus.sentUnconfirmed;
+}
 
 Future<void> _deactivateAudioSession() async {
   try {
@@ -16,10 +66,6 @@ Future<void> _deactivateAudioSession() async {
     await session.setActive(false);
   } catch (_) {}
 }
-
-// In-memory only — good enough to avoid regenerating a thumbnail every time
-// a message scrolls back into view within the same session.
-final Map<String, Uint8List> _thumbnailCache = {};
 
 // Separate from the DefaultCacheManager used for images — videos are much
 // larger, so they get their own bounded store instead of competing with (or
@@ -66,12 +112,31 @@ class VideoThumbnailImage extends StatefulWidget {
   // (see StackFit.expand there). Non-null for the fixed-square quote-card/
   // replying-to-bar previews, unaffected by this change.
   final double? size;
+  // Stable key (see Message.stableMediaKey) identifying the logical message
+  // this thumbnail belongs to, independent of which technical source
+  // (localFilePath vs. videoURL) is currently being read from — see
+  // MediaThumbnailCacheManager. Null for the reply-quote/reply-composer
+  // preview call sites, which only ever render an already-final videoURL
+  // (never experience a local->network swap), so they fall back to keying
+  // by source exactly as before.
+  final String? cacheKey;
+  // Already-generated preview frame bytes, captured before this message was
+  // ever enqueued and already precached into Flutter's ImageCache (see
+  // chat_screen.dart's _uploadAndSendVideoFile) — lets the very first build
+  // paint the real thumbnail immediately instead of showing the loading
+  // spinner while _loadThumb's own generation call catches up. Null for the
+  // reply-quote/reply-composer previews (already-sent videos, no pending
+  // phase) and for a pending item resumed after an app restart (this is
+  // never persisted).
+  final Uint8List? initialBytes;
 
   const VideoThumbnailImage({
     super.key,
     this.videoURL,
     this.localFilePath,
     this.size,
+    this.cacheKey,
+    this.initialBytes,
   });
 
   @override
@@ -82,11 +147,18 @@ class _VideoThumbnailImageState extends State<VideoThumbnailImage> {
   Uint8List? _thumb;
 
   String get _source => widget.localFilePath ?? widget.videoURL ?? '';
+  String get _cacheKey => widget.cacheKey ?? _source;
 
   @override
   void initState() {
     super.initState();
-    _loadThumb();
+    final initial = widget.initialBytes;
+    if (initial != null) {
+      _thumb = initial;
+      MediaThumbnailCacheManager.instance.put(_cacheKey, initial);
+    } else {
+      _loadThumb();
+    }
   }
 
   @override
@@ -94,10 +166,11 @@ class _VideoThumbnailImageState extends State<VideoThumbnailImage> {
     super.didUpdateWidget(oldWidget);
     // A message's videoURL can change under an already-mounted bubble (e.g.
     // a queued send's synthetic localFilePath being replaced by the real
-    // uploaded URL) — reload instead of leaving a stale/never-resolving
-    // thumbnail for the new source.
-    final oldSource = oldWidget.localFilePath ?? oldWidget.videoURL ?? '';
-    if (oldSource != _source) {
+    // uploaded URL) — reload only if the LOGICAL message identity changed
+    // (cacheKey), not just the technical source. Same message, same cached
+    // bytes: no reset, no visible reload flash.
+    final oldKey = oldWidget.cacheKey ?? (oldWidget.localFilePath ?? oldWidget.videoURL ?? '');
+    if (oldKey != _cacheKey) {
       setState(() => _thumb = null);
       _loadThumb();
     }
@@ -106,7 +179,8 @@ class _VideoThumbnailImageState extends State<VideoThumbnailImage> {
   Future<void> _loadThumb() async {
     final source = _source;
     if (source.isEmpty) return;
-    final cached = _thumbnailCache[source];
+    final key = _cacheKey;
+    final cached = MediaThumbnailCacheManager.instance.get(key);
     if (cached != null) {
       if (mounted) setState(() => _thumb = cached);
       return;
@@ -119,7 +193,7 @@ class _VideoThumbnailImageState extends State<VideoThumbnailImage> {
         quality: 60,
       );
       if (data != null) {
-        _thumbnailCache[source] = data;
+        MediaThumbnailCacheManager.instance.put(key, data);
         if (mounted) setState(() => _thumb = data);
       }
     } catch (_) {}
@@ -184,11 +258,17 @@ class VideoMessageBubble extends StatelessWidget {
   final int? videoHeight;
   final double bubbleRadius;
   final Widget timeCheckmarkOverlay;
-  // 'queued' | 'uploading' | 'failed' | null (null = a real, sent message).
-  // See UploadProgressOverlay's doc comment.
-  final String? localSendStatus;
+  // Single computed source of truth (see deliveryStatusFor) — the same
+  // value the corner checkmark is derived from, so this widget's own
+  // uploading-vs-sent decision can never visibly disagree with it.
+  final MessageDeliveryStatus deliveryStatus;
   final double? localUploadProgress;
   final VoidCallback? onCancelUpload;
+  // See VideoThumbnailImage.cacheKey — pass Message.stableMediaKey here so
+  // the generated thumbnail survives the pending->sent source swap.
+  final String? thumbnailCacheKey;
+  // See VideoThumbnailImage.initialBytes.
+  final Uint8List? initialBytes;
 
   const VideoMessageBubble({
     super.key,
@@ -199,9 +279,11 @@ class VideoMessageBubble extends StatelessWidget {
     this.videoHeight,
     required this.bubbleRadius,
     required this.timeCheckmarkOverlay,
-    this.localSendStatus,
+    required this.deliveryStatus,
     this.localUploadProgress,
     this.onCancelUpload,
+    this.thumbnailCacheKey,
+    this.initialBytes,
   });
 
   Size _boundedSize() {
@@ -256,10 +338,16 @@ class VideoMessageBubble extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              VideoThumbnailImage(videoURL: videoURL, localFilePath: localFilePath),
-              if (localSendStatus == 'queued' || localSendStatus == 'uploading')
+              VideoThumbnailImage(
+                videoURL: videoURL,
+                localFilePath: localFilePath,
+                cacheKey: thumbnailCacheKey,
+                initialBytes: initialBytes,
+              ),
+              if (deliveryStatus == MessageDeliveryStatus.queued ||
+                  deliveryStatus == MessageDeliveryStatus.uploading)
                 UploadProgressOverlay(
-                  progress: localSendStatus == 'uploading'
+                  progress: deliveryStatus == MessageDeliveryStatus.uploading
                       ? localUploadProgress
                       : null,
                   onCancel: onCancelUpload,
@@ -340,11 +428,19 @@ class ImageMessageBubble extends StatelessWidget {
   final double bubbleRadius;
   final Widget timeCheckmarkOverlay;
   final VoidCallback? onTap;
-  // 'queued' | 'uploading' | 'failed' | null (null = a real, sent message).
-  // See UploadProgressOverlay's doc comment.
-  final String? localSendStatus;
+  // Single computed source of truth (see deliveryStatusFor) — the same
+  // value the corner checkmark is derived from, so this widget's own
+  // uploading-vs-sent decision can never visibly disagree with it.
+  final MessageDeliveryStatus deliveryStatus;
   final double? localUploadProgress;
   final VoidCallback? onCancelUpload;
+  // See Message.stableMediaKey — warms/looks up ImagePreviewCacheManager so
+  // the pending-phase local file's bytes can seamlessly stand in for
+  // CachedNetworkImage's own placeholder the moment this message's source
+  // swaps to its uploaded URL (see _PendingImagePreview below).
+  final String? cacheKey;
+  // See _PendingImagePreview.initialBytes.
+  final Uint8List? initialBytes;
 
   const ImageMessageBubble({
     super.key,
@@ -355,9 +451,11 @@ class ImageMessageBubble extends StatelessWidget {
     required this.bubbleRadius,
     required this.timeCheckmarkOverlay,
     this.onTap,
-    this.localSendStatus,
+    required this.deliveryStatus,
     this.localUploadProgress,
     this.onCancelUpload,
+    this.cacheKey,
+    this.initialBytes,
   });
 
   Size _boundedSize() {
@@ -407,25 +505,42 @@ class ImageMessageBubble extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
+              // Base layer so any paint gap in the layer above (Image.file
+              // decode contending with the concurrent upload for CPU/IO,
+              // or CachedNetworkImage's own placeholder) shows this same
+              // dark placeholder everywhere, instead of the raw message-
+              // bubble color (kGold for isMe) showing through — that gap
+              // used to be fully visible since neither layer above painted
+              // over the whole area on its own.
+              Container(color: kBg3),
               localFilePath != null
-                  ? Image.file(File(localFilePath!), fit: BoxFit.cover)
+                  ? _PendingImagePreview(
+                      path: localFilePath!,
+                      cacheKey: cacheKey,
+                      initialBytes: initialBytes,
+                    )
                   : CachedNetworkImage(
                       imageUrl: imageURL!,
                       fit: BoxFit.cover,
-                      placeholder: (ctx, url) => Container(
-                        color: kBg3,
-                        child: const Center(
-                          child: CircularProgressIndicator(color: kGold),
-                        ),
-                      ),
+                      placeholder: (ctx, url) {
+                        final cached = cacheKey != null
+                            ? ImagePreviewCacheManager.instance.get(cacheKey!)
+                            : null;
+                        return cached != null
+                            ? Image.memory(cached, fit: BoxFit.cover)
+                            : const Center(
+                                child: CircularProgressIndicator(color: kGold),
+                              );
+                      },
                       errorWidget: (ctx, url, err) => Container(
                         color: kBg3,
                         child: const Icon(Icons.broken_image, color: kMuted),
                       ),
                     ),
-              if (localSendStatus == 'queued' || localSendStatus == 'uploading')
+              if (deliveryStatus == MessageDeliveryStatus.queued ||
+                  deliveryStatus == MessageDeliveryStatus.uploading)
                 UploadProgressOverlay(
-                  progress: localSendStatus == 'uploading'
+                  progress: deliveryStatus == MessageDeliveryStatus.uploading
                       ? localUploadProgress
                       : null,
                   onCancel: onCancelUpload,
@@ -440,6 +555,76 @@ class ImageMessageBubble extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+// Renders a pending (not-yet-uploaded) photo's local file exactly like a
+// plain Image.file — the only difference is a one-time side effect: it
+// reads the file's bytes into ImagePreviewCacheManager under cacheKey so
+// they're already in memory (not at risk of the local file having been
+// deleted, see PendingMessageQueueController._removeInternal) by the time
+// this message's ImageMessageBubble swaps to CachedNetworkImage and needs
+// a placeholder for its first, not-yet-cached fetch of the uploaded URL.
+class _PendingImagePreview extends StatefulWidget {
+  final String path;
+  final String? cacheKey;
+  // Already-decoded bytes for this exact photo, captured before this
+  // message was ever enqueued and already precached into Flutter's
+  // ImageCache (see chat_screen.dart's _uploadAndSendImageFile) — lets the
+  // very first build paint the real photo immediately via Image.memory
+  // instead of Image.file's own fresh decode gap. Null for a pending item
+  // resumed after an app restart (this is never persisted), which falls
+  // back to the previous Image.file + async warm-up behavior.
+  final Uint8List? initialBytes;
+
+  const _PendingImagePreview({
+    required this.path,
+    this.cacheKey,
+    this.initialBytes,
+  });
+
+  @override
+  State<_PendingImagePreview> createState() => _PendingImagePreviewState();
+}
+
+class _PendingImagePreviewState extends State<_PendingImagePreview> {
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialBytes;
+    final key = widget.cacheKey;
+    if (initial != null && key != null) {
+      ImagePreviewCacheManager.instance.put(key, initial);
+    } else {
+      _warmCache();
+    }
+  }
+
+  @override
+  void didUpdateWidget(_PendingImagePreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.path != widget.path && widget.initialBytes == null) {
+      _warmCache();
+    }
+  }
+
+  Future<void> _warmCache() async {
+    final key = widget.cacheKey;
+    if (key == null) return;
+    if (ImagePreviewCacheManager.instance.get(key) != null) return;
+    try {
+      final bytes = await File(widget.path).readAsBytes();
+      if (!mounted) return;
+      ImagePreviewCacheManager.instance.put(key, bytes);
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = widget.initialBytes;
+    return initial != null
+        ? Image.memory(initial, fit: BoxFit.cover)
+        : Image.file(File(widget.path), fit: BoxFit.cover);
   }
 }
 

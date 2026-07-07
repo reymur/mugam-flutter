@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -58,6 +59,16 @@ class PendingMediaMessage {
   // restart (a resumed 'queued' item re-uploads from scratch anyway, so it
   // correctly defaults back to 0.0 rather than showing stale progress).
   final double uploadProgress;
+  // Captured once at enqueue time (see chat_screen.dart's
+  // _uploadAndSendImageFile/_uploadAndSendVideoFile) — the full picked
+  // photo's bytes for 'image', a small generated preview frame for
+  // 'video'. Also deliberately NOT persisted via toJson/fromJson, same
+  // reasoning as uploadProgress: meaningless (and wasteful to store) across
+  // an app restart. Its whole purpose is letting the very first frame of
+  // the pending bubble already be precached via precacheImage (called
+  // before this item is ever enqueued/visible), eliminating the decode-gap
+  // flash a fresh Image.file/generated-thumbnail read would otherwise show.
+  final Uint8List? previewBytes;
 
   const PendingMediaMessage({
     required this.localId,
@@ -82,6 +93,7 @@ class PendingMediaMessage {
     this.imageHeight,
     this.waveform,
     this.uploadProgress = 0.0,
+    this.previewBytes,
   });
 
   static String generateLocalId() {
@@ -122,6 +134,7 @@ class PendingMediaMessage {
       // attempt) and 'failed' both mean whatever prior progress existed no
       // longer reflects an in-flight upload.
       uploadProgress: uploadProgress ?? (status != null ? 0.0 : this.uploadProgress),
+      previewBytes: previewBytes,
     );
   }
 
@@ -196,6 +209,8 @@ class PendingMediaMessage {
       localFilePath: filePath,
       localSendStatus: status,
       localUploadProgress: uploadProgress,
+      mediaMessageId: messageId,
+      localPreviewBytes: previewBytes,
       videoDurationMs: videoDurationMs,
       videoWidth: videoWidth,
       videoHeight: videoHeight,

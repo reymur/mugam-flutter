@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 extension UserListFiltering on List<User> {
@@ -182,6 +184,29 @@ class Message {
   // 'queued'/'uploading' — image/video only, null otherwise. See
   // PendingMediaMessage.uploadProgress for where this comes from.
   final double? localUploadProgress;
+  // Already-decoded preview bytes captured at send time (the full picked
+  // photo for 'image', a small generated frame for 'video') — set only on
+  // a synthetic pending message, see PendingMediaMessage.previewBytes for
+  // why: it lets the bubble paint the real image on its very first frame
+  // (via a precacheImage call made before this message ever became
+  // visible) instead of a decode gap flashing the placeholder background.
+  final Uint8List? localPreviewBytes;
+  // Client-only, set only on a synthetic pending message (see
+  // PendingMediaMessage.toSyntheticMessage) to the real Firestore doc id
+  // this item will use once it sends. Needed because a pending message's
+  // own `id` is deliberately 'local_$localId' (never collides with a real
+  // Firestore id — see PendingMediaMessage), so `id` alone changes across
+  // the pending->sent transition even though it's the same logical
+  // message. Null for a real, server-confirmed message (its `id` is
+  // already that final value). Use stableMediaKey below rather than this
+  // field directly.
+  final String? mediaMessageId;
+
+  // The one identifier that stays constant across a message's entire
+  // lifecycle (queued -> uploading -> sent), used to key anything that
+  // must survive that transition without visibly resetting (see
+  // MediaThumbnailCacheManager).
+  String get stableMediaKey => mediaMessageId ?? id;
 
   const Message({
     required this.id,
@@ -213,6 +238,8 @@ class Message {
     this.localFilePath,
     this.localSendStatus,
     this.localUploadProgress,
+    this.mediaMessageId,
+    this.localPreviewBytes,
   });
 
   factory Message.fromFirestore(String id, Map<String, dynamic> data) {

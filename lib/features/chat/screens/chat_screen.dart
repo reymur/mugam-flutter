@@ -20,6 +20,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:super_clipboard/super_clipboard.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 import '../../../core/cache/message_cache_service.dart';
 import '../../../core/native_sound_effect.dart';
 import '../../../core/queue/pending_message_queue_controller.dart';
@@ -29,6 +30,7 @@ import '../../../firebase/models.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import 'about_contact_screen.dart';
 import 'custom_camera_backup/camera_capture_screen.dart';
+import 'media_thumbnail_cache.dart';
 import 'message_info_screen.dart';
 import 'video_message_widgets.dart';
 
@@ -361,13 +363,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // document, so it would silently do nothing. "Yenidən göndər" only makes
   // sense once the item has actually failed — for queued/uploading the
   // automatic per-chat loop is already retrying it.
+  // A message ceasing to exist (deleted, or a queued upload cancelled
+  // before it ever finished) must not leave its bytes behind in either
+  // media byte cache — evict() is a no-op if this message's type/key was
+  // never cached in the first place.
+  void _evictMediaCaches(Message msg) {
+    if (msg.type == 'video') {
+      MediaThumbnailCacheManager.instance.evict(msg.stableMediaKey);
+    } else if (msg.type == 'image') {
+      ImagePreviewCacheManager.instance.evict(msg.stableMediaKey);
+    }
+  }
+
   // Same removal path as "Sil" in the pending-message sheet below — reused
   // directly by the photo/video upload-progress ring's cancel button so
   // there's exactly one way a queued item ever gets torn down.
   VoidCallback? _cancelUploadCallback(Message msg) {
     if (msg.localSendStatus == null) return null;
     final localId = msg.id.replaceFirst('local_', '');
-    return () => ref.read(pendingMessageQueueProvider.notifier).remove(localId);
+    return () {
+      ref.read(pendingMessageQueueProvider.notifier).remove(localId);
+      _evictMediaCaches(msg);
+    };
   }
 
   void _showPendingMessageOptionsSheet(Message msg) {
@@ -403,6 +420,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               onTap: () {
                 Navigator.of(context).pop();
                 ref.read(pendingMessageQueueProvider.notifier).remove(localId);
+                _evictMediaCaches(msg);
               },
             ),
           ],
@@ -672,6 +690,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         messageId: msg.id,
         uid: currentUid,
       );
+      _evictMediaCaches(msg);
     }
     _exitSelectionMode();
   }
@@ -683,6 +702,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         chatId: widget.chatId,
         messageId: msg.id,
       );
+      _evictMediaCaches(msg);
     }
     _exitSelectionMode();
   }
@@ -1126,6 +1146,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         videoHeight = rotated ? rawWidth : rawHeight;
       }
     } catch (_) {}
+    // Same instant-first-frame treatment as the photo path above, just for
+    // a generated preview frame instead of the whole file — generate it
+    // and decode it into Flutter's ImageCache before this message's
+    // pending bubble (VideoThumbnailImage) ever gets a chance to mount and
+    // show its own placeholder while doing that same work later.
+    Uint8List? previewBytes;
+    try {
+      previewBytes = await VideoThumbnail.thumbnailData(
+        video: filePath,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 400,
+        quality: 60,
+      );
+    } catch (_) {}
+    if (previewBytes != null) {
+      if (!mounted) return;
+      await precacheImage(MemoryImage(previewBytes), context);
+      if (!mounted) return;
+    }
     final error = await ref
         .read(pendingMessageQueueProvider.notifier)
         .enqueue(
@@ -1136,6 +1175,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           videoDurationMs: videoDurationMs,
           videoWidth: videoWidth,
           videoHeight: videoHeight,
+          previewBytes: previewBytes,
           replyToId: replyingTo?.id,
           replyToText: replyingTo != null
               ? _replyPreviewText(replyingTo)
@@ -1187,7 +1227,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // those files' EXIF tag to 1 and made the old double-correction a no-op.
   // Null on failure just means the bubble falls back to its fixed-square
   // placeholder, same as an old message queued before this field existed.
-  Future<(int, int)?> _probeImageSize(String filePath) async {
+  // Also returns the raw bytes it already had to read to get these
+  // dimensions — reused by the caller as the pending bubble's instant
+  // preview (see _uploadAndSendImageFile) instead of a second file read.
+  Future<(int, int, Uint8List)?> _probeImageSize(String filePath) async {
     try {
       final bytes = await File(filePath).readAsBytes();
       final codec = await ui.instantiateImageCodec(bytes);
@@ -1195,7 +1238,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final width = frame.image.width;
       final height = frame.image.height;
       frame.image.dispose();
-      return (width, height);
+      return (width, height, bytes);
     } catch (_) {
       return null;
     }
@@ -1210,7 +1253,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final replyingTo = _replyingTo;
     setState(() => _uploadingImage = true);
     _cancelReply();
-    final imageSize = await _probeImageSize(filePath);
+    final imageProbe = await _probeImageSize(filePath);
+    // Decode this exact byte sequence into Flutter's own ImageCache BEFORE
+    // the pending bubble is ever added to the message list (enqueue below)
+    // — by the time ImageMessageBubble first builds using the same bytes
+    // (threaded through as previewBytes/localPreviewBytes), the decode is
+    // already done and it paints the real photo on its first frame instead
+    // of a placeholder flash while decoding catches up.
+    final previewBytes = imageProbe?.$3;
+    if (previewBytes != null) {
+      if (!mounted) return;
+      await precacheImage(MemoryImage(previewBytes), context);
+      if (!mounted) return;
+    }
     final error = await ref
         .read(pendingMessageQueueProvider.notifier)
         .enqueue(
@@ -1218,8 +1273,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           senderId: currentUid,
           type: 'image',
           sourceFilePath: filePath,
-          imageWidth: imageSize?.$1,
-          imageHeight: imageSize?.$2,
+          imageWidth: imageProbe?.$1,
+          imageHeight: imageProbe?.$2,
+          previewBytes: previewBytes,
           replyToId: replyingTo?.id,
           replyToText: replyingTo != null
               ? _replyPreviewText(replyingTo)
@@ -1653,38 +1709,59 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final time = msg.timestamp != null
         ? DateFormat('HH:mm').format(msg.timestamp!.toDate())
         : '';
-    // checkIconData/isRead/isDelivered are the single source of truth for
-    // delivery status — checkMark renders it in the bubble's own text color
-    // (for text/audio/image bubbles), overlayCheckMark in a white-friendly
-    // color for the video bubble's overlay atop arbitrary video content
-    // (see VideoMessageBubble). Same status, two color treatments.
+    // Single computed source of truth for "what state is this message
+    // visually in" — see deliveryStatusFor's doc comment for why this
+    // replaced two independently-derived interpretations (this checkmark
+    // logic, and the photo/video upload-progress ring) of the same
+    // underlying pending-queue/Firestore data, which could visibly
+    // disagree for several seconds around the pending->sent transition.
+    // allMsgIds is newest-first (index 0 = newest): a message is read if
+    // it's at the same position or older (higher index) than whatever the
+    // other member last read up to.
+    final status = deliveryStatusFor(
+      msg: msg,
+      isMe: isMe,
+      otherUid: otherUid,
+      deliveredTo: deliveredTo,
+      lastReadMsgId: lastReadMsgId,
+      allMsgIds: allMsgIds,
+      index: index,
+    );
+    final isRead = status == MessageDeliveryStatus.read;
+    // checkIconData renders in the bubble's own text color (for text/audio/
+    // image bubbles), overlayCheckColor in a white-friendly color for the
+    // video bubble's overlay atop arbitrary video content (see
+    // VideoMessageBubble). Same status, two color treatments.
     IconData? checkIconData;
     Color checkColor = kMuted;
     Color overlayCheckColor = Colors.white70;
-    bool isRead = false;
-    bool isDelivered = false;
-    if (msg.localSendStatus == 'queued' || msg.localSendStatus == 'uploading') {
-      checkIconData = Icons.access_time;
-      checkColor = const Color(0xFF1A0E00);
-      overlayCheckColor = Colors.white70;
-    } else if (msg.localSendStatus == 'failed') {
-      checkIconData = Icons.error_outline;
-      checkColor = kRed;
-      overlayCheckColor = kRed;
-    } else if (isMe && otherUid != null) {
-      final lastReadId = lastReadMsgId[otherUid] as String?;
-      final lastReadIndex = lastReadId != null
-          ? allMsgIds.indexOf(lastReadId)
-          : -1;
-      // allMsgIds is newest-first (index 0 = newest): a message is read if
-      // it's at the same position or older (higher index) than whatever the
-      // other member last read up to — the opposite direction from the old
-      // oldest-first list, where "at or before" meant a lower index.
-      isRead = lastReadIndex != -1 && index >= lastReadIndex;
-      isDelivered = deliveredTo[otherUid] != null || isRead;
-      checkIconData = isDelivered ? Icons.done_all : Icons.done;
-      checkColor = isRead ? kReadBlue : const Color(0xFF1A0E00).withAlpha(128);
-      overlayCheckColor = isRead ? kReadBlue : Colors.white70;
+    switch (status) {
+      case MessageDeliveryStatus.queued:
+      case MessageDeliveryStatus.uploading:
+        checkIconData = Icons.access_time;
+        checkColor = const Color(0xFF1A0E00);
+        overlayCheckColor = Colors.white70;
+      case MessageDeliveryStatus.failed:
+        checkIconData = Icons.error_outline;
+        checkColor = kRed;
+        overlayCheckColor = kRed;
+      case MessageDeliveryStatus.sentUnconfirmed:
+        // Only a real gap when it's my own 1-1-chat message with nothing
+        // to show yet — group chats / other people's messages show no
+        // checkmark at all, matching the previous fallback exactly.
+        if (isMe && otherUid != null) {
+          checkIconData = Icons.done;
+          checkColor = const Color(0xFF1A0E00).withAlpha(128);
+          overlayCheckColor = Colors.white70;
+        }
+      case MessageDeliveryStatus.delivered:
+        checkIconData = Icons.done_all;
+        checkColor = const Color(0xFF1A0E00).withAlpha(128);
+        overlayCheckColor = Colors.white70;
+      case MessageDeliveryStatus.read:
+        checkIconData = Icons.done_all;
+        checkColor = kReadBlue;
+        overlayCheckColor = kReadBlue;
     }
     final checkMark = checkIconData != null
         ? Icon(checkIconData, size: 14, color: checkColor)
@@ -1856,8 +1933,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                       width: 60,
                                       height: 60,
                                       fit: BoxFit.cover,
-                                      placeholder: (ctx, url) =>
-                                          Container(color: kBg3),
+                                      // msg.replyToId is the original
+                                      // (already-sent) message's own id,
+                                      // which equals its stableMediaKey —
+                                      // reuses whatever ImageMessageBubble
+                                      // already warmed for it, so a reply
+                                      // to a just-sent photo doesn't show
+                                      // an empty box while this identical
+                                      // URL is fetched a second time.
+                                      placeholder: (ctx, url) {
+                                        final replyToId = msg.replyToId;
+                                        final cached = replyToId != null
+                                            ? ImagePreviewCacheManager
+                                                  .instance
+                                                  .get(replyToId)
+                                            : null;
+                                        return cached != null
+                                            ? Image.memory(
+                                                cached,
+                                                fit: BoxFit.cover,
+                                              )
+                                            : Container(color: kBg3);
+                                      },
                                       errorWidget: (ctx, url, err) => Container(
                                         color: kBg3,
                                         child: const Icon(
@@ -1921,9 +2018,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         onTap: msg.imageURL != null
                             ? () => showFullImage(context, msg.imageURL!)
                             : null,
-                        localSendStatus: msg.localSendStatus,
+                        deliveryStatus: status,
                         localUploadProgress: msg.localUploadProgress,
                         onCancelUpload: _cancelUploadCallback(msg),
+                        cacheKey: msg.stableMediaKey,
+                        initialBytes: msg.localPreviewBytes,
                         timeCheckmarkOverlay: _timeCheckmarkRow(
                           isMe,
                           otherUid,
@@ -1980,9 +2079,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         videoWidth: msg.videoWidth,
                         videoHeight: msg.videoHeight,
                         bubbleRadius: _kBubbleRadius,
-                        localSendStatus: msg.localSendStatus,
+                        deliveryStatus: status,
                         localUploadProgress: msg.localUploadProgress,
                         onCancelUpload: _cancelUploadCallback(msg),
+                        thumbnailCacheKey: msg.stableMediaKey,
+                        initialBytes: msg.localPreviewBytes,
                         timeCheckmarkOverlay: _timeCheckmarkRow(
                           isMe,
                           otherUid,
@@ -2472,7 +2573,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           width: 44,
                           height: 44,
                           fit: BoxFit.cover,
-                          placeholder: (ctx, url) => Container(color: kBg3),
+                          // Same reuse as the in-message reply-quote card
+                          // above — _replyingTo!.stableMediaKey resolves to
+                          // its own real Firestore id here (an already-sent
+                          // message), matching whatever ImageMessageBubble
+                          // already cached for it.
+                          placeholder: (ctx, url) {
+                            final cached = ImagePreviewCacheManager.instance
+                                .get(_replyingTo!.stableMediaKey);
+                            return cached != null
+                                ? Image.memory(cached, fit: BoxFit.cover)
+                                : Container(color: kBg3);
+                          },
                           errorWidget: (ctx, url, err) => Container(
                             color: kBg3,
                             child: const Icon(

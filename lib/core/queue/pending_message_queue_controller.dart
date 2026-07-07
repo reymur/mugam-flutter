@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -117,6 +118,7 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
     int? imageWidth,
     int? imageHeight,
     List<int>? waveform,
+    Uint8List? previewBytes,
   }) async {
     if (state.length >= maxQueueSize) {
       return 'Növbə doludur, gözləyin';
@@ -143,6 +145,7 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
       imageWidth: imageWidth,
       imageHeight: imageHeight,
       waveform: waveform,
+      previewBytes: previewBytes,
     );
     state = [...state, item];
     await _service.saveAll(state);
