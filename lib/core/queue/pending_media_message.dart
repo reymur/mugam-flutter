@@ -52,6 +52,12 @@ class PendingMediaMessage {
   // recording (see _downsampleWaveform in chat_screen.dart) — null for
   // non-audio items or ones queued before this field existed.
   final List<int>? waveform;
+  // Real Storage upload fraction (0.0-1.0), image/video only — drives the
+  // WhatsApp-style circular progress ring in chat_screen.dart. Deliberately
+  // NOT persisted via toJson/fromJson: it's meaningless across an app
+  // restart (a resumed 'queued' item re-uploads from scratch anyway, so it
+  // correctly defaults back to 0.0 rather than showing stale progress).
+  final double uploadProgress;
 
   const PendingMediaMessage({
     required this.localId,
@@ -75,6 +81,7 @@ class PendingMediaMessage {
     this.imageWidth,
     this.imageHeight,
     this.waveform,
+    this.uploadProgress = 0.0,
   });
 
   static String generateLocalId() {
@@ -87,6 +94,7 @@ class PendingMediaMessage {
     int? attemptCount,
     String? status,
     String? uploadedUrl,
+    double? uploadProgress,
   }) {
     return PendingMediaMessage(
       localId: localId,
@@ -110,6 +118,10 @@ class PendingMediaMessage {
       imageWidth: imageWidth,
       imageHeight: imageHeight,
       waveform: waveform,
+      // Explicit status transitions reset progress — 'queued' (fresh retry
+      // attempt) and 'failed' both mean whatever prior progress existed no
+      // longer reflects an in-flight upload.
+      uploadProgress: uploadProgress ?? (status != null ? 0.0 : this.uploadProgress),
     );
   }
 
@@ -183,6 +195,7 @@ class PendingMediaMessage {
       replyToVideoURL: replyToVideoURL,
       localFilePath: filePath,
       localSendStatus: status,
+      localUploadProgress: uploadProgress,
       videoDurationMs: videoDurationMs,
       videoWidth: videoWidth,
       videoHeight: videoHeight,

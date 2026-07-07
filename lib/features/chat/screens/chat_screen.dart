@@ -361,6 +361,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // document, so it would silently do nothing. "Yenidən göndər" only makes
   // sense once the item has actually failed — for queued/uploading the
   // automatic per-chat loop is already retrying it.
+  // Same removal path as "Sil" in the pending-message sheet below — reused
+  // directly by the photo/video upload-progress ring's cancel button so
+  // there's exactly one way a queued item ever gets torn down.
+  VoidCallback? _cancelUploadCallback(Message msg) {
+    if (msg.localSendStatus == null) return null;
+    final localId = msg.id.replaceFirst('local_', '');
+    return () => ref.read(pendingMessageQueueProvider.notifier).remove(localId);
+  }
+
   void _showPendingMessageOptionsSheet(Message msg) {
     final localId = msg.id.replaceFirst('local_', '');
     final isFailed = msg.localSendStatus == 'failed';
@@ -1912,6 +1921,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         onTap: msg.imageURL != null
                             ? () => showFullImage(context, msg.imageURL!)
                             : null,
+                        localSendStatus: msg.localSendStatus,
+                        localUploadProgress: msg.localUploadProgress,
+                        onCancelUpload: _cancelUploadCallback(msg),
                         timeCheckmarkOverlay: _timeCheckmarkRow(
                           isMe,
                           otherUid,
@@ -1968,6 +1980,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         videoWidth: msg.videoWidth,
                         videoHeight: msg.videoHeight,
                         bubbleRadius: _kBubbleRadius,
+                        localSendStatus: msg.localSendStatus,
+                        localUploadProgress: msg.localUploadProgress,
+                        onCancelUpload: _cancelUploadCallback(msg),
                         timeCheckmarkOverlay: _timeCheckmarkRow(
                           isMe,
                           otherUid,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../firebase/firestore_service.dart';
@@ -50,6 +51,12 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
 
   final Set<String> _activeChatProcessors = {};
   final Map<String, _CancelableWait> _pendingWaits = {};
+  // Live reference to whatever Storage UploadTask is currently in flight
+  // for a given item (image/video only) — lets remove() actually cancel
+  // the transfer instead of just hiding the item while it keeps uploading
+  // unseen in the background. Populated in _attemptSend, cleared once that
+  // attempt settles (success or failure) or the task is cancelled.
+  final Map<String, UploadTask> _activeUploadTasks = {};
 
   @override
   List<PendingMediaMessage> build() {
@@ -187,6 +194,18 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
   Future<void> _removeInternal(String localId) async {
     final current = state.where((e) => e.localId == localId).toList();
     if (current.isEmpty) return;
+    // If this item is mid-upload (the user tapped cancel on the progress
+    // ring), actually stop the transfer instead of just hiding it — without
+    // this, the bytes would keep flowing to Storage, unseen, until it
+    // finished or errored on its own. _attemptSend clears this same entry
+    // once its own attempt settles, so this is a no-op for the (far more
+    // common) already-finished-successfully removal path.
+    final activeTask = _activeUploadTasks.remove(localId);
+    if (activeTask != null) {
+      try {
+        await activeTask.cancel();
+      } catch (_) {}
+    }
     state = state.where((e) => e.localId != localId).toList();
     await _service.saveAll(state);
     // If this chat's loop is mid-backoff (waiting to retry this or an
@@ -277,13 +296,40 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
     PendingMediaMessage item,
   ) async {
     String? uploadedUrl;
-    final success = await attemptSendPendingMessage(
-      item,
-      _firestoreService,
-      timeout: uploadTimeout,
-      onUploaded: (url) => uploadedUrl = url,
-    );
-    return (success, uploadedUrl);
+    try {
+      final success = await attemptSendPendingMessage(
+        item,
+        _firestoreService,
+        timeout: uploadTimeout,
+        onUploaded: (url) => uploadedUrl = url,
+        onTaskStarted: (task) => _activeUploadTasks[item.localId] = task,
+        onProgress: (progress) => _updateProgress(item.localId, progress),
+      );
+      return (success, uploadedUrl);
+    } finally {
+      // Whether this attempt succeeded, failed, or was cancelled out from
+      // under it — the task this item was tracking is no longer relevant.
+      _activeUploadTasks.remove(item.localId);
+    }
+  }
+
+  // Only updates in-memory state (drives the progress ring), never touches
+  // disk — Storage's snapshotEvents can fire many times a second, and
+  // persisting on every tick would be needless I/O for a value that's
+  // meaningless across an app restart anyway (see
+  // PendingMediaMessage.uploadProgress). Throttled to whole-percent steps
+  // so a fast upload doesn't still trigger dozens of rebuilds.
+  void _updateProgress(String localId, double progress) {
+    final current = state.where((e) => e.localId == localId).toList();
+    if (current.isEmpty) return;
+    final item = current.first;
+    if ((progress * 100).round() == (item.uploadProgress * 100).round()) {
+      return;
+    }
+    state = [
+      for (final e in state)
+        if (e.localId == localId) e.copyWith(uploadProgress: progress) else e,
+    ];
   }
 }
 

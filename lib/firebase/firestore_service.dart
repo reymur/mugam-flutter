@@ -239,23 +239,41 @@ class FirestoreService {
   // already-idempotent messageId, not DateTime.now()) so retries of the
   // same queued item always target the same Storage object instead of
   // orphaning a fresh one on every attempt.
+  // onTaskStarted hands the caller the live UploadTask the moment it's
+  // created — the offline queue uses this to keep a reference it can
+  // .cancel() if the user taps the in-progress upload's cancel button,
+  // rather than just hiding the item while the transfer keeps running
+  // unseen in the background. onProgress reports real bytesTransferred/
+  // totalBytes fractions off the same task's snapshotEvents, for the
+  // WhatsApp-style circular progress ring — not a decorative animation.
   Future<String> uploadChatImage({
     required String chatId,
     required String filePath,
     required String senderId,
     required String fileName,
+    void Function(UploadTask task)? onTaskStarted,
+    void Function(double progress)? onProgress,
   }) async {
     final ref = FirebaseStorage.instance
         .ref()
         .child('chats')
         .child(chatId)
         .child(fileName);
-    await ref.putFile(
+    final task = ref.putFile(
       File(filePath),
       SettableMetadata(
         customMetadata: {'uploaderUid': senderId, 'chatId': chatId},
       ),
     );
+    onTaskStarted?.call(task);
+    if (onProgress != null) {
+      task.snapshotEvents.listen((snapshot) {
+        if (snapshot.totalBytes > 0) {
+          onProgress(snapshot.bytesTransferred / snapshot.totalBytes);
+        }
+      });
+    }
+    await task;
     return await ref.getDownloadURL();
   }
 
@@ -329,18 +347,29 @@ class FirestoreService {
     required String filePath,
     required String senderId,
     required String fileName,
+    void Function(UploadTask task)? onTaskStarted,
+    void Function(double progress)? onProgress,
   }) async {
     final ref = FirebaseStorage.instance
         .ref()
         .child('chats')
         .child(chatId)
         .child(fileName);
-    await ref.putFile(
+    final task = ref.putFile(
       File(filePath),
       SettableMetadata(
         customMetadata: {'uploaderUid': senderId, 'chatId': chatId},
       ),
     );
+    onTaskStarted?.call(task);
+    if (onProgress != null) {
+      task.snapshotEvents.listen((snapshot) {
+        if (snapshot.totalBytes > 0) {
+          onProgress(snapshot.bytesTransferred / snapshot.totalBytes);
+        }
+      });
+    }
+    await task;
     return await ref.getDownloadURL();
   }
 

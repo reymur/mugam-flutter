@@ -178,6 +178,10 @@ class Message {
   // server-confirmed message; 'queued' | 'uploading' | 'failed' otherwise.
   final String? localFilePath;
   final String? localSendStatus;
+  // Real Storage upload fraction (0.0-1.0) while localSendStatus is
+  // 'queued'/'uploading' — image/video only, null otherwise. See
+  // PendingMediaMessage.uploadProgress for where this comes from.
+  final double? localUploadProgress;
 
   const Message({
     required this.id,
@@ -208,6 +212,7 @@ class Message {
     this.reactions = const {},
     this.localFilePath,
     this.localSendStatus,
+    this.localUploadProgress,
   });
 
   factory Message.fromFirestore(String id, Map<String, dynamic> data) {

@@ -184,6 +184,11 @@ class VideoMessageBubble extends StatelessWidget {
   final int? videoHeight;
   final double bubbleRadius;
   final Widget timeCheckmarkOverlay;
+  // 'queued' | 'uploading' | 'failed' | null (null = a real, sent message).
+  // See UploadProgressOverlay's doc comment.
+  final String? localSendStatus;
+  final double? localUploadProgress;
+  final VoidCallback? onCancelUpload;
 
   const VideoMessageBubble({
     super.key,
@@ -194,6 +199,9 @@ class VideoMessageBubble extends StatelessWidget {
     this.videoHeight,
     required this.bubbleRadius,
     required this.timeCheckmarkOverlay,
+    this.localSendStatus,
+    this.localUploadProgress,
+    this.onCancelUpload,
   });
 
   Size _boundedSize() {
@@ -249,20 +257,28 @@ class VideoMessageBubble extends StatelessWidget {
             fit: StackFit.expand,
             children: [
               VideoThumbnailImage(videoURL: videoURL, localFilePath: localFilePath),
-              Center(
-                child: Container(
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withAlpha(200),
-                  ),
-                  padding: const EdgeInsets.all(14),
-                  child: const Icon(
-                    Icons.play_arrow,
-                    color: Colors.black87,
-                    size: 32,
+              if (localSendStatus == 'queued' || localSendStatus == 'uploading')
+                UploadProgressOverlay(
+                  progress: localSendStatus == 'uploading'
+                      ? localUploadProgress
+                      : null,
+                  onCancel: onCancelUpload,
+                )
+              else
+                Center(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withAlpha(200),
+                    ),
+                    padding: const EdgeInsets.all(14),
+                    child: const Icon(
+                      Icons.play_arrow,
+                      color: Colors.black87,
+                      size: 32,
+                    ),
                   ),
                 ),
-              ),
               Positioned(
                 left: 8,
                 bottom: 8,
@@ -324,6 +340,11 @@ class ImageMessageBubble extends StatelessWidget {
   final double bubbleRadius;
   final Widget timeCheckmarkOverlay;
   final VoidCallback? onTap;
+  // 'queued' | 'uploading' | 'failed' | null (null = a real, sent message).
+  // See UploadProgressOverlay's doc comment.
+  final String? localSendStatus;
+  final double? localUploadProgress;
+  final VoidCallback? onCancelUpload;
 
   const ImageMessageBubble({
     super.key,
@@ -334,6 +355,9 @@ class ImageMessageBubble extends StatelessWidget {
     required this.bubbleRadius,
     required this.timeCheckmarkOverlay,
     this.onTap,
+    this.localSendStatus,
+    this.localUploadProgress,
+    this.onCancelUpload,
   });
 
   Size _boundedSize() {
@@ -399,6 +423,13 @@ class ImageMessageBubble extends StatelessWidget {
                         child: const Icon(Icons.broken_image, color: kMuted),
                       ),
                     ),
+              if (localSendStatus == 'queued' || localSendStatus == 'uploading')
+                UploadProgressOverlay(
+                  progress: localSendStatus == 'uploading'
+                      ? localUploadProgress
+                      : null,
+                  onCancel: onCancelUpload,
+                ),
               Positioned(
                 right: 8,
                 bottom: 8,
@@ -427,6 +458,64 @@ class MediaOverlayChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
       ),
       child: child,
+    );
+  }
+}
+
+// WhatsApp-style upload-progress indicator, centered over a photo/video
+// bubble while it's queued/uploading — replaces the old small corner clock
+// icon (which only signaled "sending", not how far along it was) as the
+// primary "this is still going" cue for media specifically. progress is the
+// real Storage bytesTransferred/totalBytes fraction (see
+// PendingMediaMessage.uploadProgress) — null (e.g. still queued, hasn't
+// started uploading yet) falls back to CircularProgressIndicator's own
+// indeterminate spin rather than a fake 0% ring. Tapping the square button
+// cancels the upload via onCancel (wired to the same offline-queue
+// remove() already used by the "Sil" option on a pending message).
+class UploadProgressOverlay extends StatelessWidget {
+  final double? progress;
+  final VoidCallback? onCancel;
+
+  const UploadProgressOverlay({super.key, this.progress, this.onCancel});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.black.withAlpha(90),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            SizedBox(
+              width: 44,
+              height: 44,
+              child: CircularProgressIndicator(
+                value: progress,
+                strokeWidth: 3,
+                backgroundColor: Colors.white.withAlpha(70),
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            ),
+            GestureDetector(
+              onTap: onCancel,
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

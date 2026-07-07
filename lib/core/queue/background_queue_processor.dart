@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
@@ -38,6 +39,11 @@ Future<bool> attemptSendPendingMessage(
   FirestoreService firestoreService, {
   Duration timeout = pendingQueueUploadTimeout,
   void Function(String url)? onUploaded,
+  // Image/video only — see FirestoreService.uploadChatImage's doc comment.
+  // Left null (as the background isolate does) when there's no UI able to
+  // show progress or offer cancellation anyway.
+  void Function(UploadTask task)? onTaskStarted,
+  void Function(double progress)? onProgress,
 }) async {
   try {
     if (!await File(item.filePath).exists()) {
@@ -56,6 +62,8 @@ Future<bool> attemptSendPendingMessage(
                     filePath: item.filePath,
                     senderId: item.senderId,
                     fileName: fileName,
+                    onTaskStarted: onTaskStarted,
+                    onProgress: onProgress,
                   )
                   .timeout(timeout);
           if (item.uploadedUrl == null) onUploaded?.call(url);
@@ -134,6 +142,8 @@ Future<bool> attemptSendPendingMessage(
                     filePath: item.filePath,
                     senderId: item.senderId,
                     fileName: fileName,
+                    onTaskStarted: onTaskStarted,
+                    onProgress: onProgress,
                   )
                   .timeout(timeout);
           if (item.uploadedUrl == null) onUploaded?.call(url);
