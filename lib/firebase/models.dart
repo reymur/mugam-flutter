@@ -247,6 +247,25 @@ class Message {
   }
 }
 
+// Carries Firestore's own added/modified/removed distinction through to the
+// chat screen so it can tell "history just loaded" and "a reaction/read-
+// receipt changed on an existing message" apart from "a new message was
+// actually appended" — the three cases that matter for deciding whether to
+// auto-scroll. isInitialLoad/addedMessageIds are about this particular
+// stream *subscription's* lifecycle, independent of whatever's already on
+// screen from the message cache.
+class MessagesSnapshot {
+  final List<Message> messages;
+  final bool isInitialLoad;
+  final List<String> addedMessageIds;
+
+  const MessagesSnapshot({
+    required this.messages,
+    required this.isInitialLoad,
+    required this.addedMessageIds,
+  });
+}
+
 class StarredMessage {
   final String id; // == original message id
   final String chatId;

@@ -61,7 +61,8 @@ class MessageInfoScreen extends ConsumerWidget {
         error: (_, _) => const Center(
           child: Text('Xəta', style: TextStyle(color: kMuted)),
         ),
-        data: (messages) {
+        data: (snapshot) {
+          final messages = snapshot.messages;
           // A message still in the offline queue has no Firestore document
           // yet, so it can't have a real deliveredTo/lastReadMsgId entry —
           // any value found for those below would belong to a different,

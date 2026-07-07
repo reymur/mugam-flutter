@@ -104,18 +104,40 @@ class FirestoreService {
         );
   }
 
-  Stream<List<Message>> watchMessages(String chatId) {
+  // isFirst lives in this closure, so it's scoped to one subscription's
+  // lifetime — a fresh chat-screen mount (new subscription via autoDispose)
+  // correctly gets its own "first snapshot" again, rather than this being
+  // some global per-chatId flag.
+  Stream<MessagesSnapshot> watchMessages(String chatId) {
+    bool isFirst = true;
     return _db
         .collection('chats')
         .doc(chatId)
         .collection('messages')
         .orderBy('timestamp', descending: false)
         .snapshots()
-        .map(
-          (snap) => snap.docs
+        .map((snap) {
+          final messages = snap.docs
               .map((doc) => Message.fromFirestore(doc.id, doc.data()))
-              .toList(),
-        );
+              .toList();
+          // The very first snapshot's docChanges all report as `added`
+          // (every doc is new to this listener) — that's history loading,
+          // not new messages arriving, so addedMessageIds is deliberately
+          // left empty for it rather than reporting the whole history.
+          final addedIds = isFirst
+              ? const <String>[]
+              : snap.docChanges
+                    .where((c) => c.type == DocumentChangeType.added)
+                    .map((c) => c.doc.id)
+                    .toList();
+          final result = MessagesSnapshot(
+            messages: messages,
+            isInitialLoad: isFirst,
+            addedMessageIds: addedIds,
+          );
+          isFirst = false;
+          return result;
+        });
   }
 
   Map<String, dynamic>? _buildReplyTo({
@@ -858,12 +880,10 @@ final chatsProvider = StreamProvider.family<List<Chat>, String>((ref, uid) {
   return ref.watch(firestoreServiceProvider).watchChats(uid);
 });
 
-final messagesProvider = StreamProvider.autoDispose.family<List<Message>, String>((
-  ref,
-  chatId,
-) {
-  return ref.watch(firestoreServiceProvider).watchMessages(chatId);
-});
+final messagesProvider =
+    StreamProvider.autoDispose.family<MessagesSnapshot, String>((ref, chatId) {
+      return ref.watch(firestoreServiceProvider).watchMessages(chatId);
+    });
 
 final chatDataProvider = FutureProvider.family<Map<String, dynamic>?, String>((
   ref,

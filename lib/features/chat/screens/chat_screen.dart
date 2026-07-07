@@ -712,21 +712,35 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
+  // The message list is a reverse: true ListView with the newest message at
+  // index 0 (see combinedMessages below) — "the bottom of the chat" is
+  // therefore always pixels == 0, a fixed target that doesn't depend on the
+  // full content height being measured yet. This is what makes both this
+  // and _jumpToBottom/_isNearBottom correct even before layout has finished
+  // settling (unlike the old ascending-list + maxScrollExtent approach).
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
+        0,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
     }
   }
 
+  // Not laid out yet counts as "at the bottom" — this only gates whether an
+  // incoming message should pull the view down, and a not-yet-attached
+  // controller means nothing's been scrolled away from the bottom yet.
+  bool _isNearBottom({double threshold = 150}) {
+    if (!_scrollController.hasClients) return true;
+    return _scrollController.position.pixels <= threshold;
+  }
+
   // Chats should open already at the bottom, no visible scrolling — unlike
   // the animated _scrollToBottom used for new incoming/outgoing messages.
   void _jumpToBottom() {
     if (_scrollController.hasClients) {
-      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      _scrollController.jumpTo(0);
     }
   }
 
@@ -804,8 +818,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     });
   }
 
-  List<Message> get _selectedMessages =>
-      _lastMessages.where((m) => _selectedMessageIds.contains(m.id)).toList();
+  // _lastMessages is newest-first (see combinedMessages in build()) — reverse
+  // back to chronological order so forwarding/sharing multiple selected
+  // messages preserves their original send order in the destination.
+  List<Message> get _selectedMessages => _lastMessages.reversed
+      .where((m) => _selectedMessageIds.contains(m.id))
+      .toList();
 
   void _forwardSelected() {
     final messages = _selectedMessages;
@@ -1591,7 +1609,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final lastReadIndex = lastReadId != null
           ? allMsgIds.indexOf(lastReadId)
           : -1;
-      isRead = lastReadIndex >= index && index != -1;
+      // allMsgIds is newest-first (index 0 = newest): a message is read if
+      // it's at the same position or older (higher index) than whatever the
+      // other member last read up to — the opposite direction from the old
+      // oldest-first list, where "at or before" meant a lower index.
+      isRead = lastReadIndex != -1 && index >= lastReadIndex;
       isDelivered = deliveredTo[otherUid] != null || isRead;
       checkIconData = isDelivered ? Icons.done_all : Icons.done;
       checkColor = isRead ? kReadBlue : const Color(0xFF1A0E00).withAlpha(128);
@@ -2069,13 +2091,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   @override
   Widget build(BuildContext context) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final liveMessagesAsync = ref.watch(messagesProvider(widget.chatId));
+    final liveSnapshotAsync = ref.watch(messagesProvider(widget.chatId));
     // Before the live stream has delivered its first snapshot (cold start,
     // or currently offline), fall back to the last cached messages so the
     // screen doesn't just show a spinner. The live stream always wins once
     // it has data — this never overrides it.
-    AsyncValue<List<Message>> messagesAsync = liveMessagesAsync;
-    if (!liveMessagesAsync.hasValue) {
+    AsyncValue<List<Message>> messagesAsync = liveSnapshotAsync.whenData(
+      (snapshot) => snapshot.messages,
+    );
+    if (!liveSnapshotAsync.hasValue) {
       final cachedMessages = ref.watch(cachedMessagesProvider(widget.chatId));
       if (cachedMessages != null) {
         messagesAsync = AsyncValue.data(cachedMessages);
@@ -2087,18 +2111,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     ref.watch(starredMessagesProvider(currentUid));
 
     ref.listen(messagesProvider(widget.chatId), (previous, next) {
-      next.whenData((messages) {
-        // Only auto-scroll when a message was actually appended — deletes,
-        // reactions and other field-only updates re-emit the same count and
-        // must not yank the view back to the bottom.
-        final previousCount = previous?.value?.length ?? 0;
-        if (messages.length > previousCount) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _scrollToBottom();
-          });
+      next.whenData((snapshot) {
+        // isInitialLoad: this stream subscription's first-ever snapshot is
+        // the chat's whole history loading in, not new messages — the
+        // one-time instant jump-to-bottom below (_hasJumpedToBottomInitially)
+        // already handles getting the view to the right place for that.
+        // addedMessageIds empty: this snapshot only contains
+        // modified/removed changes (a reaction, a read receipt, a listened-
+        // status flip on an existing message) — Firestore's own docChanges
+        // says nothing was actually appended, so nothing should scroll.
+        if (snapshot.isInitialLoad || snapshot.addedMessageIds.isEmpty) {
+          return;
         }
+        // Don't yank someone back to the bottom while they're reading
+        // scrollback — only auto-scroll if they were already close to it.
+        if (!_isNearBottom()) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _scrollToBottom();
+        });
       });
-      next.whenData((messages) {
+      next.whenData((snapshot) {
+        final messages = snapshot.messages;
         if (messages.isEmpty) return;
         Message? lastOtherMsg;
         for (final m in messages.reversed) {
@@ -2117,9 +2150,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               );
         }
       });
-      next.whenData((messages) {
-        _messagesPendingCacheFlush = messages;
-        _messageCacheService.writeDebounced(widget.chatId, messages);
+      next.whenData((snapshot) {
+        _messagesPendingCacheFlush = snapshot.messages;
+        _messageCacheService.writeDebounced(widget.chatId, snapshot.messages);
       });
     });
 
@@ -2233,15 +2266,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           .toList();
                       // Not-yet-sent photo/voice/video messages, rendered as
                       // synthetic Messages through the same bubble/checkmark
-                      // pipeline — always after every confirmed message,
-                      // matching how an outgoing send-in-progress sits at
-                      // the bottom until it's confirmed.
+                      // pipeline — always right before every confirmed
+                      // message, matching how an outgoing send-in-progress
+                      // sits at the bottom until it's confirmed.
+                      //
+                      // The list is newest-first (index 0 = newest) to match
+                      // the ListView's `reverse: true` below — "the bottom
+                      // of the chat" is therefore always index 0 / pixels 0,
+                      // a fixed target independent of how tall the content
+                      // is or whether it's finished laying out. pendingForChat
+                      // is itself oldest-queued-first, so it's reversed too
+                      // before going in front of the (also reversed) real
+                      // messages.
                       final pendingForChat = ref.watch(
                         pendingMessagesForChatProvider(widget.chatId),
                       );
                       final combinedMessages = [
-                        ...visibleMessages,
-                        ...pendingForChat.map((p) => p.toSyntheticMessage()),
+                        ...pendingForChat.reversed.map(
+                          (p) => p.toSyntheticMessage(),
+                        ),
+                        ...visibleMessages.reversed,
                       ];
                       _lastMessages = combinedMessages;
                       _schedulePurgeTimers(visibleMessages);
@@ -2262,7 +2306,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           .toList();
                       return ListView.builder(
                         controller: _scrollController,
-                        reverse: false,
+                        reverse: true,
                         itemCount: combinedMessages.length,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 12,
@@ -2276,7 +2320,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           otherUidResolved,
                           deliveredTo,
                           lastReadMsgId,
-                          i > 0 ? combinedMessages[i - 1].senderId : null,
+                          // Chronologically-previous message: with index 0 =
+                          // newest, that's the NEXT index, not i - 1.
+                          i < combinedMessages.length - 1
+                              ? combinedMessages[i + 1].senderId
+                              : null,
                         ),
                       );
                     },

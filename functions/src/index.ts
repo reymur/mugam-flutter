@@ -212,8 +212,12 @@ export const toggleMessageReaction = onCall(
 // Only validates mugam-flutter's flat upload shape (chats/{chatId}/
 // {fileName}) — mugam-v2's nested chats/{chatId}/images|voice/{fileName}
 // paths are intentionally left alone (3 vs 4 path segments below).
+// Storage triggers must run in the same region as the bucket itself
+// (confirmed us-east1 via deploy-time error, not europe-west3 like the
+// other functions here) — this is a hard platform constraint, not a
+// preference.
 export const onChatMediaUploaded = onObjectFinalized(
-  { region: FUNCTIONS_REGION, bucket: "mugam-club.firebasestorage.app" },
+  { region: "us-east1", bucket: "mugam-club.firebasestorage.app" },
   async (event) => {
     const object = event.data;
     const filePath = object.name;
