@@ -35,6 +35,18 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys();
     }
 
+    // Bounds the user-configurable max-upload-size preference (Settings
+    // slider, 100MB-2GB) at the rules level too — storage.rules reads this
+    // same field via firestore.get() to reject oversized uploads, so a
+    // client writing an out-of-range value here would otherwise let it
+    // bypass its own slider UI and self-grant an unbounded upload cap.
+    function validMaxUploadSizeMb() {
+      return !('maxUploadSizeMb' in request.resource.data) ||
+        (request.resource.data.maxUploadSizeMb is int &&
+          request.resource.data.maxUploadSizeMb >= 100 &&
+          request.resource.data.maxUploadSizeMb <= 2048);
+    }
+
     // ---------------------------------------------------------------
     // users/{userId}
     // ---------------------------------------------------------------
@@ -48,7 +60,8 @@ service cloud.firestore {
 
       // Registration (both apps): the new doc's own id must equal the
       // creator's uid — you can only ever create your own profile doc.
-      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && request.auth.uid == userId
+        && validMaxUploadSizeMb();
 
       // Profile edits: only the owner, and — regardless of what else the
       // update touches — role/verified/goldRing/rating/reviews/gigs/
@@ -69,7 +82,8 @@ service cloud.firestore {
         && request.resource.data.get('rating', null) == resource.data.get('rating', null)
         && request.resource.data.get('reviews', null) == resource.data.get('reviews', null)
         && request.resource.data.get('gigs', null) == resource.data.get('gigs', null)
-        && request.resource.data.get('followers', null) == resource.data.get('followers', null);
+        && request.resource.data.get('followers', null) == resource.data.get('followers', null)
+        && validMaxUploadSizeMb();
 
       allow delete: if false;
 
@@ -189,7 +203,7 @@ service cloud.firestore {
         // sender+membership check below without the extra validation.
         function needsValidatedMedia() {
           return request.resource.data.get('clientPlatform', null) == 'flutter' &&
-            request.resource.data.type in ['image', 'video', 'audio'];
+            request.resource.data.type in ['image', 'video', 'audio', 'file'];
         }
 
         allow read: if isChatMember();

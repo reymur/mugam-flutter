@@ -22,6 +22,11 @@ class User {
   final int gigs;
   final bool verified;
   final String role;
+  // Server-enforced cap (storage.rules reads this same field via
+  // firestore.get()) on any single chat-media/file upload, in megabytes —
+  // user-configurable in Settings, range [100, 2048]. Defaults to 100 for
+  // any user doc written before this field existed.
+  final int maxUploadSizeMb;
 
   const User({
     required this.id,
@@ -39,6 +44,7 @@ class User {
     this.gigs = 0,
     this.verified = false,
     this.role = 'user',
+    this.maxUploadSizeMb = 100,
   });
 
   factory User.fromFirestore(String id, Map<String, dynamic> data) {
@@ -58,6 +64,7 @@ class User {
       gigs: (data['gigs'] ?? 0) as int,
       verified: (data['verified'] ?? false) as bool,
       role: (data['role'] ?? 'user') as String,
+      maxUploadSizeMb: (data['maxUploadSizeMb'] ?? 100) as int,
     );
   }
 }
@@ -155,6 +162,15 @@ class Message {
   // be forwarded (see toggleReaction/onChatMediaUploaded security pass).
   final String? mediaOriginChatId;
   final String? mediaFileName;
+  // 'file' type only — fileName is the original human-readable name the
+  // sender picked (used for display and as the extension source for the
+  // local open/download cache), distinct from mediaFileName above (the
+  // Storage object's own name, messageId-based like every other media
+  // type). fileSizeBytes is informational (already enforced server-side by
+  // storage.rules against the sender's own maxUploadSizeMb at upload time).
+  final String? fileURL;
+  final String? fileName;
+  final int? fileSizeBytes;
   // Fixed-length (40) 0-100 normalized amplitude bars captured live during
   // recording — null for messages sent before this field existed.
   final List<int>? waveform;
@@ -164,7 +180,7 @@ class Message {
   // FirestoreService.markVoiceMessageListened.
   final List<String> listenedBy;
   final Timestamp? timestamp;
-  final String type; // 'text', 'image', 'audio', 'video'
+  final String type; // 'text', 'image', 'audio', 'video', 'file'
   final String? replyToId;
   final String? replyToText;
   final String? replyToSenderName;
@@ -222,6 +238,9 @@ class Message {
     this.imageHeight,
     this.mediaOriginChatId,
     this.mediaFileName,
+    this.fileURL,
+    this.fileName,
+    this.fileSizeBytes,
     this.waveform,
     this.listenedBy = const [],
     this.timestamp,
@@ -259,6 +278,9 @@ class Message {
       imageHeight: data['imageHeight'] as int?,
       mediaOriginChatId: data['mediaOriginChatId'] as String?,
       mediaFileName: data['mediaFileName'] as String?,
+      fileURL: data['fileURL'] as String?,
+      fileName: data['fileName'] as String?,
+      fileSizeBytes: data['fileSizeBytes'] as int?,
       waveform: (data['waveform'] as List?)?.cast<int>(),
       listenedBy: List<String>.from(data['listenedBy'] as List? ?? const []),
       timestamp: data['timestamp'] as Timestamp?,
@@ -305,10 +327,12 @@ class StarredMessage {
   final String senderId;
   final String senderName;
   final String text;
-  final String type; // 'text', 'image', 'audio', 'video'
+  final String type; // 'text', 'image', 'audio', 'video', 'file'
   final String? imageURL;
   final String? audioURL;
   final String? videoURL;
+  final String? fileURL;
+  final String? fileName;
   final Timestamp? timestamp;
   final Timestamp? starredAt;
 
@@ -323,6 +347,8 @@ class StarredMessage {
     this.imageURL,
     this.audioURL,
     this.videoURL,
+    this.fileURL,
+    this.fileName,
     this.timestamp,
     this.starredAt,
   });
@@ -339,6 +365,8 @@ class StarredMessage {
       imageURL: data['imageURL'] as String?,
       audioURL: data['audioURL'] as String?,
       videoURL: data['videoURL'] as String?,
+      fileURL: data['fileURL'] as String?,
+      fileName: data['fileName'] as String?,
       timestamp: data['timestamp'] as Timestamp?,
       starredAt: data['starredAt'] as Timestamp?,
     );

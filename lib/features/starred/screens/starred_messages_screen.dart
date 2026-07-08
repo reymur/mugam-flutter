@@ -113,6 +113,8 @@ class _StarredListItem extends StatelessWidget {
         return '🎤 Səs mesajı';
       case 'video':
         return '🎥 Video';
+      case 'file':
+        return '📄 ${item.fileName ?? 'Fayl'}';
       default:
         return item.text;
     }

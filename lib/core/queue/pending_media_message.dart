@@ -16,7 +16,7 @@ class PendingMediaMessage {
   final String messageId;
   final String chatId;
   final String senderId;
-  final String type; // 'image' | 'audio' | 'video'
+  final String type; // 'image' | 'audio' | 'video' | 'file'
   final String filePath;
   final int createdAtMillis;
   final int attemptCount;
@@ -59,6 +59,11 @@ class PendingMediaMessage {
   // recording (see _downsampleWaveform in chat_screen.dart) — null for
   // non-audio items or ones queued before this field existed.
   final List<int>? waveform;
+  // 'file' type only — the original human-readable name/size the user
+  // picked (see Message.fileName's doc comment for why this differs from
+  // the Storage object name derived from messageId).
+  final String? fileName;
+  final int? fileSizeBytes;
   // Real Storage upload fraction (0.0-1.0), image/video only — drives the
   // WhatsApp-style circular progress ring in chat_screen.dart. Deliberately
   // NOT persisted via toJson/fromJson: it's meaningless across an app
@@ -99,6 +104,8 @@ class PendingMediaMessage {
     this.imageWidth,
     this.imageHeight,
     this.waveform,
+    this.fileName,
+    this.fileSizeBytes,
     this.uploadProgress = 0.0,
     this.previewBytes,
   });
@@ -138,6 +145,8 @@ class PendingMediaMessage {
       imageWidth: imageWidth,
       imageHeight: imageHeight,
       waveform: waveform,
+      fileName: fileName,
+      fileSizeBytes: fileSizeBytes,
       // Explicit status transitions reset progress — 'queued' (fresh retry
       // attempt) and 'failed' both mean whatever prior progress existed no
       // longer reflects an in-flight upload.
@@ -169,6 +178,8 @@ class PendingMediaMessage {
     'imageWidth': imageWidth,
     'imageHeight': imageHeight,
     'waveform': waveform,
+    'fileName': fileName,
+    'fileSizeBytes': fileSizeBytes,
   };
 
   factory PendingMediaMessage.fromJson(Map<String, dynamic> json) {
@@ -195,6 +206,8 @@ class PendingMediaMessage {
       imageWidth: json['imageWidth'] as int?,
       imageHeight: json['imageHeight'] as int?,
       waveform: (json['waveform'] as List?)?.cast<int>(),
+      fileName: json['fileName'] as String?,
+      fileSizeBytes: json['fileSizeBytes'] as int?,
     );
   }
 
@@ -210,6 +223,9 @@ class PendingMediaMessage {
       imageURL: null,
       audioURL: null,
       videoURL: null,
+      fileURL: null,
+      fileName: fileName,
+      fileSizeBytes: fileSizeBytes,
       timestamp: Timestamp.fromMillisecondsSinceEpoch(createdAtMillis),
       replyToId: replyToId,
       replyToText: replyToText,

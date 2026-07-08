@@ -1,0 +1,79 @@
+group 'com.mr.flutter.plugin.filepicker'
+version '1.0-SNAPSHOT'
+
+buildscript {
+    ext {
+        kotlin_version = '1.8.22'
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.5.1'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+// PATCHED (see this repo's android/gradle.properties comment on
+// android.builtInKotlin for the full story): upstream infers "built-in
+// Kotlin is active" purely from the AGP major version (>= 9), which is
+// wrong for this project — AGP 9 is used here with android.builtInKotlin
+// explicitly left false, because other plugins (audio_session, etc.)
+// still classpath the legacy Kotlin Gradle Plugin unconditionally, and
+// AGP9 hard-rejects `com.android.library` if that jar is on the
+// buildscript classpath while builtInKotlin=true. Reading the real
+// project property instead of guessing from the AGP version is what
+// actually fixes FilePickerPlugin.kt never being compiled.
+def builtInKotlinEnabled = rootProject.findProperty('android.builtInKotlin') == 'true'
+
+apply plugin: 'com.android.library'
+if (!builtInKotlinEnabled) {
+    apply plugin: 'org.jetbrains.kotlin.android'
+}
+
+android {
+    compileSdk flutter.compileSdkVersion
+
+    defaultConfig {
+        minSdk 21
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        consumerProguardFiles 'proguard-rules.pro'
+    }
+    lintOptions {
+        disable 'InvalidPackage'
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    if (!builtInKotlinEnabled) {
+        kotlinOptions {
+            jvmTarget = JavaVersion.VERSION_17.toString()
+        }
+    }
+    
+    dependencies {
+        implementation 'androidx.core:core:1.15.0'
+        implementation 'androidx.annotation:annotation:1.9.1'
+        implementation "androidx.lifecycle:lifecycle-runtime:2.8.7"
+        implementation "org.apache.tika:tika-core:3.2.3"
+    }
+
+    if (project.android.hasProperty("namespace")) {
+        namespace 'com.mr.flutter.plugin.filepicker' 
+    }
+}
+dependencies {
+    implementation 'androidx.core:core-ktx:1.15.0'
+}

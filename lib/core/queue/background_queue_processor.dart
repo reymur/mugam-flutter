@@ -130,6 +130,56 @@ Future<bool> attemptSendPendingMessage(
               .timeout(timeout);
           return true;
         }
+      case 'file':
+        {
+          // Preserve the picked file's own extension in the Storage object
+          // name (unlike image/video, whose extension is fixed by the
+          // compression step) — open_filex and the OS's own file-type
+          // association both need a real extension on the locally cached
+          // copy at open time, and that copy's name is derived from this
+          // same mediaFileName (see FileMessageBubble).
+          final originalName = item.fileName ?? '${item.messageId}.bin';
+          final ext = originalName.contains('.')
+              ? originalName.split('.').last
+              : 'bin';
+          final fileName = '${item.messageId}.$ext';
+          final url =
+              item.uploadedUrl ??
+              await firestoreService
+                  .uploadChatFile(
+                    chatId: item.chatId,
+                    filePath: item.filePath,
+                    senderId: item.senderId,
+                    fileName: fileName,
+                    onTaskStarted: onTaskStarted,
+                    onProgress: onProgress,
+                  )
+                  .timeout(timeout);
+          if (item.uploadedUrl == null) onUploaded?.call(url);
+          final validated = await firestoreService.waitForValidatedUpload(
+            chatId: item.chatId,
+            fileName: fileName,
+          );
+          if (!validated) return false;
+          await firestoreService
+              .sendFileMessage(
+                chatId: item.chatId,
+                senderId: item.senderId,
+                fileURL: url,
+                fileName: originalName,
+                fileSizeBytes: item.fileSizeBytes,
+                mediaOriginChatId: item.chatId,
+                mediaFileName: fileName,
+                messageId: item.messageId,
+                replyToId: item.replyToId,
+                replyToText: item.replyToText,
+                replyToSenderName: item.replyToSenderName,
+                replyToImageURL: item.replyToImageURL,
+                replyToVideoURL: item.replyToVideoURL,
+              )
+              .timeout(timeout);
+          return true;
+        }
       case 'video':
         {
           // Compressed fresh on every attempt rather than once at enqueue

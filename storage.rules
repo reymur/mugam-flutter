@@ -19,6 +19,20 @@ service firebase.storage {
           firestore.get(/databases/(default)/documents/chats/$(chatId)).data.members;
     }
 
+    // Server-side enforcement of the Settings screen's "Maximum file size"
+    // slider (users/{uid}.maxUploadSizeMb, validated to [100, 2048] by
+    // firestore.rules) — rejects an oversized upload here, before the
+    // object ever reaches Storage, rather than uploading it first and
+    // deleting it after (which onChatMediaUploaded's onFinalize trigger
+    // would otherwise have to do, wasting the transfer and leaving a
+    // window where the oversized file briefly exists). .get() with a
+    // default covers both a user doc with no maxUploadSizeMb field yet
+    // (pre-existing users) and, defensively, one somehow missing entirely.
+    function maxUploadSizeBytes(uid) {
+      return firestore.get(/databases/(default)/documents/users/$(uid))
+        .data.get('maxUploadSizeMb', 100) * 1024 * 1024;
+    }
+
     // avatars/{uid}.jpg — mugam-flutter's uploadAvatar() writes exactly
     // this filename shape (mugam-v2's own avatar upload is a dead stub
     // that always throws, so only this shape is live traffic today).
@@ -42,7 +56,8 @@ service firebase.storage {
       allow read: if isChatMember(chatId);
       allow write: if isChatMember(chatId) &&
         request.resource.metadata.uploaderUid == request.auth.uid &&
-        request.resource.metadata.chatId == chatId;
+        request.resource.metadata.chatId == chatId &&
+        request.resource.size <= maxUploadSizeBytes(request.auth.uid);
     }
 
     // chats/{chatId}/images|voice/{fileName} — mugam-v2's nested upload

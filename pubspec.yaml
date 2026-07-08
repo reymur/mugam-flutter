@@ -44,11 +44,25 @@ dependencies:
   flutter_image_compress: ^2.4.0
   get_thumbnail_video: ^0.7.3
   pasteboard: ^0.5.0
+  file_picker: ^11.0.2
+  open_filex: ^4.7.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+
+# Vendored, locally-patched copy of file_picker — see
+# third_party/file_picker/android/build.gradle's comment for why: upstream
+# 11.0.2's AGP9 detection logic conflicts with this project's Kotlin setup
+# (android.builtInKotlin=false, required by other plugins) and leaves
+# FilePickerPlugin.kt uncompiled. Same package/version otherwise, minus
+# example/test/tool. Safe to drop this override (and the third_party copy)
+# once upstream fixes the AGP9 detection to check the real project
+# property instead of inferring it from the AGP major version.
+dependency_overrides:
+  file_picker:
+    path: third_party/file_picker
 
 flutter:
   uses-material-design: true

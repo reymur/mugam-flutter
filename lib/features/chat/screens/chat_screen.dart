@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:audio_session/audio_session.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -27,12 +28,14 @@ import '../../../core/media/image_compressor.dart';
 import '../../../core/native_sound_effect.dart';
 import '../../../core/queue/pending_message_queue_controller.dart';
 import '../../../core/settings/image_quality_settings.dart';
+import '../../../core/settings/upload_limit_settings.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import 'about_contact_screen.dart';
 import 'custom_camera_backup/camera_capture_screen.dart';
+import 'file_message_widgets.dart';
 import 'media_thumbnail_cache.dart';
 import 'message_info_screen.dart';
 import 'video_message_widgets.dart';
@@ -613,7 +616,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // below rather than attempting a write the server will reject
       // anyway.
       final isMedia =
-          msg.type == 'image' || msg.type == 'audio' || msg.type == 'video';
+          msg.type == 'image' ||
+          msg.type == 'audio' ||
+          msg.type == 'video' ||
+          msg.type == 'file';
       if (isMedia &&
           (msg.mediaOriginChatId == null || msg.mediaFileName == null)) {
         throw Exception('Media message predates forward-validation fields');
@@ -650,6 +656,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               chatId: targetChatId,
               senderId: currentUid,
               videoURL: videoURL,
+              mediaOriginChatId: msg.mediaOriginChatId,
+              mediaFileName: msg.mediaFileName,
+            );
+          }
+          break;
+        case 'file':
+          final fileURL = msg.fileURL;
+          if (fileURL != null) {
+            await service.sendFileMessage(
+              chatId: targetChatId,
+              senderId: currentUid,
+              fileURL: fileURL,
+              fileName: msg.fileName ?? 'Fayl',
+              fileSizeBytes: msg.fileSizeBytes,
               mediaOriginChatId: msg.mediaOriginChatId,
               mediaFileName: msg.mediaFileName,
             );
@@ -812,6 +832,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         return '🎤 Səs mesajı';
       case 'video':
         return '🎥 Video';
+      case 'file':
+        return '📄 ${msg.fileName ?? 'Fayl'}';
       default:
         return msg.text;
     }
@@ -1302,6 +1324,64 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
+  // Any file type (matches WhatsApp — no extension allowlist). The
+  // client-side size check here is purely for fast UX feedback (no pointless
+  // enqueue+upload attempt that storage.rules would reject anyway); the
+  // real enforcement is server-side (storage.rules' maxUploadSizeBytes,
+  // reading this same user's users/{uid}.maxUploadSizeMb) since a modified
+  // client could otherwise skip this check entirely.
+  Future<void> _pickAndSendFile() async {
+    final result = await FilePicker.pickFiles();
+    final picked = result?.files.single;
+    if (picked == null || picked.path == null) return;
+    if (!mounted) return;
+    final maxMb = ref.read(maxUploadSizeMbProvider);
+    if (picked.size > maxMb * 1024 * 1024) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Fayl həddindən böyükdür (maks. $maxMb MB)'),
+          backgroundColor: kRed,
+        ),
+      );
+      return;
+    }
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final replyingTo = _replyingTo;
+    _cancelReply();
+    final error = await ref
+        .read(pendingMessageQueueProvider.notifier)
+        .enqueue(
+          chatId: widget.chatId,
+          senderId: currentUid,
+          type: 'file',
+          sourceFilePath: picked.path!,
+          fileName: picked.name,
+          fileSizeBytes: picked.size,
+          replyToId: replyingTo?.id,
+          replyToText: replyingTo != null
+              ? _replyPreviewText(replyingTo)
+              : null,
+          replyToSenderName: replyingTo != null
+              ? _replySenderName(replyingTo, currentUid)
+              : null,
+          replyToImageURL: replyingTo != null
+              ? _replyImageURL(replyingTo)
+              : null,
+          replyToVideoURL: replyingTo != null
+              ? _replyVideoURL(replyingTo)
+              : null,
+        );
+    if (error != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error), backgroundColor: kRed),
+        );
+      }
+    } else {
+      _scrollToBottom();
+    }
+  }
+
   // Only ever invoked from the context menu's explicit "Paste" tap
   // (see the TextField's contextMenuBuilder) — never on focus/timers.
   Future<void> _sendPastedImage(Uint8List bytes) async {
@@ -1458,6 +1538,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               onTap: () {
                 Navigator.of(context).pop();
                 _openCamera();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.insert_drive_file, color: kGold),
+              title: const Text('Sənəd', style: TextStyle(color: kText)),
+              onTap: () {
+                Navigator.of(context).pop();
+                _pickAndSendFile();
               },
             ),
           ],
@@ -2091,10 +2179,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           textColor: Colors.white,
                         ),
                       ),
+                    if (msg.type == 'file' &&
+                        (msg.fileURL != null || msg.localFilePath != null))
+                      FileMessageBubble(
+                        fileURL: msg.fileURL,
+                        localFilePath: msg.localFilePath,
+                        fileName: msg.fileName,
+                        fileSizeBytes: msg.fileSizeBytes,
+                        mediaOriginChatId: msg.mediaOriginChatId,
+                        mediaFileName: msg.mediaFileName,
+                        isMe: isMe,
+                        deliveryStatus: status,
+                        localUploadProgress: msg.localUploadProgress,
+                        onCancelUpload: _cancelUploadCallback(msg),
+                        timeCheckmarkRow: _timeCheckmarkRow(
+                          isMe,
+                          otherUid,
+                          msg,
+                          time,
+                          checkMark,
+                        ),
+                      ),
                     if (msg.type != 'text' &&
                         msg.type != 'video' &&
                         msg.type != 'image' &&
-                        msg.type != 'audio') ...[
+                        msg.type != 'audio' &&
+                        msg.type != 'file') ...[
                       const SizedBox(height: 2),
                       _timeCheckmarkRow(isMe, otherUid, msg, time, checkMark),
                     ],

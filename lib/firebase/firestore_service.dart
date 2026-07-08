@@ -434,6 +434,131 @@ class FirestoreService {
     });
   }
 
+  // Generic file/document upload — no compression step (unlike image/video),
+  // the raw picked file goes straight to Storage. Shares the exact same
+  // flat chats/{chatId}/{fileName} path and customMetadata shape as
+  // uploadChatImage/uploadChatVideo, so it's covered by the same
+  // storage.rules size check and the same onChatMediaUploaded ->
+  // validatedUploads trust chain — nothing type-specific needed there.
+  Future<String> uploadChatFile({
+    required String chatId,
+    required String filePath,
+    required String senderId,
+    required String fileName,
+    void Function(UploadTask task)? onTaskStarted,
+    void Function(double progress)? onProgress,
+  }) async {
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('chats')
+        .child(chatId)
+        .child(fileName);
+    final task = ref.putFile(
+      File(filePath),
+      SettableMetadata(
+        customMetadata: {'uploaderUid': senderId, 'chatId': chatId},
+      ),
+    );
+    onTaskStarted?.call(task);
+    if (onProgress != null) {
+      task.snapshotEvents.listen((snapshot) {
+        if (snapshot.totalBytes > 0) {
+          onProgress(snapshot.bytesTransferred / snapshot.totalBytes);
+        }
+      });
+    }
+    await task;
+    return await ref.getDownloadURL();
+  }
+
+  Future<void> sendFileMessage({
+    required String chatId,
+    required String senderId,
+    required String fileURL,
+    required String fileName,
+    int? fileSizeBytes,
+    String? mediaOriginChatId,
+    String? mediaFileName,
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderName,
+    String? replyToImageURL,
+    String? replyToVideoURL,
+    String? messageId,
+  }) async {
+    final now = FieldValue.serverTimestamp();
+    final replyTo = _buildReplyTo(
+      replyToId: replyToId,
+      replyToText: replyToText,
+      replyToSenderName: replyToSenderName,
+      replyToImageURL: replyToImageURL,
+      replyToVideoURL: replyToVideoURL,
+    );
+    final data = {
+      'senderId': senderId,
+      'text': '',
+      'type': 'file',
+      'clientPlatform': 'flutter',
+      'fileURL': fileURL,
+      'fileName': fileName,
+      if (fileSizeBytes != null) 'fileSizeBytes': fileSizeBytes,
+      if (mediaOriginChatId != null) 'mediaOriginChatId': mediaOriginChatId,
+      if (mediaFileName != null) 'mediaFileName': mediaFileName,
+      'imageURL': null,
+      'audioURL': null,
+      'timestamp': now,
+      if (replyTo != null) 'replyTo': replyTo,
+    };
+    bool wrote = true;
+    if (messageId != null) {
+      wrote = await _writeMessageIfAbsent(
+        chatId: chatId,
+        messageId: messageId,
+        data: data,
+      );
+    } else {
+      await _db
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add(data);
+    }
+    if (!wrote) return;
+    await _db.collection('chats').doc(chatId).update({
+      'lastMessage': '📄 $fileName',
+      'lastMessageTime': now,
+    });
+  }
+
+  // Downloads an already-sent file message's bytes to a local path so it
+  // can be opened with open_filex (which needs a real file, not a URL).
+  // Goes straight through the Storage ref built from mediaOriginChatId/
+  // mediaFileName (the same pair firestore.rules' isValidatedMedia() trusts)
+  // rather than a generic HTTP GET against fileURL — reuses the exact
+  // access-controlled path chat membership already governs, and avoids
+  // pulling in a second HTTP client dependency just for this.
+  Future<void> downloadChatFile({
+    required String mediaOriginChatId,
+    required String mediaFileName,
+    required String destPath,
+    void Function(double progress)? onProgress,
+  }) async {
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('chats')
+        .child(mediaOriginChatId)
+        .child(mediaFileName);
+    final task = ref.writeToFile(File(destPath));
+    if (onProgress != null) {
+      task.snapshotEvents.listen((snapshot) {
+        if (snapshot.totalBytes > 0) {
+          onProgress(snapshot.bytesTransferred / snapshot.totalBytes);
+        }
+      });
+    }
+    await task;
+  }
+
   Future<String> uploadChatAudio({
     required String chatId,
     required String filePath,
@@ -654,6 +779,8 @@ class FirestoreService {
           'imageURL': message.imageURL,
           'audioURL': message.audioURL,
           'videoURL': message.videoURL,
+          'fileURL': message.fileURL,
+          'fileName': message.fileName,
           'timestamp': message.timestamp,
           'starredAt': FieldValue.serverTimestamp(),
         });

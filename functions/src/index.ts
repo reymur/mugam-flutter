@@ -61,7 +61,7 @@ async function sendFcmPush(
   }
 }
 
-function previewText(type: string, text: string): string {
+function previewText(type: string, text: string, fileName?: string): string {
   switch (type) {
     case "image":
       return "🖼 Şəkil";
@@ -69,6 +69,8 @@ function previewText(type: string, text: string): string {
       return "🎤 Səs mesajı";
     case "video":
       return "🎥 Video";
+    case "file":
+      return `📄 ${fileName ?? "Fayl"}`;
     default:
       return (text ?? "").slice(0, 100);
   }
@@ -105,7 +107,7 @@ export const onNewMessage = onDocumentCreated(
       senderSnap.data()?.name ?? senderSnap.data()?.displayName ?? "İstifadəçi";
 
     const title = isGroup ? chatName : senderName;
-    const body = `${senderName}: ${previewText(message.type, message.text)}`;
+    const body = `${senderName}: ${previewText(message.type, message.text, message.fileName)}`;
     const data = { chatId, type: "new_message", senderId };
 
     await Promise.all(
