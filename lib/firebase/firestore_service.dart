@@ -559,6 +559,70 @@ class FirestoreService {
     await task;
   }
 
+  // No dedicated uploadChatLocationSnapshot — a location message's map
+  // snapshot is just an image (see LocationPickerScreen._captureSnapshot),
+  // uploaded through the exact same flat chats/{chatId}/{fileName} path
+  // and customMetadata shape as any other photo, so uploadChatImage above
+  // is reused directly rather than duplicating an identical method body.
+  Future<void> sendLocationMessage({
+    required String chatId,
+    required String senderId,
+    required String locationImageURL,
+    required double latitude,
+    required double longitude,
+    String? mediaOriginChatId,
+    String? mediaFileName,
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderName,
+    String? replyToImageURL,
+    String? replyToVideoURL,
+    String? messageId,
+  }) async {
+    final now = FieldValue.serverTimestamp();
+    final replyTo = _buildReplyTo(
+      replyToId: replyToId,
+      replyToText: replyToText,
+      replyToSenderName: replyToSenderName,
+      replyToImageURL: replyToImageURL,
+      replyToVideoURL: replyToVideoURL,
+    );
+    final data = {
+      'senderId': senderId,
+      'text': '',
+      'type': 'location',
+      'clientPlatform': 'flutter',
+      'locationImageURL': locationImageURL,
+      'latitude': latitude,
+      'longitude': longitude,
+      if (mediaOriginChatId != null) 'mediaOriginChatId': mediaOriginChatId,
+      if (mediaFileName != null) 'mediaFileName': mediaFileName,
+      'imageURL': null,
+      'audioURL': null,
+      'timestamp': now,
+      if (replyTo != null) 'replyTo': replyTo,
+    };
+    bool wrote = true;
+    if (messageId != null) {
+      wrote = await _writeMessageIfAbsent(
+        chatId: chatId,
+        messageId: messageId,
+        data: data,
+      );
+    } else {
+      await _db
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add(data);
+    }
+    if (!wrote) return;
+    await _db.collection('chats').doc(chatId).update({
+      'lastMessage': '📍 Məkan',
+      'lastMessageTime': now,
+    });
+  }
+
   Future<String> uploadChatAudio({
     required String chatId,
     required String filePath,

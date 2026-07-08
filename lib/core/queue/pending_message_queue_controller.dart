@@ -122,6 +122,8 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
     Uint8List? previewBytes,
     String? fileName,
     int? fileSizeBytes,
+    double? latitude,
+    double? longitude,
   }) async {
     if (state.length >= maxQueueSize) {
       return 'Növbə doludur, gözləyin';
@@ -152,6 +154,8 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
       previewBytes: previewBytes,
       fileName: fileName,
       fileSizeBytes: fileSizeBytes,
+      latitude: latitude,
+      longitude: longitude,
     );
     state = [...state, item];
     await _service.saveAll(state);

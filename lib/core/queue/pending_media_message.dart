@@ -16,7 +16,7 @@ class PendingMediaMessage {
   final String messageId;
   final String chatId;
   final String senderId;
-  final String type; // 'image' | 'audio' | 'video' | 'file'
+  final String type; // 'image' | 'audio' | 'video' | 'file' | 'location'
   final String filePath;
   final int createdAtMillis;
   final int attemptCount;
@@ -64,6 +64,11 @@ class PendingMediaMessage {
   // the Storage object name derived from messageId).
   final String? fileName;
   final int? fileSizeBytes;
+  // 'location' type only — filePath above is the local map-snapshot image
+  // (see LocationPickerScreen._captureSnapshot), these are the actual
+  // picked coordinates it was captured at.
+  final double? latitude;
+  final double? longitude;
   // Real Storage upload fraction (0.0-1.0), image/video only — drives the
   // WhatsApp-style circular progress ring in chat_screen.dart. Deliberately
   // NOT persisted via toJson/fromJson: it's meaningless across an app
@@ -106,6 +111,8 @@ class PendingMediaMessage {
     this.waveform,
     this.fileName,
     this.fileSizeBytes,
+    this.latitude,
+    this.longitude,
     this.uploadProgress = 0.0,
     this.previewBytes,
   });
@@ -147,6 +154,8 @@ class PendingMediaMessage {
       waveform: waveform,
       fileName: fileName,
       fileSizeBytes: fileSizeBytes,
+      latitude: latitude,
+      longitude: longitude,
       // Explicit status transitions reset progress — 'queued' (fresh retry
       // attempt) and 'failed' both mean whatever prior progress existed no
       // longer reflects an in-flight upload.
@@ -180,6 +189,8 @@ class PendingMediaMessage {
     'waveform': waveform,
     'fileName': fileName,
     'fileSizeBytes': fileSizeBytes,
+    'latitude': latitude,
+    'longitude': longitude,
   };
 
   factory PendingMediaMessage.fromJson(Map<String, dynamic> json) {
@@ -208,6 +219,8 @@ class PendingMediaMessage {
       waveform: (json['waveform'] as List?)?.cast<int>(),
       fileName: json['fileName'] as String?,
       fileSizeBytes: json['fileSizeBytes'] as int?,
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
     );
   }
 
@@ -226,6 +239,9 @@ class PendingMediaMessage {
       fileURL: null,
       fileName: fileName,
       fileSizeBytes: fileSizeBytes,
+      locationImageURL: null,
+      latitude: latitude,
+      longitude: longitude,
       timestamp: Timestamp.fromMillisecondsSinceEpoch(createdAtMillis),
       replyToId: replyToId,
       replyToText: replyToText,

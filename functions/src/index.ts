@@ -71,6 +71,8 @@ function previewText(type: string, text: string, fileName?: string): string {
       return "🎥 Video";
     case "file":
       return `📄 ${fileName ?? "Fayl"}`;
+    case "location":
+      return "📍 Məkan";
     default:
       return (text ?? "").slice(0, 100);
   }

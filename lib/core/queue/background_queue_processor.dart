@@ -130,6 +130,49 @@ Future<bool> attemptSendPendingMessage(
               .timeout(timeout);
           return true;
         }
+      case 'location':
+        {
+          final fileName = '${item.messageId}.jpg';
+          final url =
+              item.uploadedUrl ??
+              await firestoreService
+                  .uploadChatImage(
+                    chatId: item.chatId,
+                    filePath: item.filePath,
+                    senderId: item.senderId,
+                    fileName: fileName,
+                    onTaskStarted: onTaskStarted,
+                    onProgress: onProgress,
+                  )
+                  .timeout(timeout);
+          if (item.uploadedUrl == null) onUploaded?.call(url);
+          final validated = await firestoreService.waitForValidatedUpload(
+            chatId: item.chatId,
+            fileName: fileName,
+          );
+          if (!validated) return false;
+          final lat = item.latitude;
+          final lng = item.longitude;
+          if (lat == null || lng == null) return false;
+          await firestoreService
+              .sendLocationMessage(
+                chatId: item.chatId,
+                senderId: item.senderId,
+                locationImageURL: url,
+                latitude: lat,
+                longitude: lng,
+                mediaOriginChatId: item.chatId,
+                mediaFileName: fileName,
+                messageId: item.messageId,
+                replyToId: item.replyToId,
+                replyToText: item.replyToText,
+                replyToSenderName: item.replyToSenderName,
+                replyToImageURL: item.replyToImageURL,
+                replyToVideoURL: item.replyToVideoURL,
+              )
+              .timeout(timeout);
+          return true;
+        }
       case 'file':
         {
           // Preserve the picked file's own extension in the Storage object

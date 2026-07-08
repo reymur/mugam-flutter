@@ -171,6 +171,17 @@ class Message {
   final String? fileURL;
   final String? fileName;
   final int? fileSizeBytes;
+  // 'location' type only — a static snapshot of the map at the picked
+  // point (captured client-side via RepaintBoundary, uploaded through the
+  // same flat Storage path as every other media type — no Google Static
+  // Maps API call, see LocationPickerScreen), plus the actual coordinates
+  // it was captured at. Kept as its own field rather than reusing imageURL
+  // so a location message can never be mistaken for (or rendered by) the
+  // plain 'image' bubble/gallery-filter logic elsewhere, same reasoning as
+  // fileURL being separate from imageURL above.
+  final String? locationImageURL;
+  final double? latitude;
+  final double? longitude;
   // Fixed-length (40) 0-100 normalized amplitude bars captured live during
   // recording — null for messages sent before this field existed.
   final List<int>? waveform;
@@ -180,7 +191,7 @@ class Message {
   // FirestoreService.markVoiceMessageListened.
   final List<String> listenedBy;
   final Timestamp? timestamp;
-  final String type; // 'text', 'image', 'audio', 'video', 'file'
+  final String type; // 'text', 'image', 'audio', 'video', 'file', 'location'
   final String? replyToId;
   final String? replyToText;
   final String? replyToSenderName;
@@ -241,6 +252,9 @@ class Message {
     this.fileURL,
     this.fileName,
     this.fileSizeBytes,
+    this.locationImageURL,
+    this.latitude,
+    this.longitude,
     this.waveform,
     this.listenedBy = const [],
     this.timestamp,
@@ -281,6 +295,9 @@ class Message {
       fileURL: data['fileURL'] as String?,
       fileName: data['fileName'] as String?,
       fileSizeBytes: data['fileSizeBytes'] as int?,
+      locationImageURL: data['locationImageURL'] as String?,
+      latitude: (data['latitude'] as num?)?.toDouble(),
+      longitude: (data['longitude'] as num?)?.toDouble(),
       waveform: (data['waveform'] as List?)?.cast<int>(),
       listenedBy: List<String>.from(data['listenedBy'] as List? ?? const []),
       timestamp: data['timestamp'] as Timestamp?,
@@ -327,7 +344,7 @@ class StarredMessage {
   final String senderId;
   final String senderName;
   final String text;
-  final String type; // 'text', 'image', 'audio', 'video', 'file'
+  final String type; // 'text', 'image', 'audio', 'video', 'file', 'location'
   final String? imageURL;
   final String? audioURL;
   final String? videoURL;

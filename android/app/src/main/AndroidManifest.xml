@@ -30,6 +30,15 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- google_maps_flutter (location sharing, Part B) — Firebase-issued
+             key, already restricted in Google Cloud Console to this app's
+             package name + release/debug SHA-1 fingerprints and to the
+             Maps SDK for Android API only, so embedding it here (the
+             package's own documented integration point) isn't a secrecy
+             concern the way a backend API key would be. -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyAcN7WN0ahmPpVJeMspSjpohTbukmFQ_gI" />
         <!-- Required by the pasteboard plugin (lib/core/media clipboard
              image paste) to expose files via a content:// URI. -->
         <provider

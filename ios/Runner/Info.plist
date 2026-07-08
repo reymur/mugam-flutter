@@ -72,6 +72,13 @@
 	<string>Qalereyanızdan şəkil seçmək üçün giriş lazımdır</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Səs mesajı göndərmək üçün mikrofona giriş lazımdır</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Cari məkanınızı göndərmək üçün məkan girişi lazımdır</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>comgooglemaps</string>
+		<string>waze</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

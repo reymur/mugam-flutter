@@ -36,6 +36,8 @@ import '../../../shared/widgets/zoomable_image_viewer.dart';
 import 'about_contact_screen.dart';
 import 'custom_camera_backup/camera_capture_screen.dart';
 import 'file_message_widgets.dart';
+import 'location_message_widgets.dart';
+import 'location_picker_screen.dart';
 import 'media_thumbnail_cache.dart';
 import 'message_info_screen.dart';
 import 'video_message_widgets.dart';
@@ -619,7 +621,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           msg.type == 'image' ||
           msg.type == 'audio' ||
           msg.type == 'video' ||
-          msg.type == 'file';
+          msg.type == 'file' ||
+          msg.type == 'location';
       if (isMedia &&
           (msg.mediaOriginChatId == null || msg.mediaFileName == null)) {
         throw Exception('Media message predates forward-validation fields');
@@ -670,6 +673,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               fileURL: fileURL,
               fileName: msg.fileName ?? 'Fayl',
               fileSizeBytes: msg.fileSizeBytes,
+              mediaOriginChatId: msg.mediaOriginChatId,
+              mediaFileName: msg.mediaFileName,
+            );
+          }
+          break;
+        case 'location':
+          final locationImageURL = msg.locationImageURL;
+          final lat = msg.latitude;
+          final lng = msg.longitude;
+          if (locationImageURL != null && lat != null && lng != null) {
+            await service.sendLocationMessage(
+              chatId: targetChatId,
+              senderId: currentUid,
+              locationImageURL: locationImageURL,
+              latitude: lat,
+              longitude: lng,
               mediaOriginChatId: msg.mediaOriginChatId,
               mediaFileName: msg.mediaFileName,
             );
@@ -834,6 +853,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         return '🎥 Video';
       case 'file':
         return '📄 ${msg.fileName ?? 'Fayl'}';
+      case 'location':
+        return '📍 Məkan';
       default:
         return msg.text;
     }
@@ -1382,6 +1403,54 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
+  // The picker screen already did the actual location work (permission,
+  // GPS fix, camera pan, snapshot capture+compression) — this just hands
+  // its result to the same pending-send queue every other media type
+  // goes through.
+  Future<void> _pickAndSendLocation() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const LocationPickerScreen()),
+    );
+    if (result == null || !mounted) return;
+    final (lat, lng, snapshotPath) = result as (double, double, String);
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final replyingTo = _replyingTo;
+    _cancelReply();
+    final error = await ref
+        .read(pendingMessageQueueProvider.notifier)
+        .enqueue(
+          chatId: widget.chatId,
+          senderId: currentUid,
+          type: 'location',
+          sourceFilePath: snapshotPath,
+          latitude: lat,
+          longitude: lng,
+          replyToId: replyingTo?.id,
+          replyToText: replyingTo != null
+              ? _replyPreviewText(replyingTo)
+              : null,
+          replyToSenderName: replyingTo != null
+              ? _replySenderName(replyingTo, currentUid)
+              : null,
+          replyToImageURL: replyingTo != null
+              ? _replyImageURL(replyingTo)
+              : null,
+          replyToVideoURL: replyingTo != null
+              ? _replyVideoURL(replyingTo)
+              : null,
+        );
+    if (error != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error), backgroundColor: kRed),
+        );
+      }
+    } else {
+      _scrollToBottom();
+    }
+  }
+
   // Only ever invoked from the context menu's explicit "Paste" tap
   // (see the TextField's contextMenuBuilder) — never on focus/timers.
   Future<void> _sendPastedImage(Uint8List bytes) async {
@@ -1513,6 +1582,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
+  // WhatsApp-style grid of colored circular icon badges + label underneath,
+  // one row — replaces the old vertical ListTile menu. Each option gets its
+  // own accent color (matching WhatsApp's own per-type color coding)
+  // instead of every entry sharing kGold, which is what made the previous
+  // plain list read as a single undifferentiated stack of rows.
   void _showAttachSheet() {
     showModalBottomSheet(
       context: context,
@@ -1521,34 +1595,49 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (_) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_library, color: kGold),
-              title: const Text('Qalereya', style: TextStyle(color: kText)),
-              onTap: () {
-                Navigator.of(context).pop();
-                _pickAndSendImage(ImageSource.gallery);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.camera_alt, color: kGold),
-              title: const Text('Kamera', style: TextStyle(color: kText)),
-              onTap: () {
-                Navigator.of(context).pop();
-                _openCamera();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.insert_drive_file, color: kGold),
-              title: const Text('Sənəd', style: TextStyle(color: kText)),
-              onTap: () {
-                Navigator.of(context).pop();
-                _pickAndSendFile();
-              },
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _AttachOption(
+                icon: Icons.photo_library,
+                color: const Color(0xFF2196F3),
+                label: 'Qalereya',
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _pickAndSendImage(ImageSource.gallery);
+                },
+              ),
+              _AttachOption(
+                icon: Icons.camera_alt,
+                color: kMuted,
+                label: 'Kamera',
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _openCamera();
+                },
+              ),
+              _AttachOption(
+                icon: Icons.insert_drive_file,
+                color: const Color(0xFF2196F3),
+                label: 'Sənəd',
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _pickAndSendFile();
+                },
+              ),
+              _AttachOption(
+                icon: Icons.location_on,
+                color: const Color(0xFF43A047),
+                label: 'Məkan',
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _pickAndSendLocation();
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1929,7 +2018,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 // chromeless-media-plus-quote layout is a separate,
                 // not-yet-designed case).
                 padding:
-                    ((msg.type == 'video' || msg.type == 'image') &&
+                    ((msg.type == 'video' ||
+                            msg.type == 'image' ||
+                            msg.type == 'location') &&
                         msg.replyToId == null)
                     ? EdgeInsets.zero
                     : const EdgeInsets.symmetric(
@@ -2200,11 +2291,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           checkMark,
                         ),
                       ),
+                    if (msg.type == 'location' &&
+                        (msg.locationImageURL != null ||
+                            msg.localFilePath != null))
+                      LocationMessageBubble(
+                        locationImageURL: msg.locationImageURL,
+                        localFilePath: msg.localFilePath,
+                        latitude: msg.latitude,
+                        longitude: msg.longitude,
+                        senderLabel: _replySenderName(msg, currentUid),
+                        bubbleRadius: _kBubbleRadius,
+                        deliveryStatus: status,
+                        localUploadProgress: msg.localUploadProgress,
+                        onCancelUpload: _cancelUploadCallback(msg),
+                        timeCheckmarkOverlay: _timeCheckmarkRow(
+                          isMe,
+                          otherUid,
+                          msg,
+                          time,
+                          overlayCheckMark,
+                          textColor: Colors.white,
+                        ),
+                      ),
                     if (msg.type != 'text' &&
                         msg.type != 'video' &&
                         msg.type != 'image' &&
                         msg.type != 'audio' &&
-                        msg.type != 'file') ...[
+                        msg.type != 'file' &&
+                        msg.type != 'location') ...[
                       const SizedBox(height: 2),
                       _timeCheckmarkRow(isMe, otherUid, msg, time, checkMark),
                     ],
@@ -3061,6 +3175,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+// One entry in the attach sheet's grid — colored circular icon badge with
+// its label underneath, matching WhatsApp's own attach-menu layout.
+class _AttachOption extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String label;
+  final VoidCallback onTap;
+
+  const _AttachOption({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            child: Icon(icon, color: Colors.white, size: 26),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: const TextStyle(color: kText, fontSize: 13),
+          ),
         ],
       ),
     );

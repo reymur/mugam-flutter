@@ -115,6 +115,8 @@ class _StarredListItem extends StatelessWidget {
         return '🎥 Video';
       case 'file':
         return '📄 ${item.fileName ?? 'Fayl'}';
+      case 'location':
+        return '📍 Məkan';
       default:
         return item.text;
     }

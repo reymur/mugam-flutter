@@ -203,7 +203,7 @@ service cloud.firestore {
         // sender+membership check below without the extra validation.
         function needsValidatedMedia() {
           return request.resource.data.get('clientPlatform', null) == 'flutter' &&
-            request.resource.data.type in ['image', 'video', 'audio', 'file'];
+            request.resource.data.type in ['image', 'video', 'audio', 'file', 'location'];
         }
 
         allow read: if isChatMember();
