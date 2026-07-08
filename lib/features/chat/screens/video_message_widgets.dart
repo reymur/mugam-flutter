@@ -218,7 +218,9 @@ class _VideoThumbnailImageState extends State<VideoThumbnailImage> {
   }
 }
 
-String _formatDuration(int ms) {
+// Public (not file-private) so FileMessageBubble's upload-ETA text can
+// reuse it instead of a second m:ss formatter — see its doc comment.
+String formatDurationMmSs(int ms) {
   final total = Duration(milliseconds: ms);
   final m = total.inMinutes.remainder(60);
   final s = total.inSeconds.remainder(60).toString().padLeft(2, '0');
@@ -381,7 +383,7 @@ class VideoMessageBubble extends StatelessWidget {
                       if (durationMs != null) ...[
                         const SizedBox(width: 4),
                         Text(
-                          _formatDuration(durationMs!),
+                          formatDurationMmSs(durationMs!),
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 11,

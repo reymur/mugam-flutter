@@ -6,7 +6,8 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
-import 'video_message_widgets.dart' show MessageDeliveryStatus, UploadProgressOverlay;
+import 'video_message_widgets.dart'
+    show MessageDeliveryStatus, UploadProgressOverlay, formatDurationMmSs;
 
 // WhatsApp-style document/file bubble: icon-by-extension + filename + size,
 // tap downloads it (if not already cached locally) then opens it via the
@@ -64,11 +65,25 @@ class _FileMessageBubbleState extends State<FileMessageBubble> {
   bool _downloading = false;
   double? _downloadProgress;
 
+  // Rolling window of (timestamp, bytesTransferred) samples for the
+  // upload-remaining-time estimate ("Qalıb: mm:ss", WhatsApp-style) —
+  // deliberately local to this widget, not threaded through the shared
+  // upload pipeline (firestore_service.dart / PendingMediaMessage /
+  // PendingMessageQueueController), which only ever hands us a plain
+  // 0.0-1.0 fraction (see Message.localUploadProgress) and is shared by
+  // image/video/audio too. Averaging the rate over this window (oldest vs.
+  // newest sample) rather than the last two consecutive samples smooths
+  // out uneven network throughput — a single fast/slow tick doesn't make
+  // the ETA jump around, same principle real download managers use.
+  static const int _maxProgressSamples = 5;
+  final List<(DateTime, int)> _progressSamples = [];
+
   @override
   void initState() {
     super.initState();
     _readyPath = widget.localFilePath;
     if (_readyPath == null) _checkCache();
+    _recordProgressSample();
   }
 
   @override
@@ -82,6 +97,45 @@ class _FileMessageBubbleState extends State<FileMessageBubble> {
       _readyPath = widget.localFilePath;
       if (_readyPath == null) _checkCache();
     }
+    if (oldWidget.localUploadProgress != widget.localUploadProgress) {
+      _recordProgressSample();
+    }
+  }
+
+  void _recordProgressSample() {
+    final progress = widget.localUploadProgress;
+    final totalBytes = widget.fileSizeBytes;
+    if (progress == null || totalBytes == null) return;
+    final bytesNow = (progress * totalBytes).round();
+    // A retry restarts the transfer from 0 — old samples from the previous
+    // attempt would otherwise skew the window with a bogus negative/huge
+    // rate, so start the window over instead of averaging across attempts.
+    if (_progressSamples.isNotEmpty && bytesNow < _progressSamples.last.$2) {
+      _progressSamples.clear();
+    }
+    _progressSamples.add((DateTime.now(), bytesNow));
+    if (_progressSamples.length > _maxProgressSamples) {
+      _progressSamples.removeAt(0);
+    }
+  }
+
+  // Null until there are at least two samples spanning a real (non-zero)
+  // time gap — the very first tick after an upload starts has nothing to
+  // average against yet, so the bubble just shows the percentage alone for
+  // that brief moment rather than a divide-by-zero or a wild first guess.
+  String? _etaText() {
+    final totalBytes = widget.fileSizeBytes;
+    if (totalBytes == null || _progressSamples.length < 2) return null;
+    final oldest = _progressSamples.first;
+    final newest = _progressSamples.last;
+    final elapsedMs = newest.$1.difference(oldest.$1).inMilliseconds;
+    final bytesDelta = newest.$2 - oldest.$2;
+    if (elapsedMs <= 0 || bytesDelta <= 0) return null;
+    final bytesPerMs = bytesDelta / elapsedMs;
+    final remainingBytes = totalBytes - newest.$2;
+    if (remainingBytes <= 0) return null;
+    final etaMs = (remainingBytes / bytesPerMs).round();
+    return 'Qalıb: ${formatDurationMmSs(etaMs)}';
   }
 
   Future<Directory> _cacheDir() async {
@@ -222,6 +276,17 @@ class _FileMessageBubbleState extends State<FileMessageBubble> {
         widget.deliveryStatus == MessageDeliveryStatus.queued ||
         widget.deliveryStatus == MessageDeliveryStatus.uploading;
 
+    // WhatsApp-style "20 % (Qalıb: 0:20)" line while uploading — replaces
+    // the plain file-size subtitle only for that phase; the eta half is
+    // omitted (percent alone) until _etaText() has enough samples to give a
+    // real estimate rather than a divide-by-zero or a wild first guess.
+    String? uploadStatusText;
+    if (widget.deliveryStatus == MessageDeliveryStatus.uploading) {
+      final percent = ((widget.localUploadProgress ?? 0) * 100).round();
+      final eta = _etaText();
+      uploadStatusText = eta != null ? '$percent % ($eta)' : '$percent %';
+    }
+
     Widget leading;
     if (isUploading) {
       leading = SizedBox(
@@ -292,7 +357,7 @@ class _FileMessageBubbleState extends State<FileMessageBubble> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        _formatSize(widget.fileSizeBytes),
+                        uploadStatusText ?? _formatSize(widget.fileSizeBytes),
                         style: TextStyle(color: subColor, fontSize: 11),
                       ),
                     ],
