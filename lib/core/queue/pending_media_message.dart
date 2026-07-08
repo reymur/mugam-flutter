@@ -43,6 +43,12 @@ class PendingMediaMessage {
   // uploaded URL — causing a visible resize jump at that transition).
   final int? videoWidth;
   final int? videoHeight;
+  // Captured once at enqueue time from the global HD-quality setting (see
+  // hdImageUploadProvider) — read here rather than live at upload time
+  // because compression happens inside attemptSendPendingMessage, a plain
+  // top-level function shared with the headless WorkManager isolate, which
+  // has no Riverpod ref to read a live setting from.
+  final bool videoHd;
   // As-displayed pixel size read from the picked file at enqueue time (see
   // _probeImageSize in chat_screen.dart) — same rationale as
   // videoWidth/videoHeight above (plain data, not derived from a decoded
@@ -89,6 +95,7 @@ class PendingMediaMessage {
     this.videoDurationMs,
     this.videoWidth,
     this.videoHeight,
+    this.videoHd = false,
     this.imageWidth,
     this.imageHeight,
     this.waveform,
@@ -127,6 +134,7 @@ class PendingMediaMessage {
       videoDurationMs: videoDurationMs,
       videoWidth: videoWidth,
       videoHeight: videoHeight,
+      videoHd: videoHd,
       imageWidth: imageWidth,
       imageHeight: imageHeight,
       waveform: waveform,
@@ -157,6 +165,7 @@ class PendingMediaMessage {
     'videoDurationMs': videoDurationMs,
     'videoWidth': videoWidth,
     'videoHeight': videoHeight,
+    'videoHd': videoHd,
     'imageWidth': imageWidth,
     'imageHeight': imageHeight,
     'waveform': waveform,
@@ -182,6 +191,7 @@ class PendingMediaMessage {
       videoDurationMs: json['videoDurationMs'] as int?,
       videoWidth: json['videoWidth'] as int?,
       videoHeight: json['videoHeight'] as int?,
+      videoHd: json['videoHd'] as bool? ?? false,
       imageWidth: json['imageWidth'] as int?,
       imageHeight: json['imageHeight'] as int?,
       waveform: (json['waveform'] as List?)?.cast<int>(),

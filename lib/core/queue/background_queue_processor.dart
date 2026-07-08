@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
@@ -8,6 +9,7 @@ import 'package:workmanager/workmanager.dart';
 
 import '../../firebase/firestore_service.dart';
 import '../../firebase_options.dart';
+import '../media/video_compressor.dart';
 import 'pending_media_message.dart';
 import 'pending_message_queue_service.dart';
 
@@ -130,47 +132,76 @@ Future<bool> attemptSendPendingMessage(
         }
       case 'video':
         {
-          final ext = item.filePath.contains('.')
-              ? item.filePath.split('.').last
-              : 'mp4';
-          final fileName = '${item.messageId}.$ext';
-          final url =
-              item.uploadedUrl ??
-              await firestoreService
-                  .uploadChatVideo(
-                    chatId: item.chatId,
-                    filePath: item.filePath,
-                    senderId: item.senderId,
-                    fileName: fileName,
-                    onTaskStarted: onTaskStarted,
-                    onProgress: onProgress,
-                  )
-                  .timeout(timeout);
-          if (item.uploadedUrl == null) onUploaded?.call(url);
-          final validated = await firestoreService.waitForValidatedUpload(
-            chatId: item.chatId,
-            fileName: fileName,
-          );
-          if (!validated) return false;
-          await firestoreService
-              .sendVideoMessage(
-                chatId: item.chatId,
-                senderId: item.senderId,
-                videoURL: url,
-                videoDurationMs: item.videoDurationMs,
-                videoWidth: item.videoWidth,
-                videoHeight: item.videoHeight,
-                mediaOriginChatId: item.chatId,
-                mediaFileName: fileName,
-                messageId: item.messageId,
-                replyToId: item.replyToId,
-                replyToText: item.replyToText,
-                replyToSenderName: item.replyToSenderName,
-                replyToImageURL: item.replyToImageURL,
-                replyToVideoURL: item.replyToVideoURL,
-              )
-              .timeout(timeout);
-          return true;
+          // Compressed fresh on every attempt rather than once at enqueue
+          // time — keeps the pending bubble's instant appearance (see
+          // chat_screen.dart's _uploadAndSendVideoFile) since this only
+          // runs once the item is actually picked up for upload. Skipped
+          // entirely when a prior attempt's upload already succeeded
+          // (item.uploadedUrl set) — nothing left to compress for, that
+          // path only needs the earlier Firestore write retried.
+          String uploadPath = item.filePath;
+          if (item.uploadedUrl == null) {
+            uploadPath = await compressVideoFile(
+              item.filePath,
+              hd: item.videoHd,
+              onProgress: onProgress == null
+                  ? null
+                  : (p) => onProgress(p * 0.4),
+            );
+          }
+          try {
+            final ext = uploadPath.contains('.')
+                ? uploadPath.split('.').last
+                : 'mp4';
+            final fileName = '${item.messageId}.$ext';
+            final url =
+                item.uploadedUrl ??
+                await firestoreService
+                    .uploadChatVideo(
+                      chatId: item.chatId,
+                      filePath: uploadPath,
+                      senderId: item.senderId,
+                      fileName: fileName,
+                      onTaskStarted: onTaskStarted,
+                      onProgress: onProgress == null
+                          ? null
+                          : (p) => onProgress(0.4 + p * 0.6),
+                    )
+                    .timeout(timeout);
+            if (item.uploadedUrl == null) onUploaded?.call(url);
+            final validated = await firestoreService.waitForValidatedUpload(
+              chatId: item.chatId,
+              fileName: fileName,
+            );
+            if (!validated) return false;
+            await firestoreService
+                .sendVideoMessage(
+                  chatId: item.chatId,
+                  senderId: item.senderId,
+                  videoURL: url,
+                  videoDurationMs: item.videoDurationMs,
+                  videoWidth: item.videoWidth,
+                  videoHeight: item.videoHeight,
+                  mediaOriginChatId: item.chatId,
+                  mediaFileName: fileName,
+                  messageId: item.messageId,
+                  replyToId: item.replyToId,
+                  replyToText: item.replyToText,
+                  replyToSenderName: item.replyToSenderName,
+                  replyToImageURL: item.replyToImageURL,
+                  replyToVideoURL: item.replyToVideoURL,
+                )
+                .timeout(timeout);
+            return true;
+          } finally {
+            if (uploadPath != item.filePath) {
+              unawaited(
+                File(
+                  uploadPath,
+                ).delete().catchError((_) => File(uploadPath)),
+              );
+            }
+          }
         }
       default:
         return false;

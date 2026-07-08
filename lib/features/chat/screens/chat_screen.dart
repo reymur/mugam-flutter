@@ -11,16 +11,17 @@ import 'package:flutter/services.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_video_info/flutter_video_info.dart';
+import 'package:get_thumbnail_video/index.dart';
+import 'package:get_thumbnail_video/video_thumbnail.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:pasteboard/pasteboard.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:super_clipboard/super_clipboard.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
 import '../../../core/cache/message_cache_service.dart';
 import '../../../core/media/image_compressor.dart';
 import '../../../core/native_sound_effect.dart';
@@ -490,11 +491,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     try {
       final file = await DefaultCacheManager().getSingleFile(imageURL);
       final bytes = await file.readAsBytes();
-      final clipboard = SystemClipboard.instance;
-      if (clipboard == null) return;
-      final item = DataWriterItem();
-      item.add(Formats.jpeg(bytes));
-      await clipboard.write([item]);
+      await Pasteboard.writeImage(bytes);
       if (!mounted) return;
       _showCopySnackBar('Kopyalandı');
       _restoreComposerFocusIfNeeded();
@@ -1167,6 +1164,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       await precacheImage(MemoryImage(previewBytes), context);
       if (!mounted) return;
     }
+    final videoHd = ref.read(hdImageUploadProvider);
     final error = await ref
         .read(pendingMessageQueueProvider.notifier)
         .enqueue(
@@ -1177,6 +1175,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           videoDurationMs: videoDurationMs,
           videoWidth: videoWidth,
           videoHeight: videoHeight,
+          videoHd: videoHd,
           previewBytes: previewBytes,
           replyToId: replyingTo?.id,
           replyToText: replyingTo != null
@@ -1305,8 +1304,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   // Only ever invoked from the context menu's explicit "Paste" tap
   // (see the TextField's contextMenuBuilder) — never on focus/timers.
-  Future<void> _sendPastedImage(DataReaderFile file) async {
-    final bytes = await file.readAll();
+  Future<void> _sendPastedImage(Uint8List bytes) async {
     final dir = await getTemporaryDirectory();
     final path = '${dir.path}/pasted_${DateTime.now().millisecondsSinceEpoch}.jpg';
     await File(path).writeAsBytes(bytes);
@@ -1317,22 +1315,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // when supported, Flutter-drawn toolbar otherwise) so we can detect a
   // clipboard image and send it as a photo. Falls back to the field's own
   // paste callback untouched when the clipboard holds text (or nothing).
+  //
+  // SystemContextMenu/IOSSystemContextMenuItem* below are Flutter SDK's own
+  // built-in classes (flutter/widgets.dart) — nothing here depends on a
+  // clipboard-reading package. pasteboard is used only for the actual byte
+  // read/write, deliberately picked over super_clipboard specifically
+  // because it doesn't pull in the (now-abandoned, Gradle-9-incompatible)
+  // irondash_engine_context/cargokit native toolchain that package needed.
   void _handlePasteButton(VoidCallback? originalOnPressed) {
     () async {
-      final clipboard = SystemClipboard.instance;
-      if (clipboard == null) {
+      final bytes = await Pasteboard.image;
+      if (bytes == null) {
         originalOnPressed?.call();
         return;
       }
-      final reader = await clipboard.read();
-      final format = reader.canProvide(Formats.png)
-          ? Formats.png
-          : (reader.canProvide(Formats.jpeg) ? Formats.jpeg : null);
-      if (format == null) {
-        originalOnPressed?.call();
-        return;
-      }
-      reader.getFile(format, _sendPastedImage);
+      await _sendPastedImage(bytes);
     }();
   }
 

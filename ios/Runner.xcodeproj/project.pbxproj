@@ -18,6 +18,7 @@
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
+		AA11BB22CC33DD44EE55FF01 /* NativeVideoCompressorPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FF02 /* NativeVideoCompressorPlugin.swift */; };
 		AC1F264F77BB0176291432B3 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BACA39ABD50B16905308F9F3 /* Pods_Runner.framework */; };
 /* End PBXBuildFile section */
 
@@ -67,6 +68,7 @@
 		97C147001CF9000F007C117D /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A562E397A187E8091E8D88C3 /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE55FF02 /* NativeVideoCompressorPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeVideoCompressorPlugin.swift; sourceTree = "<group>"; };
 		AD1175F4CA57639F20D094DA /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
 		BACA39ABD50B16905308F9F3 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C7907050A33125FC9029D88D /* Pods-Runner.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"; sourceTree = "<group>"; };
@@ -167,6 +169,7 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				593AA09FDDAE9B8071D4855F /* NativeSoundEffectPlugin.swift */,
+				AA11BB22CC33DD44EE55FF02 /* NativeVideoCompressorPlugin.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
@@ -406,6 +409,7 @@
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				72977E1AF51CDBB4544E1651 /* NativeSoundEffectPlugin.swift in Sources */,
+				AA11BB22CC33DD44EE55FF01 /* NativeVideoCompressorPlugin.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 			);

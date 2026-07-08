@@ -7,7 +7,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:video_player/video_player.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:get_thumbnail_video/index.dart';
+import 'package:get_thumbnail_video/video_thumbnail.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/models.dart';
 import 'media_thumbnail_cache.dart';
@@ -192,10 +193,8 @@ class _VideoThumbnailImageState extends State<VideoThumbnailImage> {
         maxWidth: 400,
         quality: 60,
       );
-      if (data != null) {
-        MediaThumbnailCacheManager.instance.put(key, data);
-        if (mounted) setState(() => _thumb = data);
-      }
+      MediaThumbnailCacheManager.instance.put(key, data);
+      if (mounted) setState(() => _thumb = data);
     } catch (_) {}
   }
 

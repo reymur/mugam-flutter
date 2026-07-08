@@ -25,5 +25,8 @@ import workmanager_apple
     NativeSoundEffectPlugin.register(
       with: engineBridge.pluginRegistry.registrar(forPlugin: "NativeSoundEffectPlugin")!
     )
+    NativeVideoCompressorPlugin.register(
+      with: engineBridge.pluginRegistry.registrar(forPlugin: "NativeVideoCompressorPlugin")!
+    )
   }
 }

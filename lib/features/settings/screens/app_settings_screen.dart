@@ -4,8 +4,9 @@ import '../../../core/settings/image_quality_settings.dart';
 import '../../../core/theme/colors.dart';
 
 // General app settings, not tied to the user's profile — reached from the
-// gear icon in the chats list AppBar. Currently just the HD photo-upload
-// toggle; more app-wide settings belong here going forward.
+// gear icon in the chats list AppBar. Currently just the HD media-upload
+// toggle (applies to both photos and videos); more app-wide settings
+// belong here going forward.
 class AppSettingsScreen extends ConsumerWidget {
   const AppSettingsScreen({super.key});
 
@@ -25,7 +26,7 @@ class AppSettingsScreen extends ConsumerWidget {
             secondary: const Icon(Icons.high_quality, color: kGold),
             title: const Text('HD keyfiyyət', style: TextStyle(color: kText)),
             subtitle: const Text(
-              'Şəkilləri orijinal ölçüdə göndər (daha çox trafik)',
+              'Şəkil və videoları yüksək keyfiyyətdə göndər (daha çox trafik)',
               style: TextStyle(color: kMuted, fontSize: 12),
             ),
             activeThumbColor: kGold,

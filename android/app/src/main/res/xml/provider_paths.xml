@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- pasteboard's writeImage() writes to context.cacheDir, not an
+         external-files location — required for the "copy photo message"
+         feature (long-press → Copy on an image bubble) to work. -->
+    <cache-path
+        name="cache"
+        path="." />
+    <external-path
+        name="external_files"
+        path="." />
+</paths>
