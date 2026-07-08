@@ -22,8 +22,10 @@ import 'package:share_plus/share_plus.dart';
 import 'package:super_clipboard/super_clipboard.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import '../../../core/cache/message_cache_service.dart';
+import '../../../core/media/image_compressor.dart';
 import '../../../core/native_sound_effect.dart';
 import '../../../core/queue/pending_message_queue_controller.dart';
+import '../../../core/settings/image_quality_settings.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -1203,11 +1205,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   Future<void> _pickAndSendImage(ImageSource source) async {
-    final picked = await _picker.pickImage(
-      source: source,
-      imageQuality: 70,
-      maxWidth: 1200,
-    );
+    final picked = await _picker.pickImage(source: source);
     if (picked == null) return;
     if (!mounted) return;
     await _uploadAndSendImageFile(picked.path);
@@ -1253,7 +1251,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final replyingTo = _replyingTo;
     setState(() => _uploadingImage = true);
     _cancelReply();
-    final imageProbe = await _probeImageSize(filePath);
+    final hd = ref.read(hdImageUploadProvider);
+    final compressedPath = await compressImageFile(filePath, hd: hd);
+    if (!mounted) return;
+    final imageProbe = await _probeImageSize(compressedPath);
     // Decode this exact byte sequence into Flutter's own ImageCache BEFORE
     // the pending bubble is ever added to the message list (enqueue below)
     // — by the time ImageMessageBubble first builds using the same bytes
@@ -1272,7 +1273,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           chatId: widget.chatId,
           senderId: currentUid,
           type: 'image',
-          sourceFilePath: filePath,
+          sourceFilePath: compressedPath,
           imageWidth: imageProbe?.$1,
           imageHeight: imageProbe?.$2,
           previewBytes: previewBytes,

@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../settings/screens/app_settings_screen.dart';
 
 class ChatsScreen extends ConsumerStatefulWidget {
   const ChatsScreen({super.key});
@@ -35,6 +36,13 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
       appBar: AppBar(
         backgroundColor: kBg2,
         automaticallyImplyLeading: false,
+        leading: IconButton(
+          icon: const Icon(Icons.settings, color: kGold),
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const AppSettingsScreen()),
+          ),
+        ),
         title: Text(
           'Mesajlar',
           style: GoogleFonts.playfairDisplay(fontSize: 20, color: kText),

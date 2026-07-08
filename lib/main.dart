@@ -11,6 +11,7 @@ import 'core/cache/message_cache_service.dart';
 import 'core/queue/background_queue_processor.dart';
 import 'core/queue/pending_message_queue_controller.dart';
 import 'core/queue/pending_message_queue_service.dart';
+import 'core/settings/image_quality_settings.dart';
 import 'core/theme/colors.dart';
 import 'core/theme/typography.dart';
 import 'firebase/push_notification_service.dart';
@@ -62,6 +63,7 @@ Future<void> main() async {
         pendingMessageQueueServiceProvider.overrideWithValue(
           PendingMessageQueueService(prefs),
         ),
+        sharedPreferencesProvider.overrideWithValue(prefs),
       ],
       child: const MugamApp(),
     ),
