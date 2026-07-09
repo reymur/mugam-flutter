@@ -5,8 +5,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../firebase/models.dart';
 
-// A media message (photo/voice/video) queued locally because it couldn't be
-// uploaded yet (offline, or the upload attempt failed). Nothing here is
+// A message (photo/voice/video/file/location, or plain text) queued locally
+// because it couldn't be sent yet (offline, or the send attempt failed).
+// Nothing here is
 // ever written to Firestore directly — messageId is the id the eventual
 // real message document will use once it succeeds (see
 // FirestoreService.generateMessageId), so retries are idempotent instead
@@ -16,8 +17,13 @@ class PendingMediaMessage {
   final String messageId;
   final String chatId;
   final String senderId;
-  final String type; // 'image' | 'audio' | 'video' | 'file' | 'location'
-  final String filePath;
+  final String type; // 'image' | 'audio' | 'video' | 'file' | 'location' | 'text'
+  // Null only for type == 'text' — text messages have nothing to upload.
+  // Every reader of this field lives inside a case branch already
+  // conditioned on a non-text type (see background_queue_processor.dart's
+  // attemptSendPendingMessage, which returns early for 'text' before ever
+  // reaching a null-forgiving read of this field).
+  final String? filePath;
   final int createdAtMillis;
   final int attemptCount;
   final String status; // 'queued' | 'uploading' | 'failed'
@@ -64,6 +70,10 @@ class PendingMediaMessage {
   // the Storage object name derived from messageId).
   final String? fileName;
   final int? fileSizeBytes;
+  // 'text' type only — the message body. Never mutated after enqueue (no
+  // draft-editing of a queued message), so unlike filePath/uploadedUrl it
+  // isn't threaded through copyWith.
+  final String? text;
   // 'location' type only — filePath above is the local map-snapshot image
   // (see LocationPickerScreen._captureSnapshot), these are the actual
   // picked coordinates it was captured at.
@@ -92,7 +102,7 @@ class PendingMediaMessage {
     required this.chatId,
     required this.senderId,
     required this.type,
-    required this.filePath,
+    this.filePath,
     required this.createdAtMillis,
     this.attemptCount = 0,
     this.status = 'queued',
@@ -115,6 +125,7 @@ class PendingMediaMessage {
     this.longitude,
     this.uploadProgress = 0.0,
     this.previewBytes,
+    this.text,
   });
 
   static String generateLocalId() {
@@ -191,6 +202,7 @@ class PendingMediaMessage {
     'fileSizeBytes': fileSizeBytes,
     'latitude': latitude,
     'longitude': longitude,
+    'text': text,
   };
 
   factory PendingMediaMessage.fromJson(Map<String, dynamic> json) {
@@ -200,7 +212,7 @@ class PendingMediaMessage {
       chatId: json['chatId'] as String,
       senderId: json['senderId'] as String,
       type: json['type'] as String,
-      filePath: json['filePath'] as String,
+      filePath: json['filePath'] as String?,
       createdAtMillis: json['createdAtMillis'] as int,
       attemptCount: json['attemptCount'] as int? ?? 0,
       status: json['status'] as String? ?? 'queued',
@@ -221,6 +233,7 @@ class PendingMediaMessage {
       fileSizeBytes: json['fileSizeBytes'] as int?,
       latitude: (json['latitude'] as num?)?.toDouble(),
       longitude: (json['longitude'] as num?)?.toDouble(),
+      text: json['text'] as String?,
     );
   }
 
@@ -231,7 +244,7 @@ class PendingMediaMessage {
     return Message(
       id: 'local_$localId',
       senderId: senderId,
-      text: '',
+      text: text ?? '',
       type: type,
       imageURL: null,
       audioURL: null,

@@ -163,6 +163,51 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
     return null;
   }
 
+  // Text counterpart to enqueue() above — same queue, same FIFO/backoff/
+  // idempotency machinery, just with no source file to persist (filePath
+  // stays null; see PendingMediaMessage.filePath's doc comment) and no
+  // upload step, so it reaches Firestore in a single retry instead of an
+  // upload-then-validate-then-write sequence. Kept as a separate method
+  // rather than folding into enqueue() because the two have no meaningful
+  // parameters in common beyond chatId/senderId/reply* — a single method
+  // accepting both an optional sourceFilePath and an optional text would
+  // just move the "which one is this" branching into the caller instead of
+  // removing it.
+  Future<String?> enqueueText({
+    required String chatId,
+    required String senderId,
+    required String text,
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderName,
+    String? replyToImageURL,
+    String? replyToVideoURL,
+  }) async {
+    if (state.length >= maxQueueSize) {
+      return 'Növbə doludur, gözləyin';
+    }
+    final localId = PendingMediaMessage.generateLocalId();
+    final messageId = _firestoreService.generateMessageId(chatId);
+    final item = PendingMediaMessage(
+      localId: localId,
+      messageId: messageId,
+      chatId: chatId,
+      senderId: senderId,
+      type: 'text',
+      createdAtMillis: DateTime.now().millisecondsSinceEpoch,
+      replyToId: replyToId,
+      replyToText: replyToText,
+      replyToSenderName: replyToSenderName,
+      replyToImageURL: replyToImageURL,
+      replyToVideoURL: replyToVideoURL,
+      text: text,
+    );
+    state = [...state, item];
+    await _service.saveAll(state);
+    unawaited(_processChatQueue(chatId));
+    return null;
+  }
+
   // Manual long-press retry: one immediate attempt outside the automatic
   // FIFO/backoff loop — never silently re-enters an 8-attempt wait cycle
   // after the user explicitly asked for this right now.

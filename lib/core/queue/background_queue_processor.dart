@@ -48,6 +48,42 @@ Future<bool> attemptSendPendingMessage(
   void Function(double progress)? onProgress,
 }) async {
   try {
+    // Text has nothing to upload — no file, no Storage step, no
+    // waitForValidatedUpload — so it's handled entirely separately from the
+    // file-based types below, before filePath is ever touched.
+    if (item.type == 'text') {
+      await firestoreService
+          .sendMessage(
+            chatId: item.chatId,
+            senderId: item.senderId,
+            text: item.text ?? '',
+            messageId: item.messageId,
+            replyToId: item.replyToId,
+            replyToText: item.replyToText,
+            replyToSenderName: item.replyToSenderName,
+            replyToImageURL: item.replyToImageURL,
+            replyToVideoURL: item.replyToVideoURL,
+          )
+          .timeout(timeout);
+      return true;
+    }
+
+    // Every remaining type is file-based, so filePath must be set — a
+    // non-text item with a null filePath is an invariant violation (a bug
+    // elsewhere, not a normal runtime state) and gets handled explicitly
+    // rather than risking a null-check crash further down. This early
+    // return is also what lets `filePath` below be used unwrapped for the
+    // rest of this function — Dart promotes it to non-null for every path
+    // reachable only past this check, including inside every switch case.
+    final filePath = item.filePath;
+    if (filePath == null) {
+      debugPrint(
+        'attemptSendPendingMessage: no filePath for non-text item '
+        '${item.localId} (type=${item.type}) — treating as failed',
+      );
+      return false;
+    }
+
     // A prior attempt's upload can have already succeeded (item.uploadedUrl
     // set) even though the local temp file is gone by now — iOS is free to
     // purge app temp storage, and video's own compressed copy is deleted
@@ -55,7 +91,7 @@ Future<bool> attemptSendPendingMessage(
     // file is irrelevant: every branch below only reads it to perform the
     // upload, which is skipped whenever uploadedUrl is already set. Only
     // require the file to exist when the upload itself still needs to run.
-    if (item.uploadedUrl == null && !await File(item.filePath).exists()) {
+    if (item.uploadedUrl == null && !await File(filePath).exists()) {
       debugPrint('attemptSendPendingMessage: file missing for ${item.localId}');
       return false;
     }
@@ -68,7 +104,7 @@ Future<bool> attemptSendPendingMessage(
               await firestoreService
                   .uploadChatImage(
                     chatId: item.chatId,
-                    filePath: item.filePath,
+                    filePath: filePath,
                     senderId: item.senderId,
                     fileName: fileName,
                     onTaskStarted: onTaskStarted,
@@ -108,7 +144,7 @@ Future<bool> attemptSendPendingMessage(
               await firestoreService
                   .uploadChatAudio(
                     chatId: item.chatId,
-                    filePath: item.filePath,
+                    filePath: filePath,
                     senderId: item.senderId,
                     fileName: fileName,
                   )
@@ -145,7 +181,7 @@ Future<bool> attemptSendPendingMessage(
               await firestoreService
                   .uploadChatImage(
                     chatId: item.chatId,
-                    filePath: item.filePath,
+                    filePath: filePath,
                     senderId: item.senderId,
                     fileName: fileName,
                     onTaskStarted: onTaskStarted,
@@ -198,7 +234,7 @@ Future<bool> attemptSendPendingMessage(
               await firestoreService
                   .uploadChatFile(
                     chatId: item.chatId,
-                    filePath: item.filePath,
+                    filePath: filePath,
                     senderId: item.senderId,
                     fileName: fileName,
                     onTaskStarted: onTaskStarted,
@@ -239,10 +275,10 @@ Future<bool> attemptSendPendingMessage(
           // entirely when a prior attempt's upload already succeeded
           // (item.uploadedUrl set) — nothing left to compress for, that
           // path only needs the earlier Firestore write retried.
-          String uploadPath = item.filePath;
+          String uploadPath = filePath;
           if (item.uploadedUrl == null) {
             uploadPath = await compressVideoFile(
-              item.filePath,
+              filePath,
               hd: item.videoHd,
               onProgress: onProgress == null
                   ? null
@@ -294,7 +330,7 @@ Future<bool> attemptSendPendingMessage(
                 .timeout(timeout);
             return true;
           } finally {
-            if (uploadPath != item.filePath) {
+            if (uploadPath != filePath) {
               unawaited(
                 File(
                   uploadPath,

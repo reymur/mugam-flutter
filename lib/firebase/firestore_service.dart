@@ -206,6 +206,11 @@ class FirestoreService {
     String? replyToSenderName,
     String? replyToImageURL,
     String? replyToVideoURL,
+    // If provided, writes with .doc(messageId).set(...) instead of .add(...)
+    // — same idempotency purpose as sendImageMessage's messageId param, used
+    // by the offline pending-send queue so a retry of the same queued text
+    // message overwrites rather than duplicates.
+    String? messageId,
   }) async {
     final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
@@ -215,7 +220,7 @@ class FirestoreService {
       replyToImageURL: replyToImageURL,
       replyToVideoURL: replyToVideoURL,
     );
-    await _db.collection('chats').doc(chatId).collection('messages').add({
+    final data = {
       'senderId': senderId,
       'text': text,
       'type': 'text',
@@ -224,7 +229,18 @@ class FirestoreService {
       'imageURL': null,
       'audioURL': null,
       if (replyTo != null) 'replyTo': replyTo,
-    });
+    };
+    bool wrote = true;
+    if (messageId != null) {
+      wrote = await _writeMessageIfAbsent(
+        chatId: chatId,
+        messageId: messageId,
+        data: data,
+      );
+    } else {
+      await _db.collection('chats').doc(chatId).collection('messages').add(data);
+    }
+    if (!wrote) return;
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': text,
       'lastMessageTime': now,

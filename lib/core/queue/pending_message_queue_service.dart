@@ -62,7 +62,11 @@ class PendingMessageQueueService {
     return destPath;
   }
 
-  Future<void> deleteFile(String path) async {
+  // path is null for queue items with nothing to clean up (text messages
+  // have no local file) — a plain no-op rather than making every caller
+  // guard the call itself.
+  Future<void> deleteFile(String? path) async {
+    if (path == null) return;
     try {
       final file = File(path);
       if (await file.exists()) {

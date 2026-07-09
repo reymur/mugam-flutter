@@ -1097,18 +1097,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     });
   }
 
+  // Hands the text to the same offline-aware pending-send queue the media
+  // send paths already use (see _uploadAndSendVideoFile) instead of writing
+  // to Firestore directly — enqueueText() only fails synchronously if the
+  // queue is full (shown as a SnackBar below, text left in the field so
+  // nothing typed is lost), and only clears/scrolls once that local,
+  // network-independent persistence has actually succeeded. The real send
+  // (and its retry/backoff on failure) happens in the background, reflected
+  // on the bubble itself via the same clock/error-icon status every other
+  // message type already gets — not blocked on here.
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty || _sending) return;
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final replyingTo = _replyingTo;
     setState(() => _sending = true);
-    _messageController.clear();
-    _cancelReply();
     try {
-      await ref
-          .read(firestoreServiceProvider)
-          .sendMessage(
+      final error = await ref
+          .read(pendingMessageQueueProvider.notifier)
+          .enqueueText(
             chatId: widget.chatId,
             senderId: currentUid,
             text: text,
@@ -1126,6 +1133,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 ? _replyVideoURL(replyingTo)
                 : null,
           );
+      if (error != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(error), backgroundColor: kRed),
+          );
+        }
+        return;
+      }
+      _messageController.clear();
+      _cancelReply();
       _scrollToBottom();
     } finally {
       if (mounted) setState(() => _sending = false);
