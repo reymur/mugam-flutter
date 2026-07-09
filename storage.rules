@@ -19,6 +19,17 @@ service firebase.storage {
           firestore.get(/databases/(default)/documents/chats/$(chatId)).data.members;
     }
 
+    // Single firestore.get() covering both membership and admin/creator
+    // status, mirroring firestore.rules' isAdminOrCreator() — used for
+    // group-avatar writes below, where both checks are needed together
+    // anyway, so one lookup replaces what would otherwise be two.
+    function isGroupAdmin(chatId) {
+      let chat = firestore.get(/databases/(default)/documents/chats/$(chatId)).data;
+      return isSignedIn() && request.auth.uid in chat.members &&
+        (request.auth.uid == chat.get('createdBy', null) ||
+          request.auth.uid in chat.get('admins', []));
+    }
+
     // Server-side enforcement of the Settings screen's "Maximum file size"
     // slider (users/{uid}.maxUploadSizeMb, validated to [100, 2048] by
     // firestore.rules) — rejects an oversized upload here, before the
@@ -68,23 +79,23 @@ service firebase.storage {
       allow read, write: if isChatMember(chatId);
     }
 
-    // groups/{chatId}/avatar.jpg — mugam-v2's group photo. Chat
-    // membership is required to read or write; mugam-v2 additionally
-    // gates the upload UI to admins client-side, which this rule doesn't
-    // re-enforce (would need the same isSafeMembershipChange-style admin
-    // check as firestore.rules — deferred since a non-admin member
-    // overwriting the group photo is a low-severity nuisance, not a data
-    // exposure, and mugam-flutter never touches this path at all).
+    // groups/{chatId}/avatar.jpg — mugam-v2's group photo. Any member can
+    // read; mugam-v2's UI only shows the upload button to admins, and this
+    // now re-enforces that server-side too, so a non-admin member can't
+    // bypass the UI restriction via a direct API call.
     match /groups/{chatId}/{allPaths=**} {
-      allow read, write: if isChatMember(chatId);
+      allow read: if isChatMember(chatId);
+      allow write: if isGroupAdmin(chatId);
     }
 
     // market_images/, videos/ — defined as constants in mugam-v2 but
-    // confirmed unused (its upload functions are dead stubs); left at
-    // today's signed-in-only behavior since nothing currently depends on
-    // a tighter rule and there's no confirmed owner field to key off.
+    // confirmed unused (its upload functions are dead stubs). Denied
+    // outright rather than left open: nothing currently depends on a
+    // rule here, so if a real feature needs one of these paths in the
+    // future, it'll surface as an explicit permission-denied error to
+    // fix, not a silent open surface today.
     match /{allPaths=**} {
-      allow read, write: if isSignedIn();
+      allow read, write: if false;
     }
   }
 }
