@@ -48,7 +48,14 @@ Future<bool> attemptSendPendingMessage(
   void Function(double progress)? onProgress,
 }) async {
   try {
-    if (!await File(item.filePath).exists()) {
+    // A prior attempt's upload can have already succeeded (item.uploadedUrl
+    // set) even though the local temp file is gone by now — iOS is free to
+    // purge app temp storage, and video's own compressed copy is deleted
+    // right after upload (see the `finally` block below). In that case the
+    // file is irrelevant: every branch below only reads it to perform the
+    // upload, which is skipped whenever uploadedUrl is already set. Only
+    // require the file to exist when the upload itself still needs to run.
+    if (item.uploadedUrl == null && !await File(item.filePath).exists()) {
       debugPrint('attemptSendPendingMessage: file missing for ${item.localId}');
       return false;
     }
