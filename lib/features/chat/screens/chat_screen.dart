@@ -1413,11 +1413,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
-  Future<void> _pickAndSendImage(ImageSource source) async {
-    final picked = await _picker.pickImage(source: source);
+  // Gallery attach-sheet entry point. Uses pickMedia() (photo AND video),
+  // not pickImage() — matches the picker CameraCaptureScreen's own gallery
+  // button already uses (_pickFromGallery there), so both routes into the
+  // system media library behave identically instead of this one silently
+  // hiding videos. See _isVideoPath below for the same extension-check
+  // pattern camera_capture_screen.dart uses to route the picked file.
+  Future<void> _pickAndSendFromGallery() async {
+    final picked = await _picker.pickMedia();
     if (picked == null) return;
     if (!mounted) return;
-    await _uploadAndSendImageFile(picked.path);
+    if (_isVideoPath(picked.path)) {
+      await _uploadAndSendVideoFile(picked.path);
+    } else {
+      await _uploadAndSendImageFile(picked.path);
+    }
+  }
+
+  bool _isVideoPath(String path) {
+    final lower = path.toLowerCase();
+    return lower.endsWith('.mp4') ||
+        lower.endsWith('.mov') ||
+        lower.endsWith('.m4v') ||
+        lower.endsWith('.avi');
   }
 
   // Reads the picked file's own pixel dimensions via a decode through
@@ -1773,7 +1791,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 label: 'Qalereya',
                 onTap: () {
                   Navigator.of(context).pop();
-                  _pickAndSendImage(ImageSource.gallery);
+                  _pickAndSendFromGallery();
                 },
               ),
               _AttachOption(
