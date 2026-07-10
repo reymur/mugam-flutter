@@ -7,6 +7,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
@@ -71,7 +72,13 @@ Future<void> _deactivateAudioSession() async {
   try {
     final session = await AudioSession.instance;
     await session.setActive(false);
-  } catch (_) {}
+  } catch (e, st) {
+    FirebaseCrashlytics.instance.recordError(
+      e,
+      st,
+      reason: 'chat_screen: _deactivateAudioSession failed',
+    );
+  }
 }
 
 // Paired with _deactivateAudioSession above — needed because that manual
@@ -88,7 +95,13 @@ Future<void> _activateAudioSession() async {
   try {
     final session = await AudioSession.instance;
     await session.setActive(true);
-  } catch (_) {}
+  } catch (e, st) {
+    FirebaseCrashlytics.instance.recordError(
+      e,
+      st,
+      reason: 'chat_screen: _activateAudioSession failed',
+    );
+  }
 }
 
 class _ChatScreenState extends ConsumerState<ChatScreen>
@@ -104,7 +117,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   final AudioRecorder _audioRecorder = AudioRecorder();
   bool _isRecording = false;
   bool _uploadingAudio = false;
+  // True from the moment a recording session starts until its underlying
+  // native recorder resource has fully settled — real start AND any
+  // pending stop/cancel are both done. _isRecording itself now flips
+  // instantly on release (see _stopAndSendRecording/_cancelRecording), so
+  // it no longer naturally serializes rapid re-taps the way the old
+  // fully-blocking flow did; this guards _startRecording against
+  // beginning a second session while a previous one's background
+  // teardown is still in flight — _audioRecorder is a single shared
+  // instance that can't run two sessions at once.
+  bool _recorderSessionBusy = false;
   String? _recordingPath;
+  // Set only once the native recorder has actually started (end of
+  // _reallyStartRecorder) — deliberately separate from _recordingStopwatch,
+  // which starts at tap-down and therefore also counts the artificial
+  // _recordStartBeepGuard delay before real capture begins. Using the
+  // stopwatch for the min-duration check below would count that guard
+  // delay as "recording time", making an instant tap-release measure as
+  // 550ms+ of elapsed time despite capturing ~0ms of real audio.
+  DateTime? _actualRecordingStartedAt;
   // Resolves once the native recorder has actually started — stop/cancel
   // must await this before calling _audioRecorder.stop(), since the real
   // start is deliberately deferred past the start-beep's length (see
@@ -202,8 +233,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         'assets/sounds/record_stop.wav',
       );
       debugPrint('🔊 Beep player initialized');
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('🔊 Beep init error: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'chat_screen: sound effect init failed',
+      );
     }
   }
 
@@ -1669,7 +1705,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // capture is deferred.
   static const Duration _recordStartBeepGuard = Duration(milliseconds: 550);
 
+  // Below this, a release is treated as an accidental tap rather than a
+  // deliberate voice message (WhatsApp-style) — see _stopAndSendRecording's
+  // early-discard branch. Compared against _actualRecordingStartedAt (real
+  // capture start), NOT physical tap-down — real capture only begins after
+  // _recordStartBeepGuard (550ms) plus AVAudioRecorder's own hardware
+  // startup, which on-device measured closer to ~850ms total (an earlier
+  // 300ms threshold — assuming a ~650-720ms offset — required a ~1.1-1.2s
+  // physical hold to send, confirming the real offset is larger than that
+  // initial estimate). 150ms of real content is recalibrated against the
+  // measured ~850ms offset: a genuine ~1s physical hold (1000ms - ~850ms
+  // ≈ 150ms of real content) just clears this, while a truly instant
+  // tap-release (~0ms real content, since release still happens well
+  // before _recorderStartFuture resolves) reliably doesn't.
+  static const Duration _minRecordingDuration = Duration(milliseconds: 150);
+
   Future<void> _startRecording() async {
+    // A previous session's background stop/cancel teardown (see
+    // _finishStoppingRecorder/_finishCancellingRecorder) hasn't settled
+    // yet — _audioRecorder can't run two sessions at once, so a rapid
+    // re-tap here is ignored rather than stomping on it.
+    if (_recorderSessionBusy) return;
+    _recorderSessionBusy = true;
     // Fires before anything else, including the permission check below —
     // a tactile response the instant the finger presses down reinforces
     // the immediate visual feedback, same idea as WhatsApp's own haptic tap
@@ -1678,6 +1735,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // hasPermission() also requests permission on first call on iOS
     final hasPermission = await _audioRecorder.hasPermission();
     if (!hasPermission) {
+      _recorderSessionBusy = false;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1696,6 +1754,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _pulseController.repeat(reverse: true);
     _recordingStopwatch.reset();
     _recordingStopwatch.start();
+    _actualRecordingStartedAt = null;
     _rawAmplitudes.clear();
     _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) {
@@ -1743,108 +1802,157 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ),
       path: _recordingPath!,
     );
+    _actualRecordingStartedAt = DateTime.now();
     _amplitudeSub = _audioRecorder
         .onAmplitudeChanged(const Duration(milliseconds: 100))
         .listen((amp) => _rawAmplitudes.add(amp.current));
   }
 
+  // Instant, synchronous UI response to release — matches WhatsApp/
+  // Telegram's touch-up feel. Everything that has to wait on the native
+  // recorder lifecycle (it may not have actually started yet — see
+  // _recordStartBeepGuard — and stopping it takes a moment too) runs as a
+  // background continuation (_finishStoppingRecorder) instead of gating
+  // this visual transition, which is what previously made the button
+  // appear to freeze for up to ~1s on a quick tap. _recorderSessionBusy
+  // (cleared at the end of that continuation) is what now protects against
+  // a rapid re-tap starting a second session before this one's teardown
+  // has actually finished — _isRecording flipping instantly here no longer
+  // does that job on its own.
   Future<void> _stopAndSendRecording() async {
     // Lighter than the start haptic — a distinct "released" feel, fired
     // before anything else for the same instant-response reason.
     unawaited(HapticFeedback.lightImpact());
+    if (!_isRecording) return;
     setState(() {
       _dragX = 0.0;
       _dragY = 0.0;
       _isLocked = false;
+      _isRecording = false;
+      _recordingDuration = '0:00';
     });
     _pulseController.stop();
     _pulseController.reset();
-    if (!_isRecording) return;
-    // The native recorder itself may not have actually started yet (see
-    // _recordStartBeepGuard) if this is a very quick tap — wait for that
-    // before asking it to stop.
-    await _recorderStartFuture;
     _recordingStopwatch.stop();
     _recordingTimer?.cancel();
-    await _amplitudeSub?.cancel();
-    setState(() => _recordingDuration = '0:00');
-    // Fired before awaiting stop() below, not after — the mic itself stops
-    // capturing the instant .stop() is called; the Future only resolves
-    // once the encoder finishes finalizing the file on disk, which can
-    // take a perceptible moment and would otherwise delay this sound well
-    // past the actual button release.
-    unawaited(NativeSoundEffect.play('record_stop'));
-    final path = await _audioRecorder.stop();
-    unawaited(_deactivateAudioSession());
-    if (mounted) {
-      setState(() {
-        _isRecording = false;
-        _uploadingAudio = true;
-      });
-    }
-    if (path == null) {
-      if (mounted) setState(() => _uploadingAudio = false);
-      return;
-    }
-    final waveform = _downsampleWaveform(_rawAmplitudes, 40);
-    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final replyingTo = _replyingTo;
-    _cancelReply();
-    // Hands the file to the offline-aware pending-send queue — see
-    // _uploadAndSendVideoFile for why this doesn't upload inline anymore.
-    final error = await ref
-        .read(pendingMessageQueueProvider.notifier)
-        .enqueue(
-          chatId: widget.chatId,
-          senderId: currentUid,
-          type: 'audio',
-          sourceFilePath: path,
-          waveform: waveform,
-          replyToId: replyingTo?.id,
-          replyToText: replyingTo != null
-              ? _replyPreviewText(replyingTo)
-              : null,
-          replyToSenderName: replyingTo != null
-              ? _replySenderName(replyingTo, currentUid)
-              : null,
-          replyToImageURL: replyingTo != null
-              ? _replyImageURL(replyingTo)
-              : null,
-          replyToVideoURL: replyingTo != null
-              ? _replyVideoURL(replyingTo)
-              : null,
-        );
-    if (mounted) setState(() => _uploadingAudio = false);
-    if (error != null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error), backgroundColor: kRed),
-        );
+    unawaited(_finishStoppingRecorder());
+  }
+
+  Future<void> _finishStoppingRecorder() async {
+    try {
+      // The native recorder itself may not have actually started yet (see
+      // _recordStartBeepGuard) if this was a very quick tap — wait for
+      // that before asking it to stop.
+      await _recorderStartFuture;
+      await _amplitudeSub?.cancel();
+      // Measured from when the native recorder actually started (set at
+      // the end of _reallyStartRecorder), NOT from _recordingStopwatch —
+      // that one starts at tap-down and would also count the artificial
+      // _recordStartBeepGuard delay as "recording time", making even a
+      // genuinely instant tap-release measure past the threshold below
+      // despite capturing ~0ms of real audio. A null start (recorder never
+      // actually began — e.g. !mounted/!_isRecording raced it in
+      // _reallyStartRecorder) counts as zero, correctly below threshold.
+      final startedAt = _actualRecordingStartedAt;
+      final actualRecordedDuration = startedAt == null
+          ? Duration.zero
+          : DateTime.now().difference(startedAt);
+      if (actualRecordedDuration < _minRecordingDuration) {
+        // Accidental tap-and-release — discard instead of sending a near-
+        // zero-length clip. No stop chime, no message, and no upload
+        // spinner (unlike the normal path below) — the release haptic and
+        // the instant UI reset in _stopAndSendRecording already fired, so
+        // this doesn't read as unresponsive, same "nothing happened" feel
+        // as any other cancelled gesture.
+        await _audioRecorder.stop();
+        unawaited(_deactivateAudioSession());
+        return;
       }
-    } else {
-      _scrollToBottom();
+      // Fired before awaiting stop() below, not after — the mic itself
+      // stops capturing the instant .stop() is called; the Future only
+      // resolves once the encoder finishes finalizing the file on disk,
+      // which can take a perceptible moment and would otherwise delay
+      // this sound well past the actual button release.
+      unawaited(NativeSoundEffect.play('record_stop'));
+      final path = await _audioRecorder.stop();
+      unawaited(_deactivateAudioSession());
+      if (mounted) setState(() => _uploadingAudio = true);
+      if (path == null) {
+        if (mounted) setState(() => _uploadingAudio = false);
+        return;
+      }
+      final waveform = _downsampleWaveform(_rawAmplitudes, 40);
+      final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      final replyingTo = _replyingTo;
+      if (mounted) _cancelReply();
+      // Hands the file to the offline-aware pending-send queue — see
+      // _uploadAndSendVideoFile for why this doesn't upload inline anymore.
+      final error = await ref
+          .read(pendingMessageQueueProvider.notifier)
+          .enqueue(
+            chatId: widget.chatId,
+            senderId: currentUid,
+            type: 'audio',
+            sourceFilePath: path,
+            waveform: waveform,
+            replyToId: replyingTo?.id,
+            replyToText: replyingTo != null
+                ? _replyPreviewText(replyingTo)
+                : null,
+            replyToSenderName: replyingTo != null
+                ? _replySenderName(replyingTo, currentUid)
+                : null,
+            replyToImageURL: replyingTo != null
+                ? _replyImageURL(replyingTo)
+                : null,
+            replyToVideoURL: replyingTo != null
+                ? _replyVideoURL(replyingTo)
+                : null,
+          );
+      if (mounted) setState(() => _uploadingAudio = false);
+      if (error != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(error), backgroundColor: kRed),
+          );
+        }
+      } else {
+        _scrollToBottom();
+      }
+    } finally {
+      _recorderSessionBusy = false;
     }
   }
 
+  // Same instant-UI/background-continuation split as _stopAndSendRecording
+  // above, for the swipe-to-cancel gesture — it has the exact same
+  // native-recorder-lifecycle wait, so it froze the same way before this.
   Future<void> _cancelRecording() async {
-    // Same guard as _stopAndSendRecording — see _recordStartBeepGuard.
-    await _recorderStartFuture;
-    _recordingStopwatch.stop();
-    _recordingTimer?.cancel();
-    await _amplitudeSub?.cancel();
-    await _audioRecorder.stop();
-    unawaited(_deactivateAudioSession());
-    if (mounted) {
-      setState(() {
-        _isRecording = false;
-        _isLocked = false;
-        _dragX = 0.0;
-        _dragY = 0.0;
-        _recordingDuration = '0:00';
-      });
-    }
+    if (!_isRecording) return;
+    setState(() {
+      _isRecording = false;
+      _isLocked = false;
+      _dragX = 0.0;
+      _dragY = 0.0;
+      _recordingDuration = '0:00';
+    });
     _pulseController.stop();
     _pulseController.reset();
+    _recordingStopwatch.stop();
+    _recordingTimer?.cancel();
+    unawaited(_finishCancellingRecorder());
+  }
+
+  Future<void> _finishCancellingRecorder() async {
+    try {
+      // Same guard as _finishStoppingRecorder — see _recordStartBeepGuard.
+      await _recorderStartFuture;
+      await _amplitudeSub?.cancel();
+      await _audioRecorder.stop();
+      unawaited(_deactivateAudioSession());
+    } finally {
+      _recorderSessionBusy = false;
+    }
   }
 
 

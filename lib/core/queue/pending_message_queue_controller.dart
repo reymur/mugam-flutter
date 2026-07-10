@@ -3,10 +3,12 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../firebase/firestore_service.dart';
+import '../native_sound_effect.dart';
 import 'background_queue_processor.dart';
 import 'pending_media_message.dart';
 import 'pending_message_queue_service.dart';
@@ -72,6 +74,14 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
         wait.cancel();
       }
     });
+    // Loaded once here rather than per-chat-screen (chat_screen.dart's own
+    // _initBeepPlayer) — this controller is eagerly instantiated app-wide at
+    // startup (see main.dart), so a background/reconnect send that
+    // completes while the user isn't even on a chat screen still has the
+    // sound ready to play.
+    unawaited(
+      NativeSoundEffect.load('success_send', 'assets/sounds/success_send.wav'),
+    );
     // An item stuck 'uploading' means the app died mid-attempt last run —
     // we can't know if that upload actually landed, so treat it as
     // 'queued' again; the idempotent messageId makes re-attempting safe
@@ -225,6 +235,7 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
     _updateItem(item.copyWith(status: 'uploading'));
     final (success, uploadedUrl) = await _attemptSend(item);
     if (success) {
+      unawaited(NativeSoundEffect.play('success_send'));
       await _removeInternal(localId);
     } else {
       _updateItem(
@@ -262,7 +273,13 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
     if (activeTask != null) {
       try {
         await activeTask.cancel();
-      } catch (_) {}
+      } catch (e, st) {
+        FirebaseCrashlytics.instance.recordError(
+          e,
+          st,
+          reason: 'PendingMessageQueueController: activeTask.cancel() failed',
+        );
+      }
     }
     state = state.where((e) => e.localId != localId).toList();
     await _service.saveAll(state);
@@ -292,6 +309,7 @@ class PendingMessageQueueController extends Notifier<List<PendingMediaMessage>> 
         _updateItem(next.copyWith(status: 'uploading'));
         final (success, uploadedUrl) = await _attemptSend(next);
         if (success) {
+          unawaited(NativeSoundEffect.play('success_send'));
           await _removeInternal(next.localId);
           continue;
         }
