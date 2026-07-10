@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -35,8 +36,13 @@ class MessageCacheService {
       return decoded
           .map((e) => _messageFromCacheJson(e as Map<String, dynamic>))
           .toList();
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('MessageCacheService: corrupted cache for $chatId, clearing ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'MessageCacheService: corrupted cache for $chatId',
+      );
       _tryRemove(_keyPrefix + chatId);
       _removeFromIndex(chatId);
       return null;
@@ -87,8 +93,13 @@ class MessageCacheService {
       final encoded = jsonEncode(trimmed.map(_messageToCacheJson).toList());
       _prefs.setString(_keyPrefix + chatId, encoded);
       _touchIndex(chatId);
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('MessageCacheService: failed to write cache for $chatId ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'MessageCacheService: failed to write cache for $chatId',
+      );
     }
   }
 
@@ -97,8 +108,13 @@ class MessageCacheService {
     if (raw == null) return {};
     try {
       return Map<String, int>.from(jsonDecode(raw) as Map);
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('MessageCacheService: corrupted cache index, clearing ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'MessageCacheService: corrupted cache index',
+      );
       _tryRemove(_indexKey);
       return {};
     }
@@ -116,8 +132,13 @@ class MessageCacheService {
     }
     try {
       _prefs.setString(_indexKey, jsonEncode(index));
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('MessageCacheService: failed to write cache index ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'MessageCacheService: failed to write cache index',
+      );
     }
   }
 
@@ -126,8 +147,13 @@ class MessageCacheService {
     if (index.remove(chatId) != null) {
       try {
         await _prefs.setString(_indexKey, jsonEncode(index));
-      } catch (e) {
+      } catch (e, st) {
         debugPrint('MessageCacheService: failed to update cache index ($e)');
+        FirebaseCrashlytics.instance.recordError(
+          e,
+          st,
+          reason: 'MessageCacheService: failed to update cache index',
+        );
       }
     }
   }
@@ -135,8 +161,13 @@ class MessageCacheService {
   String? _tryRead(String key) {
     try {
       return _prefs.getString(key);
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('MessageCacheService: failed to read "$key" ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'MessageCacheService: failed to read "$key"',
+      );
       return null;
     }
   }
@@ -144,8 +175,13 @@ class MessageCacheService {
   Future<void> _tryRemove(String key) async {
     try {
       await _prefs.remove(key);
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('MessageCacheService: failed to remove "$key" ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'MessageCacheService: failed to remove "$key"',
+      );
     }
   }
 

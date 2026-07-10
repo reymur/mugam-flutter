@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
 // Mirrors mugam-v2's users/{uid}/pushTokens/{deviceId} = {token, updatedAt}
@@ -74,7 +75,13 @@ class PushNotificationService {
           .collection('pushTokens')
           .doc(deviceId)
           .delete();
-    } catch (_) {}
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'PushNotificationService: unregisterToken failed',
+      );
+    }
     _registeredUid = null;
   }
 

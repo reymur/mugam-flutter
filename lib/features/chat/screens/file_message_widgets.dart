@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
@@ -164,7 +165,13 @@ class _FileMessageBubbleState extends State<FileMessageBubble> {
       if (await File(path).exists()) {
         if (mounted) setState(() => _readyPath = path);
       }
-    } catch (_) {}
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FileMessageBubble: _checkCache failed',
+      );
+    }
   }
 
   Future<void> _open(String path) async {

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide User;
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -2166,7 +2167,13 @@ class _EventFormModalState extends State<_EventFormModal> {
     } else if (dialogResult == 'new') {
       try {
         setState(() => _blockedTime = DateTime.parse(conflict.date));
-      } catch (_) {}
+      } catch (e, st) {
+        FirebaseCrashlytics.instance.recordError(
+          e,
+          st,
+          reason: 'agreements_screen: DateTime.parse(conflict.date) failed',
+        );
+      }
     } else if (dialogResult == 'view') {
       final isOwn = conflict.ownerUid == widget.currentUid;
       final categoryTitle = isOwn ? 'Şəxsi tədbir' : 'Dəvətli tədbir';
@@ -2265,12 +2272,17 @@ class _EventFormModalState extends State<_EventFormModal> {
       }
       widget.onSaved();
       if (mounted) Navigator.of(context).pop();
-    } catch (e) {
+    } catch (e, st) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Xəta: $e'), backgroundColor: kRed),
         );
       }
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'agreements_screen: save agreement failed',
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }

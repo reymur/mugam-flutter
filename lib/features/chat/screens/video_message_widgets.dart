@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:video_player/video_player.dart';
@@ -65,7 +66,13 @@ Future<void> _deactivateAudioSession() async {
   try {
     final session = await AudioSession.instance;
     await session.setActive(false);
-  } catch (_) {}
+  } catch (e, st) {
+    FirebaseCrashlytics.instance.recordError(
+      e,
+      st,
+      reason: 'video_message_widgets: _deactivateAudioSession failed',
+    );
+  }
 }
 
 // Separate from the DefaultCacheManager used for images — videos are much
@@ -763,8 +770,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       if (_disposed) return;
       setState(() => _initialized = true);
       controller.play();
-    } catch (e) {
+    } catch (e, st) {
       if (!_disposed) setState(() => _error = 'Video açıla bilmədi: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'VideoPlayerScreen: controller.initialize() failed',
+      );
     }
   }
 

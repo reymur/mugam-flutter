@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,8 +29,13 @@ class PendingMessageQueueService {
       return decoded
           .map((e) => PendingMediaMessage.fromJson(e as Map<String, dynamic>))
           .toList();
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('PendingMessageQueueService: corrupted queue, clearing ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'PendingMessageQueueService: corrupted queue',
+      );
       _tryRemove();
       return [];
     }
@@ -41,8 +47,13 @@ class PendingMessageQueueService {
         _queueKey,
         jsonEncode(items.map((e) => e.toJson()).toList()),
       );
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('PendingMessageQueueService: failed to save queue ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'PendingMessageQueueService: failed to save queue',
+      );
     }
   }
 
@@ -72,16 +83,26 @@ class PendingMessageQueueService {
       if (await file.exists()) {
         await file.delete();
       }
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('PendingMessageQueueService: failed to delete "$path" ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'PendingMessageQueueService: failed to delete "$path"',
+      );
     }
   }
 
   String? _tryRead() {
     try {
       return _prefs.getString(_queueKey);
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('PendingMessageQueueService: failed to read queue ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'PendingMessageQueueService: failed to read queue',
+      );
       return null;
     }
   }
@@ -89,8 +110,13 @@ class PendingMessageQueueService {
   Future<void> _tryRemove() async {
     try {
       await _prefs.remove(_queueKey);
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('PendingMessageQueueService: failed to remove queue key ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'PendingMessageQueueService: failed to remove queue key',
+      );
     }
   }
 }

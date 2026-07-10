@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -342,8 +343,13 @@ Future<bool> attemptSendPendingMessage(
       default:
         return false;
     }
-  } catch (e) {
+  } catch (e, st) {
     debugPrint('attemptSendPendingMessage: failed for ${item.localId} ($e)');
+    FirebaseCrashlytics.instance.recordError(
+      e,
+      st,
+      reason: 'attemptSendPendingMessage: failed for ${item.localId} (type=${item.type})',
+    );
     return false;
   }
 }

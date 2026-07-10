@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:camera/camera.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
@@ -111,8 +112,13 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
       );
       if (_cameraIndex == -1) _cameraIndex = 0;
       await _startController(_cameras[_cameraIndex]);
-    } catch (e) {
+    } catch (e, st) {
       if (mounted) setState(() => _error = 'Kamera açıla bilmədi: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'CameraCaptureScreen: camera init failed',
+      );
     }
   }
 
@@ -161,7 +167,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
       // deviceOrientation change) caused every photo to freeze at
       // whichever orientation was captured first, regardless of how the
       // phone was actually being held for later shots.
-    } catch (e) {
+    } catch (e, st) {
       await controller.dispose();
       if (mounted) {
         setState(() {
@@ -169,6 +175,11 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
           _initializing = false;
         });
       }
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'CameraCaptureScreen: _startController failed',
+      );
     }
   }
 
@@ -245,8 +256,13 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
           '${dir.path}/oriented_${DateTime.now().millisecondsSinceEpoch}.jpg';
       await File(outPath).writeAsBytes(img.encodeJpg(baked, quality: 90));
       return outPath;
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('📸 Orientation bake failed, using original file: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'CameraCaptureScreen: _normalizeImageOrientation failed',
+      );
       return path;
     }
   }
@@ -295,9 +311,14 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
           context,
         ).pop(CapturedMedia(path: orientedPath, isVideo: false));
       }
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('📸 Photo capture error: $e');
       if (mounted) setState(() => _processingPhoto = false);
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'CameraCaptureScreen: _takePhoto failed',
+      );
     }
   }
 
@@ -322,8 +343,13 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
           );
         }
       });
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('🎥 Start recording error: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'CameraCaptureScreen: _startVideoRecording failed',
+      );
     }
   }
 
@@ -353,7 +379,7 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
           context,
         ).pop(CapturedMedia(path: file.path, isVideo: true));
       }
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('🎥 Stop recording error: $e');
       if (mounted) {
         setState(() {
@@ -361,6 +387,11 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
           _resetRecordingIndicators();
         });
       }
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'CameraCaptureScreen: _stopVideoRecording failed',
+      );
     }
   }
 
@@ -424,8 +455,13 @@ class _CameraCaptureScreenState extends State<CameraCaptureScreen>
           context,
         ).pop(CapturedMedia(path: picked.path, isVideo: isVideo));
       }
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('Gallery pick error: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'CameraCaptureScreen: _pickFromGallery failed',
+      );
     }
   }
 

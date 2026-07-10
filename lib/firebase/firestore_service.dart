@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'models.dart';
@@ -914,7 +915,13 @@ class FirestoreService {
       await _db.collection('chats').doc(chatId).update({
         'deliveredTo.$uid': DateTime.now().toIso8601String(),
       });
-    } catch (_) {}
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: markChatAsDelivered failed',
+      );
+    }
   }
 
   // Tracks who's currently viewing a chat so the push-notification Cloud
@@ -929,7 +936,13 @@ class FirestoreService {
       await _db.collection('chats').doc(chatId).update({
         'activeUsers': FieldValue.arrayUnion([uid]),
       });
-    } catch (_) {}
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: addActiveUser failed',
+      );
+    }
   }
 
   Future<void> removeActiveUser({
@@ -940,7 +953,13 @@ class FirestoreService {
       await _db.collection('chats').doc(chatId).update({
         'activeUsers': FieldValue.arrayRemove([uid]),
       });
-    } catch (_) {}
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: removeActiveUser failed',
+      );
+    }
   }
 
   // Logout cleanup, mirroring mugam-v2's pre-signOut steps: mark the user
@@ -950,7 +969,13 @@ class FirestoreService {
   Future<void> setUserOnline(String uid, bool online) async {
     try {
       await _db.collection('users').doc(uid).update({'online': online});
-    } catch (_) {}
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: setUserOnline failed',
+      );
+    }
   }
 
   Future<void> clearActiveUserFromAllChats(String uid) async {
@@ -964,7 +989,13 @@ class FirestoreService {
           'activeUsers': FieldValue.arrayRemove([uid]),
         });
       }
-    } catch (_) {}
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: clearActiveUserFromAllChats failed',
+      );
+    }
   }
 
   Future<void> markChatAsReadBy({
@@ -978,7 +1009,13 @@ class FirestoreService {
         'lastReadAt.$uid': DateTime.now().toIso8601String(),
         'lastReadMsgId.$uid': lastMsgId,
       });
-    } catch (_) {}
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: markChatAsReadBy failed',
+      );
+    }
   }
 
   Future<List<Event>> fetchEvents() async {

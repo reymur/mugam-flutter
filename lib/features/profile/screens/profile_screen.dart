@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart' hide User;
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -330,7 +331,7 @@ class _SettingsTab extends ConsumerWidget {
       await ref.read(messageCacheServiceProvider).clearAll();
       await AuthService().logout();
       if (context.mounted) context.go('/login');
-    } catch (e) {
+    } catch (e, st) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -339,6 +340,11 @@ class _SettingsTab extends ConsumerWidget {
           ),
         );
       }
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'ProfileScreen: sign out failed',
+      );
     }
   }
 }

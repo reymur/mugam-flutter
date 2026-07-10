@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:firebase_auth/firebase_auth.dart' hide User;
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -116,8 +117,13 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         _nameController.text.trim(),
       );
       if (mounted) Navigator.of(context).pop();
-    } catch (e) {
+    } catch (e, st) {
       if (mounted) setState(() => _errorMessage = 'Yadda saxlanmadı: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'EditProfileScreen: save profile failed',
+      );
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
