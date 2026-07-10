@@ -8,6 +8,12 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'models.dart';
 
+// Live-tail window size for watchMessages (finding #4) — how many of the
+// most recent messages stay covered by the always-on live listener. Older
+// history is paginated in separately (see ChatMessagesController) rather
+// than this growing per chat's total history size.
+const int messageTailWindowSize = 50;
+
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
@@ -105,6 +111,33 @@ class FirestoreService {
         );
   }
 
+  // One-off lookup for a single message by id, regardless of whether it's
+  // within the currently-loaded window (finding #4) — used by
+  // message_info_screen.dart to resolve the read/delivered comparison by
+  // timestamp instead of by position in a (now possibly-partial) messages
+  // list, since a paginated list has no stable notion of "index" for a
+  // message outside whatever's currently loaded.
+  Future<Message?> fetchMessageById({
+    required String chatId,
+    required String messageId,
+  }) async {
+    final doc = await _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .doc(messageId)
+        .get();
+    if (!doc.exists) return null;
+    return Message.fromFirestore(doc.id, doc.data()!);
+  }
+
+  // Live tail window only (finding #4) — the most recent
+  // messageTailWindowSize messages, not the entire history. Older messages
+  // are loaded on demand via fetchOlderMessages/watchOlderMessagesInRange
+  // (see ChatMessagesController), which also keeps them live once loaded
+  // rather than trading real-time reactions/read-receipts away for the
+  // memory/read-cost savings this limit exists for.
+  //
   // isFirst lives in this closure, so it's scoped to one subscription's
   // lifetime — a fresh chat-screen mount (new subscription via autoDispose)
   // correctly gets its own "first snapshot" again, rather than this being
@@ -116,6 +149,7 @@ class FirestoreService {
         .doc(chatId)
         .collection('messages')
         .orderBy('timestamp', descending: false)
+        .limitToLast(messageTailWindowSize)
         .snapshots()
         .map((snap) {
           final messages = snap.docs
@@ -139,6 +173,58 @@ class FirestoreService {
           isFirst = false;
           return result;
         });
+  }
+
+  // One-time fetch of the page immediately older than beforeTimestamp —
+  // triggered by scrolling near the top of the loaded history. Not a live
+  // listener itself; ChatMessagesController separately widens
+  // watchOlderMessagesInRange's upper bound to cover whatever this returns,
+  // so the newly-loaded page still gets live reaction/read-receipt updates
+  // going forward.
+  Future<List<Message>> fetchOlderMessages({
+    required String chatId,
+    required Timestamp beforeTimestamp,
+    int limit = messageTailWindowSize,
+  }) async {
+    final snap = await _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .orderBy('timestamp', descending: false)
+        .endBefore([beforeTimestamp])
+        .limitToLast(limit)
+        .get();
+    return snap.docs
+        .map((doc) => Message.fromFirestore(doc.id, doc.data()))
+        .toList();
+  }
+
+  // Live listener scoped to [fromTimestamp, toTimestamp) — everything
+  // paginated in via fetchOlderMessages so far, up to (but deliberately not
+  // overlapping) the live tail window's own oldest message. Kept as its own
+  // listener rather than folding into watchMessages' unbounded query so the
+  // tail stays fixed at messageTailWindowSize regardless of how much
+  // history has been paginated in during this session — ChatMessagesController
+  // is what recreates this with a wider toTimestamp as the tail's own oldest
+  // message shifts forward over time.
+  Stream<List<Message>> watchOlderMessagesInRange({
+    required String chatId,
+    required Timestamp fromTimestamp,
+    required Timestamp toTimestamp,
+  }) {
+    return _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .orderBy('timestamp', descending: false)
+        .startAt([fromTimestamp])
+        .endBefore([toTimestamp])
+        .snapshots()
+        .map(
+          (snap) => snap.docs
+              .map((doc) => Message.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
   }
 
   Map<String, dynamic>? _buildReplyTo({
@@ -895,6 +981,27 @@ class FirestoreService {
     return doc.data();
   }
 
+  // A real aggregate count, not derived from ChatMessagesController's
+  // (now paginated, finding #4) messages list — that list only reflects
+  // whatever's currently loaded, so counting within it would silently
+  // undercount for any chat with more history than the live tail window.
+  // Firestore's .count() reads only the count, not the matching documents,
+  // so this stays cheap regardless of how many images/videos/etc. a chat
+  // actually has.
+  Future<int> countMessagesByType({
+    required String chatId,
+    required String type,
+  }) async {
+    final snap = await _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .where('type', isEqualTo: type)
+        .count()
+        .get();
+    return snap.count ?? 0;
+  }
+
   Stream<Map<String, dynamic>> watchChatMeta(String chatId) {
     return _db.collection('chats').doc(chatId).snapshots().map((snap) {
       final data = snap.data() ?? {};
@@ -1154,6 +1261,18 @@ final currentUserProvider = StreamProvider.family<User?, String>((
   return ref.watch(firestoreServiceProvider).watchUserById(uid);
 });
 
+// One-off lookup, used only as a fallback when a message referenced by id
+// (e.g. lastReadMsgId in message_info_screen.dart) isn't already present in
+// ChatMessagesController's currently-loaded window (finding #4) — so this
+// is expected to almost always hit cheaply for recent chats and only
+// actually fetch for messages well back in a long history.
+final messageByIdProvider = FutureProvider.autoDispose
+    .family<Message?, ({String chatId, String messageId})>((ref, args) {
+      return ref
+          .watch(firestoreServiceProvider)
+          .fetchMessageById(chatId: args.chatId, messageId: args.messageId);
+    });
+
 final eventsProvider = FutureProvider<List<Event>>(
   (ref) => ref.watch(firestoreServiceProvider).fetchEvents(),
 );
@@ -1178,16 +1297,11 @@ final chatsProvider = StreamProvider.family<List<Chat>, String>((ref, uid) {
   return ref.watch(firestoreServiceProvider).watchChats(uid);
 });
 
-final messagesProvider =
-    StreamProvider.autoDispose.family<MessagesSnapshot, String>((ref, chatId) {
-      return ref.watch(firestoreServiceProvider).watchMessages(chatId);
-    });
-
-// autoDispose, same as messagesProvider above — both are only ever watched
-// via widget.chatId within chat_screen.dart's own lifetime (plus
-// message_info_screen.dart reading the same two), so tearing down on exit
-// and re-fetching/re-subscribing on re-entry is the same already-proven
-// pattern messagesProvider uses for this exact screen, not a new one.
+// autoDispose — only ever watched via widget.chatId within chat_screen.dart's
+// own lifetime (plus message_info_screen.dart reading the same two), so
+// tearing down on exit and re-fetching/re-subscribing on re-entry is the
+// same already-proven pattern chatMessagesControllerProvider's own tail
+// listener uses for this exact screen, not a new one.
 final chatDataProvider =
     FutureProvider.autoDispose.family<Map<String, dynamic>?, String>((
       ref,
@@ -1202,6 +1316,13 @@ final chatMetaProvider =
       chatId,
     ) {
       return ref.watch(firestoreServiceProvider).watchChatMeta(chatId);
+    });
+
+final chatMediaCountProvider = FutureProvider.autoDispose
+    .family<int, ({String chatId, String type})>((ref, args) {
+      return ref
+          .watch(firestoreServiceProvider)
+          .countMessagesByType(chatId: args.chatId, type: args.type);
     });
 
 final starredMessagesProvider =

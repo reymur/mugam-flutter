@@ -23,10 +23,12 @@ import 'package:just_audio/just_audio.dart';
 import 'package:pasteboard/pasteboard.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../../core/cache/message_cache_service.dart';
 import '../../../core/media/image_compressor.dart';
 import '../../../core/native_sound_effect.dart';
+import '../../../core/chat/chat_messages_controller.dart';
 import '../../../core/queue/pending_message_queue_controller.dart';
 import '../../../core/settings/image_quality_settings.dart';
 import '../../../core/settings/upload_limit_settings.dart';
@@ -109,7 +111,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _messageFocusNode = FocusNode();
   bool _composerHadFocusBeforeMenu = false;
-  final ScrollController _scrollController = ScrollController();
+  final ItemScrollController _itemScrollController = ItemScrollController();
+  final ItemPositionsListener _itemPositionsListener =
+      ItemPositionsListener.create();
   bool _sending = false;
   bool _uploadingImage = false;
   bool _uploadingVideo = false;
@@ -164,7 +168,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
   Message? _replyingTo;
-  final Map<String, GlobalKey> _messageKeys = {};
   String? _highlightedMessageId;
   Timer? _highlightTimer;
   List<Message> _lastMessages = [];
@@ -204,6 +207,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
       }
     });
+    _itemPositionsListener.itemPositions.addListener(_maybeLoadOlderMessages);
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -258,7 +262,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
     _messageController.dispose();
     _messageFocusNode.dispose();
-    _scrollController.dispose();
+    _itemPositionsListener.itemPositions.removeListener(
+      _maybeLoadOlderMessages,
+    );
     _audioRecorder.dispose();
     _recordingTimer?.cancel();
     _amplitudeSub?.cancel();
@@ -847,35 +853,54 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
-  // The message list is a reverse: true ListView with the newest message at
-  // index 0 (see combinedMessages below) — "the bottom of the chat" is
-  // therefore always pixels == 0, a fixed target that doesn't depend on the
-  // full content height being measured yet. This is what makes both this
-  // and _jumpToBottom/_isNearBottom correct even before layout has finished
-  // settling (unlike the old ascending-list + maxScrollExtent approach).
+  // The message list is a reverse: true ScrollablePositionedList with the
+  // newest message at index 0 (see combinedMessages below) — "the bottom of
+  // the chat" is therefore always index 0, a fixed target that doesn't
+  // depend on pixel offsets or the full content height being measured yet.
   void _scrollToBottom() {
-    if (_scrollController.hasClients) {
-      _scrollController.animateTo(
-        0,
+    if (_itemScrollController.isAttached) {
+      _itemScrollController.scrollTo(
+        index: 0,
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
     }
   }
 
-  // Not laid out yet counts as "at the bottom" — this only gates whether an
-  // incoming message should pull the view down, and a not-yet-attached
-  // controller means nothing's been scrolled away from the bottom yet.
-  bool _isNearBottom({double threshold = 150}) {
-    if (!_scrollController.hasClients) return true;
-    return _scrollController.position.pixels <= threshold;
+  // Not laid out yet (no positions published) counts as "at the bottom" —
+  // this only gates whether an incoming message should pull the view down,
+  // and nothing published yet means nothing's been scrolled away from the
+  // bottom yet.
+  bool _isNearBottom() {
+    final positions = _itemPositionsListener.itemPositions.value;
+    if (positions.isEmpty) return true;
+    return positions.any((p) => p.index == 0);
+  }
+
+  // Index-based threshold rather than a pixel one — deliberately, since a
+  // pixel-distance threshold silently assumes uniform message height, which
+  // this chat's mixed text/photo/video/voice/file bubbles violate badly
+  // enough to be the root cause of a separate scroll-precision bug (see
+  // _scrollToIndexExact). ChatMessagesController.loadOlderMessages itself
+  // no-ops if a load is already in flight or a previous page already
+  // confirmed there's nothing older, so this can fire on every position
+  // update near the threshold without needing its own additional guard.
+  void _maybeLoadOlderMessages({int threshold = 8}) {
+    final positions = _itemPositionsListener.itemPositions.value;
+    if (positions.isEmpty || _lastMessages.isEmpty) return;
+    final maxIndex = positions.map((p) => p.index).reduce((a, b) => a > b ? a : b);
+    if (maxIndex >= _lastMessages.length - 1 - threshold) {
+      ref
+          .read(chatMessagesControllerProvider(widget.chatId).notifier)
+          .loadOlderMessages();
+    }
   }
 
   // Chats should open already at the bottom, no visible scrolling — unlike
   // the animated _scrollToBottom used for new incoming/outgoing messages.
   void _jumpToBottom() {
-    if (_scrollController.hasClients) {
-      _scrollController.jumpTo(0);
+    if (_itemScrollController.isAttached) {
+      _itemScrollController.jumpTo(index: 0);
     }
   }
 
@@ -1085,44 +1110,133 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     setState(() => _replyingTo = null);
   }
 
-  void _scrollToMessage(String messageId) {
+  // A reply-preview tap can target a message from well before the
+  // currently-loaded window (finding #4's pagination) — not just something
+  // already off the visible screen. Loads older pages one at a time until
+  // the target turns up or ChatMessagesController confirms there's nothing
+  // further back, rather than the old silent no-op (harmless before
+  // pagination existed, since everything was always loaded).
+  //
+  // Capped and explicitly yielded: an unbounded, un-yielded version of this
+  // loop caused a real on-device freeze (confirmed ANR) once history got
+  // deep enough — each iteration's Firestore round trip plus the resulting
+  // full-list state merge/rebuild ran back-to-back on the main isolate with
+  // nothing forcing a frame in between. _maxOlderPagesToSearch bounds total
+  // work; the delay after each page hands control back to the frame
+  // scheduler regardless of how fast that page resolved (e.g. from local
+  // cache, near-instantly).
+  static const int _maxOlderPagesToSearch = 20;
+
+  Future<void> _scrollToMessage(String messageId) async {
+    final provider = chatMessagesControllerProvider(widget.chatId);
+    // Checked against the controller's own state (synchronously current
+    // the instant loadOlderMessages resolves) rather than _lastMessages,
+    // which only updates once this widget actually rebuilds in reaction to
+    // that state change — not guaranteed to have happened yet in the same
+    // continuation right after the await below.
+    var found = ref
+        .read(provider)
+        .messages
+        .any((m) => m.id == messageId);
+    if (!found) {
+      final controller = ref.read(provider.notifier);
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2, color: kGold),
+              ),
+              SizedBox(width: 12),
+              Text('Mesaj axtarılır...'),
+            ],
+          ),
+          backgroundColor: kBg2,
+          duration: Duration(seconds: 30),
+        ),
+      );
+      var pagesLoaded = 0;
+      while (!found) {
+        if (!ref.read(provider).hasMoreOlder ||
+            pagesLoaded >= _maxOlderPagesToSearch) {
+          messenger.hideCurrentSnackBar();
+          if (mounted) {
+            messenger.showSnackBar(
+              const SnackBar(
+                content: Text('Mesaj tapılmadı'),
+                backgroundColor: kRed,
+              ),
+            );
+          }
+          return;
+        }
+        await controller.loadOlderMessages();
+        pagesLoaded++;
+        // Explicit yield: guarantees the frame scheduler gets a turn between
+        // pages even when loadOlderMessages() resolves near-instantly (e.g.
+        // served from Firestore's local persistence cache), rather than
+        // relying on that await alone to have been enough.
+        await Future<void>.delayed(Duration.zero);
+        if (!mounted) return;
+        found = ref.read(provider).messages.any((m) => m.id == messageId);
+      }
+      messenger.hideCurrentSnackBar();
+      // Let this widget's own build() actually run against the now-updated
+      // controller state before reading _lastMessages below — otherwise it
+      // can still reflect the pre-load message list for one frame.
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+    }
     final index = _lastMessages.indexWhere((m) => m.id == messageId);
     if (index == -1) return;
-    final ctx = _messageKeys[messageId]?.currentContext;
-    if (ctx != null) {
-      _doScrollAndHighlight(ctx, messageId);
+    await _scrollToIndexExact(index);
+    if (!mounted) return;
+    _flashHighlight(messageId);
+  }
+
+  // ScrollablePositionedList's scrollTo() takes a long-distance "teleport"
+  // path if called before itemPositions have been published for the
+  // current layout — confirmed via stream_chat_flutter's own changelog fix
+  // for this exact package (their fix lives in their own fork, not
+  // upstream on pub.dev, so 0.3.8 here still has the bug). Most relevant
+  // right after the list first mounts (see _hasJumpedToBottomInitially),
+  // so wait for the first published position before calling scrollTo —
+  // matching their fix — rather than only guarding the mount path
+  // specifically.
+  // scrollTo()'s duration-based animation needs to build/measure a lot of
+  // not-yet-built content to pace itself through the jump — for this
+  // chat's media-heavy bubbles (photo/video/voice/file bubbles are all far
+  // costlier to build than plain text) that synchronous work froze the UI
+  // on-device for long jumps (a reply-jump landing far from wherever the
+  // user had already scrolled to). jumpTo() reconfigures instantly instead
+  // of animating through the range, so it stays cheap regardless of
+  // distance — used whenever the jump is far enough that scrollTo's
+  // animation wouldn't read as a smooth scroll anyway.
+  static const int _longJumpThreshold = 30;
+
+  Future<void> _scrollToIndexExact(int index) async {
+    if (_itemPositionsListener.itemPositions.value.isEmpty) {
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+    }
+    if (!_itemScrollController.isAttached) return;
+    final positions = _itemPositionsListener.itemPositions.value;
+    final currentIndex = positions.isEmpty
+        ? 0
+        : positions.map((p) => p.index).reduce((a, b) => a < b ? a : b);
+    if ((index - currentIndex).abs() > _longJumpThreshold) {
+      _itemScrollController.jumpTo(index: index, alignment: 0.5);
       return;
     }
-    if (!_scrollController.hasClients) return;
-    final estimate =
-        (index / _lastMessages.length) *
-        _scrollController.position.maxScrollExtent;
-    unawaited(_scrollThenHighlight(estimate, messageId));
-  }
-
-  Future<void> _scrollThenHighlight(double estimate, String messageId) async {
-    await _scrollController.animateTo(
-      estimate.clamp(0.0, _scrollController.position.maxScrollExtent),
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOut,
-    );
-    if (!mounted) return;
-    final retryCtx = _messageKeys[messageId]?.currentContext;
-    if (retryCtx != null && retryCtx.mounted) {
-      _doScrollAndHighlight(retryCtx, messageId);
-    } else {
-      _flashHighlight(messageId);
-    }
-  }
-
-  void _doScrollAndHighlight(BuildContext ctx, String messageId) {
-    Scrollable.ensureVisible(
-      ctx,
+    await _itemScrollController.scrollTo(
+      index: index,
+      alignment: 0.5,
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
-      alignment: 0.5,
     );
-    _flashHighlight(messageId);
   }
 
   void _flashHighlight(String messageId) {
@@ -2069,7 +2183,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final overlayCheckMark = checkIconData != null
         ? Icon(checkIconData, size: 14, color: overlayCheckColor)
         : null;
-    final messageKey = _messageKeys.putIfAbsent(msg.id, () => GlobalKey());
+    final messageKey = ValueKey(msg.id);
     final isHighlighted = _highlightedMessageId == msg.id;
     if (msg.deletedForAll) {
       final content = AnimatedContainer(
@@ -2612,15 +2726,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   @override
   Widget build(BuildContext context) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final liveSnapshotAsync = ref.watch(messagesProvider(widget.chatId));
-    // Before the live stream has delivered its first snapshot (cold start,
-    // or currently offline), fall back to the last cached messages so the
-    // screen doesn't just show a spinner. The live stream always wins once
-    // it has data — this never overrides it.
-    AsyncValue<List<Message>> messagesAsync = liveSnapshotAsync.whenData(
-      (snapshot) => snapshot.messages,
+    final chatMessagesState = ref.watch(
+      chatMessagesControllerProvider(widget.chatId),
     );
-    if (!liveSnapshotAsync.hasValue) {
+    // Before the live tail listener has delivered its first snapshot (cold
+    // start, or currently offline), fall back to the last cached messages
+    // so the screen doesn't just show a spinner. The live stream always
+    // wins once it has data — this never overrides it.
+    AsyncValue<List<Message>> messagesAsync = AsyncValue.data(
+      chatMessagesState.messages,
+    );
+    if (!chatMessagesState.hasLoadedOnce) {
       final cachedMessages = ref.watch(cachedMessagesProvider(widget.chatId));
       if (cachedMessages != null) {
         messagesAsync = AsyncValue.data(cachedMessages);
@@ -2631,29 +2747,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // ref.read reflects live data in the message options sheet.
     ref.watch(starredMessagesProvider(currentUid));
 
-    ref.listen(messagesProvider(widget.chatId), (previous, next) {
-      next.whenData((snapshot) {
-        // isInitialLoad: this stream subscription's first-ever snapshot is
-        // the chat's whole history loading in, not new messages — the
-        // one-time instant jump-to-bottom below (_hasJumpedToBottomInitially)
-        // already handles getting the view to the right place for that.
-        // addedMessageIds empty: this snapshot only contains
-        // modified/removed changes (a reaction, a read receipt, a listened-
-        // status flip on an existing message) — Firestore's own docChanges
-        // says nothing was actually appended, so nothing should scroll.
-        if (snapshot.isInitialLoad || snapshot.addedMessageIds.isEmpty) {
-          return;
-        }
+    ref.listen(chatMessagesControllerProvider(widget.chatId), (
+      previous,
+      next,
+    ) {
+      // isInitialLoad: this controller's first-ever tail snapshot is the
+      // chat's whole (recent-window) history loading in, not new messages
+      // — the one-time instant jump-to-bottom below
+      // (_hasJumpedToBottomInitially) already handles getting the view to
+      // the right place for that. addedMessageIds empty: this snapshot
+      // only contains modified/removed changes (a reaction, a read
+      // receipt, a listened-status flip on an existing message) —
+      // Firestore's own docChanges says nothing was actually appended, so
+      // nothing should scroll.
+      if (!next.isInitialLoad && next.addedMessageIds.isNotEmpty) {
         // Don't yank someone back to the bottom while they're reading
         // scrollback — only auto-scroll if they were already close to it.
-        if (!_isNearBottom()) return;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _scrollToBottom();
-        });
-      });
-      next.whenData((snapshot) {
-        final messages = snapshot.messages;
-        if (messages.isEmpty) return;
+        if (_isNearBottom()) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _scrollToBottom();
+          });
+        }
+      }
+      final messages = next.messages;
+      if (messages.isNotEmpty) {
         Message? lastOtherMsg;
         for (final m in messages.reversed) {
           if (m.senderId != currentUid) {
@@ -2670,11 +2787,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 lastMsgId: lastOtherMsg.id,
               );
         }
-      });
-      next.whenData((snapshot) {
-        _messagesPendingCacheFlush = snapshot.messages;
-        _messageCacheService.writeDebounced(widget.chatId, snapshot.messages);
-      });
+      }
+      _messagesPendingCacheFlush = next.messages;
+      _messageCacheService.writeDebounced(widget.chatId, next.messages);
     });
 
     final chatMetaAsync = ref.watch(chatMetaProvider(widget.chatId));
@@ -2840,8 +2955,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       final allMsgIds = combinedMessages
                           .map((m) => m.id)
                           .toList();
-                      return ListView.builder(
-                        controller: _scrollController,
+                      return ScrollablePositionedList.builder(
+                        itemScrollController: _itemScrollController,
+                        itemPositionsListener: _itemPositionsListener,
                         reverse: true,
                         itemCount: combinedMessages.length,
                         padding: const EdgeInsets.symmetric(

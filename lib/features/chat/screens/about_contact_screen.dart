@@ -279,10 +279,9 @@ class _MediaTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final messagesAsync = ref.watch(messagesProvider(chatId));
-    final count = messagesAsync.value?.messages
-        .where((m) => m.type == 'image')
-        .length;
+    final count = ref
+        .watch(chatMediaCountProvider((chatId: chatId, type: 'image')))
+        .value;
     return _SettingsTile(
       icon: Icons.image_outlined,
       title: 'Media, keçidlər və sənədlər',
