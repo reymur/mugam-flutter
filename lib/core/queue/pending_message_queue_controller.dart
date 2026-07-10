@@ -423,7 +423,7 @@ final pendingMessageQueueProvider =
     );
 
 final pendingMessagesForChatProvider =
-    Provider.family<List<PendingMediaMessage>, String>((ref, chatId) {
+    Provider.autoDispose.family<List<PendingMediaMessage>, String>((ref, chatId) {
       return ref
           .watch(pendingMessageQueueProvider)
           .where((e) => e.chatId == chatId)

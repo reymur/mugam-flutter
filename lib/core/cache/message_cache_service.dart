@@ -237,6 +237,8 @@ final messageCacheServiceProvider = Provider<MessageCacheService>((ref) {
   );
 });
 
-final cachedMessagesProvider = Provider.family<List<Message>?, String>((ref, chatId) {
-  return ref.watch(messageCacheServiceProvider).read(chatId);
-});
+final cachedMessagesProvider = Provider.autoDispose.family<List<Message>?, String>(
+  (ref, chatId) {
+    return ref.watch(messageCacheServiceProvider).read(chatId);
+  },
+);

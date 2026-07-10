@@ -1115,10 +1115,35 @@ final allUsersProvider = StreamProvider<List<User>>(
   (ref) => ref.watch(firestoreServiceProvider).watchAllUsers(),
 );
 
-final userByIdProvider = FutureProvider.family<User?, String>((
+// autoDispose with a grace period, not a bare autoDispose — this is read
+// per-message-bubble for every sender (chat_screen.dart's message list),
+// so a plain ListView.builder recycling a bubble out of and back into the
+// build range (normal scroll-up-to-read-history-then-back-down) would
+// otherwise dispose and re-fetch the same user on every pass, risking a
+// visible blank-name/avatar flicker each time. ref.keepAlive() overrides
+// the default "dispose the instant listeners hit zero" behavior; onCancel
+// (last listener gone) starts a grace timer instead of disposing
+// immediately, onResume (a new listener before that timer fires) cancels
+// it, so only a sender nobody has scrolled near in a while actually gets
+// disposed. 10s comfortably covers a normal scroll-away-and-back or a
+// pause to read older messages, while still reclaiming memory for
+// senders no longer in view within a reasonable window (not held for the
+// entire chat-screen lifetime, unlike a plain non-autoDispose family).
+final userByIdProvider = FutureProvider.autoDispose.family<User?, String>((
   ref,
   uid,
 ) {
+  final link = ref.keepAlive();
+  Timer? disposeTimer;
+  ref.onCancel(() {
+    disposeTimer = Timer(const Duration(seconds: 10), link.close);
+  });
+  ref.onResume(() {
+    disposeTimer?.cancel();
+  });
+  ref.onDispose(() {
+    disposeTimer?.cancel();
+  });
   return ref.watch(firestoreServiceProvider).fetchUserById(uid);
 });
 
@@ -1158,19 +1183,26 @@ final messagesProvider =
       return ref.watch(firestoreServiceProvider).watchMessages(chatId);
     });
 
-final chatDataProvider = FutureProvider.family<Map<String, dynamic>?, String>((
-  ref,
-  chatId,
-) {
-  return ref.watch(firestoreServiceProvider).fetchChatData(chatId);
-});
+// autoDispose, same as messagesProvider above — both are only ever watched
+// via widget.chatId within chat_screen.dart's own lifetime (plus
+// message_info_screen.dart reading the same two), so tearing down on exit
+// and re-fetching/re-subscribing on re-entry is the same already-proven
+// pattern messagesProvider uses for this exact screen, not a new one.
+final chatDataProvider =
+    FutureProvider.autoDispose.family<Map<String, dynamic>?, String>((
+      ref,
+      chatId,
+    ) {
+      return ref.watch(firestoreServiceProvider).fetchChatData(chatId);
+    });
 
-final chatMetaProvider = StreamProvider.family<Map<String, dynamic>, String>((
-  ref,
-  chatId,
-) {
-  return ref.watch(firestoreServiceProvider).watchChatMeta(chatId);
-});
+final chatMetaProvider =
+    StreamProvider.autoDispose.family<Map<String, dynamic>, String>((
+      ref,
+      chatId,
+    ) {
+      return ref.watch(firestoreServiceProvider).watchChatMeta(chatId);
+    });
 
 final starredMessagesProvider =
     StreamProvider.family<List<StarredMessage>, String>((ref, uid) {
