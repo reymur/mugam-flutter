@@ -49,10 +49,17 @@ service firebase.storage {
     // that always throws, so only this shape is live traffic today).
     // Readable by anyone signed in (avatars are public profile data,
     // matching users/{uid} read access) — writable only by the uid the
-    // filename names.
+    // filename names. Exact-string match, not fileName.split('.')[0] ==
+    // uid — split()'s argument is a regex, not a literal separator, so an
+    // unescaped '.' matches any character and silently splits on every
+    // character instead of the extension dot (confirmed via Rules
+    // Playground: fileName.split('.') evaluated to [""]), permanently
+    // denying every avatar upload since this rule's introduction.
+    // uploadAvatar() always writes '$uid.jpg', so this can just compare
+    // the whole filename directly.
     match /avatars/{fileName} {
       allow read: if isSignedIn();
-      allow write: if isSignedIn() && fileName.split('.')[0] == request.auth.uid;
+      allow write: if isSignedIn() && fileName == request.auth.uid + '.jpg';
     }
 
     // chats/{chatId}/{fileName} — mugam-flutter's flat upload shape
