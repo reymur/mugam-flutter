@@ -17,6 +17,7 @@ dependencies:
   firebase_storage: any
   firebase_messaging: any
   cloud_functions: any
+  firebase_crashlytics: any
   go_router: any
   flutter_riverpod: any
   riverpod: any

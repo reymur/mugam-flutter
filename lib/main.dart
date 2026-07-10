@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:audio_session/audio_session.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,8 +21,32 @@ import 'firebase_options.dart';
 import 'navigation/app_router.dart';
 
 Future<void> main() async {
+  // Everything (including runApp) runs inside this zone so errors that
+  // escape Flutter's own error funnels — e.g. thrown from an un-awaited
+  // Future, rather than during a frame/build FlutterError already catches,
+  // or from a callback PlatformDispatcher.onError already catches — still
+  // reach Crashlytics instead of vanishing into an unhandled zone error.
+  runZonedGuarded<Future<void>>(() async {
+    await _mainImpl();
+  }, (error, stack) {
+    FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+  });
+}
+
+Future<void> _mainImpl() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  // Flutter-framework errors (failed builds, layout, etc.) go through
+  // FlutterError.onError; everything else Dart-level (thrown in a callback,
+  // a bad platform-channel response) goes through PlatformDispatcher.onError
+  // — between the two of these and the runZonedGuarded wrapper above, no
+  // unhandled error is invisible in production anymore (previously: only
+  // debugPrint/print, meaningless without an attached debugger).
+  FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+  PlatformDispatcher.instance.onError = (error, stack) {
+    FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+    return true;
+  };
   // Ducks background audio (Spotify, etc.) while this app plays or records
   // voice/video message audio — video_player and camera's own iOS audio
   // session setup both merge into (rather than overwrite) whatever's
