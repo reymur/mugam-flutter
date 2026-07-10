@@ -442,6 +442,10 @@ class FirestoreService {
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🖼 Şəkil',
       'lastMessageTime': now,
+      // Every chat was backfilled with an accurate starting value (one-off
+      // migration, run before this line ever shipped) — safe to always use
+      // a plain atomic increment, no "field missing" fallback needed.
+      'mediaImageCount': FieldValue.increment(1),
     });
   }
 
@@ -866,16 +870,31 @@ class FirestoreService {
     required String chatId,
     required String messageId,
   }) async {
-    await _db
+    final msgRef = _db
         .collection('chats')
         .doc(chatId)
         .collection('messages')
-        .doc(messageId)
-        .update({
-          'deletedForAll': true,
-          'deletedAt': DateTime.now().toIso8601String(),
-          'text': '',
-        });
+        .doc(messageId);
+    // Transaction, not a plain update: needs the message's own type (to
+    // know whether mediaImageCount needs decrementing) and must be
+    // idempotent against a repeat call on an already-deleted message
+    // (which would otherwise double-decrement).
+    final wasImage = await _db.runTransaction((tx) async {
+      final snap = await tx.get(msgRef);
+      final data = snap.data();
+      if (data == null || data['deletedForAll'] == true) return false;
+      tx.update(msgRef, {
+        'deletedForAll': true,
+        'deletedAt': DateTime.now().toIso8601String(),
+        'text': '',
+      });
+      return data['type'] == 'image';
+    });
+    if (wasImage) {
+      await _db.collection('chats').doc(chatId).update({
+        'mediaImageCount': FieldValue.increment(-1),
+      });
+    }
   }
 
   Future<void> deleteMessageForMe({
@@ -981,27 +1000,6 @@ class FirestoreService {
     return doc.data();
   }
 
-  // A real aggregate count, not derived from ChatMessagesController's
-  // (now paginated, finding #4) messages list — that list only reflects
-  // whatever's currently loaded, so counting within it would silently
-  // undercount for any chat with more history than the live tail window.
-  // Firestore's .count() reads only the count, not the matching documents,
-  // so this stays cheap regardless of how many images/videos/etc. a chat
-  // actually has.
-  Future<int> countMessagesByType({
-    required String chatId,
-    required String type,
-  }) async {
-    final snap = await _db
-        .collection('chats')
-        .doc(chatId)
-        .collection('messages')
-        .where('type', isEqualTo: type)
-        .count()
-        .get();
-    return snap.count ?? 0;
-  }
-
   Stream<Map<String, dynamic>> watchChatMeta(String chatId) {
     return _db.collection('chats').doc(chatId).snapshots().map((snap) {
       final data = snap.data() ?? {};
@@ -1010,6 +1008,12 @@ class FirestoreService {
         'deliveredTo': Map<String, dynamic>.from(data['deliveredTo'] ?? {}),
         'lastReadMsgId': Map<String, dynamic>.from(data['lastReadMsgId'] ?? {}),
         'lastReadAt': Map<String, dynamic>.from(data['lastReadAt'] ?? {}),
+        // Maintained by sendImageMessage/deleteMessageForAll via atomic
+        // FieldValue.increment — every chat was backfilled with an
+        // accurate starting value before that logic went live (one-off
+        // Cloud Function migration, already run and spot-checked), so no
+        // "field missing" fallback is needed here.
+        'mediaImageCount': (data['mediaImageCount'] as num?)?.toInt() ?? 0,
       };
     });
   }
@@ -1316,13 +1320,6 @@ final chatMetaProvider =
       chatId,
     ) {
       return ref.watch(firestoreServiceProvider).watchChatMeta(chatId);
-    });
-
-final chatMediaCountProvider = FutureProvider.autoDispose
-    .family<int, ({String chatId, String type})>((ref, args) {
-      return ref
-          .watch(firestoreServiceProvider)
-          .countMessagesByType(chatId: args.chatId, type: args.type);
     });
 
 final starredMessagesProvider =

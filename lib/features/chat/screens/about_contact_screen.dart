@@ -279,9 +279,8 @@ class _MediaTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final count = ref
-        .watch(chatMediaCountProvider((chatId: chatId, type: 'image')))
-        .value;
+    final count = ref.watch(chatMetaProvider(chatId)).value?['mediaImageCount']
+        as int?;
     return _SettingsTile(
       icon: Icons.image_outlined,
       title: 'Media, keçidlər və sənədlər',
