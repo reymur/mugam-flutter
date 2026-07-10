@@ -149,10 +149,13 @@ class NativeVideoCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
 
     var audioOutput: AVAssetReaderTrackOutput?
     if let audioTrack = audioTrack {
-      // nil settings == passthrough, no audio re-encode. Audio is a small
-      // fraction of a chat video's total size — not worth the extra
-      // complexity/risk of a second encoder for marginal savings.
-      let output = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
+      // Passthrough (nil) doesn't work with the .mp4 writer below (see
+      // audioWriterSettings comment there) — decode to linear PCM here so
+      // the writer's AAC encoder has raw samples to re-encode from.
+      let audioReaderSettings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+      ]
+      let output = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: audioReaderSettings)
       output.alwaysCopiesSampleData = false
       if assetReader.canAdd(output) {
         assetReader.add(output)
@@ -181,7 +184,20 @@ class NativeVideoCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
 
     var audioInput: AVAssetWriterInput?
     if audioOutput != nil {
-      let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
+      // Passthrough (nil outputSettings) only works for .mov containers —
+      // AVAssetWriter with fileType .mp4 silently refuses to add a
+      // passthrough audio input (canAdd returns false, no error), which
+      // was dropping every compressed video's audio track. Real AAC
+      // re-encode instead: standard, universally-compatible settings
+      // (same combo WhatsApp/Telegram/Signal use), well within what a
+      // chat-message voice/ambient track needs.
+      let audioWriterSettings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatMPEG4AAC,
+        AVSampleRateKey: 44100,
+        AVNumberOfChannelsKey: 2,
+        AVEncoderBitRateKey: 128000,
+      ]
+      let input = AVAssetWriterInput(mediaType: .audio, outputSettings: audioWriterSettings)
       input.expectsMediaDataInRealTime = false
       if assetWriter.canAdd(input) {
         assetWriter.add(input)
