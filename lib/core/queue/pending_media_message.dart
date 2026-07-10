@@ -167,6 +167,7 @@ class PendingMediaMessage {
       fileSizeBytes: fileSizeBytes,
       latitude: latitude,
       longitude: longitude,
+      text: text,
       // Explicit status transitions reset progress — 'queued' (fresh retry
       // attempt) and 'failed' both mean whatever prior progress existed no
       // longer reflects an in-flight upload.
