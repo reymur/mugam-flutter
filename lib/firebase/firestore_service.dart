@@ -326,6 +326,40 @@ class FirestoreService {
     });
   }
 
+  // No system message: renaming/re-emoji-ing a group is cosmetic, not an
+  // event worth announcing — mugam-v2's own updateGroupInfo has no
+  // addDoc/system-message call either.
+  Future<void> updateGroupInfo({
+    required String chatId,
+    required String name,
+    required String emoji,
+    String? photoURL,
+  }) async {
+    await _db.collection('chats').doc(chatId).update({
+      'name': name,
+      'emoji': emoji,
+      'photoURL': ?photoURL,
+    });
+  }
+
+  // Mirrors uploadAvatar's shape above rather than mugam-v2's XHR/blob
+  // upload (a React Native-specific pattern that doesn't apply here).
+  // Returns the URL only, same as every other upload* function in this
+  // file — none of them write the URL back to Firestore themselves, that's
+  // left to the caller (see updateGroupInfo's own photoURL param above).
+  Future<String> uploadGroupPhoto({
+    required String chatId,
+    required String uri,
+  }) async {
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('groups')
+        .child(chatId)
+        .child('avatar.jpg');
+    await ref.putFile(File(uri));
+    return await ref.getDownloadURL();
+  }
+
   // One-off lookup for a single message by id, regardless of whether it's
   // within the currently-loaded window (finding #4) — used by
   // message_info_screen.dart to resolve the read/delivered comparison by
