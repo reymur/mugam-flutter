@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -162,6 +163,51 @@ class FirestoreService {
     });
 
     return chatRef.id;
+  }
+
+  // Uses a transaction because we may need to both remove `uid` from
+  // `admins` AND add a newly-promoted admin in the same write —
+  // Firestore doesn't allow arrayRemove and arrayUnion on the same
+  // field in one update, so the new `admins` array must be computed
+  // client-side and written as a plain list, inside a transaction to
+  // avoid racing a concurrent membership/role change.
+  Future<void> leaveGroup({
+    required String chatId,
+    required String uid,
+    required String userName,
+  }) async {
+    final chatRef = _db.collection('chats').doc(chatId);
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(chatRef);
+      final data = snap.data() ?? {};
+      final members = List<String>.from(data['members'] as List? ?? const []);
+      final admins = List<String>.from(data['admins'] as List? ?? const []);
+      final wasAdmin = admins.contains(uid);
+
+      final remainingMembers = members.where((m) => m != uid).toList();
+      final remainingAdmins = admins.where((a) => a != uid).toList();
+
+      // WhatsApp-style guarantee: a group is never left without an admin —
+      // if the sole admin leaves and members remain, randomly promote one.
+      if (wasAdmin && remainingAdmins.isEmpty && remainingMembers.isNotEmpty) {
+        final promoted =
+            remainingMembers[Random().nextInt(remainingMembers.length)];
+        remainingAdmins.add(promoted);
+      }
+
+      tx.update(chatRef, {
+        'members': remainingMembers,
+        'admins': remainingAdmins,
+      });
+    });
+
+    await chatRef.collection('messages').add({
+      'senderId': uid,
+      'text': '$userName qrupdan çıxdı',
+      'type': 'text',
+      'isSystem': true,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
   }
 
   // One-off lookup for a single message by id, regardless of whether it's
