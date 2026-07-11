@@ -39,6 +39,7 @@ import '../../../shared/widgets/zoomable_image_viewer.dart';
 import 'about_contact_screen.dart';
 import 'custom_camera_backup/camera_capture_screen.dart';
 import 'file_message_widgets.dart';
+import 'group_info_screen.dart';
 import 'location_message_widgets.dart';
 import 'location_picker_screen.dart';
 import 'media_thumbnail_cache.dart';
@@ -2915,9 +2916,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   ),
               ],
             );
-            // Group chats don't have a single "contact" to show info about —
-            // the About Contact screen is scoped to 1:1 chats for now.
-            if (isGroup || otherUidResolved == null) return titleColumn;
+            if (isGroup) {
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    fullscreenDialog: true,
+                    builder: (_) => GroupInfoScreen(chatId: widget.chatId),
+                  ),
+                ),
+                child: titleColumn,
+              );
+            }
+            if (otherUidResolved == null) return titleColumn;
             return GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => Navigator.push(
