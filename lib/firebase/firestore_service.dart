@@ -215,6 +215,7 @@ class FirestoreService {
     required String uid,
     required String userName,
     required String addedByName,
+    required String adminUid,
   }) async {
     final chatRef = _db.collection('chats').doc(chatId);
     await chatRef.update({
@@ -222,7 +223,7 @@ class FirestoreService {
     });
 
     await chatRef.collection('messages').add({
-      'senderId': uid,
+      'senderId': adminUid,
       'text': '$addedByName $userName qrupa əlavə etdi',
       'type': 'text',
       'isSystem': true,
@@ -242,6 +243,7 @@ class FirestoreService {
     required String uid,
     required String userName,
     required String removedByName,
+    required String adminUid,
   }) async {
     final chatRef = _db.collection('chats').doc(chatId);
     final snap = await chatRef.get();
@@ -255,7 +257,7 @@ class FirestoreService {
     });
 
     await chatRef.collection('messages').add({
-      'senderId': uid,
+      'senderId': adminUid,
       'text': '$removedByName $userName qrupdan çıxardı',
       'type': 'text',
       'isSystem': true,
