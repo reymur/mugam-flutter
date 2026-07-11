@@ -2550,6 +2550,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         deliveryStatus: status,
                         localUploadProgress: msg.localUploadProgress,
                         onCancelUpload: _cancelUploadCallback(msg),
+                        caption: msg.text,
                         timeCheckmarkRow: _timeCheckmarkRow(
                           isMe,
                           otherUid,

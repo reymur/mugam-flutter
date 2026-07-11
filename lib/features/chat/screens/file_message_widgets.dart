@@ -35,6 +35,12 @@ class FileMessageBubble extends StatefulWidget {
   final double? localUploadProgress;
   final VoidCallback? onCancelUpload;
   final Widget timeCheckmarkRow;
+  // Optional caption (Message.text) — same convention every other media
+  // bubble uses. No separate background wrapper needed here (unlike
+  // Image/VideoMessageBubble) since this card already sits inside the
+  // normal padded chat bubble, which is already the right isMe-dependent
+  // color (see chat_screen.dart's outer bubble Container).
+  final String caption;
 
   const FileMessageBubble({
     super.key,
@@ -49,6 +55,7 @@ class FileMessageBubble extends StatefulWidget {
     this.localUploadProgress,
     this.onCancelUpload,
     required this.timeCheckmarkRow,
+    this.caption = '',
   });
 
   @override
@@ -372,6 +379,13 @@ class _FileMessageBubbleState extends State<FileMessageBubble> {
                 ),
               ],
             ),
+            if (widget.caption.trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                widget.caption,
+                style: TextStyle(color: labelColor, fontSize: 14),
+              ),
+            ],
             const SizedBox(height: 4),
             Row(children: [const Spacer(), widget.timeCheckmarkRow]),
           ],
