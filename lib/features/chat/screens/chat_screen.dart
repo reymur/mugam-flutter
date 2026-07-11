@@ -2489,6 +2489,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                             otherUid != null &&
                             msg.listenedBy.contains(otherUid),
                         listenedByMe: msg.listenedBy.contains(currentUid),
+                        caption: msg.text,
                         onListened:
                             msg.type == 'audio' &&
                                 msg.senderId != currentUid &&
@@ -3624,6 +3625,10 @@ class _VoiceMessagePlayer extends StatefulWidget {
   // meaningful for !isMe; harmless (unused) otherwise.
   final bool listenedByMe;
   final VoidCallback? onListened;
+  // Optional caption (Message.text) — same convention as FileMessageBubble
+  // (this player also uses the bubble's normal padded chrome, no separate
+  // background wrapper needed).
+  final String caption;
   const _VoiceMessagePlayer({
     this.audioURL,
     this.localFilePath,
@@ -3636,6 +3641,7 @@ class _VoiceMessagePlayer extends StatefulWidget {
     this.listenedByOther = false,
     this.listenedByMe = false,
     this.onListened,
+    this.caption = '',
   });
 
   @override
@@ -3917,6 +3923,13 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
               ),
             ],
           ),
+          if (widget.caption.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              widget.caption,
+              style: TextStyle(color: labelColor, fontSize: 14),
+            ),
+          ],
         ],
       ),
     );
