@@ -604,6 +604,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   final targets = chats
                       .where((c) => c.id != widget.chatId)
                       .toList();
+                  debugPrint('🔍 FORWARD: total chats from provider = ${chats.length}, after filter = ${targets.length}');
+                  debugPrint('🔍 FORWARD: chat IDs = ${chats.map((c) => "${c.id}:${c.name}:completed=${c.completed}").join(", ")}');
                   if (targets.isEmpty) {
                     return const Center(
                       child: Text(
@@ -2457,13 +2459,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         onCancelUpload: _cancelUploadCallback(msg),
                         cacheKey: msg.stableMediaKey,
                         initialBytes: msg.localPreviewBytes,
+                        caption: msg.text,
+                        isMe: isMe,
                         timeCheckmarkOverlay: _timeCheckmarkRow(
                           isMe,
                           otherUid,
                           msg,
                           time,
                           overlayCheckMark,
-                          textColor: Colors.white,
+                          textColor: msg.text.trim().isEmpty
+                              ? Colors.white
+                              : null,
                         ),
                       ),
                     if (msg.type == 'audio' &&

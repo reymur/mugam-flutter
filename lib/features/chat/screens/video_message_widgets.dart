@@ -449,6 +449,13 @@ class ImageMessageBubble extends StatelessWidget {
   final String? cacheKey;
   // See _PendingImagePreview.initialBytes.
   final Uint8List? initialBytes;
+  // Optional caption (Message.text) shown below the photo, same as
+  // WhatsApp/Telegram — when present, the corner time/checkmark overlay
+  // moves off the photo and becomes a trailing element after the caption
+  // text instead (matches how a plain text bubble already places it),
+  // so it never sits on top of unrelated caption text.
+  final String caption;
+  final bool isMe;
 
   const ImageMessageBubble({
     super.key,
@@ -464,6 +471,8 @@ class ImageMessageBubble extends StatelessWidget {
     this.onCancelUpload,
     this.cacheKey,
     this.initialBytes,
+    this.caption = '',
+    required this.isMe,
   });
 
   Size _boundedSize() {
@@ -503,60 +512,102 @@ class ImageMessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final size = _boundedSize();
-    return GestureDetector(
-      onTap: onTap,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(bubbleRadius),
-        child: SizedBox(
-          width: size.width,
-          height: size.height,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // Base layer so any paint gap in the layer above (Image.file
-              // decode contending with the concurrent upload for CPU/IO,
-              // or CachedNetworkImage's own placeholder) shows this same
-              // dark placeholder everywhere, instead of the raw message-
-              // bubble color (kGold for isMe) showing through — that gap
-              // used to be fully visible since neither layer above painted
-              // over the whole area on its own.
-              Container(color: kBg3),
-              localFilePath != null
-                  ? _PendingImagePreview(
-                      path: localFilePath!,
-                      cacheKey: cacheKey,
-                      initialBytes: initialBytes,
-                    )
-                  : CachedNetworkImage(
-                      imageUrl: imageURL!,
-                      fit: BoxFit.cover,
-                      placeholder: (ctx, url) {
-                        final cached = cacheKey != null
-                            ? ImagePreviewCacheManager.instance.get(cacheKey!)
-                            : null;
-                        return cached != null
-                            ? Image.memory(cached, fit: BoxFit.cover)
-                            : const Center(
-                                child: CircularProgressIndicator(color: kGold),
-                              );
-                      },
-                      errorWidget: (ctx, url, err) => Container(
-                        color: kBg3,
-                        child: const Icon(Icons.broken_image, color: kMuted),
-                      ),
+    final hasCaption = caption.trim().isNotEmpty;
+
+    final imageStack = ClipRRect(
+      borderRadius: hasCaption
+          ? BorderRadius.only(
+              topLeft: Radius.circular(bubbleRadius),
+              topRight: Radius.circular(bubbleRadius),
+            )
+          : BorderRadius.circular(bubbleRadius),
+      child: SizedBox(
+        width: size.width,
+        height: size.height,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Container(color: kBg3),
+            localFilePath != null
+                ? _PendingImagePreview(
+                    path: localFilePath!,
+                    cacheKey: cacheKey,
+                    initialBytes: initialBytes,
+                  )
+                : CachedNetworkImage(
+                    imageUrl: imageURL!,
+                    fit: BoxFit.cover,
+                    placeholder: (ctx, url) {
+                      final cached = cacheKey != null
+                          ? ImagePreviewCacheManager.instance.get(cacheKey!)
+                          : null;
+                      return cached != null
+                          ? Image.memory(cached, fit: BoxFit.cover)
+                          : const Center(
+                              child: CircularProgressIndicator(color: kGold),
+                            );
+                    },
+                    errorWidget: (ctx, url, err) => Container(
+                      color: kBg3,
+                      child: const Icon(Icons.broken_image, color: kMuted),
                     ),
-              if (deliveryStatus == MessageDeliveryStatus.queued ||
-                  deliveryStatus == MessageDeliveryStatus.uploading)
-                UploadProgressOverlay(
-                  progress: deliveryStatus == MessageDeliveryStatus.uploading
-                      ? localUploadProgress
-                      : null,
-                  onCancel: onCancelUpload,
-                ),
+                  ),
+            if (deliveryStatus == MessageDeliveryStatus.queued ||
+                deliveryStatus == MessageDeliveryStatus.uploading)
+              UploadProgressOverlay(
+                progress: deliveryStatus == MessageDeliveryStatus.uploading
+                    ? localUploadProgress
+                    : null,
+                onCancel: onCancelUpload,
+              ),
+            if (!hasCaption)
               Positioned(
                 right: 8,
                 bottom: 8,
                 child: MediaOverlayChip(child: timeCheckmarkOverlay),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (!hasCaption) {
+      return GestureDetector(onTap: onTap, child: imageStack);
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(bubbleRadius),
+        child: Container(
+          width: size.width,
+          color: isMe ? kGold : kBg3,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              imageStack,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        caption,
+                        style: TextStyle(
+                          color: isMe
+                              ? const Color(0xFF1A0E00)
+                              : kText,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    timeCheckmarkOverlay,
+                  ],
+                ),
               ),
             ],
           ),
