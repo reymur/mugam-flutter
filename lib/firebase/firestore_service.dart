@@ -1076,6 +1076,15 @@ class FirestoreService {
         // Cloud Function migration, already run and spot-checked), so no
         // "field missing" fallback is needed here.
         'mediaImageCount': (data['mediaImageCount'] as num?)?.toInt() ?? 0,
+        // Live so a group rename/role change reflects in the app bar
+        // without needing to reopen the chat screen — see chat_screen.dart's
+        // app bar, which reads these instead of the one-time
+        // chatDataProvider for group chats specifically.
+        'admins': List<String>.from(data['admins'] ?? const []),
+        'createdBy': data['createdBy'] ?? '',
+        'name': data['name'] ?? '',
+        'emoji': data['emoji'] ?? '💬',
+        'photoURL': data['photoURL'],
       };
     });
   }

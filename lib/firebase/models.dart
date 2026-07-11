@@ -80,6 +80,12 @@ class Chat {
   final bool isGroup;
   final String? photoURL;
   final bool completed;
+  // Empty for every 1:1 chat (mugam-v2 never wrote either field for those —
+  // only createGroupChat does) and for group docs from before these fields
+  // existed, so an empty default is the correct "absent" value here, not a
+  // parsing error.
+  final List<String> admins;
+  final String createdBy;
 
   const Chat({
     required this.id,
@@ -92,6 +98,8 @@ class Chat {
     required this.isGroup,
     this.photoURL,
     this.completed = false,
+    this.admins = const [],
+    this.createdBy = '',
   });
 
   factory Chat.fromFirestore(String id, Map<String, dynamic> data) {
@@ -124,6 +132,8 @@ class Chat {
       isGroup: data['isGroup'] ?? false,
       photoURL: data['photoURL'],
       completed: (data['completed'] ?? false) as bool,
+      admins: List<String>.from(data['admins'] as List? ?? const []),
+      createdBy: data['createdBy'] ?? '',
     );
   }
 }

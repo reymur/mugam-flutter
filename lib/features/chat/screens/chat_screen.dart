@@ -2881,9 +2881,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         title: chatDataAsync.when(
           data: (data) {
             final isGroup = data?['isGroup'] == true;
+            // Groups: prefer the live chatMetaProvider stream (already
+            // watched above for deliveredTo/lastReadMsgId/members) so a
+            // rename by an admin shows up here immediately instead of only
+            // after reopening the chat — falls back to the one-time
+            // chatDataProvider value until the live stream's first snapshot
+            // arrives. 1:1 chats are untouched: otherUser.name (live via
+            // userByIdProvider) already covers that case, same as before.
             final displayName = (!isGroup && otherUser != null)
                 ? otherUser.name
-                : (data?['name'] ?? 'Chat');
+                : (isGroup
+                      ? (chatMetaAsync.value?['name'] as String? ??
+                            data?['name'] ??
+                            'Chat')
+                      : (data?['name'] ?? 'Chat'));
             final titleColumn = Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
