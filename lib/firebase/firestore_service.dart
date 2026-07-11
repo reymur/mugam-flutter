@@ -111,6 +111,59 @@ class FirestoreService {
         );
   }
 
+  // Mirrors mugam-v2's createGroupChat() Firestore write shape exactly
+  // (isGroup, name, emoji, photoURL, members, admins, createdBy, preview,
+  // timestamps, completed, unreadCount — see mugam-v2/src/firebase/
+  // firestore.ts) so both apps' group chats are structurally identical.
+  // One deliberate difference: the "X created the group" system message is
+  // written with senderId == the real creator's uid (not the literal
+  // string 'system' mugam-v2 uses), specifically so the already-existing
+  // onNewMessage Cloud Function push trigger resolves a real display name
+  // and fires correctly on its own — mugam-v2 instead sends its own push
+  // directly from the client (reading every recipient's push tokens
+  // itself), which this app deliberately never does anywhere else; adding
+  // that pattern here just for groups would be a step backward, not
+  // matching a standard.
+  Future<String> createGroupChat({
+    required String creatorUid,
+    required String creatorName,
+    required String groupName,
+    required List<String> memberUids,
+    required String emoji,
+    String? photoURL,
+  }) async {
+    final members = [
+      creatorUid,
+      ...memberUids.where((u) => u != creatorUid),
+    ];
+    final now = FieldValue.serverTimestamp();
+    final chatRef = await _db.collection('chats').add({
+      'isGroup': true,
+      'name': groupName,
+      'emoji': emoji,
+      'photoURL': photoURL,
+      'members': members,
+      'admins': [creatorUid],
+      'createdBy': creatorUid,
+      'preview': '$creatorName qrupu yaratdı',
+      'lastMessageAt': now,
+      'lastMessageTime': now,
+      'createdAt': now,
+      'completed': false,
+      'unreadCount': <String, int>{},
+    });
+
+    await chatRef.collection('messages').add({
+      'senderId': creatorUid,
+      'text': '$creatorName qrupu yaratdı',
+      'type': 'text',
+      'isSystem': true,
+      'timestamp': now,
+    });
+
+    return chatRef.id;
+  }
+
   // One-off lookup for a single message by id, regardless of whether it's
   // within the currently-loaded window (finding #4) — used by
   // message_info_screen.dart to resolve the read/delivered comparison by

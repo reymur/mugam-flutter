@@ -8,6 +8,7 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../settings/screens/app_settings_screen.dart';
+import 'create_group_screen.dart';
 
 class ChatsScreen extends ConsumerStatefulWidget {
   const ChatsScreen({super.key});
@@ -50,9 +51,10 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.group_add, color: kGold),
-            onPressed: () {
-              // TODO: CreateGroup — not implemented yet
-            },
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const CreateGroupScreen()),
+            ),
           ),
         ],
       ),

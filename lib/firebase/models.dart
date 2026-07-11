@@ -228,6 +228,14 @@ class Message {
   // already that final value). Use stableMediaKey below rather than this
   // field directly.
   final String? mediaMessageId;
+  // True for auto-generated announcements ("X created the group", "X left
+  // the group") — rendered as centered gray text, no bubble/avatar, same
+  // as mugam-v2's own system messages (see createGroupChat/leaveGroup
+  // there). senderId for these is the real acting user's uid (not a
+  // literal 'system' string) so the existing onNewMessage push-notification
+  // Cloud Function still resolves a real display name — isSystem is purely
+  // a rendering distinction, not a push-routing one.
+  final bool isSystem;
 
   // The one identifier that stays constant across a message's entire
   // lifecycle (queued -> uploading -> sent), used to key anything that
@@ -273,6 +281,7 @@ class Message {
     this.localUploadProgress,
     this.mediaMessageId,
     this.localPreviewBytes,
+    this.isSystem = false,
   });
 
   factory Message.fromFirestore(String id, Map<String, dynamic> data) {
@@ -314,6 +323,7 @@ class Message {
         for (final entry in rawReactions.entries)
           entry.key: List<String>.from(entry.value as List? ?? const []),
       },
+      isSystem: data['isSystem'] == true,
     );
   }
 }

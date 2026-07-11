@@ -2135,6 +2135,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     String? prevSenderId,
   ) {
     final isMe = msg.senderId == currentUid;
+
+    // System announcements ("X created the group", "X left the group") get
+    // no bubble, no avatar, no sender-side distinction — just centered gray
+    // text, matching mugam-v2's own system messages exactly.
+    if (msg.isSystem) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 40),
+        child: Center(
+          child: Text(
+            msg.text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: kMuted, fontSize: 12),
+          ),
+        ),
+      );
+    }
     // Tight vertical gap within a run of consecutive messages from the same
     // sender, wider gap when the sender changes — matches WhatsApp's
     // grouping. Controlled entirely by top margin so it only depends on the
