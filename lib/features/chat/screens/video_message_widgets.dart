@@ -277,6 +277,10 @@ class VideoMessageBubble extends StatelessWidget {
   final String? thumbnailCacheKey;
   // See VideoThumbnailImage.initialBytes.
   final Uint8List? initialBytes;
+  // Optional caption (Message.text) — same treatment as ImageMessageBubble,
+  // see its own caption field comment for the full rationale.
+  final String caption;
+  final bool isMe;
 
   const VideoMessageBubble({
     super.key,
@@ -292,6 +296,8 @@ class VideoMessageBubble extends StatelessWidget {
     this.onCancelUpload,
     this.thumbnailCacheKey,
     this.initialBytes,
+    this.caption = '',
+    required this.isMe,
   });
 
   Size _boundedSize() {
@@ -331,6 +337,101 @@ class VideoMessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final size = _boundedSize();
+    final hasCaption = caption.trim().isNotEmpty;
+
+    final videoStack = ClipRRect(
+      borderRadius: hasCaption
+          ? BorderRadius.only(
+              topLeft: Radius.circular(bubbleRadius),
+              topRight: Radius.circular(bubbleRadius),
+            )
+          : BorderRadius.circular(bubbleRadius),
+      child: SizedBox(
+        width: size.width,
+        height: size.height,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            VideoThumbnailImage(
+              videoURL: videoURL,
+              localFilePath: localFilePath,
+              cacheKey: thumbnailCacheKey,
+              initialBytes: initialBytes,
+            ),
+            if (deliveryStatus == MessageDeliveryStatus.queued ||
+                deliveryStatus == MessageDeliveryStatus.uploading)
+              UploadProgressOverlay(
+                progress: deliveryStatus == MessageDeliveryStatus.uploading
+                    ? localUploadProgress
+                    : null,
+                onCancel: onCancelUpload,
+              )
+            else
+              Center(
+                child: Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withAlpha(200),
+                  ),
+                  padding: const EdgeInsets.all(14),
+                  child: const Icon(
+                    Icons.play_arrow,
+                    color: Colors.black87,
+                    size: 32,
+                  ),
+                ),
+              ),
+            Positioned(
+              left: 8,
+              bottom: 8,
+              child: MediaOverlayChip(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.videocam,
+                      color: Colors.white,
+                      size: 13,
+                    ),
+                    if (durationMs != null) ...[
+                      const SizedBox(width: 4),
+                      Text(
+                        formatDurationMmSs(durationMs!),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            if (!hasCaption)
+              Positioned(
+                right: 8,
+                bottom: 8,
+                child: MediaOverlayChip(child: timeCheckmarkOverlay),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (!hasCaption) {
+      return GestureDetector(
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => VideoPlayerScreen(
+              videoURL: videoURL,
+              localFilePath: localFilePath,
+            ),
+          ),
+        ),
+        child: videoStack,
+      );
+    }
+
     return GestureDetector(
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(
@@ -340,71 +441,35 @@ class VideoMessageBubble extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(bubbleRadius),
-        child: SizedBox(
+        child: Container(
           width: size.width,
-          height: size.height,
-          child: Stack(
-            fit: StackFit.expand,
+          color: isMe ? kGold : kBg3,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              VideoThumbnailImage(
-                videoURL: videoURL,
-                localFilePath: localFilePath,
-                cacheKey: thumbnailCacheKey,
-                initialBytes: initialBytes,
-              ),
-              if (deliveryStatus == MessageDeliveryStatus.queued ||
-                  deliveryStatus == MessageDeliveryStatus.uploading)
-                UploadProgressOverlay(
-                  progress: deliveryStatus == MessageDeliveryStatus.uploading
-                      ? localUploadProgress
-                      : null,
-                  onCancel: onCancelUpload,
-                )
-              else
-                Center(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white.withAlpha(200),
-                    ),
-                    padding: const EdgeInsets.all(14),
-                    child: const Icon(
-                      Icons.play_arrow,
-                      color: Colors.black87,
-                      size: 32,
-                    ),
-                  ),
-                ),
-              Positioned(
-                left: 8,
-                bottom: 8,
-                child: MediaOverlayChip(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.videocam,
-                        color: Colors.white,
-                        size: 13,
-                      ),
-                      if (durationMs != null) ...[
-                        const SizedBox(width: 4),
-                        Text(
-                          formatDurationMmSs(durationMs!),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                          ),
+              videoStack,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        caption,
+                        style: TextStyle(
+                          color: isMe
+                              ? const Color(0xFF1A0E00)
+                              : kText,
+                          fontSize: 14,
                         ),
-                      ],
-                    ],
-                  ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    timeCheckmarkOverlay,
+                  ],
                 ),
-              ),
-              Positioned(
-                right: 8,
-                bottom: 8,
-                child: MediaOverlayChip(child: timeCheckmarkOverlay),
               ),
             ],
           ),
