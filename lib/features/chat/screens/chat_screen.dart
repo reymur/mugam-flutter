@@ -2572,13 +2572,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         deliveryStatus: status,
                         localUploadProgress: msg.localUploadProgress,
                         onCancelUpload: _cancelUploadCallback(msg),
+                        caption: msg.text,
+                        isMe: isMe,
                         timeCheckmarkOverlay: _timeCheckmarkRow(
                           isMe,
                           otherUid,
                           msg,
                           time,
                           overlayCheckMark,
-                          textColor: Colors.white,
+                          textColor: msg.text.trim().isEmpty
+                              ? Colors.white
+                              : null,
                         ),
                       ),
                     if (msg.type != 'text' &&

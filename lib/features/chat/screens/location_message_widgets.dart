@@ -36,6 +36,10 @@ class LocationMessageBubble extends StatelessWidget {
   final MessageDeliveryStatus deliveryStatus;
   final double? localUploadProgress;
   final VoidCallback? onCancelUpload;
+  // Optional caption (Message.text) — same treatment as ImageMessageBubble,
+  // see its own caption field comment for the full rationale.
+  final String caption;
+  final bool isMe;
 
   const LocationMessageBubble({
     super.key,
@@ -49,6 +53,8 @@ class LocationMessageBubble extends StatelessWidget {
     required this.deliveryStatus,
     this.localUploadProgress,
     this.onCancelUpload,
+    this.caption = '',
+    required this.isMe,
   });
 
   void _showOpenFailedSnackbar(BuildContext context) {
@@ -165,45 +171,97 @@ class LocationMessageBubble extends StatelessWidget {
     final isUploading =
         deliveryStatus == MessageDeliveryStatus.queued ||
         deliveryStatus == MessageDeliveryStatus.uploading;
-    return GestureDetector(
-      onTap: isUploading ? null : () => _openInMaps(context),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(bubbleRadius),
-        child: SizedBox(
-          width: _width,
-          height: _height,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Container(color: kBg3),
-              localFilePath != null
-                  ? Image.file(File(localFilePath!), fit: BoxFit.cover)
-                  : CachedNetworkImage(
-                      imageUrl: locationImageURL!,
-                      fit: BoxFit.cover,
-                      placeholder: (ctx, url) =>
-                          const Center(
-                            child: CircularProgressIndicator(color: kGold),
-                          ),
-                      errorWidget: (ctx, url, err) => Container(
-                        color: kBg3,
-                        child: const Icon(
-                          Icons.location_off,
-                          color: kMuted,
+    final hasCaption = caption.trim().isNotEmpty;
+
+    final mapStack = ClipRRect(
+      borderRadius: hasCaption
+          ? BorderRadius.only(
+              topLeft: Radius.circular(bubbleRadius),
+              topRight: Radius.circular(bubbleRadius),
+            )
+          : BorderRadius.circular(bubbleRadius),
+      child: SizedBox(
+        width: _width,
+        height: _height,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Container(color: kBg3),
+            localFilePath != null
+                ? Image.file(File(localFilePath!), fit: BoxFit.cover)
+                : CachedNetworkImage(
+                    imageUrl: locationImageURL!,
+                    fit: BoxFit.cover,
+                    placeholder: (ctx, url) =>
+                        const Center(
+                          child: CircularProgressIndicator(color: kGold),
                         ),
+                    errorWidget: (ctx, url, err) => Container(
+                      color: kBg3,
+                      child: const Icon(
+                        Icons.location_off,
+                        color: kMuted,
                       ),
                     ),
-              if (isUploading)
-                UploadProgressOverlay(
-                  progress: deliveryStatus == MessageDeliveryStatus.uploading
-                      ? localUploadProgress
-                      : null,
-                  onCancel: onCancelUpload,
-                ),
+                  ),
+            if (isUploading)
+              UploadProgressOverlay(
+                progress: deliveryStatus == MessageDeliveryStatus.uploading
+                    ? localUploadProgress
+                    : null,
+                onCancel: onCancelUpload,
+              ),
+            if (!hasCaption)
               Positioned(
                 right: 8,
                 bottom: 8,
                 child: MediaOverlayChip(child: timeCheckmarkOverlay),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (!hasCaption) {
+      return GestureDetector(
+        onTap: isUploading ? null : () => _openInMaps(context),
+        child: mapStack,
+      );
+    }
+
+    return GestureDetector(
+      onTap: isUploading ? null : () => _openInMaps(context),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(bubbleRadius),
+        child: Container(
+          width: _width,
+          color: isMe ? kGold : kBg3,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              mapStack,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        caption,
+                        style: TextStyle(
+                          color: isMe
+                              ? const Color(0xFF1A0E00)
+                              : kText,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    timeCheckmarkOverlay,
+                  ],
+                ),
               ),
             ],
           ),
