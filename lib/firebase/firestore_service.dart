@@ -265,6 +265,67 @@ class FirestoreService {
     });
   }
 
+  Future<void> makeGroupAdmin({
+    required String chatId,
+    required String uid,
+    required String userName,
+    required String adminUid,
+    required String adminName,
+  }) async {
+    final chatRef = _db.collection('chats').doc(chatId);
+    await chatRef.update({
+      'admins': FieldValue.arrayUnion([uid]),
+    });
+
+    await chatRef.collection('messages').add({
+      'senderId': adminUid,
+      'text': '$adminName $userName-ni admin etdi',
+      'type': 'text',
+      'isSystem': true,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+  }
+
+  // Two client-side checks, both before any write:
+  //  - Creator immunity: the group's createdBy uid can never be dismissed
+  //    as admin, same protection as removeGroupMember in Phase C.
+  //  - Last-admin guarantee: dismissing `uid` may not leave `admins`
+  //    empty. This differs from leaveGroup's sole-admin case (which
+  //    auto-promotes a replacement, since someone is actually leaving the
+  //    group there) — here both people remain members, so there's no one
+  //    to silently promote and blocking the action is the correct
+  //    behavior instead.
+  Future<void> dismissAsAdmin({
+    required String chatId,
+    required String uid,
+    required String userName,
+    required String adminUid,
+    required String adminName,
+  }) async {
+    final chatRef = _db.collection('chats').doc(chatId);
+    final snap = await chatRef.get();
+    final data = snap.data() ?? {};
+    if (uid == data['createdBy']) {
+      throw Exception('Cannot dismiss the group creator as admin');
+    }
+    final admins = List<String>.from(data['admins'] as List? ?? const []);
+    if (admins.where((a) => a != uid).isEmpty) {
+      throw Exception('Cannot dismiss the last remaining admin');
+    }
+
+    await chatRef.update({
+      'admins': FieldValue.arrayRemove([uid]),
+    });
+
+    await chatRef.collection('messages').add({
+      'senderId': adminUid,
+      'text': '$adminName $userName-ni admin statusundan çıxardı',
+      'type': 'text',
+      'isSystem': true,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+  }
+
   // One-off lookup for a single message by id, regardless of whether it's
   // within the currently-loaded window (finding #4) — used by
   // message_info_screen.dart to resolve the read/delivered comparison by
