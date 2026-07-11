@@ -210,6 +210,59 @@ class FirestoreService {
     });
   }
 
+  Future<void> addGroupMember({
+    required String chatId,
+    required String uid,
+    required String userName,
+    required String addedByName,
+  }) async {
+    final chatRef = _db.collection('chats').doc(chatId);
+    await chatRef.update({
+      'members': FieldValue.arrayUnion([uid]),
+    });
+
+    await chatRef.collection('messages').add({
+      'senderId': uid,
+      'text': '$addedByName $userName qrupa əlavə etdi',
+      'type': 'text',
+      'isSystem': true,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+  }
+
+  // Client-side creator protection: mugam-v2 has no check anywhere (neither
+  // in removeGroupMember nor properly enforced in GroupInfo.tsx's UI —
+  // verified by reading its source) preventing an admin from removing the
+  // group's own createdBy uid, which would leave the group creatorless.
+  // This is that missing guard, added here rather than left as a gap to
+  // copy — a rules-level version of the same protection is planned for a
+  // later phase; this is the client-side layer, not a replacement for it.
+  Future<void> removeGroupMember({
+    required String chatId,
+    required String uid,
+    required String userName,
+    required String removedByName,
+  }) async {
+    final chatRef = _db.collection('chats').doc(chatId);
+    final snap = await chatRef.get();
+    if (uid == snap.data()?['createdBy']) {
+      throw Exception('Cannot remove the group creator');
+    }
+
+    await chatRef.update({
+      'members': FieldValue.arrayRemove([uid]),
+      'admins': FieldValue.arrayRemove([uid]),
+    });
+
+    await chatRef.collection('messages').add({
+      'senderId': uid,
+      'text': '$removedByName $userName qrupdan çıxardı',
+      'type': 'text',
+      'isSystem': true,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+  }
+
   // One-off lookup for a single message by id, regardless of whether it's
   // within the currently-loaded window (finding #4) — used by
   // message_info_screen.dart to resolve the read/delivered comparison by
