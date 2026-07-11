@@ -386,6 +386,11 @@ class FirestoreService {
     required String imageURL,
     int? imageWidth,
     int? imageHeight,
+    // Optional caption sent alongside the photo — same 'text' field every
+    // message type already carries, just populated here instead of left
+    // as ''. Used by forwarding-with-a-caption today; a first-send caption
+    // UI could reuse the same param later.
+    String caption = '',
     // Which validated upload this image actually is: mediaOriginChatId ==
     // chatId for a fresh send, or an earlier chat's id when forwarding an
     // existing message's photo. Required (by firestore.rules) for every
@@ -412,7 +417,7 @@ class FirestoreService {
     );
     final data = {
       'senderId': senderId,
-      'text': '',
+      'text': caption,
       'type': 'image',
       'clientPlatform': 'flutter',
       'imageURL': imageURL,
@@ -487,6 +492,7 @@ class FirestoreService {
     int? videoDurationMs,
     int? videoWidth,
     int? videoHeight,
+    String caption = '',
     String? mediaOriginChatId,
     String? mediaFileName,
     String? replyToId,
@@ -506,7 +512,7 @@ class FirestoreService {
     );
     final data = {
       'senderId': senderId,
-      'text': '',
+      'text': caption,
       'type': 'video',
       'clientPlatform': 'flutter',
       'videoURL': videoURL,
@@ -584,6 +590,7 @@ class FirestoreService {
     required String fileURL,
     required String fileName,
     int? fileSizeBytes,
+    String caption = '',
     String? mediaOriginChatId,
     String? mediaFileName,
     String? replyToId,
@@ -603,7 +610,7 @@ class FirestoreService {
     );
     final data = {
       'senderId': senderId,
-      'text': '',
+      'text': caption,
       'type': 'file',
       'clientPlatform': 'flutter',
       'fileURL': fileURL,
@@ -677,6 +684,7 @@ class FirestoreService {
     required String locationImageURL,
     required double latitude,
     required double longitude,
+    String caption = '',
     String? mediaOriginChatId,
     String? mediaFileName,
     String? replyToId,
@@ -696,7 +704,7 @@ class FirestoreService {
     );
     final data = {
       'senderId': senderId,
-      'text': '',
+      'text': caption,
       'type': 'location',
       'clientPlatform': 'flutter',
       'locationImageURL': locationImageURL,
@@ -755,6 +763,7 @@ class FirestoreService {
     required String senderId,
     required String audioURL,
     List<int>? waveform,
+    String caption = '',
     String? mediaOriginChatId,
     String? mediaFileName,
     String? replyToId,
@@ -774,7 +783,7 @@ class FirestoreService {
     );
     final data = {
       'senderId': senderId,
-      'text': '',
+      'text': caption,
       'type': 'audio',
       'clientPlatform': 'flutter',
       'audioURL': audioURL,
