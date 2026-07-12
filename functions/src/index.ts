@@ -1,7 +1,7 @@
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getMessaging } from "firebase-admin/messaging";
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onDocumentCreated, onDocumentDeleted } from "firebase-functions/v2/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onObjectFinalized } from "firebase-functions/v2/storage";
 import { logger } from "firebase-functions";
@@ -93,6 +93,25 @@ export const onNewMessage = onDocumentCreated(
     if (!chatSnap.exists) return;
     const chat = chatSnap.data()!;
 
+    // messageCount tracks how many messages currently exist in this chat
+    // (not lifetime-ever-sent) — incremented here and decremented by the
+    // symmetric onMessageDeleted trigger below. This is the source of
+    // truth for a future "frequently contacted" ranking in the forward-
+    // message picker, deliberately server-owned (unlike mediaImageCount,
+    // which every client send/delete call site increments/decrements
+    // itself) so it stays correct regardless of which code path creates
+    // or deletes a message, including future ones (e.g. forwarding)
+    // without needing every call site updated individually. Independent
+    // of the push-notification logic below — must not block/fail pushes,
+    // so it's caught and logged rather than thrown.
+    try {
+      await db.collection("chats").doc(chatId).update({
+        messageCount: FieldValue.increment(1),
+      });
+    } catch (e) {
+      logger.warn("onNewMessage: messageCount increment failed", e);
+    }
+
     const members: string[] = chat.members ?? [];
     const activeUsers: string[] = chat.activeUsers ?? [];
     const recipients = members.filter(
@@ -132,6 +151,36 @@ export const onNewMessage = onDocumentCreated(
         );
       }),
     );
+  },
+);
+
+// messageCount's decrement half — see onNewMessage's own comment above for
+// the full rationale. Symmetric trigger on the same path (deliberately no
+// explicit region either, matching onNewMessage exactly, unlike the
+// FUNCTIONS_REGION callables below), so a message's contribution to the
+// count is removed exactly when its document actually is — regardless of
+// which client code path performed the deletion (the 5-minute opportunistic
+// hard-delete purge in chat_screen.dart, deleteGroupChat's batch cleanup
+// below, or any future one).
+//
+// Deliberately no floor guard: messageCount has no backfill for messages
+// that already existed before this trigger shipped (unlike mediaImageCount,
+// which got a one-off migration), so hard-deleting one of those pre-
+// existing messages after this deploys decrements a count that never
+// counted it in the first place — messageCount can legitimately go
+// negative until enough new messages arrive to bring it back up. Clamping
+// that would hide the real state instead of letting it self-correct.
+export const onMessageDeleted = onDocumentDeleted(
+  "chats/{chatId}/messages/{messageId}",
+  async (event) => {
+    const { chatId } = event.params;
+    try {
+      await db.collection("chats").doc(chatId).update({
+        messageCount: FieldValue.increment(-1),
+      });
+    } catch (e) {
+      logger.warn("onMessageDeleted: messageCount decrement failed", e);
+    }
   },
 );
 
