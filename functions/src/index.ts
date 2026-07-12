@@ -268,3 +268,84 @@ export const onChatMediaUploaded = onObjectFinalized(
       });
   },
 );
+
+// Client-side document deletion is denied entirely by firestore.rules
+// (`allow delete: if false` on chats/{chatId}) — Cloud Functions run with
+// Admin SDK privileges and bypass rules, which is exactly why deleting a
+// group has to go through a callable rather than a rules change. Only the
+// group's own createdBy uid may call this, verified server-side from the
+// auth context (never trusted from client-supplied data). mugam-v2's own
+// deleteGroup has no caller authorization at all (verified in an earlier
+// investigation pass) — this closes that gap rather than reproducing it.
+export const deleteGroupChat = onCall(
+  { region: FUNCTIONS_REGION },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const { chatId } = (request.data ?? {}) as { chatId?: string };
+    if (!chatId) {
+      throw new HttpsError("invalid-argument", "chatId is required.");
+    }
+
+    const chatRef = db.collection("chats").doc(chatId);
+    const chatSnap = await chatRef.get();
+    if (!chatSnap.exists) {
+      throw new HttpsError("not-found", "Chat not found.");
+    }
+    const chat = chatSnap.data()!;
+    if (!chat.isGroup) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Not a group chat — this function only deletes groups.",
+      );
+    }
+    if (chat.createdBy !== uid) {
+      throw new HttpsError(
+        "permission-denied",
+        "Only the group creator may delete the group.",
+      );
+    }
+    // leaveGroup() intentionally never clears createdBy (see Phase B's own
+    // documented rationale) — so if the creator has since left, createdBy
+    // still points at them even though they're no longer a member. This
+    // function runs with Admin SDK privileges and bypasses firestore.rules
+    // entirely, so without this second check, a former creator could still
+    // call it directly with a known chatId and delete a group they've
+    // already left.
+    if (!Array.isArray(chat.members) || !chat.members.includes(uid)) {
+      throw new HttpsError(
+        "permission-denied",
+        "You are no longer a member of this group.",
+      );
+    }
+
+    // Firestore doesn't cascade-delete subcollections — messages must be
+    // removed explicitly, in pages within the 500-writes-per-batch limit,
+    // before the chat doc itself can go. No orderBy/cursor needed: each
+    // page is always "whatever's left", since the previous page is already
+    // gone by the time the next .get() runs.
+    const messagesRef = chatRef.collection("messages");
+    let page = await messagesRef.limit(400).get();
+    while (!page.empty) {
+      const batch = db.batch();
+      for (const doc of page.docs) {
+        batch.delete(doc.ref);
+      }
+      await batch.commit();
+      page = await messagesRef.limit(400).get();
+    }
+
+    // Storage cleanup (groups/{chatId}/avatar.jpg, if one was ever
+    // uploaded) is a known, deliberate gap — no delete flow anywhere in
+    // this codebase cleans up Storage objects on document deletion, so
+    // this doesn't invent a new pattern for it. The orphaned file is
+    // harmless: storage.rules still gates it to former members/admins via
+    // chats/{chatId}, which no longer exists after this, and it's not
+    // referenced from any UI surface once the chat doc is gone.
+    await chatRef.delete();
+
+    return { ok: true };
+  },
+);
