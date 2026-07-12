@@ -5,6 +5,7 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../chats/screens/create_group_screen.dart';
+import 'chat_screen.dart';
 
 // WhatsApp-style forward sheet (Phase C2) — replaces chat_screen.dart's
 // old single-tap-and-close bottom sheet. Search + "Often contacted"/
@@ -74,31 +75,18 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
     });
   }
 
-  void _openNewGroup() {
-    Navigator.of(context).pop();
-    widget.onDone();
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const CreateGroupScreen()),
-    );
-  }
-
-  Future<void> _send() async {
-    if (_selectedChatIds.isEmpty || _sending) return;
-    // Captured before any await — ScaffoldMessenger.of(context) must not
-    // be looked up again after this sheet's own context is popped below,
-    // but the State object itself (belonging to ChatScreen's ancestor
-    // Scaffold, still mounted underneath) stays valid to use afterward.
-    final messenger = ScaffoldMessenger.of(context);
-    setState(() => _sending = true);
+  // Shared by _send() and _openNewGroup() — forwards every
+  // widget.messages entry into every target chat, per-message-per-chat
+  // try/catch (one message failing doesn't abort the rest of that
+  // chat's batch), using the caption field's current text as an
+  // override. Returns whether any individual forward failed, for the
+  // caller's own success/partial-failure SnackBar.
+  Future<bool> _forwardTo(Iterable<String> chatIds) async {
     final service = ref.read(firestoreServiceProvider);
     final captionText = _captionController.text.trim();
     final captionOverride = captionText.isEmpty ? null : captionText;
-    // Per-message-per-chat try/catch, not per-chat — one message failing
-    // to forward (e.g. it predates forward-validation fields) shouldn't
-    // abort the rest of that same chat's batch, same granularity as the
-    // old pre-Phase-C2 code had.
     var anyFailed = false;
-    for (final chatId in _selectedChatIds) {
+    for (final chatId in chatIds) {
       for (final msg in widget.messages) {
         try {
           await service.forwardMessage(
@@ -112,6 +100,59 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
         }
       }
     }
+    return anyFailed;
+  }
+
+  // Matches real WhatsApp's own forward-sheet behavior: "New group"
+  // pushes CreateGroupScreen (popWithChatId: true, so it hands the new
+  // chatId back via a plain pop instead of navigating itself into the
+  // new group's ChatScreen — see CreateGroupScreen's own doc comment)
+  // rather than abandoning the forward. Cancelling there pops with null
+  // — the forward sheet is still showing underneath (it was never
+  // popped), so there's nothing further to do; the in-progress
+  // selection/caption are untouched, exactly as if this had never been
+  // tapped. On an actual chatId, forwards the message(s) into it and
+  // lands the user directly in that new group's chat — same "land in
+  // the new chat" behavior normal group creation already has — rather
+  // than back in the chat they were forwarding from, which is why this
+  // pops the sheet AND pushReplacements the original ChatScreen, not
+  // just one or the other.
+  //
+  // Navigator captured before the sheet's own pop, same reasoning as
+  // messenger elsewhere in this file: this widget's own context is
+  // about to be unmounted by that pop, but the NavigatorState itself
+  // (owned by an ancestor still very much alive) stays valid to keep
+  // driving afterward.
+  Future<void> _openNewGroup() async {
+    final navigator = Navigator.of(context);
+    final chatId = await navigator.push<String>(
+      MaterialPageRoute(
+        builder: (_) => const CreateGroupScreen(popWithChatId: true),
+      ),
+    );
+    if (!mounted || chatId == null) return;
+    setState(() => _sending = true);
+    // Navigate regardless of partial per-message failure, same as a
+    // normal send — landing in the new group with whatever did arrive
+    // is itself the confirmation, no separate SnackBar needed here.
+    await _forwardTo([chatId]);
+    if (!mounted) return;
+    navigator.pop();
+    widget.onDone();
+    navigator.pushReplacement(
+      MaterialPageRoute(builder: (_) => ChatScreen(chatId: chatId)),
+    );
+  }
+
+  Future<void> _send() async {
+    if (_selectedChatIds.isEmpty || _sending) return;
+    // Captured before any await — ScaffoldMessenger.of(context) must not
+    // be looked up again after this sheet's own context is popped below,
+    // but the State object itself (belonging to ChatScreen's ancestor
+    // Scaffold, still mounted underneath) stays valid to use afterward.
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _sending = true);
+    final anyFailed = await _forwardTo(_selectedChatIds);
     if (!mounted) return;
     Navigator.of(context).pop();
     widget.onDone();

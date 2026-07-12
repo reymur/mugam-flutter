@@ -13,7 +13,16 @@ import '../../chat/screens/chat_screen.dart';
 // mugam-v2's literal colors. See FirestoreService.createGroupChat for the
 // Firestore write shape this produces.
 class CreateGroupScreen extends ConsumerStatefulWidget {
-  const CreateGroupScreen({super.key});
+  // Default (false) preserves this screen's original standalone
+  // behavior (chats_screen.dart's "+" button) — land directly in the
+  // new group's own ChatScreen via pushReplacement. true is for callers
+  // like ForwardSheet that need the new chatId handed back via a plain
+  // pop instead, so they can act on it themselves (e.g. forward a
+  // message into the just-created group) rather than being replaced by
+  // it.
+  final bool popWithChatId;
+
+  const CreateGroupScreen({super.key, this.popWithChatId = false});
 
   @override
   ConsumerState<CreateGroupScreen> createState() => _CreateGroupScreenState();
@@ -71,6 +80,10 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
         emoji: _emoji,
       );
       if (!mounted) return;
+      if (widget.popWithChatId) {
+        Navigator.of(context).pop(chatId);
+        return;
+      }
       // Replace this create-group screen with the new group's chat, same
       // as mugam-v2's onCreated navigation.
       Navigator.of(context).pushReplacement(
