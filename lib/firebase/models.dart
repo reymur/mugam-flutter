@@ -86,6 +86,12 @@ class Chat {
   // parsing error.
   final List<String> admins;
   final String createdBy;
+  // How many messages currently exist in this chat (not lifetime-ever-sent)
+  // — server-owned via onNewMessage/onMessageDeleted's symmetric Firestore
+  // triggers (see functions/src/index.ts), not incremented client-side.
+  // Defaults to 0 for any chat doc that predates this field, same as
+  // admins/createdBy above.
+  final int messageCount;
 
   const Chat({
     required this.id,
@@ -100,6 +106,7 @@ class Chat {
     this.completed = false,
     this.admins = const [],
     this.createdBy = '',
+    this.messageCount = 0,
   });
 
   factory Chat.fromFirestore(String id, Map<String, dynamic> data) {
@@ -134,6 +141,7 @@ class Chat {
       completed: (data['completed'] ?? false) as bool,
       admins: List<String>.from(data['admins'] as List? ?? const []),
       createdBy: data['createdBy'] ?? '',
+      messageCount: (data['messageCount'] as num?)?.toInt() ?? 0,
     );
   }
 }
