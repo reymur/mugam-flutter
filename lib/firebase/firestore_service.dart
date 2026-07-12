@@ -171,12 +171,43 @@ class FirestoreService {
   // field in one update, so the new `admins` array must be computed
   // client-side and written as a plain list, inside a transaction to
   // avoid racing a concurrent membership/role change.
+  //
+  // The system message MUST be written before the transaction, not
+  // after: firestore.rules' isChatMember() (required by the messages
+  // subcollection's `allow create`) reads the chat doc's CURRENT
+  // committed `members` array. If the transaction removing `uid` from
+  // `members` ran first, the leaving user would already be gone from
+  // that array by the time the message write's rule check runs —
+  // guaranteeing permission-denied on every single leave, for every
+  // member, deterministically (confirmed via on-device testing — this
+  // isn't a race condition, the ordering makes it 100% reproducible).
+  // Deliberately two sequential awaits rather than folding the message
+  // write into the same transaction too: we haven't verified how
+  // security rules' cross-document reads behave for a second write's
+  // rule evaluation from inside an in-flight transaction (pre- vs.
+  // mid-transaction state), so two plain sequential writes — correctly
+  // ordered — is the fix that doesn't require guessing about that.
+  //
+  // Known, accepted tradeoff: if the system-message write succeeds but
+  // the transaction below then fails for an unrelated reason (e.g. a
+  // transient network error), the chat briefly shows "X left the
+  // group" while X is technically still a member. Minor and unlikely
+  // versus the previous 100%-reproducible failure this replaces.
   Future<void> leaveGroup({
     required String chatId,
     required String uid,
     required String userName,
   }) async {
     final chatRef = _db.collection('chats').doc(chatId);
+
+    await chatRef.collection('messages').add({
+      'senderId': uid,
+      'text': '$userName qrupdan çıxdı',
+      'type': 'text',
+      'isSystem': true,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
     await _db.runTransaction((tx) async {
       final snap = await tx.get(chatRef);
       final data = snap.data() ?? {};
@@ -199,14 +230,6 @@ class FirestoreService {
         'members': remainingMembers,
         'admins': remainingAdmins,
       });
-    });
-
-    await chatRef.collection('messages').add({
-      'senderId': uid,
-      'text': '$userName qrupdan çıxdı',
-      'type': 'text',
-      'isSystem': true,
-      'timestamp': FieldValue.serverTimestamp(),
     });
   }
 
