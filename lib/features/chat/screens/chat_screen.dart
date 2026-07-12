@@ -3037,20 +3037,39 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           horizontal: 12,
                           vertical: 8,
                         ),
-                        itemBuilder: (ctx, i) => _buildMessageBubble(
-                          combinedMessages[i],
-                          i,
-                          allMsgIds,
-                          currentUid,
-                          otherUidResolved,
-                          deliveredTo,
-                          lastReadMsgId,
-                          // Chronologically-previous message: with index 0 =
-                          // newest, that's the NEXT index, not i - 1.
-                          i < combinedMessages.length - 1
-                              ? combinedMessages[i + 1].senderId
-                              : null,
-                        ),
+                        itemBuilder: (ctx, i) {
+                          // Defensive against scrollable_positioned_list's
+                          // own internal position-tracking state
+                          // requesting a stale/out-of-bounds index
+                          // (including -1) when combinedMessages collapses
+                          // from N to ~0 in a single frame while this
+                          // screen is still mounted — first reachable via
+                          // leaveGroup/deleteGroupChat/removeGroupMember
+                          // (the chat's messages becoming instantly
+                          // inaccessible mid-rebuild/pop), none of which
+                          // existed before groups did. Not a bug in our
+                          // own list-building logic: combinedMessages and
+                          // itemCount above are always consistent with
+                          // each other in this same closure — it's the
+                          // package's own internal state that goes stale.
+                          if (i < 0 || i >= combinedMessages.length) {
+                            return const SizedBox.shrink();
+                          }
+                          return _buildMessageBubble(
+                            combinedMessages[i],
+                            i,
+                            allMsgIds,
+                            currentUid,
+                            otherUidResolved,
+                            deliveredTo,
+                            lastReadMsgId,
+                            // Chronologically-previous message: with index
+                            // 0 = newest, that's the NEXT index, not i - 1.
+                            i < combinedMessages.length - 1
+                                ? combinedMessages[i + 1].senderId
+                                : null,
+                          );
+                        },
                       );
                     },
                   ),
