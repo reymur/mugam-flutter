@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../firebase/firestore_service.dart';
@@ -128,6 +129,26 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
         addedMessageIds: snapshot.addedMessageIds,
         hasLoadedOnce: true,
       );
+    }, onError: (Object e, StackTrace st) {
+      // This stream naturally dies with a permission-denied error the
+      // instant the chat disappears out from under a still-mounted
+      // ChatScreen — leave-group, delete-group, or being removed by an
+      // admin (found via Phase G testing: firestore.rules' isMember()
+      // starts rejecting reads the moment the write that causes any of
+      // those lands, but this screen isn't unmounted until its own
+      // Navigator.pop() finishes a beat later). The screen is already
+      // navigating away in all of those cases, so silently stopping here
+      // is correct — rethrowing/updating state would surface a scary raw
+      // FirebaseException as Flutter's default red error overlay for
+      // something that isn't really an error from the user's point of
+      // view. A genuine, unexpected Firestore error on a still-valid chat
+      // is a different, much rarer case; logging it (rather than
+      // crashing) is still the safer default for that case too.
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'ChatMessagesController: tail listener error for $chatId',
+      );
     });
     return const ChatMessagesState(
       messages: [],
@@ -155,6 +176,16 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
           state = _mergedState(
             isInitialLoad: state.isInitialLoad,
             addedMessageIds: const [],
+          );
+        }, onError: (Object e, StackTrace st) {
+          // Same rationale as _tailSub's onError above — this listener
+          // dies the same way, for the same reasons, whenever the tail
+          // one does.
+          FirebaseCrashlytics.instance.recordError(
+            e,
+            st,
+            reason:
+                'ChatMessagesController: older listener error for $chatId',
           );
         });
   }
