@@ -39,6 +39,7 @@ import '../../../shared/widgets/zoomable_image_viewer.dart';
 import 'about_contact_screen.dart';
 import 'custom_camera_backup/camera_capture_screen.dart';
 import 'file_message_widgets.dart';
+import 'forward_sheet.dart';
 import 'group_info_screen.dart';
 import 'location_message_widgets.dart';
 import 'location_picker_screen.dart';
@@ -580,200 +581,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _restoreComposerFocusIfNeeded();
   }
 
+  // Phase C2 — the actual multi-select/search/sections/caption UI lives
+  // in ForwardSheet (its own file, like group_info_screen.dart), which
+  // owns the send loop itself (via FirestoreService.forwardMessage) and
+  // calls back into _exitSelectionMode when done, since that's
+  // ChatScreen-specific selection state ForwardSheet has no business
+  // owning.
   void _openForwardSheet(List<Message> messages) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     showModalBottomSheet(
       context: context,
       backgroundColor: kBg2,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (_) => SafeArea(
-        child: SizedBox(
-          height: 400,
-          child: Consumer(
-            builder: (context, ref, _) {
-              final chatsAsync = ref.watch(chatsProvider(currentUid));
-              return chatsAsync.when(
-                loading: () => const Center(
-                  child: CircularProgressIndicator(color: kGold),
-                ),
-                error: (_, _) => const Center(
-                  child: Text('Xəta', style: TextStyle(color: kMuted)),
-                ),
-                data: (chats) {
-                  final targets = chats
-                      .where((c) => c.id != widget.chatId)
-                      .toList();
-                  if (targets.isEmpty) {
-                    return const Center(
-                      child: Text(
-                        'Söhbət tapılmadı',
-                        style: TextStyle(color: kMuted),
-                      ),
-                    );
-                  }
-                  return ListView.builder(
-                    itemCount: targets.length,
-                    itemBuilder: (ctx, i) {
-                      final chat = targets[i];
-                      return ListTile(
-                        leading: Text(
-                          chat.emoji,
-                          style: const TextStyle(fontSize: 24),
-                        ),
-                        title: Text(
-                          chat.name,
-                          style: const TextStyle(color: kText),
-                        ),
-                        onTap: () async {
-                          Navigator.of(context).pop();
-                          for (final msg in messages) {
-                            await _forwardMessage(msg, chat.id, currentUid);
-                          }
-                          _exitSelectionMode();
-                        },
-                      );
-                    },
-                  );
-                },
-              );
-            },
-          ),
-        ),
+      builder: (_) => ForwardSheet(
+        messages: messages,
+        sourceChatId: widget.chatId,
+        currentUid: currentUid,
+        onDone: _exitSelectionMode,
       ),
     );
-  }
-
-  Future<void> _forwardMessage(
-    Message msg,
-    String targetChatId,
-    String currentUid,
-  ) async {
-    final service = ref.read(firestoreServiceProvider);
-    try {
-      // mediaOriginChatId/mediaFileName let firestore.rules confirm this
-      // media really was a validated upload (see onChatMediaUploaded)
-      // rather than trusting the URL string alone — a forward has to carry
-      // them through from the original message, not just its URL. Messages
-      // sent before this field existed don't have them and can no longer
-      // be forwarded; surfaced as the same generic forward-failed error
-      // below rather than attempting a write the server will reject
-      // anyway.
-      final isMedia =
-          msg.type == 'image' ||
-          msg.type == 'audio' ||
-          msg.type == 'video' ||
-          msg.type == 'file' ||
-          msg.type == 'location';
-      if (isMedia &&
-          (msg.mediaOriginChatId == null || msg.mediaFileName == null)) {
-        throw Exception('Media message predates forward-validation fields');
-      }
-      // The forwarded copy's own count is the source message's count plus
-      // this hop — forwarding an already-forwarded message grows the chain
-      // depth rather than resetting it (see Message.forwardCount).
-      final forwardCount = msg.forwardCount + 1;
-      switch (msg.type) {
-        case 'image':
-          final imageURL = msg.imageURL;
-          if (imageURL != null) {
-            await service.sendImageMessage(
-              chatId: targetChatId,
-              senderId: currentUid,
-              imageURL: imageURL,
-              caption: msg.text,
-              forwardCount: forwardCount,
-              mediaOriginChatId: msg.mediaOriginChatId,
-              mediaFileName: msg.mediaFileName,
-            );
-          }
-          break;
-        case 'audio':
-          final audioURL = msg.audioURL;
-          if (audioURL != null) {
-            await service.sendAudioMessage(
-              chatId: targetChatId,
-              senderId: currentUid,
-              audioURL: audioURL,
-              caption: msg.text,
-              forwardCount: forwardCount,
-              mediaOriginChatId: msg.mediaOriginChatId,
-              mediaFileName: msg.mediaFileName,
-            );
-          }
-          break;
-        case 'video':
-          final videoURL = msg.videoURL;
-          if (videoURL != null) {
-            await service.sendVideoMessage(
-              chatId: targetChatId,
-              senderId: currentUid,
-              videoURL: videoURL,
-              caption: msg.text,
-              forwardCount: forwardCount,
-              mediaOriginChatId: msg.mediaOriginChatId,
-              mediaFileName: msg.mediaFileName,
-            );
-          }
-          break;
-        case 'file':
-          final fileURL = msg.fileURL;
-          if (fileURL != null) {
-            await service.sendFileMessage(
-              chatId: targetChatId,
-              senderId: currentUid,
-              fileURL: fileURL,
-              fileName: msg.fileName ?? 'Fayl',
-              fileSizeBytes: msg.fileSizeBytes,
-              caption: msg.text,
-              forwardCount: forwardCount,
-              mediaOriginChatId: msg.mediaOriginChatId,
-              mediaFileName: msg.mediaFileName,
-            );
-          }
-          break;
-        case 'location':
-          final locationImageURL = msg.locationImageURL;
-          final lat = msg.latitude;
-          final lng = msg.longitude;
-          if (locationImageURL != null && lat != null && lng != null) {
-            await service.sendLocationMessage(
-              chatId: targetChatId,
-              senderId: currentUid,
-              locationImageURL: locationImageURL,
-              latitude: lat,
-              longitude: lng,
-              caption: msg.text,
-              forwardCount: forwardCount,
-              mediaOriginChatId: msg.mediaOriginChatId,
-              mediaFileName: msg.mediaFileName,
-            );
-          }
-          break;
-        default:
-          await service.sendMessage(
-            chatId: targetChatId,
-            senderId: currentUid,
-            text: msg.text,
-            forwardCount: forwardCount,
-          );
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Yönləndirildi')));
-      }
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Yönləndirmə uğursuz oldu'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
   }
 
   Future<void> _deleteSelectedForMe() async {

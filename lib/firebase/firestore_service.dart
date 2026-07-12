@@ -1122,6 +1122,136 @@ class FirestoreService {
     });
   }
 
+  // Single source of truth for forwarding one message into one target
+  // chat — dispatches by type to the matching send*Message method above,
+  // carrying forward-chain depth (message.forwardCount + 1, see
+  // Message.forwardCount) and the original media-validation fields
+  // through. Moved here from chat_screen.dart's own private
+  // _forwardMessage (Phase C1) so ForwardSheet (Phase C2, its own file)
+  // can call it directly without reaching into ChatScreen's private
+  // state — this was always data-layer orchestration over the send*
+  // methods above, not UI logic.
+  //
+  // captionOverride, when non-null, REPLACES the source message's own
+  // text/caption on every destination copy — used by ForwardSheet's
+  // optional caption field. Deliberately a replace, not an append: an
+  // append would need to invent a separator/ordering convention with no
+  // existing precedent in this app, while replace matches how
+  // captionOverride already behaves as just "the caption to use", same
+  // shape as every send*Message method's own `caption` parameter.
+  // Passing null (the caller has nothing typed) preserves the exact
+  // original text/caption, unchanged from Phase C1's behavior.
+  Future<void> forwardMessage({
+    required Message message,
+    required String targetChatId,
+    required String senderId,
+    String? captionOverride,
+  }) async {
+    // mediaOriginChatId/mediaFileName let firestore.rules confirm this
+    // media really was a validated upload (see onChatMediaUploaded)
+    // rather than trusting the URL string alone — a forward has to carry
+    // them through from the original message, not just its URL. Messages
+    // sent before this field existed don't have them and can no longer
+    // be forwarded.
+    final isMedia =
+        message.type == 'image' ||
+        message.type == 'audio' ||
+        message.type == 'video' ||
+        message.type == 'file' ||
+        message.type == 'location';
+    if (isMedia &&
+        (message.mediaOriginChatId == null || message.mediaFileName == null)) {
+      throw Exception('Media message predates forward-validation fields');
+    }
+    final forwardCount = message.forwardCount + 1;
+    final caption = captionOverride ?? message.text;
+    switch (message.type) {
+      case 'image':
+        final imageURL = message.imageURL;
+        if (imageURL != null) {
+          await sendImageMessage(
+            chatId: targetChatId,
+            senderId: senderId,
+            imageURL: imageURL,
+            caption: caption,
+            forwardCount: forwardCount,
+            mediaOriginChatId: message.mediaOriginChatId,
+            mediaFileName: message.mediaFileName,
+          );
+        }
+        break;
+      case 'audio':
+        final audioURL = message.audioURL;
+        if (audioURL != null) {
+          await sendAudioMessage(
+            chatId: targetChatId,
+            senderId: senderId,
+            audioURL: audioURL,
+            caption: caption,
+            forwardCount: forwardCount,
+            mediaOriginChatId: message.mediaOriginChatId,
+            mediaFileName: message.mediaFileName,
+          );
+        }
+        break;
+      case 'video':
+        final videoURL = message.videoURL;
+        if (videoURL != null) {
+          await sendVideoMessage(
+            chatId: targetChatId,
+            senderId: senderId,
+            videoURL: videoURL,
+            caption: caption,
+            forwardCount: forwardCount,
+            mediaOriginChatId: message.mediaOriginChatId,
+            mediaFileName: message.mediaFileName,
+          );
+        }
+        break;
+      case 'file':
+        final fileURL = message.fileURL;
+        if (fileURL != null) {
+          await sendFileMessage(
+            chatId: targetChatId,
+            senderId: senderId,
+            fileURL: fileURL,
+            fileName: message.fileName ?? 'Fayl',
+            fileSizeBytes: message.fileSizeBytes,
+            caption: caption,
+            forwardCount: forwardCount,
+            mediaOriginChatId: message.mediaOriginChatId,
+            mediaFileName: message.mediaFileName,
+          );
+        }
+        break;
+      case 'location':
+        final locationImageURL = message.locationImageURL;
+        final lat = message.latitude;
+        final lng = message.longitude;
+        if (locationImageURL != null && lat != null && lng != null) {
+          await sendLocationMessage(
+            chatId: targetChatId,
+            senderId: senderId,
+            locationImageURL: locationImageURL,
+            latitude: lat,
+            longitude: lng,
+            caption: caption,
+            forwardCount: forwardCount,
+            mediaOriginChatId: message.mediaOriginChatId,
+            mediaFileName: message.mediaFileName,
+          );
+        }
+        break;
+      default:
+        await sendMessage(
+          chatId: targetChatId,
+          senderId: senderId,
+          text: caption,
+          forwardCount: forwardCount,
+        );
+    }
+  }
+
   // Waits for the onChatMediaUploaded Storage trigger to write its
   // validatedUploads marker for a just-uploaded file — without this, the
   // caller's next step (creating the message doc) would race the trigger
