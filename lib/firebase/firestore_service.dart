@@ -360,6 +360,19 @@ class FirestoreService {
     return await ref.getDownloadURL();
   }
 
+  // Client-side document deletion is denied entirely by firestore.rules —
+  // this goes through the deleteGroupChat Cloud Function instead (Admin SDK,
+  // bypasses rules), which re-verifies server-side that the caller is the
+  // group's creator AND still a member (Phase G) before deleting the chat
+  // doc and batch-deleting its messages subcollection. Same
+  // httpsCallable(...).call({...}) shape as toggleReaction above, on the
+  // same europe-west3 _functions instance.
+  Future<void> deleteGroupChat(String chatId) async {
+    await _functions.httpsCallable('deleteGroupChat').call({
+      'chatId': chatId,
+    });
+  }
+
   // One-off lookup for a single message by id, regardless of whether it's
   // within the currently-loaded window (finding #4) — used by
   // message_info_screen.dart to resolve the read/delivered comparison by

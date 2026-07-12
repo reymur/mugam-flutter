@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,17 +12,16 @@ import '../../../firebase/firestore_service.dart';
 
 // Group Info screen — mirrors mugam-v2's GroupInfo.tsx (header photo/name/
 // emoji, participant list with role badges + per-row admin actions,
-// add-participants, leave-group), restyled with this app's own design
-// tokens. Presented as a fullscreenDialog route from chat_screen.dart's app
-// bar (tapping a group chat's title), matching mugam-v2's own iOS pageSheet
-// modal presentation for the same screen.
+// add-participants, leave-group, delete-group), restyled with this app's
+// own design tokens. Presented as a fullscreenDialog route from
+// chat_screen.dart's app bar (tapping a group chat's title), matching
+// mugam-v2's own iOS pageSheet modal presentation for the same screen.
 //
 // Wires up FirestoreService's already-committed group-management methods
 // (leaveGroup, addGroupMember, removeGroupMember, makeGroupAdmin,
-// dismissAsAdmin, updateGroupInfo, uploadGroupPhoto — Phases B-E). Group
-// deletion is intentionally NOT wired here: deleteGroup's Cloud Function
-// doesn't exist yet (a later phase), so there's no working action to attach
-// a button to.
+// dismissAsAdmin, updateGroupInfo, uploadGroupPhoto — Phases B-E) plus the
+// deleteGroupChat Cloud Function (Phase G, deployed and emulator-tested
+// separately from this UI wiring).
 //
 // Reads chatMetaProvider (Phase A's live stream) rather than the one-time
 // chatDataProvider, so a rename/role change made here — or by another
@@ -37,6 +37,7 @@ class GroupInfoScreen extends ConsumerStatefulWidget {
 
 class _GroupInfoScreenState extends ConsumerState<GroupInfoScreen> {
   bool _leaving = false;
+  bool _deleting = false;
 
   String get _myUid => FirebaseAuth.instance.currentUser?.uid ?? '';
   String get _myName =>
@@ -292,6 +293,66 @@ class _GroupInfoScreenState extends ConsumerState<GroupInfoScreen> {
     }
   }
 
+  // Irreversible and destroys the group for every member, not just the
+  // actor — a stronger confirmation than the plain Cancel/Confirm dialogs
+  // used for Remove/Demote/Leave above: explicit destructive framing in the
+  // body text, and the confirm button reads "Sil" rather than a generic
+  // "OK" or "Confirm".
+  Future<void> _confirmAndDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        title: const Text('Qrupu sil', style: TextStyle(color: kText)),
+        content: const Text(
+          'Qrup və bütün mesajları hər kəs üçün həmişəlik silinəcək. '
+          'Bu əməliyyatı geri qaytarmaq mümkün deyil.',
+          style: TextStyle(color: kMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Ləğv et', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text(
+              'Sil',
+              style: TextStyle(color: kRed, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || _deleting || !mounted) return;
+
+    setState(() => _deleting = true);
+    // Captured immediately after the mounted check above, before
+    // deleteGroupChat's own await — same reasoning as _confirmAndLeave:
+    // this screen (and the ChatScreen beneath it) is about to be popped,
+    // so `context` itself must not be touched again after this point.
+    final navigator = Navigator.of(context);
+    try {
+      await ref.read(firestoreServiceProvider).deleteGroupChat(widget.chatId);
+      // The chat no longer exists at all — leave both this screen and the
+      // chat screen itself, same double-pop as leaving.
+      navigator.pop();
+      navigator.pop();
+    } catch (e) {
+      if (mounted) setState(() => _deleting = false);
+      // FirebaseFunctionsException carries the HttpsError's own message
+      // (e.g. "Only the group creator may delete the group." or "You are
+      // no longer a member of this group." — both re-verified server-side
+      // in deleteGroupChat regardless of what this screen's own UI gating
+      // already prevents) — surface that instead of a raw exception dump.
+      if (e is FirebaseFunctionsException) {
+        _showError(e.message ?? e.code);
+      } else {
+        _showError(e);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final metaAsync = ref.watch(chatMetaProvider(widget.chatId));
@@ -449,6 +510,31 @@ class _GroupInfoScreenState extends ConsumerState<GroupInfoScreen> {
                 title: const Text('Qrupdan çıx', style: TextStyle(color: kRed)),
                 onTap: _leaving ? null : _confirmAndLeave,
               ),
+              // Creator-only — matches deleteGroupChat's own server-side
+              // authorization exactly, not just isAdminOrCreator like every
+              // other action menu above. A button any other admin could
+              // tap but that would always fail server-side is worse UX
+              // than not showing it at all.
+              if (createdBy == _myUid) ...[
+                const SizedBox(height: 24),
+                ListTile(
+                  leading: _deleting
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: kRed,
+                          ),
+                        )
+                      : const Icon(Icons.delete_forever, color: kRed),
+                  title: const Text(
+                    'Qrupu sil',
+                    style: TextStyle(color: kRed, fontWeight: FontWeight.w700),
+                  ),
+                  onTap: _deleting ? null : _confirmAndDelete,
+                ),
+              ],
               const SizedBox(height: 32),
             ],
           );
