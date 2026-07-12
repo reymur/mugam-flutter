@@ -254,6 +254,16 @@ class Message {
   // Cloud Function still resolves a real display name — isSystem is purely
   // a rendering distinction, not a push-routing one.
   final bool isSystem;
+  // How many times this message has been forwarded — 0 for a normal send.
+  // Set from the source message's own forwardCount + 1 when
+  // _forwardMessage builds a forwarded copy (chat_screen.dart), so
+  // forwarding an already-forwarded message grows the chain depth rather
+  // than resetting it. Drives the "Yönləndirilib"/"Dəfələrlə
+  // yönləndirilib" bubble label. num? rather than int? in fromFirestore
+  // below, matching Chat.messageCount's own pattern (Phase B) — Firestore
+  // can hand back either representation depending on how the value was
+  // written/read.
+  final int forwardCount;
 
   // The one identifier that stays constant across a message's entire
   // lifecycle (queued -> uploading -> sent), used to key anything that
@@ -300,6 +310,7 @@ class Message {
     this.mediaMessageId,
     this.localPreviewBytes,
     this.isSystem = false,
+    this.forwardCount = 0,
   });
 
   factory Message.fromFirestore(String id, Map<String, dynamic> data) {
@@ -342,6 +353,7 @@ class Message {
           entry.key: List<String>.from(entry.value as List? ?? const []),
       },
       isSystem: data['isSystem'] == true,
+      forwardCount: (data['forwardCount'] as num?)?.toInt() ?? 0,
     );
   }
 }

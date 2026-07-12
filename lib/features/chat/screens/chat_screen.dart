@@ -605,8 +605,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   final targets = chats
                       .where((c) => c.id != widget.chatId)
                       .toList();
-                  debugPrint('🔍 FORWARD: total chats from provider = ${chats.length}, after filter = ${targets.length}');
-                  debugPrint('🔍 FORWARD: chat IDs = ${chats.map((c) => "${c.id}:${c.name}:completed=${c.completed}").join(", ")}');
                   if (targets.isEmpty) {
                     return const Center(
                       child: Text(
@@ -672,6 +670,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           (msg.mediaOriginChatId == null || msg.mediaFileName == null)) {
         throw Exception('Media message predates forward-validation fields');
       }
+      // The forwarded copy's own count is the source message's count plus
+      // this hop — forwarding an already-forwarded message grows the chain
+      // depth rather than resetting it (see Message.forwardCount).
+      final forwardCount = msg.forwardCount + 1;
       switch (msg.type) {
         case 'image':
           final imageURL = msg.imageURL;
@@ -680,6 +682,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               chatId: targetChatId,
               senderId: currentUid,
               imageURL: imageURL,
+              caption: msg.text,
+              forwardCount: forwardCount,
               mediaOriginChatId: msg.mediaOriginChatId,
               mediaFileName: msg.mediaFileName,
             );
@@ -692,6 +696,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               chatId: targetChatId,
               senderId: currentUid,
               audioURL: audioURL,
+              caption: msg.text,
+              forwardCount: forwardCount,
               mediaOriginChatId: msg.mediaOriginChatId,
               mediaFileName: msg.mediaFileName,
             );
@@ -704,6 +710,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               chatId: targetChatId,
               senderId: currentUid,
               videoURL: videoURL,
+              caption: msg.text,
+              forwardCount: forwardCount,
               mediaOriginChatId: msg.mediaOriginChatId,
               mediaFileName: msg.mediaFileName,
             );
@@ -718,6 +726,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               fileURL: fileURL,
               fileName: msg.fileName ?? 'Fayl',
               fileSizeBytes: msg.fileSizeBytes,
+              caption: msg.text,
+              forwardCount: forwardCount,
               mediaOriginChatId: msg.mediaOriginChatId,
               mediaFileName: msg.mediaFileName,
             );
@@ -734,6 +744,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               locationImageURL: locationImageURL,
               latitude: lat,
               longitude: lng,
+              caption: msg.text,
+              forwardCount: forwardCount,
               mediaOriginChatId: msg.mediaOriginChatId,
               mediaFileName: msg.mediaFileName,
             );
@@ -744,6 +756,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             chatId: targetChatId,
             senderId: currentUid,
             text: msg.text,
+            forwardCount: forwardCount,
           );
       }
       if (mounted) {
@@ -2125,6 +2138,53 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     });
   }
 
+  // Quiet inline "Forwarded" marker, shown above the reply-to quote (if
+  // any) and the message content — no background/container of its own,
+  // sits directly on the bubble like any other in-bubble metadata (the
+  // bubble's own gold-vs-kBg3 background, set on the outer Container this
+  // sits inside, is unrelated pre-existing outgoing/incoming bubble
+  // styling — not part of this label). Right padding keeps it clear of
+  // the bubble's own right edge, same concern as isMe's tighter right
+  // margin (Container margin: right: isMe ? 0 : 60). Color: kMuted for
+  // isMe==false (incoming, dark kBg3 bubble — already reads fine there);
+  // for isMe==true (outgoing, gold bubble) kMuted is too light against
+  // gold, so this reuses _timeCheckmarkRow's own established dark-on-gold
+  // metadata color (Color(0xFF1A0E00).withAlpha(150)) instead of
+  // inventing a new one. >= 5 gets a distinct "many times" icon/label,
+  // matching WhatsApp's own double-arrow treatment for a long forward
+  // chain.
+  Widget _forwardedLabel(int forwardCount, bool isMe) {
+    final manyTimes = forwardCount >= 5;
+    final color = isMe ? const Color(0xFF1A0E00).withAlpha(150) : kMuted;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4, right: 10),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            manyTimes ? Icons.fast_forward : Icons.forward,
+            size: 14,
+            color: color,
+          ),
+          const SizedBox(width: 3),
+          // Flexible (not a bare Text) — an unconstrained Row child sizes
+          // to its own natural single-line width regardless of the
+          // bubble's actual available space, which is what let this
+          // overflow past the screen edge instead of shrinking/eliding
+          // like every other in-bubble text does.
+          Flexible(
+            child: Text(
+              manyTimes ? 'Dəfələrlə yönləndirilib' : 'Yönləndirilib',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: color, fontSize: 11),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMessageBubble(
     Message msg,
     int index,
@@ -2313,6 +2373,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       : CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (msg.forwardCount > 0)
+                      _forwardedLabel(msg.forwardCount, isMe),
                     if (msg.replyToId != null)
                       GestureDetector(
                         onTap: () => _scrollToMessage(msg.replyToId!),

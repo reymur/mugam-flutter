@@ -573,6 +573,9 @@ class FirestoreService {
     required String chatId,
     required String senderId,
     required String text,
+    // How many times this message has already been forwarded — 0 for a
+    // normal send. See sendImageMessage's own forwardCount doc comment.
+    int forwardCount = 0,
     String? replyToId,
     String? replyToText,
     String? replyToSenderName,
@@ -597,6 +600,7 @@ class FirestoreService {
       'text': text,
       'type': 'text',
       'clientPlatform': 'flutter',
+      'forwardCount': forwardCount,
       'timestamp': now,
       'imageURL': null,
       'audioURL': null,
@@ -676,6 +680,11 @@ class FirestoreService {
     // as ''. Used by forwarding-with-a-caption today; a first-send caption
     // UI could reuse the same param later.
     String caption = '',
+    // How many times this message has already been forwarded — 0 for a
+    // normal send, msg.forwardCount + 1 when _forwardMessage builds a
+    // forwarded copy (chat_screen.dart). Drives the "Yönləndirilib" bubble
+    // label — see Message.forwardCount.
+    int forwardCount = 0,
     // Which validated upload this image actually is: mediaOriginChatId ==
     // chatId for a fresh send, or an earlier chat's id when forwarding an
     // existing message's photo. Required (by firestore.rules) for every
@@ -705,6 +714,7 @@ class FirestoreService {
       'text': caption,
       'type': 'image',
       'clientPlatform': 'flutter',
+      'forwardCount': forwardCount,
       'imageURL': imageURL,
       if (imageWidth != null) 'imageWidth': imageWidth,
       if (imageHeight != null) 'imageHeight': imageHeight,
@@ -778,6 +788,8 @@ class FirestoreService {
     int? videoWidth,
     int? videoHeight,
     String caption = '',
+    // See sendImageMessage's own forwardCount doc comment.
+    int forwardCount = 0,
     String? mediaOriginChatId,
     String? mediaFileName,
     String? replyToId,
@@ -800,6 +812,7 @@ class FirestoreService {
       'text': caption,
       'type': 'video',
       'clientPlatform': 'flutter',
+      'forwardCount': forwardCount,
       'videoURL': videoURL,
       if (videoDurationMs != null) 'videoDurationMs': videoDurationMs,
       if (videoWidth != null) 'videoWidth': videoWidth,
@@ -876,6 +889,8 @@ class FirestoreService {
     required String fileName,
     int? fileSizeBytes,
     String caption = '',
+    // See sendImageMessage's own forwardCount doc comment.
+    int forwardCount = 0,
     String? mediaOriginChatId,
     String? mediaFileName,
     String? replyToId,
@@ -898,6 +913,7 @@ class FirestoreService {
       'text': caption,
       'type': 'file',
       'clientPlatform': 'flutter',
+      'forwardCount': forwardCount,
       'fileURL': fileURL,
       'fileName': fileName,
       if (fileSizeBytes != null) 'fileSizeBytes': fileSizeBytes,
@@ -970,6 +986,8 @@ class FirestoreService {
     required double latitude,
     required double longitude,
     String caption = '',
+    // See sendImageMessage's own forwardCount doc comment.
+    int forwardCount = 0,
     String? mediaOriginChatId,
     String? mediaFileName,
     String? replyToId,
@@ -992,6 +1010,7 @@ class FirestoreService {
       'text': caption,
       'type': 'location',
       'clientPlatform': 'flutter',
+      'forwardCount': forwardCount,
       'locationImageURL': locationImageURL,
       'latitude': latitude,
       'longitude': longitude,
@@ -1049,6 +1068,8 @@ class FirestoreService {
     required String audioURL,
     List<int>? waveform,
     String caption = '',
+    // See sendImageMessage's own forwardCount doc comment.
+    int forwardCount = 0,
     String? mediaOriginChatId,
     String? mediaFileName,
     String? replyToId,
@@ -1071,6 +1092,7 @@ class FirestoreService {
       'text': caption,
       'type': 'audio',
       'clientPlatform': 'flutter',
+      'forwardCount': forwardCount,
       'audioURL': audioURL,
       if (waveform != null) 'waveform': waveform,
       if (mediaOriginChatId != null) 'mediaOriginChatId': mediaOriginChatId,
