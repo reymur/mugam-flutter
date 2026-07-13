@@ -53,3 +53,7 @@ firestore-debug.log
 functions/firestore-debug.log
 *.emulator-debug.log
 test-results.json
+
+# Xcode auto-bumps LastUpgradeVersion on every build/run — no real signal,
+# just churn on every commit that happens to follow a build.
+ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
