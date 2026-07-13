@@ -107,41 +107,56 @@ service cloud.firestore {
       // onChatDeleted triggers in functions/src/index.ts (Admin SDK, bypasses
       // rules). Deliberately no `allow write` at all: a client write here
       // would let a user forge a false "shares a chat with me" signal and
-      // read someone else's contacts-mode status. No `allow read` either —
-      // isContact() below reads it via exists(), which evaluates against
-      // the document's actual existence regardless of this collection's own
-      // read rule, so no rule is needed for that to work; nothing in the
-      // client reads this collection directly today.
+      // have themselves added to a contacts-mode status's visibleToUids
+      // (via onStatusCreated / the propagation triggers reading this
+      // collection). No `allow read` either — nothing in the client reads
+      // this collection directly today; only Cloud Functions (Admin SDK,
+      // bypasses rules) ever read it, to compute/maintain statuses'
+      // visibleToUids.
 
       // users/{uid}/statuses/{statusId} — a WhatsApp-style 24h status post.
       // See lib/firebase/models.dart's Status class for the field shapes
-      // referenced below (privacyMode/privacyList in particular).
+      // referenced below (privacyMode/privacyList/visibleToUids in
+      // particular).
+      //
+      // Access is gated on visibleToUids, a denormalized array of every uid
+      // currently allowed to see this status — NOT recomputed from
+      // privacyMode/privacyList/contacts here. An exists()-based "is this
+      // reader a contact" check (the previous approach) only ever works for
+      // a single getDoc() of a known document id; it cannot support a real
+      // list/collectionGroup query, because Firestore only allows a list
+      // query when its security rule can be evaluated using solely the
+      // query's own filters (plus request.auth) — it never runs the rule
+      // against documents outside what the query already constrains, so a
+      // rule that reads another document via exists()/get() can't gate a
+      // list read. visibleToUids is written exclusively by Cloud Functions
+      // (onStatusCreated at creation, then kept in sync by the
+      // contacts-change propagation in onChatUpdated/onChatDeleted — see
+      // functions/src/index.ts) specifically so `visibleToUids
+      // array-contains request.auth.uid` can be both the query filter AND
+      // the rule condition.
+      //
+      // The read rule itself is declared separately, in a top-level
+      // `match /{path=**}/statuses/{statusId}` block below (NOT here) —
+      // confirmed by testing (status-feed-query.test.ts) that a rule
+      // nested inside match /users/{userId} {...}, like this block, DOES
+      // authorize a plain get()/collection() read at the exact nested path,
+      // but is NOT matched by a collectionGroup('statuses') query — only a
+      // rule declared with the recursive wildcard path is. Since the real
+      // feed access pattern is exactly that collectionGroup query, the read
+      // rule has to live there, not here.
       match /statuses/{statusId} {
-        function isContact(ownerUid) {
-          return exists(/databases/$(database)/documents/users/$(ownerUid)/contacts/$(request.auth.uid));
-        }
-        // Takes ownerUid/data as parameters (rather than reading
-        // resource.data implicitly) so the viewers subcollection's
-        // `allow create` below can call this against the PARENT status
-        // doc's data via get(), not its own resource.data.
-        function statusVisibleTo(ownerUid, data) {
-          return request.auth.uid == ownerUid || (
-            data.privacyMode == 'contacts' && isContact(ownerUid)
-          ) || (
-            data.privacyMode == 'contactsExcept' && isContact(ownerUid)
-              && !(request.auth.uid in data.privacyList)
-          ) || (
-            // Independent explicit allowlist — deliberately NOT gated
-            // behind isContact(). A user can be granted status access
-            // this way with zero shared chats.
-            data.privacyMode == 'onlyShareWith'
-              && request.auth.uid in data.privacyList
-          );
-        }
+        // The client must never set visibleToUids itself — only the
+        // onStatusCreated trigger (Admin SDK, bypasses rules) may, once the
+        // doc already exists. A client-supplied value here would let a
+        // user grant themselves (or anyone) read access outright.
+        allow create: if isSignedIn() && request.auth.uid == userId
+          && !('visibleToUids' in request.resource.data);
 
-        allow read: if isSignedIn() && statusVisibleTo(userId, resource.data);
-        allow create: if isSignedIn() && request.auth.uid == userId;
-        // Statuses are immutable after posting, same as WhatsApp.
+        // Statuses are immutable after posting, same as WhatsApp — this
+        // also blocks a client from ever rewriting visibleToUids post-
+        // creation (the Cloud Functions above use the Admin SDK, which
+        // bypasses rules entirely, so they're unaffected by this).
         allow update: if false;
         allow delete: if isSignedIn() && request.auth.uid == userId;
 
@@ -152,10 +167,8 @@ service cloud.firestore {
 
           allow create, update: if isSignedIn() && request.auth.uid == viewerUid
             && request.auth.uid != userId // owner doesn't "view" their own status
-            && statusVisibleTo(
-                 userId,
-                 get(/databases/$(database)/documents/users/$(userId)/statuses/$(statusId)).data
-               )
+            && request.auth.uid in
+                 get(/databases/$(database)/documents/users/$(userId)/statuses/$(statusId)).data.visibleToUids
             // Enforces the timestamp is the real server request time, not
             // a client-supplied value — standard anti-spoofing pattern.
             && request.resource.data.viewedAt == request.time;
@@ -165,6 +178,20 @@ service cloud.firestore {
           allow delete: if false;
         }
       }
+    }
+
+    // ---------------------------------------------------------------
+    // users/{uid}/statuses/{statusId} read access for collectionGroup
+    // queries — see the long comment on match /statuses/{statusId} above
+    // for why this can't just live inside that nested block. request.auth
+    // is available for a query request the same as a get(), and Firestore
+    // resolves this block for a get()/collection() read at the concrete
+    // nested path too (a match with `{path=**}` matches any prefix,
+    // including "users/{uid}"), so this is the single, sufficient
+    // declaration of the read rule — the nested block above intentionally
+    // has none.
+    match /{path=**}/statuses/{statusId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.visibleToUids;
     }
 
     // ---------------------------------------------------------------

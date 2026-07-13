@@ -7,14 +7,27 @@ import {
   assertFails,
 } from "@firebase/rules-unit-testing";
 import { doc, getDoc, setDoc, serverTimestamp, Timestamp } from "firebase/firestore";
-import { PROJECT_ID, FIRESTORE_EMULATOR_PORT } from "./helpers";
+import { PROJECT_ID, FIRESTORE_EMULATOR_PORT, db, waitFor } from "./helpers";
 
-// First rules test in this repo — no prior pattern to match. Reloads the
-// real firestore.rules file content into the already-running Firestore
-// emulator (started by `firebase emulators:exec` per firebase.json's
-// top-level firestore.rules config) so this suite is always validating
-// the exact file on disk, not whatever the emulator happened to load at
-// startup.
+// Reloads the real firestore.rules file content into the already-running
+// Firestore emulator (started by `firebase emulators:exec` per
+// firebase.json's top-level firestore.rules config) so this suite is
+// always validating the exact file on disk, not whatever the emulator
+// happened to load at startup.
+//
+// visibleToUids-based rules rework: access is now gated on a denormalized
+// `visibleToUids` array rather than a live exists()-based contacts check
+// (see firestore.rules' own comment on why — list/collectionGroup queries
+// can't be gated by exists()). These tests seed real contacts docs and
+// status docs WITHOUT visibleToUids, then wait for the real onStatusCreated
+// trigger to compute it — deliberately NOT hand-seeding visibleToUids
+// directly, because onStatusCreated is a real trigger running in this same
+// emulator session regardless of withSecurityRulesDisabled, and it would
+// silently overwrite any hand-seeded value moments later (it did, before
+// this fix — see functions/src/index.ts's onStatusCreated for the
+// matching robustness fix this surfaced). The real collectionGroup+
+// array-contains access pattern (as opposed to a single getDoc(), used
+// throughout below) is covered by status-feed-query.test.ts.
 let testEnv: RulesTestEnvironment;
 
 const OWNER = "owner";
@@ -38,10 +51,16 @@ afterAll(async () => {
   await testEnv.cleanup();
 });
 
+async function visibleToUidsOf(path: string): Promise<string[] | undefined> {
+  const snap = await db().doc(path).get();
+  return snap.data()?.visibleToUids as string[] | undefined;
+}
+
 beforeEach(async () => {
   await testEnv.clearFirestore();
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const d = context.firestore();
+
     await setDoc(doc(d, `users/${OWNER}/contacts/${CONTACT}`), { since: new Date() });
     await setDoc(doc(d, `users/${CONTACT}/contacts/${OWNER}`), { since: new Date() });
     await setDoc(doc(d, `users/${OWNER}/contacts/${EXCEPTED}`), { since: new Date() });
@@ -55,6 +74,9 @@ beforeEach(async () => {
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + 86400000),
     };
+    // No visibleToUids here — the real onStatusCreated trigger computes it
+    // (waited for below), so these tests validate against what that
+    // trigger actually produces, not a hand-typed guess.
     await setDoc(doc(d, `users/${OWNER}/statuses/s-contacts`), {
       ...base, privacyMode: "contacts", privacyList: [],
     });
@@ -69,6 +91,14 @@ beforeEach(async () => {
       viewedAt: new Date(),
     });
   });
+
+  await waitFor(async () => (await visibleToUidsOf(`users/${OWNER}/statuses/s-contacts`)) !== undefined);
+  await waitFor(
+    async () => (await visibleToUidsOf(`users/${OWNER}/statuses/s-contactsExcept`)) !== undefined,
+  );
+  await waitFor(
+    async () => (await visibleToUidsOf(`users/${OWNER}/statuses/s-onlyShareWith`)) !== undefined,
+  );
 });
 
 test("privacyMode 'contacts': a real contact CAN read", async () => {
@@ -106,6 +136,37 @@ test("the owner can always read their own status regardless of mode", async () =
   await assertSucceeds(getDoc(doc(ownerDb, `users/${OWNER}/statuses/s-contacts`)));
   await assertSucceeds(getDoc(doc(ownerDb, `users/${OWNER}/statuses/s-contactsExcept`)));
   await assertSucceeds(getDoc(doc(ownerDb, `users/${OWNER}/statuses/s-onlyShareWith`)));
+});
+
+test("create: a status WITHOUT a client-supplied visibleToUids succeeds", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    setDoc(doc(ownerDb, `users/${OWNER}/statuses/new-status`), {
+      ownerUid: OWNER,
+      type: "text",
+      text: "hey",
+      createdAt: serverTimestamp(),
+      expiresAt: new Date(Date.now() + 86400000),
+      privacyMode: "contacts",
+      privacyList: [],
+    }),
+  );
+});
+
+test("create: a status WITH a client-supplied visibleToUids is REJECTED", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    setDoc(doc(ownerDb, `users/${OWNER}/statuses/new-status-2`), {
+      ownerUid: OWNER,
+      type: "text",
+      text: "hey",
+      createdAt: serverTimestamp(),
+      expiresAt: new Date(Date.now() + 86400000),
+      privacyMode: "contacts",
+      privacyList: [],
+      visibleToUids: [OWNER, STRANGER],
+    }),
+  );
 });
 
 test("viewers subcollection: owner can read a viewer doc", async () => {

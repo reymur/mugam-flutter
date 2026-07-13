@@ -569,6 +569,18 @@ class Status {
   // Exception list for 'contactsExcept', allowlist for 'onlyShareWith',
   // empty for 'contacts'.
   final List<String> privacyList;
+  // Denormalized, server-computed audience for this status — the exact set
+  // of uids (always including ownerUid) allowed to read it, derived from
+  // privacyMode/privacyList + the owner's contacts at the time this field
+  // was last written. NEVER set by the client: it's computed and
+  // maintained exclusively by Cloud Functions (onStatusCreated at
+  // creation, then kept in sync by the contact-change propagation in
+  // onChatUpdated/onChatDeleted — see functions/src/index.ts). The client
+  // only ever reads it, as the array-contains filter for its own
+  // collectionGroup('statuses') feed query — firestore.rules requires
+  // every list/query read to be provably scoped this way, which an
+  // exists()-based check can't satisfy.
+  final List<String> visibleToUids;
 
   const Status({
     required this.id,
@@ -581,6 +593,7 @@ class Status {
     required this.expiresAt,
     required this.privacyMode,
     this.privacyList = const [],
+    this.visibleToUids = const [],
   });
 
   factory Status.fromFirestore(String id, Map<String, dynamic> data) {
@@ -595,6 +608,8 @@ class Status {
       expiresAt: (data['expiresAt'] as Timestamp).toDate(),
       privacyMode: (data['privacyMode'] ?? 'contacts') as String,
       privacyList: List<String>.from(data['privacyList'] as List? ?? const []),
+      visibleToUids:
+          List<String>.from(data['visibleToUids'] as List? ?? const []),
     );
   }
 }
