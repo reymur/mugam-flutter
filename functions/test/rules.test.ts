@@ -6,7 +6,7 @@ import {
   assertSucceeds,
   assertFails,
 } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc, serverTimestamp, Timestamp } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, setDoc, serverTimestamp, Timestamp } from "firebase/firestore";
 import { PROJECT_ID, FIRESTORE_EMULATOR_PORT, db, waitFor } from "./helpers";
 
 // Reloads the real firestore.rules file content into the already-running
@@ -88,6 +88,11 @@ beforeEach(async () => {
     });
 
     await setDoc(doc(d, `users/${OWNER}/statuses/s-contacts/viewers/${CONTACT}`), {
+      viewedAt: new Date(),
+    });
+    // A second viewer doc, so tests can prove a viewer can read their OWN
+    // record but not another viewer's.
+    await setDoc(doc(d, `users/${OWNER}/statuses/s-contacts/viewers/${EXCEPTED}`), {
       viewedAt: new Date(),
     });
   });
@@ -174,9 +179,25 @@ test("viewers subcollection: owner can read a viewer doc", async () => {
   await assertSucceeds(getDoc(doc(ownerDb, `users/${OWNER}/statuses/s-contacts/viewers/${CONTACT}`)));
 });
 
-test("viewers subcollection: a non-owner (even the viewer themselves) CANNOT read", async () => {
+// Superseded by the viewer-can-read-their-own-record change below: a viewer
+// CAN now get() their own record. A true stranger (neither owner nor that
+// specific viewer) still cannot.
+test("viewers subcollection: a stranger (neither owner nor that viewer) CANNOT read", async () => {
+  const strangerDb = testEnv.authenticatedContext(STRANGER).firestore();
+  await assertFails(getDoc(doc(strangerDb, `users/${OWNER}/statuses/s-contacts/viewers/${CONTACT}`)));
+});
+
+test("viewers subcollection: a viewer CAN get() their own viewer doc", async () => {
   const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
-  await assertFails(getDoc(doc(contactDb, `users/${OWNER}/statuses/s-contacts/viewers/${CONTACT}`)));
+  await assertSucceeds(getDoc(doc(contactDb, `users/${OWNER}/statuses/s-contacts/viewers/${CONTACT}`)));
+});
+
+// Proves the fix is scoped to "your own record only" — it doesn't
+// accidentally open up reading arbitrary viewer docs just because you're
+// signed in and a viewer of the same status.
+test("viewers subcollection: a viewer CANNOT get() a DIFFERENT viewer's doc", async () => {
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(getDoc(doc(contactDb, `users/${OWNER}/statuses/s-contacts/viewers/${EXCEPTED}`)));
 });
 
 test("viewer write with a client-supplied (non-request.time) viewedAt is REJECTED", async () => {
@@ -198,4 +219,19 @@ test("(control) viewer write using serverTimestamp() for viewedAt is ACCEPTED", 
       viewedAt: serverTimestamp(),
     }),
   );
+});
+
+// contacts list access — needed by the Status creation privacy picker
+// (choosing who's in a contactsExcept/onlyShareWith list). This is a real
+// list query (getDocs on the whole subcollection), not a single getDoc(),
+// same "prove it, don't just test one doc" bar as the feed query tests.
+test("contacts list: a user CAN read their own contacts (list query)", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  const snap = await assertSucceeds(getDocs(collection(ownerDb, `users/${OWNER}/contacts`)));
+  expect(snap.size).toBe(2); // CONTACT + EXCEPTED, seeded in beforeEach
+});
+
+test("contacts list: a user CANNOT read another user's contacts (list query)", async () => {
+  const strangerDb = testEnv.authenticatedContext(STRANGER).firestore();
+  await assertFails(getDocs(collection(strangerDb, `users/${OWNER}/contacts`)));
 });

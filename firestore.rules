@@ -109,10 +109,17 @@ service cloud.firestore {
       // would let a user forge a false "shares a chat with me" signal and
       // have themselves added to a contacts-mode status's visibleToUids
       // (via onStatusCreated / the propagation triggers reading this
-      // collection). No `allow read` either — nothing in the client reads
-      // this collection directly today; only Cloud Functions (Admin SDK,
-      // bypasses rules) ever read it, to compute/maintain statuses'
-      // visibleToUids.
+      // collection). Read is owner-only, and safe as both a get() AND a
+      // full-collection list query (unlike the old statuses isContact()/
+      // exists() problem) — the condition depends only on the path segment
+      // `userId` matching request.auth.uid, never on document field data, so
+      // Firestore can prove it statically for every possible result a list
+      // query could return. The client reads its own contacts list here for
+      // the Status creation privacy picker (choosing who's in a
+      // contactsExcept/onlyShareWith list).
+      match /contacts/{otherUid} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+      }
 
       // users/{uid}/statuses/{statusId} — a WhatsApp-style 24h status post.
       // See lib/firebase/models.dart's Status class for the field shapes
@@ -161,9 +168,16 @@ service cloud.firestore {
         allow delete: if isSignedIn() && request.auth.uid == userId;
 
         match /viewers/{viewerUid} {
-          // ONLY the status owner can see who viewed it — confirmed via
-          // search that WhatsApp never shows viewers to each other.
-          allow read: if isSignedIn() && request.auth.uid == userId;
+          // ONLY the status owner can LIST/see the full who-viewed-me set —
+          // confirmed via search that WhatsApp never shows viewers to each
+          // other. A viewer may additionally get() their own single record
+          // (viewerUid must equal their own uid, matching the path segment
+          // exactly the same provably-safe way as the contacts rule above)
+          // so the client can render "have I already viewed this status"
+          // for the ring UI — this does NOT let them list or read anyone
+          // else's viewer doc.
+          allow read: if isSignedIn()
+            && (request.auth.uid == userId || request.auth.uid == viewerUid);
 
           allow create, update: if isSignedIn() && request.auth.uid == viewerUid
             && request.auth.uid != userId // owner doesn't "view" their own status
