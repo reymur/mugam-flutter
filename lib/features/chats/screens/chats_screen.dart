@@ -8,6 +8,7 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../settings/screens/app_settings_screen.dart';
+import '../widgets/status_feed_bar.dart';
 import 'create_group_screen.dart';
 
 class ChatsScreen extends ConsumerStatefulWidget {
@@ -60,6 +61,15 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
       ),
       body: Column(
         children: [
+          StatusFeedBar(
+            currentUid: currentUid,
+            onCreateStatus: () {
+              // TODO: navigate to CreateStatusScreen, not built yet
+            },
+            onOpenStatus: (ownerUid) {
+              // TODO: navigate to StatusViewerScreen, not built yet
+            },
+          ),
           Padding(
             padding: const EdgeInsets.only(
               left: 16,
