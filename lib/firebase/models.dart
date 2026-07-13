@@ -613,3 +613,14 @@ class Status {
     );
   }
 }
+
+// One owner's currently-visible-to-me statuses, grouped for the feed bar
+// (one ring per owner, not one per status). Built client-side by
+// FirestoreService.watchStatusFeed from the flat collectionGroup query
+// result — not a Firestore document shape of its own.
+class StatusGroup {
+  final String ownerUid;
+  final List<Status> statuses; // sorted by createdAt ascending
+
+  const StatusGroup({required this.ownerUid, required this.statuses});
+}

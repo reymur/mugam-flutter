@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -110,6 +111,80 @@ class FirestoreService {
                   return b.lastMessageTime!.compareTo(a.lastMessageTime!);
                 }),
         );
+  }
+
+  // The feed's real-time source: every currently-active status (across all
+  // owners) this uid is allowed to see. The where() clause here — field
+  // name, operator, and using request.auth.uid (via arrayContains: uid))
+  // — must exactly match firestore.rules' top-level
+  // `match /{path=**}/statuses/{statusId} { allow read: if isSignedIn() &&
+  // request.auth.uid in resource.data.visibleToUids; }` block. Firestore
+  // only authorizes a collectionGroup() query when the query's own filters
+  // alone can prove the rule holds for every possible result — changing
+  // this shape without re-checking that rule can silently reintroduce the
+  // "getDoc() works, the real feed query doesn't" gap hit and fixed in
+  // commit d6b2ad6 (see that commit, and firestore.rules' own comment on
+  // /{path=**}/statuses/{statusId}, for the full story).
+  Stream<List<StatusGroup>> watchStatusFeed(String uid) {
+    return _db
+        .collectionGroup('statuses')
+        .where('visibleToUids', arrayContains: uid)
+        .where('expiresAt', isGreaterThan: Timestamp.now())
+        .snapshots()
+        .map((snap) {
+          final statuses = snap.docs
+              .map((doc) => Status.fromFirestore(doc.id, doc.data()))
+              .toList();
+
+          final byOwner = <String, List<Status>>{};
+          for (final status in statuses) {
+            byOwner.putIfAbsent(status.ownerUid, () => []).add(status);
+          }
+
+          final groups = byOwner.entries
+              .map(
+                (e) => StatusGroup(
+                  ownerUid: e.key,
+                  statuses: e.value
+                    ..sort((a, b) => a.createdAt.compareTo(b.createdAt)),
+                ),
+              )
+              .toList();
+
+          // Own group first, then everyone else in whatever order the
+          // query returned them — no "unviewed first" ordering here, that
+          // needs per-status viewed state (see hasViewedStatus below),
+          // which is a separate concern from this feed query.
+          groups.sort((a, b) {
+            if (a.ownerUid == uid) return -1;
+            if (b.ownerUid == uid) return 1;
+            return 0;
+          });
+
+          return groups;
+        });
+  }
+
+  // Single-doc check: has `viewerUid` already viewed this specific status.
+  // One read per status currently shown in the feed — bounded by feed
+  // size, not a scale concern (same reasoning as the SCALE NOTE comments
+  // in functions/src/index.ts). Deliberately decoupled from
+  // watchStatusFeed's own stream so the main feed listener doesn't have to
+  // also fan out a viewers/ read per status on every snapshot.
+  Future<bool> hasViewedStatus({
+    required String ownerUid,
+    required String statusId,
+    required String viewerUid,
+  }) async {
+    final doc = await _db
+        .collection('users')
+        .doc(ownerUid)
+        .collection('statuses')
+        .doc(statusId)
+        .collection('viewers')
+        .doc(viewerUid)
+        .get();
+    return doc.exists;
   }
 
   // Mirrors mugam-v2's createGroupChat() Firestore write shape exactly
@@ -1755,6 +1830,31 @@ final eventsAsParticipantProvider =
 final chatsProvider = StreamProvider.family<List<Chat>, String>((ref, uid) {
   return ref.watch(firestoreServiceProvider).watchChats(uid);
 });
+
+final statusFeedProvider =
+    StreamProvider.family<List<StatusGroup>, String>((ref, uid) {
+      return ref.watch(firestoreServiceProvider).watchStatusFeed(uid);
+    });
+
+// autoDispose — called once per status currently shown in the feed as the
+// user scrolls through many different owners' statuses over the app's
+// lifetime, same "don't pin every combination ever seen" rationale as
+// messageByIdProvider's own autoDispose above. viewerUid is deliberately
+// NOT part of the family key (there is only ever one signed-in user at a
+// time, unlike ownerUid which varies per status) — read directly from
+// FirebaseAuth here rather than threaded through as a parameter, matching
+// the precedent in core/settings/upload_limit_settings.dart.
+final hasViewedStatusProvider = FutureProvider.autoDispose
+    .family<bool, ({String ownerUid, String statusId})>((ref, args) {
+      final viewerUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      return ref
+          .watch(firestoreServiceProvider)
+          .hasViewedStatus(
+            ownerUid: args.ownerUid,
+            statusId: args.statusId,
+            viewerUid: viewerUid,
+          );
+    });
 
 // autoDispose — only ever watched via widget.chatId within chat_screen.dart's
 // own lifetime (plus message_info_screen.dart reading the same two), so
