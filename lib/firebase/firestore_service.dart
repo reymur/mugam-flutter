@@ -151,14 +151,22 @@ class FirestoreService {
               )
               .toList();
 
-          // Own group first, then everyone else in whatever order the
-          // query returned them — no "unviewed first" ordering here, that
-          // needs per-status viewed state (see hasViewedStatus below),
-          // which is a separate concern from this feed query.
+          // Own group first, always. Among everyone else, most recently
+          // posted author first — deterministic, not just a stability
+          // patch: List.sort() isn't guaranteed stable, so without a real
+          // secondary key here, two non-owner groups could visibly swap
+          // places on every snapshot for no actual change. No "unviewed
+          // first" ordering here, that needs per-status viewed state (see
+          // hasViewedStatus below), which is a separate concern from this
+          // feed query.
           groups.sort((a, b) {
-            if (a.ownerUid == uid) return -1;
-            if (b.ownerUid == uid) return 1;
-            return 0;
+            final aIsOwn = a.ownerUid == uid;
+            final bIsOwn = b.ownerUid == uid;
+            if (aIsOwn != bIsOwn) return aIsOwn ? -1 : 1;
+            if (aIsOwn) return 0; // at most one own group can exist
+            return b.statuses.last.createdAt.compareTo(
+              a.statuses.last.createdAt,
+            );
           });
 
           return groups;

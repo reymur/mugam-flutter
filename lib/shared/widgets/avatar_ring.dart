@@ -5,12 +5,19 @@ import '../../core/theme/colors.dart';
 // Presentational only — no tap handling. The parent (feed bar) wires onTap.
 class AvatarRing extends StatelessWidget {
   final String? photoURL;
+  // Matches the app's existing avatar-fallback convention (_ContactAvatar,
+  // profile_screen.dart both fall back to the user's own emoji field on a
+  // null photo) instead of diverging from it — purely additive/optional so
+  // this widget still doesn't need to fetch any User data itself, callers
+  // just pass along whatever emoji they already have on hand.
+  final String? fallbackEmoji;
   final bool hasUnviewed;
   final double size;
 
   const AvatarRing({
     super.key,
     required this.photoURL,
+    this.fallbackEmoji,
     required this.hasUnviewed,
     this.size = 64,
   });
@@ -46,14 +53,20 @@ class AvatarRing extends StatelessWidget {
                 placeholder: (context, url) =>
                     const Center(child: CircularProgressIndicator(color: kGold)),
               )
-            // Existing avatars (_ContactAvatar, profile_screen.dart) fall
-            // back to the user's own emoji field on a null photo — not
-            // available here, since this widget deliberately only takes a
-            // photoURL to stay data-layer agnostic (reused for any status
-            // owner without needing a full User). Icons.person is the
-            // closest faithful match: same null-check structure/circular
-            // clip as those, generic content in place of the unavailable
-            // per-user emoji.
+            : fallbackEmoji != null
+            ? Center(
+                // _ContactAvatar uses fontSize: 64 on a 140px avatar (ratio
+                // ~0.457) — profile_screen.dart's 86px avatar uses fontSize:
+                // 38 (ratio ~0.442), same proportion. Scaled by `size` here
+                // rather than hardcoding either literal value, since this
+                // widget (unlike those two) is reused at variable sizes.
+                child: Text(
+                  fallbackEmoji!,
+                  style: TextStyle(fontSize: size * 0.45),
+                ),
+              )
+            // Last resort only, when the caller has neither a photo nor an
+            // emoji to fall back to.
             : const Center(child: Icon(Icons.person, color: kMuted)),
       ),
     );
