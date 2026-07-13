@@ -7,6 +7,28 @@ import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
 
+// StatusFeedBar's own content height, computed rather than guessed — a
+// hardcoded SizedBox(height: 90) previously overflowed by 10px on a real
+// device (RenderFlex "OVERFLOWED BY 10.0 PIXELS" under the "Siz" label).
+//
+// AvatarRing's actual rendered footprint is exactly its `size` param
+// (_kAvatarSize below, matching the unmodified default both
+// _MyStatusItem/_OtherStatusItem use) — Container's own explicit
+// width/height forces a TIGHT outer constraint, so the ring's 2.5px
+// padding and 2.5px border are painted *inside* that same fixed box, not
+// added on top of it.
+const double _kAvatarSize = 64;
+const double _kLabelSpacing = 4; // the SizedBox between ring and label
+const double _kLabelLineHeight = 16; // one line at fontSize: 11
+const double _kListVerticalPadding = 8 + 8; // ListView's own top+bottom
+const double _kBarSafetyMargin = 8;
+const double _kBarHeight =
+    _kAvatarSize +
+    _kLabelSpacing +
+    _kLabelLineHeight +
+    _kListVerticalPadding +
+    _kBarSafetyMargin; // 64+4+16+16+8 = 108
+
 // WhatsApp-style status row, above the chat list (see ChatsScreen). No
 // navigation logic of its own — onCreateStatus/onOpenStatus are supplied
 // by the caller, which is what actually knows about CreateStatusScreen/
@@ -58,7 +80,7 @@ class StatusFeedBar extends ConsumerWidget {
     final otherGroups = hasOwnGroup ? groups.skip(1).toList() : groups;
 
     return SizedBox(
-      height: 90,
+      height: _kBarHeight,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
