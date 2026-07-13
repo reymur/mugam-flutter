@@ -1,7 +1,8 @@
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getMessaging } from "firebase-admin/messaging";
-import { onDocumentCreated, onDocumentDeleted } from "firebase-functions/v2/firestore";
+import { getStorage } from "firebase-admin/storage";
+import { onDocumentCreated, onDocumentDeleted, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onObjectFinalized } from "firebase-functions/v2/storage";
 import { logger } from "firebase-functions";
@@ -396,5 +397,152 @@ export const deleteGroupChat = onCall(
     await chatRef.delete();
 
     return { ok: true };
+  },
+);
+
+// ---------------------------------------------------------------------
+// users/{uid}/contacts/{otherUid} denormalization
+// ---------------------------------------------------------------------
+// Document existence = "these two users currently share at least one
+// chat." Never written by the client (no `allow write` for this
+// collection in firestore.rules at all — see that file) — maintained
+// exclusively by the three triggers below, on chats/{chatId} create/
+// update/delete. This is the real, stored signal the Status feature's
+// `contacts` privacy mode checks via isContact(), rather than
+// recomputing shared-chat membership on every single status read.
+async function upsertContactPair(a: string, b: string): Promise<void> {
+  const since = FieldValue.serverTimestamp();
+  await Promise.all([
+    db.collection("users").doc(a).collection("contacts").doc(b).set({ since }, { merge: true }),
+    db.collection("users").doc(b).collection("contacts").doc(a).set({ since }, { merge: true }),
+  ]);
+}
+
+async function upsertAllContactPairs(members: string[]): Promise<void> {
+  const tasks: Promise<void>[] = [];
+  for (let i = 0; i < members.length; i++) {
+    for (let j = i + 1; j < members.length; j++) {
+      tasks.push(upsertContactPair(members[i], members[j]));
+    }
+  }
+  await Promise.all(tasks);
+}
+
+// SCALE NOTE (leave as code comment, not a bug): this recompute runs only
+// on membership-change events, not per status read — acceptable at
+// current scale. If a user's total chat count grows very large this
+// in-memory filter degrades and should be revisited with better indexing
+// at that point.
+async function sharesAnyChat(uidX: string, uidY: string): Promise<boolean> {
+  const snap = await db.collection("chats").where("members", "array-contains", uidX).get();
+  return snap.docs.some((doc) => {
+    const members: string[] = doc.data().members ?? [];
+    return members.includes(uidY);
+  });
+}
+
+async function removeContactPairIfNoSharedChat(uidX: string, uidY: string): Promise<void> {
+  if (await sharesAnyChat(uidX, uidY)) return;
+  await Promise.all([
+    db.collection("users").doc(uidX).collection("contacts").doc(uidY).delete(),
+    db.collection("users").doc(uidY).collection("contacts").doc(uidX).delete(),
+  ]);
+}
+
+export const onChatCreated = onDocumentCreated("chats/{chatId}", async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const members: string[] = snap.data().members ?? [];
+  await upsertAllContactPairs(members);
+});
+
+export const onChatUpdated = onDocumentUpdated("chats/{chatId}", async (event) => {
+  const beforeMembers: string[] = event.data?.before.data().members ?? [];
+  const afterMembers: string[] = event.data?.after.data().members ?? [];
+  const added = afterMembers.filter((uid) => !beforeMembers.includes(uid));
+  const removed = beforeMembers.filter((uid) => !afterMembers.includes(uid));
+
+  const tasks: Promise<void>[] = [];
+  for (const uid of added) {
+    for (const other of afterMembers) {
+      if (other === uid) continue;
+      tasks.push(upsertContactPair(uid, other));
+    }
+  }
+  for (const uid of removed) {
+    for (const other of afterMembers) {
+      tasks.push(removeContactPairIfNoSharedChat(uid, other));
+    }
+  }
+  await Promise.all(tasks);
+});
+
+export const onChatDeleted = onDocumentDeleted("chats/{chatId}", async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const members: string[] = snap.data().members ?? [];
+  const tasks: Promise<void>[] = [];
+  for (let i = 0; i < members.length; i++) {
+    for (let j = i + 1; j < members.length; j++) {
+      tasks.push(removeContactPairIfNoSharedChat(members[i], members[j]));
+    }
+  }
+  await Promise.all(tasks);
+});
+
+// ---------------------------------------------------------------------
+// users/{uid}/statuses/{statusId} cascade cleanup
+// ---------------------------------------------------------------------
+// Firebase Storage download URLs encode the object's full path between
+// "/o/" and the query string (URL-encoded) — parsing it back out avoids
+// needing a separate storage-path field on the status doc; mediaUrl is
+// already the single source of truth the client itself uses to display
+// the media.
+function storagePathFromDownloadUrl(url: string): string | null {
+  const match = url.match(/\/o\/([^?]+)/);
+  if (!match) return null;
+  return decodeURIComponent(match[1]);
+}
+
+// Exhaustive scope, deliberately: (1) viewer records aren't cascade-
+// deleted by Firestore automatically, (2) media file cleanup for
+// image/video statuses. Nothing else — no push notifications to clean up
+// (disabled pending a paid Apple Developer account), no other subsystem
+// references statuses yet.
+export const onStatusDeleted = onDocumentDeleted(
+  "users/{uid}/statuses/{statusId}",
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const status = snap.data();
+
+    // (1) viewers subcollection — chunked into ≤500-op batches (Firestore's
+    // hard per-batch limit) and committed sequentially, matching this
+    // file's deleteGroupChat batching style above rather than firing all
+    // chunks concurrently via Promise.all.
+    const viewersSnap = await snap.ref.collection("viewers").get();
+    const viewerDocs = viewersSnap.docs;
+    for (let i = 0; i < viewerDocs.length; i += 500) {
+      const batch = db.batch();
+      for (const doc of viewerDocs.slice(i, i + 500)) {
+        batch.delete(doc.ref);
+      }
+      await batch.commit();
+    }
+
+    // (2) media file, if any — text statuses have no mediaUrl.
+    const mediaUrl: string | undefined = status.mediaUrl;
+    if ((status.type === "image" || status.type === "video") && mediaUrl) {
+      const path = storagePathFromDownloadUrl(mediaUrl);
+      if (!path) {
+        logger.warn("onStatusDeleted: could not parse storage path from mediaUrl", { mediaUrl });
+      } else {
+        try {
+          await getStorage().bucket("mugam-club.firebasestorage.app").file(path).delete();
+        } catch (e) {
+          logger.warn("onStatusDeleted: storage cleanup failed", e);
+        }
+      }
+    }
   },
 );

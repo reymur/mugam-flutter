@@ -49,3 +49,7 @@ app.*.map.json
 /functions/node_modules/
 /functions/lib/
 /functions/*.local
+firestore-debug.log
+functions/firestore-debug.log
+*.emulator-debug.log
+test-results.json

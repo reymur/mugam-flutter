@@ -549,3 +549,52 @@ class PersonalEvent {
     );
   }
 }
+
+// users/{ownerUid}/statuses/{statusId} — a WhatsApp-style 24h status post.
+// expiresAt is set client-side at creation (createdAt + 24h) and is what
+// every read-path query must filter on; the Firestore TTL policy on this
+// same field is storage cleanup only (deletion can lag up to 24h behind
+// expiresAt per Firestore's own TTL semantics) and is never the authority
+// for whether a status is still visible.
+class Status {
+  final String id;
+  final String ownerUid;
+  final String type; // 'text' | 'image' | 'video'
+  final String? mediaUrl;
+  final String? text;
+  final String? caption;
+  final DateTime createdAt;
+  final DateTime expiresAt;
+  final String privacyMode; // 'contacts' | 'contactsExcept' | 'onlyShareWith'
+  // Exception list for 'contactsExcept', allowlist for 'onlyShareWith',
+  // empty for 'contacts'.
+  final List<String> privacyList;
+
+  const Status({
+    required this.id,
+    required this.ownerUid,
+    required this.type,
+    this.mediaUrl,
+    this.text,
+    this.caption,
+    required this.createdAt,
+    required this.expiresAt,
+    required this.privacyMode,
+    this.privacyList = const [],
+  });
+
+  factory Status.fromFirestore(String id, Map<String, dynamic> data) {
+    return Status(
+      id: id,
+      ownerUid: (data['ownerUid'] ?? '') as String,
+      type: (data['type'] ?? 'text') as String,
+      mediaUrl: data['mediaUrl'] as String?,
+      text: data['text'] as String?,
+      caption: data['caption'] as String?,
+      createdAt: (data['createdAt'] as Timestamp).toDate(),
+      expiresAt: (data['expiresAt'] as Timestamp).toDate(),
+      privacyMode: (data['privacyMode'] ?? 'contacts') as String,
+      privacyList: List<String>.from(data['privacyList'] as List? ?? const []),
+    );
+  }
+}
