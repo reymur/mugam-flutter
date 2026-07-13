@@ -195,6 +195,31 @@ class FirestoreService {
     return doc.exists;
   }
 
+  // Write-side counterpart to hasViewedStatus above — called once by
+  // StatusViewerScreen when a non-owner's status segment is actually shown
+  // (never for the owner's own group). viewedAt MUST be
+  // FieldValue.serverTimestamp(), not a client-supplied DateTime.now():
+  // firestore.rules' viewers/{viewerUid} write rule requires
+  // `request.resource.data.viewedAt == request.time`, which only a real
+  // server timestamp sentinel satisfies (see that rule's own comment for
+  // the anti-spoofing rationale). Plain set(), no merge — the viewer doc
+  // has exactly this one field, so there's nothing to preserve across
+  // repeat views of the same status.
+  Future<void> markStatusViewed({
+    required String ownerUid,
+    required String statusId,
+    required String viewerUid,
+  }) {
+    return _db
+        .collection('users')
+        .doc(ownerUid)
+        .collection('statuses')
+        .doc(statusId)
+        .collection('viewers')
+        .doc(viewerUid)
+        .set({'viewedAt': FieldValue.serverTimestamp()});
+  }
+
   // Mirrors mugam-v2's createGroupChat() Firestore write shape exactly
   // (isGroup, name, emoji, photoURL, members, admins, createdBy, preview,
   // timestamps, completed, unreadCount — see mugam-v2/src/firebase/

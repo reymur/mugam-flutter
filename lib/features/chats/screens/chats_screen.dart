@@ -8,6 +8,7 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../settings/screens/app_settings_screen.dart';
+import '../../status/screens/status_viewer_screen.dart';
 import '../widgets/status_feed_bar.dart';
 import 'create_group_screen.dart';
 
@@ -66,9 +67,15 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
             onCreateStatus: () {
               // TODO: navigate to CreateStatusScreen, not built yet
             },
-            onOpenStatus: (ownerUid) {
-              // TODO: navigate to StatusViewerScreen, not built yet
-            },
+            onOpenStatus: (ownerUid) => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => StatusViewerScreen(
+                  initialOwnerUid: ownerUid,
+                  currentUid: currentUid,
+                ),
+              ),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.only(
