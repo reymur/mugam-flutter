@@ -86,6 +86,38 @@ service firebase.storage {
       allow read, write: if isChatMember(chatId);
     }
 
+    // statuses/{ownerUid}/{fileName} — statusId is threaded through
+    // customMetadata at upload time (generated client-side before the
+    // Firestore status doc exists, via newStatusId()/doc().set() — see
+    // firestore_service.dart), specifically so this rule can look up the
+    // real status document and mirror firestore.rules' `visibleToUids
+    // array-contains uid` check exactly (see that rule's comment for why
+    // an isContact()-style approximation would be wrong for
+    // contactsExcept/onlyShareWith). Write-side can't check visibleToUids
+    // (the Firestore doc doesn't exist yet at upload time — upload happens
+    // before createStatus) so write access is ownership-only, matching
+    // firestore.rules' own create rule for the status doc. Read-side has
+    // the same chicken-and-egg problem, one step further: uploadStatusImage/
+    // uploadStatusVideo call ref.getDownloadURL() immediately after the
+    // upload completes, which is itself a Storage read — but createStatus()
+    // (and the visibleToUids it triggers) hasn't run yet at that point, so
+    // a visibleToUids-only check would deny the uploader's own
+    // getDownloadURL() call every time. The owner-uid bypass below covers
+    // exactly that window; visibleToUids covers every other reader once
+    // the status is actually live.
+    match /statuses/{ownerUid}/{fileName} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == ownerUid ||
+        request.auth.uid in
+          firestore.get(/databases/(default)/documents/users/$(ownerUid)/statuses/$(resource.metadata.statusId))
+            .data.visibleToUids
+      );
+      allow write: if isSignedIn() && request.auth.uid == ownerUid &&
+        request.resource.metadata.uploaderUid == request.auth.uid &&
+        'statusId' in request.resource.metadata &&
+        request.resource.size <= maxUploadSizeBytes(request.auth.uid);
+    }
+
     // groups/{chatId}/avatar.jpg — mugam-v2's group photo. Any member can
     // read; mugam-v2's UI only shows the upload button to admins, and this
     // now re-enforces that server-side too, so a non-admin member can't

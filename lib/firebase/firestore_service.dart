@@ -220,6 +220,136 @@ class FirestoreService {
         .set({'viewedAt': FieldValue.serverTimestamp()});
   }
 
+  // Read-side for the Status creation privacy picker's contacts
+  // multiselect (contactsExcept/onlyShareWith). users/{uid}/contacts/
+  // {otherUid} docs carry no meaningful fields of their own (see
+  // firestore.rules' own comment on that collection — only the otherUid
+  // path segment matters), so this just enumerates doc IDs and resolves
+  // each to a full User. Future.wait fan-out rather than a whereIn batch:
+  // no batching convention exists anywhere else in this file to reuse, and
+  // a contacts list is bounded by how many people you've actually chatted
+  // with, not global user count — same "not a scale concern" reasoning as
+  // hasViewedStatus's own doc comment above.
+  Future<List<User>> fetchMyContacts(String uid) async {
+    final snap = await _db
+        .collection('users')
+        .doc(uid)
+        .collection('contacts')
+        .get();
+    final users = await Future.wait(snap.docs.map((d) => fetchUserById(d.id)));
+    return users.whereType<User>().toList();
+  }
+
+  // Storage path statuses/{ownerUid}/{fileName} — mirrors uploadChatImage's
+  // chats/{chatId}/{fileName} shape below.
+  String newStatusId(String ownerUid) {
+    return _db.collection('users').doc(ownerUid).collection('statuses').doc().id;
+  }
+
+  Future<String> uploadStatusImage({
+    required String ownerUid,
+    required String statusId,
+    required String filePath,
+    required String fileName,
+    void Function(UploadTask task)? onTaskStarted,
+    void Function(double progress)? onProgress,
+  }) async {
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('statuses')
+        .child(ownerUid)
+        .child(fileName);
+    final task = ref.putFile(
+      File(filePath),
+      SettableMetadata(customMetadata: {
+        'uploaderUid': ownerUid,
+        'statusId': statusId,
+      }),
+    );
+    onTaskStarted?.call(task);
+    if (onProgress != null) {
+      task.snapshotEvents.listen((snapshot) {
+        if (snapshot.totalBytes > 0) {
+          onProgress(snapshot.bytesTransferred / snapshot.totalBytes);
+        }
+      });
+    }
+    await task;
+    return await ref.getDownloadURL();
+  }
+
+  Future<String> uploadStatusVideo({
+    required String ownerUid,
+    required String statusId,
+    required String filePath,
+    required String fileName,
+    void Function(UploadTask task)? onTaskStarted,
+    void Function(double progress)? onProgress,
+  }) async {
+    final ref = FirebaseStorage.instance
+        .ref()
+        .child('statuses')
+        .child(ownerUid)
+        .child(fileName);
+    final task = ref.putFile(
+      File(filePath),
+      SettableMetadata(customMetadata: {
+        'uploaderUid': ownerUid,
+        'statusId': statusId,
+      }),
+    );
+    onTaskStarted?.call(task);
+    if (onProgress != null) {
+      task.snapshotEvents.listen((snapshot) {
+        if (snapshot.totalBytes > 0) {
+          onProgress(snapshot.bytesTransferred / snapshot.totalBytes);
+        }
+      });
+    }
+    await task;
+    return await ref.getDownloadURL();
+  }
+
+  // Deliberately does NOT set visibleToUids — firestore.rules' allow
+  // create on users/{uid}/statuses/{statusId} rejects any client-supplied
+  // visibleToUids outright (see that rule's own comment), and the
+  // onStatusCreated Cloud Function trigger computes the real value
+  // server-side right after this write lands. expiresAt is a concrete
+  // client-computed Timestamp, NOT FieldValue.serverTimestamp() — a
+  // serverTimestamp() sentinel resolves to "now", not "now+24h", which
+  // would break every consumer (watchStatusFeed's expiresAt filter,
+  // Status.fromFirestore) expecting a real future expiry.
+  Future<String> createStatus({
+    required String statusId,
+    required String ownerUid,
+    required String type,
+    String? mediaUrl,
+    String? text,
+    String? caption,
+    required String privacyMode,
+    List<String> privacyList = const [],
+  }) async {
+    await _db
+        .collection('users')
+        .doc(ownerUid)
+        .collection('statuses')
+        .doc(statusId)
+        .set({
+      'ownerUid': ownerUid,
+      'type': type,
+      if (mediaUrl != null) 'mediaUrl': mediaUrl,
+      if (text != null) 'text': text,
+      if (caption != null) 'caption': caption,
+      'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(
+        DateTime.now().toUtc().add(const Duration(hours: 24)),
+      ),
+      'privacyMode': privacyMode,
+      'privacyList': privacyList,
+    });
+    return statusId;
+  }
+
   // Mirrors mugam-v2's createGroupChat() Firestore write shape exactly
   // (isGroup, name, emoji, photoURL, members, admins, createdBy, preview,
   // timestamps, completed, unreadCount — see mugam-v2/src/firebase/
@@ -1888,6 +2018,15 @@ final hasViewedStatusProvider = FutureProvider.autoDispose
             viewerUid: viewerUid,
           );
     });
+
+// autoDispose — read once when the Status creation privacy picker opens,
+// same "don't pin every combination ever seen" rationale as
+// hasViewedStatusProvider above; no keepAlive-with-grace-period dance like
+// userByIdProvider needs, since this isn't re-fetched on a scrolling
+// list's recycling.
+final myContactsProvider = FutureProvider.autoDispose.family<List<User>, String>(
+  (ref, uid) => ref.watch(firestoreServiceProvider).fetchMyContacts(uid),
+);
 
 // autoDispose — only ever watched via widget.chatId within chat_screen.dart's
 // own lifetime (plus message_info_screen.dart reading the same two), so
