@@ -220,6 +220,48 @@ class FirestoreService {
         .set({'viewedAt': FieldValue.serverTimestamp()});
   }
 
+  // Plain client-side delete — firestore.rules already authorizes this
+  // directly (`allow delete: if isSignedIn() && request.auth.uid ==
+  // userId` on the status doc), no Cloud Function needed the way
+  // deleteGroupChat needs server-side creator-immunity logic. The
+  // already-deployed onStatusDeleted trigger handles cascade cleanup
+  // (viewers subcollection + Storage media) after this delete lands.
+  Future<void> deleteStatus({
+    required String ownerUid,
+    required String statusId,
+  }) {
+    return _db
+        .collection('users')
+        .doc(ownerUid)
+        .collection('statuses')
+        .doc(statusId)
+        .delete();
+  }
+
+  // Server-side Storage copy — see functions/src/index.ts's
+  // copyMediaToStatus for the full rationale (avoids a client
+  // download+re-upload round trip when forwarding existing chat media
+  // to a status; the source URL itself can't just be reused directly,
+  // since chats/{chatId}/{fileName}'s read rule is chat-membership-based
+  // while statuses/{ownerUid}/{fileName}'s is visibleToUids-based).
+  // Returns the copied file's public download URL, ready to pass
+  // straight into createStatus() without any further compress/upload
+  // step. Same httpsCallable(...).call({...}) shape as toggleReaction/
+  // deleteGroupChat above, on the same _functions instance.
+  Future<String> copyMediaToStatus({
+    required String sourceChatId,
+    required String sourceFileName,
+    required String statusId,
+  }) async {
+    final result = await _functions.httpsCallable('copyMediaToStatus').call({
+      'sourceChatId': sourceChatId,
+      'sourceFileName': sourceFileName,
+      'statusId': statusId,
+    });
+    final path = result.data['path'] as String;
+    return await FirebaseStorage.instance.ref(path).getDownloadURL();
+  }
+
   // Read-side for the Status creation privacy picker's contacts
   // multiselect (contactsExcept/onlyShareWith). users/{uid}/contacts/
   // {otherUid} docs carry no meaningful fields of their own (see

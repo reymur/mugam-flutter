@@ -187,6 +187,57 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
     unawaited(_markViewed(status.id));
   }
 
+  // Deleting is destructive and immediate (no undo) — confirm first,
+  // same AlertDialog shape as create_status_screen.dart's over-30s
+  // dialog for visual consistency within this feature. On success, pops
+  // the whole viewer back to ChatsScreen (this status's data — and this
+  // Status's own place in widget.group.statuses — no longer exists, so
+  // there's nothing left in this viewer worth staying on).
+  Future<void> _confirmAndDeleteStatus(Status status) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        title: const Text('Statusu sil', style: TextStyle(color: kText)),
+        content: const Text(
+          'Bu status həmişəlik silinəcək.',
+          style: TextStyle(color: kMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Ləğv et', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Sil', style: TextStyle(color: kRed)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await ref
+          .read(firestoreServiceProvider)
+          .deleteStatus(ownerUid: status.ownerUid, statusId: status.id);
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: '_StatusGroupPageState: status delete failed',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Status silinmədi'),
+          backgroundColor: kRed,
+        ),
+      );
+    }
+  }
+
   // A failed view-marking write must not interrupt viewing — same
   // try/catch + FirebaseCrashlytics.instance.recordError shape as
   // status_video_player.dart's _deactivateAudioSession, silently logged
@@ -325,6 +376,8 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
                         user: user,
                         status: status,
                         onClose: () => Navigator.of(context).pop(),
+                        isOwnGroup: widget.isOwnGroup,
+                        onDelete: () => _confirmAndDeleteStatus(status),
                       ),
                     ],
                   ),
@@ -409,11 +462,15 @@ class _HeaderRow extends StatelessWidget {
   final User? user;
   final Status status;
   final VoidCallback onClose;
+  final bool isOwnGroup;
+  final VoidCallback onDelete;
 
   const _HeaderRow({
     required this.user,
     required this.status,
     required this.onClose,
+    required this.isOwnGroup,
+    required this.onDelete,
   });
 
   @override
@@ -453,10 +510,33 @@ class _HeaderRow extends StatelessWidget {
             ],
           ),
         ),
-        IconButton(
-          icon: const Icon(Icons.close, color: Colors.white, size: 26),
-          onPressed: onClose,
-        ),
+        // Own statuses get a "..." menu (currently just delete) instead
+        // of a plain close X — deleting removes this specific status
+        // fragment via the already-deployed backend (firestore.rules'
+        // owner-delete rule + onStatusDeleted's cascade cleanup). Other
+        // people's statuses keep the plain close X unchanged — deleting
+        // someone else's status was never possible and isn't offered.
+        // The existing drag-down-to-dismiss gesture still works as a
+        // close method either way, this only changes the button.
+        if (isOwnGroup)
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white, size: 26),
+            color: kBg2,
+            onSelected: (value) {
+              if (value == 'delete') onDelete();
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'delete',
+                child: Text('Sil', style: TextStyle(color: kText)),
+              ),
+            ],
+          )
+        else
+          IconButton(
+            icon: const Icon(Icons.close, color: Colors.white, size: 26),
+            onPressed: onClose,
+          ),
       ],
     );
   }
