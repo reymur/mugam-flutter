@@ -5,6 +5,7 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../chats/screens/create_group_screen.dart';
+import '../../status/screens/create_status_screen.dart';
 import 'chat_screen.dart';
 
 // WhatsApp-style forward sheet (Phase C2) — replaces chat_screen.dart's
@@ -47,6 +48,7 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
   final TextEditingController _captionController = TextEditingController();
   String _search = '';
   final Set<String> _selectedChatIds = {};
+  bool _statusSelected = false;
   bool _sending = false;
 
   @override
@@ -145,25 +147,76 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
   }
 
   Future<void> _send() async {
-    if (_selectedChatIds.isEmpty || _sending) return;
-    // Captured before any await — ScaffoldMessenger.of(context) must not
-    // be looked up again after this sheet's own context is popped below,
-    // but the State object itself (belonging to ChatScreen's ancestor
-    // Scaffold, still mounted underneath) stays valid to use afterward.
+    if ((_selectedChatIds.isEmpty && !_statusSelected) || _sending) return;
+    // Both captured before any await — this sheet's own context is
+    // about to be popped below, but the underlying State objects
+    // (belonging to ChatScreen's ancestor Scaffold, still mounted
+    // underneath) stay valid to use afterward. Same reasoning as
+    // _openNewGroup's own navigator-capture above.
     final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
     setState(() => _sending = true);
-    final anyFailed = await _forwardTo(_selectedChatIds);
+    var anyFailed = false;
+    if (_selectedChatIds.isNotEmpty) {
+      anyFailed = await _forwardTo(_selectedChatIds);
+    }
     if (!mounted) return;
-    Navigator.of(context).pop();
+
+    // Status-forwarding: each qualifying (image/video) message gets its
+    // own server-side Storage copy (copyMediaToStatus — see
+    // firestore_service.dart's own doc comment for why the original
+    // chat URL can't just be reused directly), then all copied items
+    // share ONE privacy choice via PrivacyPickerScreen — same "one
+    // choice, loop-publish multiple statuses" shape create_status_
+    // screen.dart's own auto-split path already uses, not a new
+    // architecture invented here.
+    List<(String, String)>? forwardedMedia;
+    if (_statusSelected) {
+      final mediaMessages = widget.messages
+          .where((m) => m.type == 'image' || m.type == 'video')
+          .toList();
+      if (mediaMessages.isNotEmpty) {
+        final firestoreService = ref.read(firestoreServiceProvider);
+        final results = <(String, String)>[];
+        try {
+          for (final msg in mediaMessages) {
+            final statusId = firestoreService.newStatusId(widget.currentUid);
+            final url = await firestoreService.copyMediaToStatus(
+              sourceChatId: msg.mediaOriginChatId!,
+              sourceFileName: msg.mediaFileName!,
+              statusId: statusId,
+            );
+            results.add((url, msg.type));
+          }
+          forwardedMedia = results;
+        } catch (_) {
+          anyFailed = true;
+        }
+      }
+    }
+
+    if (!mounted) return;
+    navigator.pop();
     widget.onDone();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          anyFailed ? 'Bəzi söhbətlərə göndərilmədi' : 'Yönləndirildi',
+    if (forwardedMedia != null && forwardedMedia.isNotEmpty) {
+      navigator.push(
+        MaterialPageRoute(
+          builder: (_) => PrivacyPickerScreen(
+            type: forwardedMedia!.first.$2,
+            forwardedMedia: forwardedMedia,
+          ),
         ),
-        backgroundColor: anyFailed ? kRed : null,
-      ),
-    );
+      );
+    } else {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            anyFailed ? 'Bəzi söhbətlərə göndərilmədi' : 'Yönləndirildi',
+          ),
+          backgroundColor: anyFailed ? kRed : null,
+        ),
+      );
+    }
   }
 
   // Top 5 by messageCount desc (ties broken by lastMessageTime desc),
@@ -309,6 +362,47 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
                   ),
                 ),
               ),
+              // Matches real WhatsApp's own forward sheet, which has a
+              // "My Status" entry alongside regular chats, ABOVE "New
+              // group" — only shown when the forward selection actually
+              // includes image/video (text-only forwards have nothing to
+              // post as a status).
+              if (widget.messages.any(
+                (m) => m.type == 'image' || m.type == 'video',
+              ))
+                ListTile(
+                  onTap: () => setState(
+                    () => _statusSelected = !_statusSelected,
+                  ),
+                  leading: const CircleAvatar(
+                    radius: 23,
+                    backgroundColor: kBg3,
+                    child: Icon(Icons.add_circle, color: kGold),
+                  ),
+                  title: const Text(
+                    'Mənim statusum',
+                    style: TextStyle(color: kText, fontWeight: FontWeight.w600),
+                  ),
+                  trailing: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _statusSelected ? kGold : Colors.transparent,
+                      border: Border.all(
+                        color: _statusSelected ? kGold : kBorder,
+                        width: 2,
+                      ),
+                    ),
+                    child: _statusSelected
+                        ? const Icon(
+                            Icons.check,
+                            size: 14,
+                            color: Color(0xFF1A0E00),
+                          )
+                        : null,
+                  ),
+                ),
               ListTile(
                 onTap: _openNewGroup,
                 leading: const CircleAvatar(

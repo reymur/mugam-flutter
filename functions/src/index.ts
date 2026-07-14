@@ -253,6 +253,76 @@ export const toggleMessageReaction = onCall(
   },
 );
 
+// Server-side copy for "forward photo/video to status" — copies the
+// already-uploaded chat media object directly within Cloud Storage (no
+// client download/re-upload round trip) into the statuses/ path, then
+// stamps the copy with the same uploaderUid/statusId customMetadata
+// every other status media object carries, so the existing
+// visibleToUids-based Storage read rule (see storage.rules'
+// statuses/{ownerUid}/{fileName} block) works identically for viewers
+// of this status as for any freshly-uploaded one. Authorization is
+// re-verified server-side (chat membership) rather than trusting the
+// client's claim it has access to the source file — Admin SDK bypasses
+// Storage rules entirely, so this check is this function's own
+// responsibility, not inherited from anywhere else. copy() alone would
+// carry over the source object's own uploaderUid/chatId metadata (meant
+// for the chats/ path's rules, meaningless and wrong under statuses/),
+// so setMetadata() afterward fully overwrites it with what the
+// statuses/ read rule actually checks — confirmed via Cloud Storage's
+// own docs that copy() and setMetadata() are separate, sequential
+// operations, not a single atomic call with a metadata option.
+export const copyMediaToStatus = onCall(
+  { region: FUNCTIONS_REGION },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const { sourceChatId, sourceFileName, statusId } = (request.data ?? {}) as {
+      sourceChatId?: string;
+      sourceFileName?: string;
+      statusId?: string;
+    };
+    if (!sourceChatId || !sourceFileName || !statusId) {
+      throw new HttpsError(
+        "invalid-argument",
+        "sourceChatId, sourceFileName and statusId are required.",
+      );
+    }
+
+    const chatSnap = await db.collection("chats").doc(sourceChatId).get();
+    if (!chatSnap.exists) {
+      throw new HttpsError("not-found", "Source chat not found.");
+    }
+    const members: string[] = chatSnap.data()?.members ?? [];
+    if (!members.includes(uid)) {
+      throw new HttpsError(
+        "permission-denied",
+        "Not a member of the source chat.",
+      );
+    }
+
+    const bucket = getStorage().bucket();
+    const sourcePath = `chats/${sourceChatId}/${sourceFileName}`;
+    const destFileName = `${Date.now()}_${sourceFileName}`;
+    const destPath = `statuses/${uid}/${destFileName}`;
+    const sourceFile = bucket.file(sourcePath);
+    const destFile = bucket.file(destPath);
+
+    const [exists] = await sourceFile.exists();
+    if (!exists) {
+      throw new HttpsError("not-found", "Source media no longer exists.");
+    }
+
+    await sourceFile.copy(destFile);
+    await destFile.setMetadata({
+      metadata: { uploaderUid: uid, statusId },
+    });
+
+    return { path: destPath };
+  },
+);
+
 // Closes the gap between "a file landed in Storage" and "a message doc
 // claims to point at it" — Firestore rules can't inspect Storage state
 // directly, so without this, a client could write an arbitrary/external
