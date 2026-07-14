@@ -1187,89 +1187,98 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                child: AnimatedBuilder(
-                  animation: _controller!,
-                  builder: (context, _) {
-                    final position = _controller!.value.position;
-                    final duration = _controller!.value.duration;
-                    final remaining = duration - position;
-                    return Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        VideoProgressIndicator(
-                          _controller!,
-                          allowScrubbing: true,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 4,
-                          ),
-                          colors: const VideoProgressColors(
-                            playedColor: kGold,
-                            bufferedColor: Colors.white38,
-                            backgroundColor: Colors.white12,
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                formatDurationMmSs(position.inMilliseconds),
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              Text(
-                                '-${formatDurationMmSs(remaining.inMilliseconds)}',
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                // Icon row lives OUTSIDE the AnimatedBuilder on purpose —
+                // it doesn't depend on video position, so it shouldn't be
+                // rebuilt on every scrub tick. Only the progress bar + time
+                // labels (which do depend on position) are inside.
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedBuilder(
+                      animation: _controller!,
+                      builder: (context, _) {
+                        final position = _controller!.value.position;
+                        final duration = _controller!.value.duration;
+                        final remaining = duration - position;
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            IconButton(
-                              icon: const Icon(
-                                Icons.ios_share,
-                                color: Colors.white,
+                            VideoProgressIndicator(
+                              _controller!,
+                              allowScrubbing: true,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 4,
                               ),
-                              onPressed: _shareVideo,
+                              colors: const VideoProgressColors(
+                                playedColor: kGold,
+                                bufferedColor: Colors.white38,
+                                backgroundColor: Colors.white12,
+                              ),
                             ),
-                            IconButton(
-                              icon: const Icon(
-                                Icons.reply,
-                                color: Colors.white,
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
                               ),
-                              onPressed: _openForward,
-                            ),
-                            IconButton(
-                              icon: Icon(
-                                isStarred ? Icons.star : Icons.star_border,
-                                color: isStarred ? kGold : Colors.white,
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    formatDurationMmSs(
+                                      position.inMilliseconds,
+                                    ),
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Text(
+                                    '-${formatDurationMmSs(remaining.inMilliseconds)}',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              onPressed: () => _toggleFavorite(isStarred),
-                            ),
-                            IconButton(
-                              icon: const Icon(
-                                Icons.delete_outline,
-                                color: Colors.white,
-                              ),
-                              onPressed: _confirmDelete,
                             ),
                           ],
+                        );
+                      },
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.ios_share,
+                            color: Colors.white,
+                          ),
+                          onPressed: _shareVideo,
                         ),
-                        const SizedBox(height: 8),
+                        IconButton(
+                          icon: const Icon(Icons.reply, color: Colors.white),
+                          onPressed: _openForward,
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            isStarred ? Icons.star : Icons.star_border,
+                            color: isStarred ? kGold : Colors.white,
+                          ),
+                          onPressed: () => _toggleFavorite(isStarred),
+                        ),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.delete_outline,
+                            color: Colors.white,
+                          ),
+                          onPressed: _confirmDelete,
+                        ),
                       ],
-                    );
-                  },
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                 ),
               ),
           ],
