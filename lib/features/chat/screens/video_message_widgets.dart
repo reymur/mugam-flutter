@@ -6,12 +6,18 @@ import 'package:audio_session/audio_session.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:video_player/video_player.dart';
 import 'package:get_thumbnail_video/index.dart';
 import 'package:get_thumbnail_video/video_thumbnail.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../../core/theme/colors.dart';
+import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import 'chat_screen.dart';
+import 'forward_sheet.dart';
 import 'media_thumbnail_cache.dart';
 
 // Single source of truth for "what state is this message visually in" —
@@ -281,6 +287,11 @@ class VideoMessageBubble extends StatelessWidget {
   // see its own caption field comment for the full rationale.
   final String caption;
   final bool isMe;
+  final Message message;
+  final String chatId;
+  final String currentUid;
+  final String chatName;
+  final String senderName;
 
   const VideoMessageBubble({
     super.key,
@@ -298,6 +309,11 @@ class VideoMessageBubble extends StatelessWidget {
     this.initialBytes,
     this.caption = '',
     required this.isMe,
+    required this.message,
+    required this.chatId,
+    required this.currentUid,
+    required this.chatName,
+    required this.senderName,
   });
 
   Size _boundedSize() {
@@ -425,6 +441,11 @@ class VideoMessageBubble extends StatelessWidget {
             builder: (_) => VideoPlayerScreen(
               videoURL: videoURL,
               localFilePath: localFilePath,
+              message: message,
+              chatId: chatId,
+              currentUid: currentUid,
+              chatName: chatName,
+              senderName: senderName,
             ),
           ),
         ),
@@ -436,7 +457,15 @@ class VideoMessageBubble extends StatelessWidget {
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) =>
-              VideoPlayerScreen(videoURL: videoURL, localFilePath: localFilePath),
+              VideoPlayerScreen(
+                videoURL: videoURL,
+                localFilePath: localFilePath,
+                message: message,
+                chatId: chatId,
+                currentUid: currentUid,
+                chatName: chatName,
+                senderName: senderName,
+              ),
         ),
       ),
       child: ClipRRect(
@@ -833,17 +862,31 @@ class UploadProgressOverlay extends StatelessWidget {
 // pattern of building lightweight custom UI over a media package (e.g. the
 // voice-message player over just_audio) rather than pulling in a full
 // player-UI package.
-class VideoPlayerScreen extends StatefulWidget {
+class VideoPlayerScreen extends ConsumerStatefulWidget {
   final String? videoURL;
   final String? localFilePath;
+  final Message message;
+  final String chatId;
+  final String currentUid;
+  final String chatName;
+  final String senderName;
 
-  const VideoPlayerScreen({super.key, this.videoURL, this.localFilePath});
+  const VideoPlayerScreen({
+    super.key,
+    this.videoURL,
+    this.localFilePath,
+    required this.message,
+    required this.chatId,
+    required this.currentUid,
+    required this.chatName,
+    required this.senderName,
+  });
 
   @override
-  State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
+  ConsumerState<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
 }
 
-class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
+class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   // Nullable — building the controller now takes an async cache-lookup step
   // before it exists, so a fast back-navigation can dispose this screen
   // before _setup() ever assigns one. _disposed guards every await
@@ -858,6 +901,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   @override
   void initState() {
     super.initState();
+    // Pause any playing voice message before this screen's own AVPlayer
+    // activates — two audio sessions (just_audio for voice, video_player's
+    // AVPlayer for this) fighting over the shared iOS AVAudioSession was
+    // the suspected cause of a real, watchdog-confirmed main-thread hang
+    // reproduced by scrubbing the video progress bar right after opening
+    // a video message.
+    VoiceMessageCoordinator.instance.pauseActive();
     _setup();
   }
 
@@ -930,8 +980,148 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
+  Future<void> _shareVideo() async {
+    try {
+      final localPath = widget.localFilePath;
+      final XFile file;
+      if (localPath != null) {
+        file = XFile(localPath);
+      } else {
+        final url = widget.videoURL;
+        if (url == null) return;
+        final cached = await DefaultCacheManager().getSingleFile(url);
+        final bytes = await cached.readAsBytes();
+        final tempDir = await getTemporaryDirectory();
+        final path = '${tempDir.path}/share_${widget.message.id}.mp4';
+        await File(path).writeAsBytes(bytes);
+        file = XFile(path);
+      }
+      await SharePlus.instance.share(ShareParams(files: [file]));
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'VideoPlayerScreen: share failed',
+      );
+    }
+  }
+
+  void _openForward() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kBg2,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => ForwardSheet(
+        messages: [widget.message],
+        sourceChatId: widget.chatId,
+        currentUid: widget.currentUid,
+        onDone: () {},
+      ),
+    );
+  }
+
+  Future<void> _toggleFavorite(bool isStarred) async {
+    final service = ref.read(firestoreServiceProvider);
+    if (isStarred) {
+      await service.unstarMessage(
+        uid: widget.currentUid,
+        messageId: widget.message.id,
+      );
+    } else {
+      await service.starMessage(
+        uid: widget.currentUid,
+        chatId: widget.chatId,
+        chatName: widget.chatName,
+        senderName: widget.senderName,
+        message: widget.message,
+      );
+    }
+  }
+
+  void _confirmDelete() {
+    final isMe = widget.message.senderId == widget.currentUid;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kBg2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const SizedBox(width: 40),
+                  const Expanded(
+                    child: Text(
+                      'Mesajı silmək?',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: kText,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: kMuted),
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (isMe)
+                ListTile(
+                  title: const Text(
+                    'Hamıdan sil',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await ref
+                        .read(firestoreServiceProvider)
+                        .deleteMessageForAll(
+                          chatId: widget.chatId,
+                          messageId: widget.message.id,
+                        );
+                    if (mounted) Navigator.of(context).pop();
+                  },
+                ),
+              ListTile(
+                title: const Text(
+                  'Yalnız məndən sil',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  await ref
+                      .read(firestoreServiceProvider)
+                      .deleteMessageForMe(
+                        chatId: widget.chatId,
+                        messageId: widget.message.id,
+                        uid: widget.currentUid,
+                      );
+                  if (mounted) Navigator.of(context).pop();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final starredAsync = ref.watch(starredMessagesProvider(widget.currentUid));
+    final isStarred =
+        starredAsync.value?.any((m) => m.id == widget.message.id) ?? false;
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -997,15 +1187,89 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                child: VideoProgressIndicator(
-                  _controller!,
-                  allowScrubbing: true,
-                  padding: const EdgeInsets.all(12),
-                  colors: const VideoProgressColors(
-                    playedColor: kGold,
-                    bufferedColor: Colors.white38,
-                    backgroundColor: Colors.white12,
-                  ),
+                child: AnimatedBuilder(
+                  animation: _controller!,
+                  builder: (context, _) {
+                    final position = _controller!.value.position;
+                    final duration = _controller!.value.duration;
+                    final remaining = duration - position;
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        VideoProgressIndicator(
+                          _controller!,
+                          allowScrubbing: true,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                          colors: const VideoProgressColors(
+                            playedColor: kGold,
+                            bufferedColor: Colors.white38,
+                            backgroundColor: Colors.white12,
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                formatDurationMmSs(position.inMilliseconds),
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                '-${formatDurationMmSs(remaining.inMilliseconds)}',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            IconButton(
+                              icon: const Icon(
+                                Icons.ios_share,
+                                color: Colors.white,
+                              ),
+                              onPressed: _shareVideo,
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.reply,
+                                color: Colors.white,
+                              ),
+                              onPressed: _openForward,
+                            ),
+                            IconButton(
+                              icon: Icon(
+                                isStarred ? Icons.star : Icons.star_border,
+                                color: isStarred ? kGold : Colors.white,
+                              ),
+                              onPressed: () => _toggleFavorite(isStarred),
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                color: Colors.white,
+                              ),
+                              onPressed: _confirmDelete,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                    );
+                  },
                 ),
               ),
           ],

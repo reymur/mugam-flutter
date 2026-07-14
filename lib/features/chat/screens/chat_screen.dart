@@ -2435,6 +2435,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         initialBytes: msg.localPreviewBytes,
                         caption: msg.text,
                         isMe: isMe,
+                        message: msg,
+                        chatId: widget.chatId,
+                        currentUid: currentUid,
+                        chatName:
+                            ref.read(chatDataProvider(widget.chatId)).value?['name']
+                                as String? ??
+                            '',
+                        senderName: _replySenderName(msg, currentUid),
                         timeCheckmarkOverlay: _timeCheckmarkRow(
                           isMe,
                           otherUid,
@@ -3603,21 +3611,33 @@ class _VoiceMessagePlayer extends StatefulWidget {
 // state — this coordinates transient in-memory playback, not app data, and
 // only ever has at most one interested reader (the currently active
 // player) at a time.
-class _VoiceMessageCoordinator {
-  _VoiceMessageCoordinator._();
-  static final instance = _VoiceMessageCoordinator._();
+class VoiceMessageCoordinator {
+  VoiceMessageCoordinator._();
+  static final instance = VoiceMessageCoordinator._();
 
   _VoiceMessagePlayerState? _active;
 
-  void starting(_VoiceMessagePlayerState player) {
+  void _starting(_VoiceMessagePlayerState player) {
     if (_active != null && _active != player) {
       _active!._pauseFromCoordinator();
     }
     _active = player;
   }
 
-  void stopped(_VoiceMessagePlayerState player) {
+  void _stopped(_VoiceMessagePlayerState player) {
     if (_active == player) _active = null;
+  }
+
+  // Pauses whatever voice message is currently playing, without a new one
+  // taking its place — called when opening VideoPlayerScreen, so the
+  // video's own AVPlayer/AVAudioSession doesn't activate while a voice
+  // message's just_audio session is still active. Two audio sessions
+  // fighting over the shared iOS AVAudioSession was the suspected cause
+  // of a real, watchdog-confirmed main-thread hang (SpringBoard's
+  // "scene-update" watchdog fired after 5s) reproduced by scrubbing the
+  // video progress bar right after opening a video message.
+  void pauseActive() {
+    _active?._pauseFromCoordinator();
   }
 }
 
@@ -3710,7 +3730,7 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
   @override
   void dispose() {
     if (_isPlaying) unawaited(_deactivateAudioSession());
-    _VoiceMessageCoordinator.instance.stopped(this);
+    VoiceMessageCoordinator.instance._stopped(this);
     _player.dispose();
     super.dispose();
   }
@@ -3736,7 +3756,7 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
         if (_isPlaying) {
           await _player.pause();
         } else {
-          _VoiceMessageCoordinator.instance.starting(this);
+          VoiceMessageCoordinator.instance._starting(this);
           await _activateAudioSession();
           if (_hasCompletedAtLeastOnce) {
             // Replicates the manual seek-bar drag that reliably restored
