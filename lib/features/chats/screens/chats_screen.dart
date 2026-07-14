@@ -8,6 +8,7 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../settings/screens/app_settings_screen.dart';
+import '../../status/screens/create_status_screen.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import '../widgets/status_feed_bar.dart';
 import 'create_group_screen.dart';
@@ -31,6 +32,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('MY UID: ${FirebaseAuth.instance.currentUser?.uid}');
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final chatsAsync = ref.watch(chatsProvider(currentUid));
 
@@ -64,18 +66,21 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
         children: [
           StatusFeedBar(
             currentUid: currentUid,
-            onCreateStatus: () {
-              // TODO: navigate to CreateStatusScreen, not built yet
-            },
-            onOpenStatus: (ownerUid) => Navigator.push(
+            onCreateStatus: () => Navigator.push(
               context,
-              MaterialPageRoute(
-                builder: (_) => StatusViewerScreen(
-                  initialOwnerUid: ownerUid,
-                  currentUid: currentUid,
-                ),
-              ),
+              MaterialPageRoute(builder: (_) => const CreateStatusScreen()),
             ),
+            onOpenStatus: (ownerUid) {
+              return Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => StatusViewerScreen(
+                    initialOwnerUid: ownerUid,
+                    currentUid: currentUid,
+                  ),
+                ),
+              );
+            },
           ),
           Padding(
             padding: const EdgeInsets.only(

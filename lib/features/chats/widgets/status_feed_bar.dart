@@ -36,7 +36,7 @@ const double _kBarHeight =
 class StatusFeedBar extends ConsumerWidget {
   final String currentUid;
   final VoidCallback onCreateStatus;
-  final void Function(String ownerUid) onOpenStatus;
+  final Future<void> Function(String ownerUid) onOpenStatus;
 
   const StatusFeedBar({
     super.key,
@@ -107,7 +107,7 @@ class _MyStatusItem extends ConsumerWidget {
   final String currentUid;
   final StatusGroup? ownGroup;
   final VoidCallback onCreateStatus;
-  final void Function(String ownerUid) onOpenStatus;
+  final Future<void> Function(String ownerUid) onOpenStatus;
 
   const _MyStatusItem({
     required this.currentUid,
@@ -137,15 +137,26 @@ class _MyStatusItem extends ConsumerWidget {
                   // apply to yourself.
                   hasUnviewed: false,
                 ),
-                if (ownGroup == null)
-                  Positioned(
-                    bottom: 0,
-                    right: 0,
-                    // Scaled from edit_profile_screen.dart's avatar-edit
-                    // badge (28px badge / 14px icon on a 96px avatar,
-                    // ~0.29/~0.15 ratio) down to AvatarRing's default 64px
-                    // size — same kGold/dark-icon treatment, "+" instead
-                    // of a camera.
+                Positioned(
+                  bottom: 0,
+                  right: 0,
+                  // Always visible, independent of whether a status is
+                  // already active — matches WhatsApp's own behavior
+                  // (confirmed via search) of keeping the add-status
+                  // control on screen at all times, not just before the
+                  // first post; tapping it lets you post another status
+                  // alongside an existing one rather than only being able
+                  // to view what's already there. Scaled from
+                  // edit_profile_screen.dart's avatar-edit badge (28px
+                  // badge / 14px icon on a 96px avatar, ~0.29/~0.15 ratio)
+                  // down to AvatarRing's default 64px size — same
+                  // kGold/dark-icon treatment, "+" instead of a camera.
+                  // Its own GestureDetector so tapping the badge
+                  // specifically always creates, independent of the outer
+                  // ring's own tap target (open-existing vs create-first).
+                  child: GestureDetector(
+                    onTap: onCreateStatus,
+                    behavior: HitTestBehavior.opaque,
                     child: Container(
                       width: 20,
                       height: 20,
@@ -160,6 +171,7 @@ class _MyStatusItem extends ConsumerWidget {
                       ),
                     ),
                   ),
+                ),
               ],
             ),
             const SizedBox(height: 4),
@@ -181,7 +193,7 @@ class _MyStatusItem extends ConsumerWidget {
 class _OtherStatusItem extends ConsumerStatefulWidget {
   final String currentUid;
   final StatusGroup group;
-  final void Function(String ownerUid) onOpenStatus;
+  final Future<void> Function(String ownerUid) onOpenStatus;
 
   const _OtherStatusItem({
     required this.currentUid,
@@ -242,10 +254,23 @@ class _OtherStatusItemState extends ConsumerState<_OtherStatusItem> {
 
   @override
   Widget build(BuildContext context) {
-    final user = ref.watch(userByIdProvider(widget.group.ownerUid)).value;
+    final user = ref.watch(currentUserProvider(widget.group.ownerUid)).value;
 
     return GestureDetector(
-      onTap: () => widget.onOpenStatus(widget.group.ownerUid),
+      onTap: () async {
+        // onOpenStatus now returns the Navigator.push Future — awaiting it
+        // lets us recompute _viewedFuture the moment the viewer is popped,
+        // so the ring flips from gold to gray immediately on return instead
+        // of staying stale until this group's status *set* next changes
+        // (didUpdateWidget's own check, which doesn't fire just from
+        // viewing).
+        await widget.onOpenStatus(widget.group.ownerUid);
+        if (mounted) {
+          setState(() {
+            _viewedFuture = _computeViewedFuture(widget.group);
+          });
+        }
+      },
       child: SizedBox(
         width: 68,
         child: Column(
