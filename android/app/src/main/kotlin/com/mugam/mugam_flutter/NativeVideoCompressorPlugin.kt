@@ -91,12 +91,17 @@ class NativeVideoCompressorPlugin : FlutterPlugin, MethodChannel.MethodCallHandl
                     result.error("INVALID_ARGUMENT", "Expected path, outputPath, shortSide, bitrate", null)
                     return
                 }
+                // Optional trim range — both present together or not at all
+                // (Dart side only ever sends both or neither, see
+                // video_compressor.dart).
+                val startTimeMs = call.argument<Int>("startTimeMs")
+                val endTimeMs = call.argument<Int>("endTimeMs")
                 if (isBusy) {
                     result.error("BUSY", "A compression is already in progress", null)
                     return
                 }
                 isBusy = true
-                compress(path, outputPath, shortSide, bitrate, result)
+                compress(path, outputPath, shortSide, bitrate, startTimeMs, endTimeMs, result)
             }
             "cancel" -> {
                 transformer?.cancel()
@@ -106,7 +111,15 @@ class NativeVideoCompressorPlugin : FlutterPlugin, MethodChannel.MethodCallHandl
         }
     }
 
-    private fun compress(path: String, outputPath: String, shortSide: Int, bitrate: Int, result: MethodChannel.Result) {
+    private fun compress(
+        path: String,
+        outputPath: String,
+        shortSide: Int,
+        bitrate: Int,
+        startTimeMs: Int?,
+        endTimeMs: Int?,
+        result: MethodChannel.Result
+    ) {
         try {
             java.io.File(outputPath).delete()
 
@@ -137,7 +150,21 @@ class NativeVideoCompressorPlugin : FlutterPlugin, MethodChannel.MethodCallHandl
                 .build()
             transformer = newTransformer
 
-            val editedMediaItem = EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(java.io.File(path))))
+            // When a trim range is provided, MediaItem.ClippingConfiguration
+            // is Media3's own documented mechanism for it (confirmed via
+            // Android's Transformer docs) — Transformer trims and
+            // re-encodes in the same export pass rather than two separate
+            // operations.
+            var mediaItemBuilder = MediaItem.Builder().setUri(Uri.fromFile(java.io.File(path)))
+            if (startTimeMs != null && endTimeMs != null) {
+                mediaItemBuilder = mediaItemBuilder.setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(startTimeMs.toLong())
+                        .setEndPositionMs(endTimeMs.toLong())
+                        .build()
+                )
+            }
+            val editedMediaItem = EditedMediaItem.Builder(mediaItemBuilder.build())
                 .setEffects(
                     Effects(
                         /* audioProcessors= */ listOf(),

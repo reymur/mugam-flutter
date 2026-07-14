@@ -65,13 +65,17 @@ class NativeVideoCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
         result(FlutterError(code: "INVALID_ARGUMENT", message: "Expected path, outputPath, shortSide, bitrate", details: nil))
         return
       }
+      // Optional trim range — both present together or not at all (Dart
+      // side only ever sends both or neither, see video_compressor.dart).
+      let startTimeMs = args["startTimeMs"] as? Int
+      let endTimeMs = args["endTimeMs"] as? Int
       if isBusy {
         result(FlutterError(code: "BUSY", message: "A compression is already in progress", details: nil))
         return
       }
       isBusy = true
       isCancelled = false
-      compress(path: path, outputPath: outputPath, shortSide: shortSide, bitrate: bitrate) { [weak self] outcome in
+      compress(path: path, outputPath: outputPath, shortSide: shortSide, bitrate: bitrate, startTimeMs: startTimeMs, endTimeMs: endTimeMs) { [weak self] outcome in
         self?.isBusy = false
         outcome.fold(
           onSuccess: { result(nil) },
@@ -93,6 +97,8 @@ class NativeVideoCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
     outputPath: String,
     shortSide: Int,
     bitrate: Int,
+    startTimeMs: Int?,
+    endTimeMs: Int?,
     completion: @escaping (CompressResult) -> Void
   ) {
     let inputURL = URL(fileURLWithPath: path)
@@ -116,6 +122,22 @@ class NativeVideoCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
     }
     self.reader = assetReader
     self.writer = assetWriter
+
+    // When a trim range is provided, restrict what the reader emits to
+    // that range — AVAssetReader.timeRange is Apple's own documented
+    // mechanism for this (set before startReading()), so trimming and
+    // compressing happen in the same decode/encode pass instead of two
+    // separate exports. trimStartTime also becomes the writer's session
+    // start time below, so the output file's own timestamps begin at
+    // zero instead of carrying the original video's offset forward.
+    var trimStartTime = CMTime.zero
+    var trimDurationSeconds: Double? = nil
+    if let startMs = startTimeMs, let endMs = endTimeMs {
+      trimStartTime = CMTime(value: CMTimeValue(startMs), timescale: 1000)
+      let trimEndTime = CMTime(value: CMTimeValue(endMs), timescale: 1000)
+      assetReader.timeRange = CMTimeRange(start: trimStartTime, end: trimEndTime)
+      trimDurationSeconds = CMTimeGetSeconds(trimEndTime) - CMTimeGetSeconds(trimStartTime)
+    }
 
     // naturalSize is the raw encoded buffer, before preferredTransform's
     // rotation is applied — a 90/270 transform means the visually-portrait
@@ -213,9 +235,9 @@ class NativeVideoCompressorPlugin: NSObject, FlutterPlugin, FlutterStreamHandler
       completion(.failure(code: "WRITE_ERROR", message: assetWriter.error?.localizedDescription ?? "startWriting failed"))
       return
     }
-    assetWriter.startSession(atSourceTime: .zero)
+    assetWriter.startSession(atSourceTime: trimStartTime)
 
-    let durationSeconds = CMTimeGetSeconds(asset.duration)
+    let durationSeconds = trimDurationSeconds ?? CMTimeGetSeconds(asset.duration)
     let group = DispatchGroup()
 
     group.enter()

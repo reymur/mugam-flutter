@@ -24,10 +24,18 @@ const _progressChannel = EventChannel('mugam/native_video_compressor/progress');
 // crash, a second call arriving while one is already busy) so a
 // compression error never blocks sending, only sends the uncompressed
 // original.
+// startTimeMs/endTimeMs are optional — when both are provided, the
+// native side trims to that range as part of the same compress pass
+// (AVAssetReader.timeRange on iOS, MediaItem.ClippingConfiguration on
+// Android) rather than compressing then trimming separately. Used by
+// the over-30s-video flow (manual trim picker and auto-split into
+// consecutive 30s segments) — see create_status_screen.dart.
 Future<String> compressVideoFile(
   String filePath, {
   required bool hd,
   void Function(double progress)? onProgress,
+  int? startTimeMs,
+  int? endTimeMs,
 }) async {
   final dir = await getTemporaryDirectory();
   final outputPath =
@@ -44,6 +52,8 @@ Future<String> compressVideoFile(
       'outputPath': outputPath,
       'shortSide': _shortSide,
       'bitrate': hd ? _hdBitrate : _baseBitrate,
+      if (startTimeMs != null) 'startTimeMs': startTimeMs,
+      if (endTimeMs != null) 'endTimeMs': endTimeMs,
     });
     if (!await File(outputPath).exists()) return filePath;
     return outputPath;
