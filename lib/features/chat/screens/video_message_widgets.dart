@@ -897,6 +897,10 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
   bool _disposed = false;
   bool _wasPlaying = false;
   String? _error;
+  bool _scrubbing = false;
+  int? _scrubPositionMs;
+  DateTime? _lastScrubSeekAt;
+  bool _seekInFlight = false;
 
   @override
   void initState() {
@@ -968,6 +972,22 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
     _controller?.dispose();
     if (_wasPlaying) unawaited(_deactivateAudioSession());
     super.dispose();
+  }
+
+  Future<void> _performSeek(int ms) async {
+    if (_disposed || _controller == null) return;
+    _seekInFlight = true;
+    try {
+      await _controller!.seekTo(Duration(milliseconds: ms));
+    } catch (e, st) {
+      if (!_disposed) {
+        FirebaseCrashlytics.instance.recordError(
+          e, st, reason: 'VideoPlayerScreen: seekTo failed during scrub',
+        );
+      }
+    } finally {
+      _seekInFlight = false;
+    }
   }
 
   void _togglePlay() {
@@ -1199,21 +1219,131 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
                       builder: (context, _) {
                         final position = _controller!.value.position;
                         final duration = _controller!.value.duration;
-                        final remaining = duration - position;
+                        // Custom scrub bar replacing VideoProgressIndicator's
+                        // built-in allowScrubbing — that widget calls
+                        // controller.seekTo() on every single drag-update
+                        // tick with no throttling, which is expensive
+                        // enough per-call (real decode-to-frame work) that
+                        // debug-mode's extra overhead queued them up into
+                        // a full main-thread hang on-device (confirmed:
+                        // release mode doesn't hang, debug mode does).
+                        // This bar throttles real seekTo() calls to at
+                        // most once per 100ms during an active drag, with
+                        // one final precise seekTo() on release. The bar
+                        // and time labels show _scrubPositionMs (not the
+                        // controller's own lagging position) while
+                        // scrubbing, so the UI tracks the finger exactly
+                        // even though real seeks are throttled.
+                        final displayPositionMs = _scrubbing
+                            ? (_scrubPositionMs ?? position.inMilliseconds)
+                            : position.inMilliseconds;
+                        final displayRemaining = duration -
+                            Duration(milliseconds: displayPositionMs);
+                        final durationMs = duration.inMilliseconds;
+                        final bufferedRanges = _controller!.value.buffered;
+                        final bufferedMs = bufferedRanges.isNotEmpty
+                            ? bufferedRanges.last.end.inMilliseconds
+                            : 0;
+                        final playedFraction = durationMs > 0
+                            ? (displayPositionMs / durationMs).clamp(0.0, 1.0)
+                            : 0.0;
+                        final bufferedFraction = durationMs > 0
+                            ? (bufferedMs / durationMs).clamp(0.0, 1.0)
+                            : 0.0;
                         return Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            VideoProgressIndicator(
-                              _controller!,
-                              allowScrubbing: true,
+                            Padding(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 12,
                                 vertical: 4,
                               ),
-                              colors: const VideoProgressColors(
-                                playedColor: kGold,
-                                bufferedColor: Colors.white38,
-                                backgroundColor: Colors.white12,
+                              child: LayoutBuilder(
+                                builder: (barContext, constraints) {
+                                  final trackWidth = constraints.maxWidth;
+                                  void seekToLocalDx(double dx) {
+                                    final newMs = (dx / trackWidth * durationMs)
+                                        .round()
+                                        .clamp(0, durationMs);
+                                    setState(() => _scrubPositionMs = newMs);
+                                    final now = DateTime.now();
+                                    if (!_seekInFlight &&
+                                        (_lastScrubSeekAt == null ||
+                                            now.difference(_lastScrubSeekAt!) >
+                                                const Duration(
+                                                    milliseconds: 100))) {
+                                      _lastScrubSeekAt = now;
+                                      unawaited(_performSeek(newMs));
+                                    }
+                                  }
+
+                                  return GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onHorizontalDragStart: (details) {
+                                      setState(() {
+                                        _scrubbing = true;
+                                        _scrubPositionMs =
+                                            position.inMilliseconds;
+                                      });
+                                    },
+                                    onHorizontalDragUpdate: (details) {
+                                      if (_disposed) return;
+                                      final box = barContext.findRenderObject()
+                                          as RenderBox;
+                                      final local = box.globalToLocal(
+                                        details.globalPosition,
+                                      );
+                                      seekToLocalDx(local.dx);
+                                    },
+                                    onHorizontalDragEnd: (details) {
+                                      if (_disposed || _controller == null) {
+                                        return;
+                                      }
+                                      final finalMs = _scrubPositionMs ??
+                                          position.inMilliseconds;
+                                      unawaited(_performSeek(finalMs));
+                                      setState(() => _scrubbing = false);
+                                    },
+                                    child: SizedBox(
+                                      height: 12,
+                                      child: Stack(
+                                        alignment: Alignment.centerLeft,
+                                        children: [
+                                          Container(
+                                            height: 3,
+                                            decoration: BoxDecoration(
+                                              color: Colors.white12,
+                                              borderRadius:
+                                                  BorderRadius.circular(2),
+                                            ),
+                                          ),
+                                          FractionallySizedBox(
+                                            widthFactor: bufferedFraction,
+                                            child: Container(
+                                              height: 3,
+                                              decoration: BoxDecoration(
+                                                color: Colors.white38,
+                                                borderRadius:
+                                                    BorderRadius.circular(2),
+                                              ),
+                                            ),
+                                          ),
+                                          FractionallySizedBox(
+                                            widthFactor: playedFraction,
+                                            child: Container(
+                                              height: 3,
+                                              decoration: BoxDecoration(
+                                                color: kGold,
+                                                borderRadius:
+                                                    BorderRadius.circular(2),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
                               ),
                             ),
                             Padding(
@@ -1225,16 +1355,14 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
                                     MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
-                                    formatDurationMmSs(
-                                      position.inMilliseconds,
-                                    ),
+                                    formatDurationMmSs(displayPositionMs),
                                     style: const TextStyle(
                                       color: Colors.white70,
                                       fontSize: 12,
                                     ),
                                   ),
                                   Text(
-                                    '-${formatDurationMmSs(remaining.inMilliseconds)}',
+                                    '-${formatDurationMmSs(displayRemaining.inMilliseconds)}',
                                     style: const TextStyle(
                                       color: Colors.white70,
                                       fontSize: 12,
