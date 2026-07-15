@@ -792,6 +792,42 @@ class FirestoreService {
         );
   }
 
+  // All image/video messages in a chat, for a media thumbnail strip.
+  // deletedForAll is filtered CLIENT-side here, not via a Firestore
+  // `.where('deletedForAll', isEqualTo: false)` — that was tried first and
+  // silently broke the thumbnail strip for nearly every chat: sendImage/
+  // VideoMessage never write a `deletedForAll` field at all (it's only
+  // ever set, to true, by deleteMessageForAll), so almost every real
+  // message has no `deletedForAll` field whatsoever, and a Firestore
+  // equality filter never matches a document where the field is entirely
+  // absent — the query was excluding nearly all media, not just deleted
+  // media. Filtering client-side on the mapped List<Message> instead
+  // (Message.fromFirestore's own `data['deletedForAll'] ?? false` default
+  // makes the absent-vs-false distinction irrelevant once it's a Dart
+  // bool) sidesteps that gotcha entirely, matching how deletedFor
+  // (per-user delete) is already filtered client-side everywhere else in
+  // this file (see chat_screen.dart's
+  // `.where((m) => !m.deletedFor.contains(currentUid))`) rather than in a
+  // query. Deliberately still does NOT filter the per-user `deletedFor`
+  // array here — Firestore has no "array does not contain" query, and
+  // this method's own caller is expected to apply that same client-side
+  // filter itself, same as chat_screen.dart does for the main message list.
+  Stream<List<Message>> watchChatMedia(String chatId) {
+    return _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .where('type', whereIn: ['image', 'video'])
+        .orderBy('timestamp', descending: false)
+        .snapshots()
+        .map(
+          (snap) => snap.docs
+              .map((doc) => Message.fromFirestore(doc.id, doc.data()))
+              .where((m) => !m.deletedForAll)
+              .toList(),
+        );
+  }
+
   Map<String, dynamic>? _buildReplyTo({
     String? replyToId,
     String? replyToText,
@@ -2095,3 +2131,10 @@ final starredMessagesProvider =
     StreamProvider.family<List<StarredMessage>, String>((ref, uid) {
       return ref.watch(firestoreServiceProvider).watchStarredMessages(uid);
     });
+
+final chatMediaProvider = StreamProvider.family<List<Message>, String>((
+  ref,
+  chatId,
+) {
+  return ref.watch(firestoreServiceProvider).watchChatMedia(chatId);
+});

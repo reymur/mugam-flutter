@@ -231,6 +231,96 @@ class _VideoThumbnailImageState extends State<VideoThumbnailImage> {
   }
 }
 
+// Plain static-image thumbnail counterpart to VideoThumbnailImage — no
+// frame-extraction step needed since the source is already an image, so
+// this is just CachedNetworkImage/Image.file behind the same kBg3
+// placeholder background for visual consistency between image and video
+// tiles in a mixed media strip (see ChatMediaThumbnail below). Doesn't
+// reuse ImageMessageBubble's ImagePreviewCacheManager/cacheKey plumbing —
+// that exists specifically for the pending-upload local->network swap
+// (see its own doc comment), which a media-gallery strip of already-sent
+// messages doesn't need; CachedNetworkImage already caches the network
+// fetch itself.
+class ImageThumbnail extends StatelessWidget {
+  final String? imageURL;
+  final String? localFilePath;
+  final double? size;
+
+  const ImageThumbnail({
+    super.key,
+    this.imageURL,
+    this.localFilePath,
+    this.size,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final localPath = localFilePath;
+    final url = imageURL;
+    return Container(
+      width: size,
+      height: size,
+      color: kBg3,
+      child: localPath != null
+          ? Image.file(File(localPath), fit: BoxFit.cover)
+          : url != null
+              ? CachedNetworkImage(
+                  imageUrl: url,
+                  fit: BoxFit.cover,
+                  placeholder: (ctx, url) => const Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: kGold,
+                      ),
+                    ),
+                  ),
+                  errorWidget: (ctx, url, err) => const Icon(
+                    Icons.broken_image,
+                    color: kMuted,
+                  ),
+                )
+              : const SizedBox.shrink(),
+    );
+  }
+}
+
+// Single entry point for a mixed image/video media strip (see
+// chatMediaProvider in firestore_service.dart) — dispatches to
+// VideoThumbnailImage or ImageThumbnail by message.type so callers don't
+// need their own type-branching. VideoThumbnailImage alone can't render a
+// photo (VideoThumbnail.thumbnailData is video-frame-extraction only) and
+// ImageThumbnail alone can't render a video frame, so neither is safe to
+// use unconditionally across a mixed list.
+class ChatMediaThumbnail extends StatelessWidget {
+  final Message message;
+  final double size;
+
+  const ChatMediaThumbnail({
+    super.key,
+    required this.message,
+    required this.size,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return message.type == 'video'
+        ? VideoThumbnailImage(
+            videoURL: message.videoURL,
+            localFilePath: message.localFilePath,
+            size: size,
+            cacheKey: message.stableMediaKey,
+          )
+        : ImageThumbnail(
+            imageURL: message.imageURL,
+            localFilePath: message.localFilePath,
+            size: size,
+          );
+  }
+}
+
 // Public (not file-private) so FileMessageBubble's upload-ETA text can
 // reuse it instead of a second m:ss formatter — see its doc comment.
 String formatDurationMmSs(int ms) {
@@ -887,119 +977,6 @@ class VideoPlayerScreen extends ConsumerStatefulWidget {
 }
 
 class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
-  // Nullable — building the controller now takes an async cache-lookup step
-  // before it exists, so a fast back-navigation can dispose this screen
-  // before _setup() ever assigns one. _disposed guards every await
-  // resumption in _setup() so it never touches state (or leaks a controller
-  // nothing will ever dispose) after that happens.
-  VideoPlayerController? _controller;
-  bool _initialized = false;
-  bool _disposed = false;
-  bool _wasPlaying = false;
-  String? _error;
-  bool _scrubbing = false;
-  int? _scrubPositionMs;
-  DateTime? _lastScrubSeekAt;
-  bool _seekInFlight = false;
-
-  @override
-  void initState() {
-    super.initState();
-    // Pause any playing voice message before this screen's own AVPlayer
-    // activates — two audio sessions (just_audio for voice, video_player's
-    // AVPlayer for this) fighting over the shared iOS AVAudioSession was
-    // the suspected cause of a real, watchdog-confirmed main-thread hang
-    // reproduced by scrubbing the video progress bar right after opening
-    // a video message.
-    VoiceMessageCoordinator.instance.pauseActive();
-    _setup();
-  }
-
-  Future<void> _setup() async {
-    final localPath = widget.localFilePath;
-    VideoPlayerController controller;
-    if (localPath != null) {
-      controller = VideoPlayerController.file(File(localPath));
-    } else {
-      final url = widget.videoURL!;
-      unawaited(_cacheVideoInBackground(url));
-      final cached = await VideoCacheManager.instance.getFileFromCache(url);
-      if (_disposed) return;
-      controller = cached != null
-          ? VideoPlayerController.file(cached.file)
-          : VideoPlayerController.networkUrl(Uri.parse(url));
-    }
-    if (_disposed) {
-      controller.dispose();
-      return;
-    }
-    setState(() => _controller = controller);
-    controller.addListener(_onControllerTick);
-    try {
-      await controller.initialize();
-      if (_disposed) return;
-      setState(() => _initialized = true);
-      controller.play();
-    } catch (e, st) {
-      if (!_disposed) setState(() => _error = 'Video açıla bilmədi: $e');
-      FirebaseCrashlytics.instance.recordError(
-        e,
-        st,
-        reason: 'VideoPlayerScreen: controller.initialize() failed',
-      );
-    }
-  }
-
-  // video_player never sends AVAudioSession the explicit "I'm done" signal
-  // that lets iOS un-duck other apps' audio — it only engages ducking as a
-  // side effect of actually outputting sound. Watching for isPlaying's
-  // true->false edge here catches pause, natural end-of-video, and (via
-  // dispose below) navigating away mid-playback — all the ways playback
-  // can stop short of the app itself being backgrounded, which is the only
-  // thing that was incidentally clearing the ducked state before this.
-  void _onControllerTick() {
-    final isPlaying = _controller?.value.isPlaying ?? false;
-    if (_wasPlaying && !isPlaying) {
-      unawaited(_deactivateAudioSession());
-    }
-    _wasPlaying = isPlaying;
-  }
-
-  @override
-  void dispose() {
-    _disposed = true;
-    _controller?.removeListener(_onControllerTick);
-    _controller?.dispose();
-    if (_wasPlaying) unawaited(_deactivateAudioSession());
-    super.dispose();
-  }
-
-  Future<void> _performSeek(int ms) async {
-    if (_disposed || _controller == null) return;
-    _seekInFlight = true;
-    try {
-      await _controller!.seekTo(Duration(milliseconds: ms));
-    } catch (e, st) {
-      if (!_disposed) {
-        FirebaseCrashlytics.instance.recordError(
-          e, st, reason: 'VideoPlayerScreen: seekTo failed during scrub',
-        );
-      }
-    } finally {
-      _seekInFlight = false;
-    }
-  }
-
-  void _togglePlay() {
-    final controller = _controller;
-    if (controller == null) return;
-    if (controller.value.isPlaying) {
-      controller.pause();
-    } else {
-      controller.play();
-    }
-  }
-
   Future<void> _shareVideo() async {
     try {
       final localPath = widget.localFilePath;
@@ -1147,53 +1124,11 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
       body: SafeArea(
         child: Stack(
           children: [
-            if (_error != null)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 32),
-                  child: Text(
-                    _error!,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-              )
-            else if (!_initialized)
-              const Center(child: CircularProgressIndicator(color: kGold))
-            else
-              AnimatedBuilder(
-                animation: _controller!,
-                builder: (context, _) => Center(
-                  child: GestureDetector(
-                    onTap: _togglePlay,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        AspectRatio(
-                          aspectRatio: _controller!.value.aspectRatio,
-                          child: VideoPlayer(_controller!),
-                        ),
-                        AnimatedOpacity(
-                          opacity: _controller!.value.isPlaying ? 0 : 1,
-                          duration: const Duration(milliseconds: 200),
-                          child: Container(
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.black45,
-                            ),
-                            padding: const EdgeInsets.all(16),
-                            child: const Icon(
-                              Icons.play_arrow,
-                              color: Colors.white,
-                              size: 48,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+            VideoPlaybackCore(
+              videoURL: widget.videoURL,
+              localFilePath: widget.localFilePath,
+              bottomChromeHeight: 56.0,
+            ),
             Positioned(
               top: 8,
               left: 8,
@@ -1202,216 +1137,423 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
                 onPressed: () => Navigator.of(context).pop(),
               ),
             ),
-            if (_initialized)
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                // Icon row lives OUTSIDE the AnimatedBuilder on purpose —
-                // it doesn't depend on video position, so it shouldn't be
-                // rebuilt on every scrub tick. Only the progress bar + time
-                // labels (which do depend on position) are inside.
-                child: Column(
+            // Not gated on VideoPlaybackCore's own init/error state the way
+            // the old combined scrub-bar+icon-row block was — none of these
+            // actions (share/forward/favorite/delete) touch playback, so
+            // there's no reason to hide them while the video is still
+            // loading.
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.ios_share, color: Colors.white),
+                      onPressed: _shareVideo,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.reply, color: Colors.white),
+                      onPressed: _openForward,
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        isStarred ? Icons.star : Icons.star_border,
+                        color: isStarred ? kGold : Colors.white,
+                      ),
+                      onPressed: () => _toggleFavorite(isStarred),
+                    ),
+                    IconButton(
+                      icon: const Icon(
+                        Icons.delete_outline,
+                        color: Colors.white,
+                      ),
+                      onPressed: _confirmDelete,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Playback-only core (video surface, tap-to-toggle-play overlay, scrub bar)
+// with no message/chat/user coupling — VideoPlayerScreen above is now a
+// thin chrome wrapper around this, and a future shared attachment-viewer
+// container can host this widget directly instead of duplicating the
+// controller lifecycle / scrub-throttling logic.
+class VideoPlaybackCore extends ConsumerStatefulWidget {
+  final String? videoURL;
+  final String? localFilePath;
+  // How much space the host reserves below this widget for its own bottom
+  // chrome (e.g. VideoPlayerScreen's share/forward/favorite/delete icon
+  // row) — the scrub bar is inset from the bottom by this amount so it
+  // doesn't render underneath that chrome. Caller-supplied rather than
+  // baked in, since different hosts (e.g. a future attachment-viewer
+  // container) may reserve a different height or none at all.
+  final double bottomChromeHeight;
+
+  const VideoPlaybackCore({
+    super.key,
+    this.videoURL,
+    this.localFilePath,
+    required this.bottomChromeHeight,
+  });
+
+  @override
+  ConsumerState<VideoPlaybackCore> createState() => _VideoPlaybackCoreState();
+}
+
+class _VideoPlaybackCoreState extends ConsumerState<VideoPlaybackCore> {
+  // Nullable — building the controller now takes an async cache-lookup step
+  // before it exists, so a fast back-navigation can dispose this screen
+  // before _setup() ever assigns one. _disposed guards every await
+  // resumption in _setup() so it never touches state (or leaks a controller
+  // nothing will ever dispose) after that happens.
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  bool _disposed = false;
+  bool _wasPlaying = false;
+  String? _error;
+  bool _scrubbing = false;
+  int? _scrubPositionMs;
+  DateTime? _lastScrubSeekAt;
+  bool _seekInFlight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Pause any playing voice message before this screen's own AVPlayer
+    // activates — two audio sessions (just_audio for voice, video_player's
+    // AVPlayer for this) fighting over the shared iOS AVAudioSession was
+    // the suspected cause of a real, watchdog-confirmed main-thread hang
+    // reproduced by scrubbing the video progress bar right after opening
+    // a video message.
+    VoiceMessageCoordinator.instance.pauseActive();
+    _setup();
+  }
+
+  Future<void> _setup() async {
+    final localPath = widget.localFilePath;
+    VideoPlayerController controller;
+    if (localPath != null) {
+      controller = VideoPlayerController.file(File(localPath));
+    } else {
+      final url = widget.videoURL!;
+      unawaited(_cacheVideoInBackground(url));
+      final cached = await VideoCacheManager.instance.getFileFromCache(url);
+      if (_disposed) return;
+      controller = cached != null
+          ? VideoPlayerController.file(cached.file)
+          : VideoPlayerController.networkUrl(Uri.parse(url));
+    }
+    if (_disposed) {
+      controller.dispose();
+      return;
+    }
+    setState(() => _controller = controller);
+    controller.addListener(_onControllerTick);
+    try {
+      await controller.initialize();
+      if (_disposed) return;
+      setState(() => _initialized = true);
+      controller.play();
+    } catch (e, st) {
+      if (!_disposed) setState(() => _error = 'Video açıla bilmədi: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'VideoPlaybackCore: controller.initialize() failed',
+      );
+    }
+  }
+
+  // video_player never sends AVAudioSession the explicit "I'm done" signal
+  // that lets iOS un-duck other apps' audio — it only engages ducking as a
+  // side effect of actually outputting sound. Watching for isPlaying's
+  // true->false edge here catches pause, natural end-of-video, and (via
+  // dispose below) navigating away mid-playback — all the ways playback
+  // can stop short of the app itself being backgrounded, which is the only
+  // thing that was incidentally clearing the ducked state before this.
+  void _onControllerTick() {
+    final isPlaying = _controller?.value.isPlaying ?? false;
+    if (_wasPlaying && !isPlaying) {
+      unawaited(_deactivateAudioSession());
+    }
+    _wasPlaying = isPlaying;
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _controller?.removeListener(_onControllerTick);
+    _controller?.dispose();
+    if (_wasPlaying) unawaited(_deactivateAudioSession());
+    super.dispose();
+  }
+
+  Future<void> _performSeek(int ms) async {
+    if (_disposed || _controller == null) return;
+    _seekInFlight = true;
+    try {
+      await _controller!.seekTo(Duration(milliseconds: ms));
+    } catch (e, st) {
+      if (!_disposed) {
+        FirebaseCrashlytics.instance.recordError(
+          e, st, reason: 'VideoPlaybackCore: seekTo failed during scrub',
+        );
+      }
+    } finally {
+      _seekInFlight = false;
+    }
+  }
+
+  void _togglePlay() {
+    final controller = _controller;
+    if (controller == null) return;
+    if (controller.value.isPlaying) {
+      controller.pause();
+    } else {
+      controller.play();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      // Forces this Stack to size to all the space its parent gives it
+      // (constraints.biggest) regardless of the video's own AspectRatio-
+      // driven size — needed since this widget is nested one level inside
+      // the host screen's own Stack rather than sitting directly under
+      // Scaffold/SafeArea's tight constraints; without it, a non-full-
+      // bleed video (letterboxed) would shrink this Stack down to the
+      // video's own frame, and the scrub bar's Positioned(bottom: ...)
+      // below would anchor to the bottom of that frame instead of the
+      // actual screen bottom.
+      fit: StackFit.expand,
+      children: [
+        if (_error != null)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          )
+        else if (!_initialized)
+          const Center(child: CircularProgressIndicator(color: kGold))
+        else
+          AnimatedBuilder(
+            animation: _controller!,
+            builder: (context, _) => Center(
+              child: GestureDetector(
+                onTap: _togglePlay,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    AspectRatio(
+                      aspectRatio: _controller!.value.aspectRatio,
+                      child: VideoPlayer(_controller!),
+                    ),
+                    AnimatedOpacity(
+                      opacity: _controller!.value.isPlaying ? 0 : 1,
+                      duration: const Duration(milliseconds: 200),
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.black45,
+                        ),
+                        padding: const EdgeInsets.all(16),
+                        child: const Icon(
+                          Icons.play_arrow,
+                          color: Colors.white,
+                          size: 48,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        if (_initialized)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: widget.bottomChromeHeight,
+            child: AnimatedBuilder(
+              animation: _controller!,
+              builder: (context, _) {
+                final position = _controller!.value.position;
+                final duration = _controller!.value.duration;
+                // Custom scrub bar replacing VideoProgressIndicator's
+                // built-in allowScrubbing — that widget calls
+                // controller.seekTo() on every single drag-update
+                // tick with no throttling, which is expensive
+                // enough per-call (real decode-to-frame work) that
+                // debug-mode's extra overhead queued them up into
+                // a full main-thread hang on-device (confirmed:
+                // release mode doesn't hang, debug mode does).
+                // This bar throttles real seekTo() calls to at
+                // most once per 100ms during an active drag, with
+                // one final precise seekTo() on release. The bar
+                // and time labels show _scrubPositionMs (not the
+                // controller's own lagging position) while
+                // scrubbing, so the UI tracks the finger exactly
+                // even though real seeks are throttled.
+                final displayPositionMs = _scrubbing
+                    ? (_scrubPositionMs ?? position.inMilliseconds)
+                    : position.inMilliseconds;
+                final displayRemaining = duration -
+                    Duration(milliseconds: displayPositionMs);
+                final durationMs = duration.inMilliseconds;
+                final bufferedRanges = _controller!.value.buffered;
+                final bufferedMs = bufferedRanges.isNotEmpty
+                    ? bufferedRanges.last.end.inMilliseconds
+                    : 0;
+                final playedFraction = durationMs > 0
+                    ? (displayPositionMs / durationMs).clamp(0.0, 1.0)
+                    : 0.0;
+                final bufferedFraction = durationMs > 0
+                    ? (bufferedMs / durationMs).clamp(0.0, 1.0)
+                    : 0.0;
+                return Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    AnimatedBuilder(
-                      animation: _controller!,
-                      builder: (context, _) {
-                        final position = _controller!.value.position;
-                        final duration = _controller!.value.duration;
-                        // Custom scrub bar replacing VideoProgressIndicator's
-                        // built-in allowScrubbing — that widget calls
-                        // controller.seekTo() on every single drag-update
-                        // tick with no throttling, which is expensive
-                        // enough per-call (real decode-to-frame work) that
-                        // debug-mode's extra overhead queued them up into
-                        // a full main-thread hang on-device (confirmed:
-                        // release mode doesn't hang, debug mode does).
-                        // This bar throttles real seekTo() calls to at
-                        // most once per 100ms during an active drag, with
-                        // one final precise seekTo() on release. The bar
-                        // and time labels show _scrubPositionMs (not the
-                        // controller's own lagging position) while
-                        // scrubbing, so the UI tracks the finger exactly
-                        // even though real seeks are throttled.
-                        final displayPositionMs = _scrubbing
-                            ? (_scrubPositionMs ?? position.inMilliseconds)
-                            : position.inMilliseconds;
-                        final displayRemaining = duration -
-                            Duration(milliseconds: displayPositionMs);
-                        final durationMs = duration.inMilliseconds;
-                        final bufferedRanges = _controller!.value.buffered;
-                        final bufferedMs = bufferedRanges.isNotEmpty
-                            ? bufferedRanges.last.end.inMilliseconds
-                            : 0;
-                        final playedFraction = durationMs > 0
-                            ? (displayPositionMs / durationMs).clamp(0.0, 1.0)
-                            : 0.0;
-                        final bufferedFraction = durationMs > 0
-                            ? (bufferedMs / durationMs).clamp(0.0, 1.0)
-                            : 0.0;
-                        return Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 4,
-                              ),
-                              child: LayoutBuilder(
-                                builder: (barContext, constraints) {
-                                  final trackWidth = constraints.maxWidth;
-                                  void seekToLocalDx(double dx) {
-                                    final newMs = (dx / trackWidth * durationMs)
-                                        .round()
-                                        .clamp(0, durationMs);
-                                    setState(() => _scrubPositionMs = newMs);
-                                    final now = DateTime.now();
-                                    if (!_seekInFlight &&
-                                        (_lastScrubSeekAt == null ||
-                                            now.difference(_lastScrubSeekAt!) >
-                                                const Duration(
-                                                    milliseconds: 100))) {
-                                      _lastScrubSeekAt = now;
-                                      unawaited(_performSeek(newMs));
-                                    }
-                                  }
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
+                      child: LayoutBuilder(
+                        builder: (barContext, constraints) {
+                          final trackWidth = constraints.maxWidth;
+                          void seekToLocalDx(double dx) {
+                            final newMs = (dx / trackWidth * durationMs)
+                                .round()
+                                .clamp(0, durationMs);
+                            setState(() => _scrubPositionMs = newMs);
+                            final now = DateTime.now();
+                            if (!_seekInFlight &&
+                                (_lastScrubSeekAt == null ||
+                                    now.difference(_lastScrubSeekAt!) >
+                                        const Duration(
+                                            milliseconds: 100))) {
+                              _lastScrubSeekAt = now;
+                              unawaited(_performSeek(newMs));
+                            }
+                          }
 
-                                  return GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onHorizontalDragStart: (details) {
-                                      setState(() {
-                                        _scrubbing = true;
-                                        _scrubPositionMs =
-                                            position.inMilliseconds;
-                                      });
-                                    },
-                                    onHorizontalDragUpdate: (details) {
-                                      if (_disposed) return;
-                                      final box = barContext.findRenderObject()
-                                          as RenderBox;
-                                      final local = box.globalToLocal(
-                                        details.globalPosition,
-                                      );
-                                      seekToLocalDx(local.dx);
-                                    },
-                                    onHorizontalDragEnd: (details) {
-                                      if (_disposed || _controller == null) {
-                                        return;
-                                      }
-                                      final finalMs = _scrubPositionMs ??
-                                          position.inMilliseconds;
-                                      unawaited(_performSeek(finalMs));
-                                      setState(() => _scrubbing = false);
-                                    },
-                                    child: SizedBox(
-                                      height: 12,
-                                      child: Stack(
-                                        alignment: Alignment.centerLeft,
-                                        children: [
-                                          Container(
-                                            height: 3,
-                                            decoration: BoxDecoration(
-                                              color: Colors.white12,
-                                              borderRadius:
-                                                  BorderRadius.circular(2),
-                                            ),
-                                          ),
-                                          FractionallySizedBox(
-                                            widthFactor: bufferedFraction,
-                                            child: Container(
-                                              height: 3,
-                                              decoration: BoxDecoration(
-                                                color: Colors.white38,
-                                                borderRadius:
-                                                    BorderRadius.circular(2),
-                                              ),
-                                            ),
-                                          ),
-                                          FractionallySizedBox(
-                                            widthFactor: playedFraction,
-                                            child: Container(
-                                              height: 3,
-                                              decoration: BoxDecoration(
-                                                color: kGold,
-                                                borderRadius:
-                                                    BorderRadius.circular(2),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                              ),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
+                          return GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onHorizontalDragStart: (details) {
+                              setState(() {
+                                _scrubbing = true;
+                                _scrubPositionMs =
+                                    position.inMilliseconds;
+                              });
+                            },
+                            onHorizontalDragUpdate: (details) {
+                              if (_disposed) return;
+                              final box = barContext.findRenderObject()
+                                  as RenderBox;
+                              final local = box.globalToLocal(
+                                details.globalPosition,
+                              );
+                              seekToLocalDx(local.dx);
+                            },
+                            onHorizontalDragEnd: (details) {
+                              if (_disposed || _controller == null) {
+                                return;
+                              }
+                              final finalMs = _scrubPositionMs ??
+                                  position.inMilliseconds;
+                              unawaited(_performSeek(finalMs));
+                              setState(() => _scrubbing = false);
+                            },
+                            child: SizedBox(
+                              height: 12,
+                              child: Stack(
+                                alignment: Alignment.centerLeft,
                                 children: [
-                                  Text(
-                                    formatDurationMmSs(displayPositionMs),
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12,
+                                  Container(
+                                    height: 3,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white12,
+                                      borderRadius:
+                                          BorderRadius.circular(2),
                                     ),
                                   ),
-                                  Text(
-                                    '-${formatDurationMmSs(displayRemaining.inMilliseconds)}',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12,
+                                  FractionallySizedBox(
+                                    widthFactor: bufferedFraction,
+                                    child: Container(
+                                      height: 3,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white38,
+                                        borderRadius:
+                                            BorderRadius.circular(2),
+                                      ),
+                                    ),
+                                  ),
+                                  FractionallySizedBox(
+                                    widthFactor: playedFraction,
+                                    child: Container(
+                                      height: 3,
+                                      decoration: BoxDecoration(
+                                        color: kGold,
+                                        borderRadius:
+                                            BorderRadius.circular(2),
+                                      ),
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                          ],
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
-                      children: [
-                        IconButton(
-                          icon: const Icon(
-                            Icons.ios_share,
-                            color: Colors.white,
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                      ),
+                      child: Row(
+                        mainAxisAlignment:
+                            MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            formatDurationMmSs(displayPositionMs),
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
                           ),
-                          onPressed: _shareVideo,
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.reply, color: Colors.white),
-                          onPressed: _openForward,
-                        ),
-                        IconButton(
-                          icon: Icon(
-                            isStarred ? Icons.star : Icons.star_border,
-                            color: isStarred ? kGold : Colors.white,
+                          Text(
+                            '-${formatDurationMmSs(displayRemaining.inMilliseconds)}',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
                           ),
-                          onPressed: () => _toggleFavorite(isStarred),
-                        ),
-                        IconButton(
-                          icon: const Icon(
-                            Icons.delete_outline,
-                            color: Colors.white,
-                          ),
-                          onPressed: _confirmDelete,
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 8),
                   ],
-                ),
-              ),
-          ],
-        ),
-      ),
+                );
+              },
+            ),
+          ),
+      ],
     );
   }
 }

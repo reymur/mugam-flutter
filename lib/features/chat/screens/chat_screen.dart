@@ -35,8 +35,8 @@ import '../../../core/settings/upload_limit_settings.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
-import '../../../shared/widgets/zoomable_image_viewer.dart';
 import 'about_contact_screen.dart';
+import 'chat_attachment_viewer_screen.dart';
 import 'custom_camera_backup/camera_capture_screen.dart';
 import 'file_message_widgets.dart';
 import 'forward_sheet.dart';
@@ -2360,7 +2360,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         imageHeight: msg.imageHeight,
                         bubbleRadius: _kBubbleRadius,
                         onTap: msg.imageURL != null
-                            ? () => showFullImage(context, msg.imageURL!)
+                            ? () => Navigator.of(context)
+                                  .push<Message>(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          ChatAttachmentViewerScreen(
+                                            initialMessage: msg,
+                                            chatId: widget.chatId,
+                                            currentUid: currentUid,
+                                            chatName:
+                                                ref
+                                                    .read(
+                                                      chatDataProvider(
+                                                        widget.chatId,
+                                                      ),
+                                                    )
+                                                    .value?['name']
+                                                    as String? ??
+                                                '',
+                                            senderName: _replySenderName(
+                                              msg,
+                                              currentUid,
+                                            ),
+                                          ),
+                                    ),
+                                  )
+                                  .then((result) {
+                                    if (result != null) _startReply(result);
+                                  })
                             : null,
                         deliveryStatus: status,
                         localUploadProgress: msg.localUploadProgress,
