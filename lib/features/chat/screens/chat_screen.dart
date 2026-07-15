@@ -2480,6 +2480,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         videoWidth: msg.videoWidth,
                         videoHeight: msg.videoHeight,
                         bubbleRadius: _kBubbleRadius,
+                        onTap: msg.videoURL != null
+                            ? () => Navigator.of(context)
+                                  .push<Message>(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          ChatAttachmentViewerScreen(
+                                            initialMessage: msg,
+                                            chatId: widget.chatId,
+                                            currentUid: currentUid,
+                                            chatName:
+                                                ref
+                                                    .read(
+                                                      chatDataProvider(
+                                                        widget.chatId,
+                                                      ),
+                                                    )
+                                                    .value?['name']
+                                                    as String? ??
+                                                '',
+                                            senderName: _replySenderName(
+                                              msg,
+                                              currentUid,
+                                            ),
+                                          ),
+                                    ),
+                                  )
+                                  .then((result) {
+                                    if (result != null) _startReply(result);
+                                  })
+                            : null,
                         deliveryStatus: status,
                         localUploadProgress: msg.localUploadProgress,
                         onCancelUpload: _cancelUploadCallback(msg),
@@ -2487,14 +2517,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         initialBytes: msg.localPreviewBytes,
                         caption: msg.text,
                         isMe: isMe,
-                        message: msg,
-                        chatId: widget.chatId,
-                        currentUid: currentUid,
-                        chatName:
-                            ref.read(chatDataProvider(widget.chatId)).value?['name']
-                                as String? ??
-                            '',
-                        senderName: _replySenderName(msg, currentUid),
                         timeCheckmarkOverlay: _timeCheckmarkRow(
                           isMe,
                           otherUid,

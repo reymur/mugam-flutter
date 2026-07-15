@@ -362,6 +362,7 @@ class VideoMessageBubble extends StatelessWidget {
   final int? videoHeight;
   final double bubbleRadius;
   final Widget timeCheckmarkOverlay;
+  final VoidCallback? onTap;
   // Single computed source of truth (see deliveryStatusFor) — the same
   // value the corner checkmark is derived from, so this widget's own
   // uploading-vs-sent decision can never visibly disagree with it.
@@ -377,11 +378,6 @@ class VideoMessageBubble extends StatelessWidget {
   // see its own caption field comment for the full rationale.
   final String caption;
   final bool isMe;
-  final Message message;
-  final String chatId;
-  final String currentUid;
-  final String chatName;
-  final String senderName;
 
   const VideoMessageBubble({
     super.key,
@@ -392,6 +388,7 @@ class VideoMessageBubble extends StatelessWidget {
     this.videoHeight,
     required this.bubbleRadius,
     required this.timeCheckmarkOverlay,
+    this.onTap,
     required this.deliveryStatus,
     this.localUploadProgress,
     this.onCancelUpload,
@@ -399,11 +396,6 @@ class VideoMessageBubble extends StatelessWidget {
     this.initialBytes,
     this.caption = '',
     required this.isMe,
-    required this.message,
-    required this.chatId,
-    required this.currentUid,
-    required this.chatName,
-    required this.senderName,
   });
 
   Size _boundedSize() {
@@ -525,39 +517,11 @@ class VideoMessageBubble extends StatelessWidget {
     );
 
     if (!hasCaption) {
-      return GestureDetector(
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => VideoPlayerScreen(
-              videoURL: videoURL,
-              localFilePath: localFilePath,
-              message: message,
-              chatId: chatId,
-              currentUid: currentUid,
-              chatName: chatName,
-              senderName: senderName,
-            ),
-          ),
-        ),
-        child: videoStack,
-      );
+      return GestureDetector(onTap: onTap, child: videoStack);
     }
 
     return GestureDetector(
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) =>
-              VideoPlayerScreen(
-                videoURL: videoURL,
-                localFilePath: localFilePath,
-                message: message,
-                chatId: chatId,
-                currentUid: currentUid,
-                chatName: chatName,
-                senderName: senderName,
-              ),
-        ),
-      ),
+      onTap: onTap,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(bubbleRadius),
         child: Container(
