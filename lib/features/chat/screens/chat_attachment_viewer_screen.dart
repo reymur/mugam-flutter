@@ -611,8 +611,23 @@ class _ChatAttachmentViewerScreenState
 
     return mediaAsync.when(
       data: (media) {
-        _resolveInitialPage(media);
-        final items = media.isEmpty ? [widget.initialMessage] : media;
+        // chatMediaProvider's own doc comment (watchChatMedia in
+        // firestore_service.dart) explicitly requires the caller to apply
+        // the per-user deletedFor filter itself — Firestore has no "array
+        // does not contain" query, so it can't be done server-side.
+        // Missing this let a message the current user had personally
+        // deleted still appear here and be reply-quotable, which then made
+        // chat_screen.dart's reply-jump silently fail afterward (that
+        // screen's own _lastMessages correctly filters deletedFor, by
+        // design, so the target could never be found there — this was
+        // mistaken for a timing race before the real cause was found).
+        final filteredMedia = media
+            .where((m) => !m.deletedFor.contains(widget.currentUid))
+            .toList();
+        _resolveInitialPage(filteredMedia);
+        final items = filteredMedia.isEmpty
+            ? [widget.initialMessage]
+            : filteredMedia;
         final currentMessage = items[_currentIndex.clamp(0, items.length - 1)];
         final isStarred =
             starredAsync.value?.any((m) => m.id == currentMessage.id) ??

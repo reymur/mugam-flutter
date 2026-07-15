@@ -1035,8 +1035,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       await WidgetsBinding.instance.endOfFrame;
       if (!mounted) return;
     }
-    final index = _lastMessages.indexWhere((m) => m.id == messageId);
-    if (index == -1) return;
+    var index = _lastMessages.indexWhere((m) => m.id == messageId);
+    if (index == -1) {
+      // The provider already had this message (found was true above, so
+      // no pagination/await ran at all) but this widget's own build() —
+      // the only place _lastMessages gets refreshed, see its assignment
+      // site — hasn't necessarily caught up to that yet by the time a tap
+      // handler runs synchronously; same class of lag the found-check
+      // comment above already documents, just previously left unhandled
+      // once found was already true. One frame is enough for build() to
+      // run against the current provider state; if it's still missing
+      // after that, treat it the same as the pagination-exhausted case
+      // below rather than returning silently.
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      index = _lastMessages.indexWhere((m) => m.id == messageId);
+      if (index == -1) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Mesaj tapılmadı'),
+              backgroundColor: kRed,
+            ),
+          );
+        }
+        return;
+      }
+    }
     await _scrollToIndexExact(index);
     if (!mounted) return;
     _flashHighlight(messageId);
