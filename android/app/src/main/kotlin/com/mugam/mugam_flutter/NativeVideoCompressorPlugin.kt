@@ -45,6 +45,14 @@ class NativeVideoCompressorPlugin : FlutterPlugin, MethodChannel.MethodCallHandl
     private var eventSink: EventChannel.EventSink? = null
     private var transformer: Transformer? = null
     private var isBusy = false
+    // The MethodChannel.Result for whichever "compress" call is currently
+    // in flight — Transformer.cancel() is documented to NOT invoke
+    // onCompleted/onError (cancellation isn't treated as a completion or an
+    // error by Media3), so without this, a cancelled compress's own result
+    // callback would never be resolved and isBusy would never be reset,
+    // wedging every later compress call behind a stale BUSY. The "cancel"
+    // case below resolves this directly instead of relying on the listener.
+    private var pendingCompressResult: MethodChannel.Result? = null
     private val progressHolder = ProgressHolder()
     private val progressRunnable = object : Runnable {
         override fun run() {
@@ -101,10 +109,24 @@ class NativeVideoCompressorPlugin : FlutterPlugin, MethodChannel.MethodCallHandl
                     return
                 }
                 isBusy = true
+                pendingCompressResult = result
                 compress(path, outputPath, shortSide, bitrate, startTimeMs, endTimeMs, result)
             }
             "cancel" -> {
                 transformer?.cancel()
+                // No-op if nothing is running (isBusy false / no compress in
+                // flight) — pendingCompressResult is only non-null while a
+                // "compress" call is outstanding, so a stray cancel just
+                // resolves its own result.success(null) below and touches
+                // nothing else.
+                val pending = pendingCompressResult
+                if (pending != null) {
+                    // Clears pendingCompressResult before resolving it, so
+                    // this can't double-resolve the same result even if
+                    // onError/onCompleted somehow still fired first.
+                    finish()
+                    pending.error("CANCELLED", "Compression cancelled", null)
+                }
                 result.success(null)
             }
             else -> result.notImplemented()
@@ -184,6 +206,7 @@ class NativeVideoCompressorPlugin : FlutterPlugin, MethodChannel.MethodCallHandl
     private fun finish() {
         isBusy = false
         transformer = null
+        pendingCompressResult = null
         mainHandler.removeCallbacks(progressRunnable)
     }
 }

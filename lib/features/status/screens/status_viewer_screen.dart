@@ -175,6 +175,23 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
     super.dispose();
   }
 
+  // Defensive backstop for the same class of bug build() guards against
+  // below: if widget.group ever updates with a shorter statuses list
+  // (deleting the last piece is the known trigger — statusFeedProvider's
+  // live stream can deliver the post-delete group before
+  // _confirmAndDeleteStatus's popUntil actually unmounts this screen,
+  // reusing this same State via its unchanged ValueKey) while
+  // _currentIndex now points past the new end, clamp it back in bounds
+  // rather than leaving it dangling for the next _currentStatus read.
+  @override
+  void didUpdateWidget(_StatusGroupPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final maxIndex = widget.group.statuses.length - 1;
+    if (maxIndex >= 0 && _currentIndex > maxIndex) {
+      _currentIndex = maxIndex;
+    }
+  }
+
   // Never called for the owner's own group — you don't "view" your own
   // status. Guarded by _markedViewedStatusId so re-visiting the same
   // status (e.g. tapping back then forward again) doesn't re-write the
@@ -189,10 +206,13 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
 
   // Deleting is destructive and immediate (no undo) — confirm first,
   // same AlertDialog shape as create_status_screen.dart's over-30s
-  // dialog for visual consistency within this feature. On success, pops
-  // the whole viewer back to ChatsScreen (this status's data — and this
-  // Status's own place in widget.group.statuses — no longer exists, so
-  // there's nothing left in this viewer worth staying on).
+  // dialog for visual consistency within this feature. Only pops the
+  // whole viewer back to ChatsScreen when this was the author's last
+  // remaining piece — otherwise stays open: didUpdateWidget's clamp +
+  // build()'s bounds guard (added for the RangeError fix) already handle
+  // rendering whatever piece is now current once the shortened group
+  // arrives via statusFeedProvider's stream, so there's nothing else this
+  // method needs to do to show it.
   Future<void> _confirmAndDeleteStatus(Status status) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -216,12 +236,20 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
       ),
     );
     if (confirmed != true || !mounted) return;
+    // Captured before the delete resolves — deleteStatus() itself returns
+    // nothing about the post-delete count, and widget.group.statuses isn't
+    // updated locally by this method (only ever replaced wholesale by a
+    // new _StatusGroupPage from StatusViewerScreen's own rebuild), so this
+    // is the only point where "how many pieces existed" is actually known.
+    final wasLastPiece = widget.group.statuses.length <= 1;
     try {
       await ref
           .read(firestoreServiceProvider)
           .deleteStatus(ownerUid: status.ownerUid, statusId: status.id);
       if (!mounted) return;
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      if (wasLastPiece) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
         e,
@@ -322,6 +350,17 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
 
   @override
   Widget build(BuildContext context) {
+    // Bridges the brief window between statusFeedProvider delivering a
+    // shortened group (deleting the last piece is the known trigger) and
+    // _confirmAndDeleteStatus's popUntil actually unmounting this screen —
+    // without this, _currentStatus below would index past the end of the
+    // now-shorter list and throw. didUpdateWidget above clamps
+    // _currentIndex for every other case; this covers the one case it
+    // can't (the list is now empty, so there's no valid index to clamp to).
+    if (widget.group.statuses.isEmpty ||
+        _currentIndex >= widget.group.statuses.length) {
+      return const Scaffold(backgroundColor: Colors.black);
+    }
     final status = _currentStatus;
     final user = ref.watch(userByIdProvider(widget.group.ownerUid)).value;
     final dragProgress = (_dragY / 400).clamp(0.0, 1.0);

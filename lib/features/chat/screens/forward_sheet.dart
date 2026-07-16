@@ -1,5 +1,11 @@
+import 'dart:io';
+
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
@@ -165,12 +171,19 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
     // Status-forwarding: each qualifying (image/video) message gets its
     // own server-side Storage copy (copyMediaToStatus — see
     // firestore_service.dart's own doc comment for why the original
-    // chat URL can't just be reused directly), then all copied items
-    // share ONE privacy choice via PrivacyPickerScreen — same "one
+    // chat URL can't just be reused directly) when short enough to post
+    // as-is, or gets downloaded locally and auto-split into ≤30s
+    // segments (videoSegmentGroups) when over Status's 30s cap —
+    // matching CreateStatusScreen's own direct-post flow, which already
+    // offers this choice; forwarding previously skipped it entirely and
+    // posted the full-length video unsplit. Every copied/split item then
+    // shares ONE privacy choice via PrivacyPickerScreen — same "one
     // choice, loop-publish multiple statuses" shape create_status_
     // screen.dart's own auto-split path already uses, not a new
     // architecture invented here.
     List<(String, String)>? forwardedMedia;
+    List<({String localFilePath, List<(int, int)> segments})>?
+    videoSegmentGroups;
     if (_statusSelected) {
       final mediaMessages = widget.messages
           .where((m) => m.type == 'image' || m.type == 'video')
@@ -178,32 +191,129 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
       if (mediaMessages.isNotEmpty) {
         final firestoreService = ref.read(firestoreServiceProvider);
         final results = <(String, String)>[];
-        try {
-          for (final msg in mediaMessages) {
-            final statusId = firestoreService.newStatusId(widget.currentUid);
-            final url = await firestoreService.copyMediaToStatus(
-              sourceChatId: msg.mediaOriginChatId!,
-              sourceFileName: msg.mediaFileName!,
-              statusId: statusId,
+        final segmentGroups =
+            <({String localFilePath, List<(int, int)> segments})>[];
+        // Per-item try/catch — unlike the old single try around the
+        // whole loop, one failed item no longer discards every other
+        // item's already-completed work.
+        for (final msg in mediaMessages) {
+          try {
+            const maxMs = 30000;
+            final knownDurationMs = msg.videoDurationMs;
+            final isShortVideo =
+                msg.type == 'video' &&
+                knownDurationMs != null &&
+                knownDurationMs <= maxMs;
+            if (msg.type == 'image' || isShortVideo) {
+              final statusId = firestoreService.newStatusId(
+                widget.currentUid,
+              );
+              final url = await firestoreService.copyMediaToStatus(
+                sourceChatId: msg.mediaOriginChatId!,
+                sourceFileName: msg.mediaFileName!,
+                statusId: statusId,
+              );
+              results.add((url, msg.type));
+              continue;
+            }
+            // msg.type == 'video' here, and either knownDurationMs > 30s
+            // (confirmed long) or knownDurationMs is null (unknown —
+            // never assume short: an older or probe-failed message can
+            // be a real long video with no stored duration at all, see
+            // chat_screen.dart's own videoDurationMs doc comment).
+            // Download it locally so its real length can be confirmed
+            // and, if needed, split — same pattern as
+            // ChatAttachmentViewerScreen._shareMessage's video branch.
+            final cached = await DefaultCacheManager().getSingleFile(
+              msg.videoURL!,
             );
-            results.add((url, msg.type));
+            final bytes = await cached.readAsBytes();
+            final tempDir = await getTemporaryDirectory();
+            final localPath = '${tempDir.path}/status_split_${msg.id}.mp4';
+            await File(localPath).writeAsBytes(bytes);
+
+            int totalMs;
+            if (knownDurationMs != null) {
+              // Already confirmed > 30s by isShortVideo's check above —
+              // trusted once non-null, no need to re-probe.
+              totalMs = knownDurationMs;
+            } else {
+              final probeController = VideoPlayerController.file(
+                File(localPath),
+              );
+              try {
+                await probeController.initialize();
+                totalMs = probeController.value.duration.inMilliseconds;
+              } finally {
+                await probeController.dispose();
+              }
+            }
+
+            if (totalMs <= maxMs) {
+              // The stored field was null, but the real video turns out
+              // to be short after all — no split needed. The download
+              // above was only for probing; copyMediaToStatus is still
+              // the right path here (server-side copy, no re-encode or
+              // quality loss), so use it exactly like the known-short
+              // case rather than uploading the already-downloaded copy
+              // through the segment-group path.
+              final statusId = firestoreService.newStatusId(
+                widget.currentUid,
+              );
+              final url = await firestoreService.copyMediaToStatus(
+                sourceChatId: msg.mediaOriginChatId!,
+                sourceFileName: msg.mediaFileName!,
+                statusId: statusId,
+              );
+              results.add((url, msg.type));
+              continue;
+            }
+
+            // Confirmed long — split into ≤30s segments, same
+            // while-loop as CreateStatusScreen._startAutoSplit.
+            final segments = <(int, int)>[];
+            var start = 0;
+            while (start < totalMs) {
+              final end = (start + maxMs).clamp(0, totalMs);
+              segments.add((start, end));
+              start = end;
+            }
+            segmentGroups.add((
+              localFilePath: localPath,
+              segments: segments,
+            ));
+          } catch (e, st) {
+            anyFailed = true;
+            FirebaseCrashlytics.instance.recordError(
+              e,
+              st,
+              reason: 'ForwardSheet: status-forward failed for one item',
+            );
           }
-          forwardedMedia = results;
-        } catch (_) {
-          anyFailed = true;
         }
+        forwardedMedia = results.isEmpty ? null : results;
+        videoSegmentGroups = segmentGroups.isEmpty ? null : segmentGroups;
       }
     }
 
     if (!mounted) return;
     navigator.pop();
     widget.onDone();
-    if (forwardedMedia != null && forwardedMedia.isNotEmpty) {
+    final hasForwardedMedia =
+        forwardedMedia != null && forwardedMedia.isNotEmpty;
+    final hasSegmentGroups =
+        videoSegmentGroups != null && videoSegmentGroups.isNotEmpty;
+    if (hasForwardedMedia || hasSegmentGroups) {
       navigator.push(
         MaterialPageRoute(
           builder: (_) => PrivacyPickerScreen(
-            type: forwardedMedia!.first.$2,
+            // Unused by _post() whenever forwardedMedia/videoSegmentGroups
+            // are set (both branches read type per-item or hardcode
+            // 'video' themselves — confirmed via that method's own code),
+            // a safe placeholder here, not a real distinguishing value.
+            type: 'video',
             forwardedMedia: forwardedMedia,
+            videoSegmentGroups: videoSegmentGroups,
           ),
         ),
       );
