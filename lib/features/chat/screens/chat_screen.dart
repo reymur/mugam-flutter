@@ -2879,10 +2879,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 ),
                 if (!isGroup)
                   Text(
-                    data?['online'] == true ? '● Onlayn' : '○ Oflayn',
+                    otherUser?.online == true ? '● Onlayn' : '○ Oflayn',
                     style: TextStyle(
                       fontSize: 11,
-                      color: data?['online'] == true
+                      color: otherUser?.online == true
                           ? const Color(0xFF4CAF50)
                           : kMuted,
                     ),
