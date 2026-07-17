@@ -442,7 +442,18 @@ service cloud.firestore {
     // full lifecycle rationale)
     // ---------------------------------------------------------------
     match /friendRequests/{requestId} {
+      // resource is null when the document doesn't exist yet (the normal
+      // state for any two users who've never sent each other a request) —
+      // without this branch, resource.data.fromUid on a null resource is a
+      // rules evaluation error, which Firestore treats as permission-
+      // denied, not as "not found." That silently broke every profile's
+      // Add-friend button (via _buildFriendButton's own error branch,
+      // which correctly hides the button on any read error — this is what
+      // it was hiding). Allowing the null case is safe: it only lets a
+      // signed-in user learn "no request exists between this uid pair,"
+      // which reveals nothing sensitive.
       allow read: if isSignedIn() && (
+        resource == null ||
         resource.data.fromUid == request.auth.uid ||
         resource.data.toUid == request.auth.uid
       );
