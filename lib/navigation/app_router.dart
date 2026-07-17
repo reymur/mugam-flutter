@@ -7,6 +7,7 @@ import '../features/board/screens/board_screen.dart';
 import '../features/chat/screens/chat_screen.dart';
 import '../features/chats/screens/chats_screen.dart';
 import '../features/friends/screens/friend_requests_screen.dart';
+import '../features/friends/screens/friends_list_screen.dart';
 import '../features/gigs/screens/gigs_screen.dart';
 import '../features/home/screens/home_screen.dart';
 import '../features/market/screens/market_screen.dart';
@@ -46,6 +47,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/friend-requests',
       builder: (c, s) => const FriendRequestsScreen(),
+    ),
+    GoRoute(
+      path: '/friends',
+      builder: (c, s) => const FriendsListScreen(),
     ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) =>

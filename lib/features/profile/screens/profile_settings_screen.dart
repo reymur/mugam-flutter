@@ -88,6 +88,12 @@ class ProfileSettingsScreen extends ConsumerWidget {
             ),
           ),
           const Divider(color: kBorder, height: 1),
+          ListTile(
+            leading: const Icon(Icons.group, color: kGold),
+            title: const Text('Dostlar', style: TextStyle(color: kText)),
+            trailing: const Icon(Icons.chevron_right, color: kMuted),
+            onTap: () => context.push('/friends'),
+          ),
           if (friendRequestsAvailable)
             ListTile(
               leading: const Icon(Icons.people_alt, color: kGold),
