@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 import 'core/cache/message_cache_service.dart';
+import 'core/presence/presence_service.dart';
 import 'core/queue/background_queue_processor.dart';
 import 'core/queue/pending_message_queue_controller.dart';
 import 'core/queue/pending_message_queue_service.dart';
@@ -112,6 +113,9 @@ class _MugamAppState extends ConsumerState<MugamApp> {
     _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
       if (user != null) {
         PushNotificationService.instance.registerToken(user.uid);
+        PresenceService.instance.start(user.uid);
+      } else {
+        PresenceService.instance.stop();
       }
     });
     PushNotificationService.instance.setupForegroundPresentation();
@@ -130,6 +134,7 @@ class _MugamAppState extends ConsumerState<MugamApp> {
   @override
   void dispose() {
     _authSub?.cancel();
+    PresenceService.instance.stop();
     super.dispose();
   }
 

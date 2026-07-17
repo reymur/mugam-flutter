@@ -152,6 +152,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   final Stopwatch _recordingStopwatch = Stopwatch();
   Timer? _recordingTimer;
   String _recordingDuration = '0:00';
+  // isActuallyOnline's staleness threshold is ~2 minutes (see User model /
+  // docs/presence-system.md); the header's otherUser comes from a live
+  // Firestore listener (currentUserProvider) that only rebuilds when the
+  // document actually changes, not as time simply passes, so this
+  // periodic no-op setState re-evaluates isActuallyOnline against a fresh
+  // DateTime.now(). Same 20s interval and reasoning as
+  // about_contact_screen.dart's _presenceRefreshTimer.
+  Timer? _presenceRefreshTimer;
   StreamSubscription<Amplitude>? _amplitudeSub;
   final List<double> _rawAmplitudes = [];
   bool _isLocked = false;
@@ -226,6 +234,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       );
       _firestoreService.addActiveUser(chatId: widget.chatId, uid: currentUid);
     }
+    _presenceRefreshTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _initBeepPlayer() async {
@@ -269,6 +280,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
     _audioRecorder.dispose();
     _recordingTimer?.cancel();
+    _presenceRefreshTimer?.cancel();
     _amplitudeSub?.cancel();
     _pulseController.dispose();
     _highlightTimer?.cancel();
@@ -2835,9 +2847,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // instead of the initiator's (same root cause fixed for the chat list
     // in _ChatListItem; the AppBar title here was never updated to match).
     final otherUser = otherUidResolved != null
-        ? ref.watch(userByIdProvider(otherUidResolved)).value
+        ? ref.watch(currentUserProvider(otherUidResolved)).value
         : null;
-
     return Scaffold(
       appBar: AppBar(
         backgroundColor: kBg2,
@@ -2861,7 +2872,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             // after reopening the chat — falls back to the one-time
             // chatDataProvider value until the live stream's first snapshot
             // arrives. 1:1 chats are untouched: otherUser.name (live via
-            // userByIdProvider) already covers that case, same as before.
+            // currentUserProvider) already covers that case, same as before.
             final displayName = (!isGroup && otherUser != null)
                 ? otherUser.name
                 : (isGroup
@@ -2879,10 +2890,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 ),
                 if (!isGroup)
                   Text(
-                    otherUser?.online == true ? '● Onlayn' : '○ Oflayn',
+                    otherUser?.isActuallyOnline == true ? '● Onlayn' : '○ Oflayn',
                     style: TextStyle(
                       fontSize: 11,
-                      color: otherUser?.online == true
+                      color: otherUser?.isActuallyOnline == true
                           ? const Color(0xFF4CAF50)
                           : kMuted,
                     ),

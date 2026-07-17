@@ -18,6 +18,7 @@ class UserProfileScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final isOwnProfile = user.id.isNotEmpty && user.id == currentUid;
+    final liveUser = ref.watch(currentUserProvider(user.id)).value ?? user;
 
     final eventsAsync = ref.watch(personalEventsProvider(currentUid));
     final agreementCount = eventsAsync.asData?.value
@@ -46,7 +47,7 @@ class UserProfileScreen extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildHero(context, isOwnProfile, agreementCount),
+            _buildHero(context, isOwnProfile, agreementCount, liveUser),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
               child: Column(
@@ -76,7 +77,12 @@ class UserProfileScreen extends ConsumerWidget {
   // ---------------------------------------------------------------------------
   // Hero section
   // ---------------------------------------------------------------------------
-  Widget _buildHero(BuildContext context, bool isOwnProfile, int agreementCount) {
+  Widget _buildHero(
+    BuildContext context,
+    bool isOwnProfile,
+    int agreementCount,
+    User liveUser,
+  ) {
     final starCount = user.rating.round().clamp(0, 5);
     final starsStr =
         List.filled(starCount, '★').join() + List.filled(5 - starCount, '☆').join();
@@ -115,7 +121,7 @@ class UserProfileScreen extends ConsumerWidget {
                     width: 18,
                     height: 18,
                     decoration: BoxDecoration(
-                      color: user.online ? kGreen : kMuted,
+                      color: liveUser.isActuallyOnline ? kGreen : kMuted,
                       shape: BoxShape.circle,
                       border: Border.all(color: _kHeroBg, width: 3),
                     ),
@@ -143,7 +149,7 @@ class UserProfileScreen extends ConsumerWidget {
             style: const TextStyle(fontSize: 15, color: kGold, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 12),
-          // Meta row: city + online badge + available badge
+          // Meta row: city + available badge
           Wrap(
             alignment: WrapAlignment.center,
             spacing: 10,
@@ -153,7 +159,6 @@ class UserProfileScreen extends ConsumerWidget {
                 '📍 ${user.city}',
                 style: const TextStyle(fontSize: 13, color: kMuted),
               ),
-              _onlineBadge(user.online),
               if (user.available) _availableBadge(),
             ],
           ),
@@ -273,25 +278,6 @@ class UserProfileScreen extends ConsumerWidget {
             ),
           ],
         ],
-      ),
-    );
-  }
-
-  Widget _onlineBadge(bool online) {
-    final bg = online ? kGreen.withAlpha(30) : kMuted.withAlpha(30);
-    final border = online ? kGreen : kMuted;
-    final color = online ? kGreen : kMuted;
-    final label = online ? '● Onlayn' : '○ Oflayn';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: border),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.bold),
       ),
     );
   }

@@ -1844,22 +1844,30 @@ class FirestoreService {
     }
   }
 
-  // Logout cleanup, mirroring mugam-v2's pre-signOut steps: mark the user
-  // offline and defensively strip their uid from every chat's activeUsers
-  // (in case they logged out without normally leaving a chat first, which
-  // would otherwise leave them permanently exempt from push notifications).
-  Future<void> setUserOnline(String uid, bool online) async {
+  // Writes online + lastSeen together — used both by PresenceService's
+  // heartbeat (see docs/presence-system.md) and by the logout flow below,
+  // which calls this directly (not via PresenceService.stop()) because it
+  // must run *before* AuthService().logout() while the user is still
+  // authenticated; Firestore rules would reject the write once signed out.
+  Future<void> setUserPresence(String uid, {required bool online}) async {
     try {
-      await _db.collection('users').doc(uid).update({'online': online});
+      await _db.collection('users').doc(uid).update({
+        'online': online,
+        'lastSeen': FieldValue.serverTimestamp(),
+      });
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
         e,
         st,
-        reason: 'FirestoreService: setUserOnline failed',
+        reason: 'FirestoreService: setUserPresence failed',
       );
     }
   }
 
+  // Logout cleanup, mirroring mugam-v2's pre-signOut steps: defensively
+  // strip the user's uid from every chat's activeUsers (in case they logged
+  // out without normally leaving a chat first, which would otherwise leave
+  // them permanently exempt from push notifications).
   Future<void> clearActiveUserFromAllChats(String uid) async {
     try {
       final snap = await _db

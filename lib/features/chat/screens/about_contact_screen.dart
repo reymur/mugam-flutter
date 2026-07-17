@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,7 +14,7 @@ import '../../starred/screens/starred_messages_screen.dart';
 // no phone number field (checked across the whole schema), so the contact's
 // name takes the large primary text slot that WhatsApp uses for the phone
 // number, with online status as the secondary muted line underneath.
-class AboutContactScreen extends ConsumerWidget {
+class AboutContactScreen extends ConsumerStatefulWidget {
   final String chatId;
   final String contactUid;
 
@@ -23,8 +25,41 @@ class AboutContactScreen extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final userAsync = ref.watch(userByIdProvider(contactUid));
+  ConsumerState<AboutContactScreen> createState() =>
+      _AboutContactScreenState();
+}
+
+// isActuallyOnline's staleness threshold is ~2 minutes (see User model /
+// docs/presence-system.md); this screen's live Firestore listener
+// (currentUserProvider) only rebuilds when the document actually changes,
+// not as time simply passes, so a periodic no-op setState is needed to
+// re-evaluate isActuallyOnline against a fresh DateTime.now(). 20s is
+// frequent enough that the dot flips to offline within a few tens of
+// seconds of actually going stale, without being wasteful — it's a pure
+// widget rebuild, no refetch, and the underlying heartbeat only writes
+// every 60s anyway.
+const _presenceRefreshInterval = Duration(seconds: 20);
+
+class _AboutContactScreenState extends ConsumerState<AboutContactScreen> {
+  Timer? _presenceRefreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _presenceRefreshTimer = Timer.periodic(_presenceRefreshInterval, (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _presenceRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final userAsync = ref.watch(currentUserProvider(widget.contactUid));
 
     return Scaffold(
       backgroundColor: kBg,
@@ -70,10 +105,10 @@ class AboutContactScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  user.online ? '● Onlayn' : '○ Oflayn',
+                  user.isActuallyOnline ? '● Onlayn' : '○ Oflayn',
                   style: TextStyle(
                     fontSize: 13,
-                    color: user.online ? const Color(0xFF4CAF50) : kMuted,
+                    color: user.isActuallyOnline ? const Color(0xFF4CAF50) : kMuted,
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -91,13 +126,13 @@ class AboutContactScreen extends ConsumerWidget {
                 const SizedBox(height: 24),
                 _SettingsGroup(
                   children: [
-                    _MediaTile(chatId: chatId),
+                    _MediaTile(chatId: widget.chatId),
                     _SettingsTile(
                       icon: Icons.storage_outlined,
                       title: 'Yaddaşın idarə edilməsi',
                       onTap: () => _showStub(context),
                     ),
-                    _StarredTile(chatId: chatId),
+                    _StarredTile(chatId: widget.chatId),
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -285,7 +320,7 @@ class _MediaTile extends ConsumerWidget {
       icon: Icons.image_outlined,
       title: 'Media, keçidlər və sənədlər',
       trailing: count == null ? null : '$count',
-      onTap: () => AboutContactScreen._showStub(context),
+      onTap: () => _AboutContactScreenState._showStub(context),
     );
   }
 }

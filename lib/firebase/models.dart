@@ -17,6 +17,7 @@ class User {
   final bool available;
   final bool goldRing;
   final bool online;
+  final Timestamp? lastSeen;
   final String bio;
   final String? photoURL;
   final int gigs;
@@ -39,6 +40,7 @@ class User {
     required this.available,
     required this.goldRing,
     required this.online,
+    this.lastSeen,
     required this.bio,
     this.photoURL,
     this.gigs = 0,
@@ -59,6 +61,7 @@ class User {
       available: (data['available'] ?? false) as bool,
       goldRing: (data['goldRing'] ?? false) as bool,
       online: (data['online'] ?? false) as bool,
+      lastSeen: data['lastSeen'] as Timestamp?,
       bio: (data['bio'] ?? '') as String,
       photoURL: data['photoURL'] as String?,
       gigs: (data['gigs'] ?? 0) as int,
@@ -66,6 +69,19 @@ class User {
       role: (data['role'] ?? 'user') as String,
       maxUploadSizeMb: (data['maxUploadSizeMb'] ?? 100) as int,
     );
+  }
+
+  // `online` alone isn't trustworthy — PresenceService's heartbeat pauses
+  // (not clears) on backgrounding, so a long-backgrounded user can stay
+  // `online: true` indefinitely with no further write until they return or
+  // sign out (see docs/presence-system.md). Cross-checking against lastSeen
+  // corrects for that: 2 minutes is double the 60s heartbeat interval, so
+  // one missed/delayed beat doesn't falsely flip someone offline.
+  bool get isActuallyOnline {
+    if (!online) return false;
+    final seen = lastSeen;
+    if (seen == null) return false;
+    return DateTime.now().difference(seen.toDate()) < const Duration(minutes: 2);
   }
 }
 

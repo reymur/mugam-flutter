@@ -1,4 +1,4 @@
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -226,13 +226,14 @@ class _ChatListItem extends ConsumerWidget {
     // instead of trusting those static fields.
     var displayName = chat.name;
     var displayEmoji = chat.emoji;
+    User? other;
     if (!chat.isGroup) {
       final otherUid = chat.members.firstWhere(
         (m) => m != currentUid,
         orElse: () => '',
       );
       if (otherUid.isNotEmpty) {
-        final other = ref.watch(userByIdProvider(otherUid)).value;
+        other = ref.watch(currentUserProvider(otherUid)).value;
         if (other != null) {
           displayName = other.name;
           displayEmoji = other.emoji;
@@ -277,7 +278,9 @@ class _ChatListItem extends ConsumerWidget {
                             width: 12,
                             height: 12,
                             decoration: BoxDecoration(
-                              color: kGreen,
+                              color: other?.isActuallyOnline == true
+                                  ? kGreen
+                                  : kMuted,
                               shape: BoxShape.circle,
                               border: Border.all(color: kBg2, width: 2),
                             ),

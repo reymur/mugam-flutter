@@ -325,7 +325,7 @@ class _SettingsTab extends ConsumerWidget {
     final service = ref.read(firestoreServiceProvider);
     try {
       if (uid != null && uid.isNotEmpty) {
-        await service.setUserOnline(uid, false);
+        await service.setUserPresence(uid, online: false);
         await service.clearActiveUserFromAllChats(uid);
       }
       await ref.read(messageCacheServiceProvider).clearAll();

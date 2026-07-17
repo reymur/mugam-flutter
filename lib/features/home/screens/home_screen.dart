@@ -443,7 +443,7 @@ class _MusicianCard extends StatelessWidget {
                             width: 12,
                             height: 12,
                             decoration: BoxDecoration(
-                              color: musician.online ? kGreen : kMuted,
+                              color: musician.isActuallyOnline ? kGreen : kMuted,
                               shape: BoxShape.circle,
                               border: Border.all(color: kCard, width: 2),
                             ),
