@@ -327,18 +327,40 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                     final selected = _selectedUids.contains(u.id);
                     return ListTile(
                       onTap: () => _toggleUser(u.id),
-                      leading: Container(
+                      leading: SizedBox(
                         width: 46,
                         height: 46,
-                        decoration: BoxDecoration(
-                          color: kBg3,
-                          shape: BoxShape.circle,
-                          border: selected
-                              ? Border.all(color: kGold, width: 2)
-                              : null,
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Container(
+                              width: 46,
+                              height: 46,
+                              decoration: BoxDecoration(
+                                color: kBg3,
+                                shape: BoxShape.circle,
+                                border: selected
+                                    ? Border.all(color: kGold, width: 2)
+                                    : null,
+                              ),
+                              alignment: Alignment.center,
+                              child: Text(u.emoji, style: const TextStyle(fontSize: 20)),
+                            ),
+                            Positioned(
+                              bottom: 0,
+                              right: 0,
+                              child: Container(
+                                width: 12,
+                                height: 12,
+                                decoration: BoxDecoration(
+                                  color: u.isActuallyOnline ? kGreen : kMuted,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: kBg2, width: 2),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                        alignment: Alignment.center,
-                        child: Text(u.emoji, style: const TextStyle(fontSize: 20)),
                       ),
                       title: Text(
                         u.name,

@@ -9,8 +9,8 @@ import '../../user/screens/user_profile_screen.dart';
 
 // Incoming/outgoing friendRequests inbox, reached from ProfileScreen's
 // settings tab (see the "Dost sorğuları" ListTile there). Each row resolves
-// its counterpart's name/avatar via the existing userByIdProvider — this
-// screen never duplicates user data of its own, it only reads
+// its counterpart's name/avatar/presence live via currentUserProvider —
+// this screen never duplicates user data of its own, it only reads
 // FriendRequest documents (uids only) plus that shared lookup.
 class FriendRequestsScreen extends ConsumerStatefulWidget {
   const FriendRequestsScreen({super.key});
@@ -143,9 +143,9 @@ class _RequestTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final userAsync = ref.watch(userByIdProvider(otherUid));
+    final userAsync = ref.watch(currentUserProvider(otherUid));
     final service = ref.read(firestoreServiceProvider);
-    final user = userAsync.asData?.value;
+    final user = userAsync.value;
 
     return GestureDetector(
       onTap: incoming && user != null
@@ -163,10 +163,32 @@ class _RequestTile extends ConsumerWidget {
         ),
         child: Row(
           children: [
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: kBg3,
-              child: Text(user?.emoji ?? '🎵', style: const TextStyle(fontSize: 20)),
+            SizedBox(
+              width: 44,
+              height: 44,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  CircleAvatar(
+                    radius: 22,
+                    backgroundColor: kBg3,
+                    child: Text(user?.emoji ?? '🎵', style: const TextStyle(fontSize: 20)),
+                  ),
+                  Positioned(
+                    bottom: 0,
+                    right: 0,
+                    child: Container(
+                      width: 12,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: user?.isActuallyOnline == true ? kGreen : kMuted,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: kBg2, width: 2),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(

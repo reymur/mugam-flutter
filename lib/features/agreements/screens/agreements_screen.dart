@@ -2967,15 +2967,37 @@ class _ParticipantPickerDialogState extends State<_ParticipantPickerDialog> {
                   final m = filtered[i];
                   final sel = _selected.contains(m.id);
                   return ListTile(
-                    leading: Container(
+                    leading: SizedBox(
                       width: 36,
                       height: 36,
-                      decoration: BoxDecoration(
-                        color: kBg3,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Center(
-                        child: Text(m.emoji, style: const TextStyle(fontSize: 18)),
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: kBg3,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Center(
+                              child: Text(m.emoji, style: const TextStyle(fontSize: 18)),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: Container(
+                              width: 12,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: m.isActuallyOnline ? kGreen : kMuted,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: kBg2, width: 2),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     title: Text(m.name,
