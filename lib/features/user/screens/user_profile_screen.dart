@@ -342,23 +342,55 @@ class UserProfileScreen extends ConsumerWidget {
           );
         }
 
-        return Row(
+        // Incoming request — this is the one moment on a profile that asks
+        // the viewer for an actual decision, so it's deliberately more
+        // visually distinct than the plain pill-button row above: lead
+        // with who's asking (name in gold, matching the hero name's own
+        // treatment), then a centered Bəli/Xeyr pair sized to the text
+        // rather than stretched full-width like the other buttons.
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Expanded(
-              child: _friendActionButton(
-                label: '✅ Qəbul et',
-                filled: true,
-                onPressed: () => service.acceptFriendRequest(req.id),
+            RichText(
+              textAlign: TextAlign.center,
+              text: TextSpan(
+                style: GoogleFonts.playfairDisplay(
+                  fontSize: 16,
+                  color: kText,
+                  height: 1.4,
+                ),
+                children: [
+                  TextSpan(
+                    text: user.name,
+                    style: const TextStyle(
+                      color: kGold,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const TextSpan(
+                    text: ' sizə dostluq təklif etdi.\nQəbul edirsiniz?',
+                  ),
+                ],
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _friendActionButton(
-                label: '❌ İmtina et',
-                filled: false,
-                onPressed: () =>
-                    service.removeFriendRequestOrFriendship(req.id),
-              ),
+            const SizedBox(height: 14),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _pillDecisionButton(
+                  label: '✓ Bəli',
+                  filled: true,
+                  onPressed: () => service.acceptFriendRequest(req.id),
+                ),
+                const SizedBox(width: 16),
+                _pillDecisionButton(
+                  label: '✕ Xeyr',
+                  filled: false,
+                  onPressed: () =>
+                      service.removeFriendRequestOrFriendship(req.id),
+                ),
+              ],
             ),
           ],
         );
@@ -434,6 +466,47 @@ class UserProfileScreen extends ConsumerWidget {
           color: muted ? kMuted : kText,
           fontWeight: FontWeight.bold,
         ),
+      ),
+    );
+  }
+
+  // Compact, hug-the-text pair used only for the incoming-request Bəli/Xeyr
+  // decision — deliberately narrower and rounder than _friendActionButton's
+  // full-width pills, since these sit centered side-by-side rather than
+  // stretched across the row.
+  Widget _pillDecisionButton({
+    required String label,
+    required bool filled,
+    required VoidCallback onPressed,
+  }) {
+    if (filled) {
+      return ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: kGold,
+          foregroundColor: const Color(0xFF1A0E00),
+          elevation: 0,
+          minimumSize: const Size(100, 44),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+          padding: const EdgeInsets.symmetric(horizontal: 22),
+        ),
+        child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+      );
+    }
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        side: const BorderSide(color: kBorder),
+        foregroundColor: kMuted,
+        minimumSize: const Size(100, 44),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        padding: const EdgeInsets.symmetric(horizontal: 22),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(color: kMuted, fontWeight: FontWeight.bold),
       ),
     );
   }
