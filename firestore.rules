@@ -205,8 +205,31 @@ service cloud.firestore {
     // including "users/{uid}"), so this is the single, sufficient
     // declaration of the read rule — the nested block above intentionally
     // has none.
+    //
+    // Split into `get` and `list` (rather than one combined `read`) because
+    // they now have genuinely different audiences. `list` is unchanged from
+    // before this split — the visibleToUids-based check the feed's own
+    // collectionGroup query filters on (see watchStatusFeed's own comment,
+    // firestore_service.dart) — and must keep behaving identically, since
+    // Firestore only authorizes that query when this exact rule shape can
+    // be proven from the query's own filters alone. `get` is new: a direct
+    // single-doc read (e.g. viewing one specific person's status from their
+    // profile, not through the friends-scoped feed) is authorized by
+    // isPublic — server-computed by onStatusCreated alongside visibleToUids
+    // (functions/src/index.ts) — for anyone except a uid the owner
+    // explicitly excluded via privacyList (only meaningful for
+    // 'contactsExcept'; empty for every other mode). visibleToUids still
+    // authorizes get() too, so 'onlyShareWith' (isPublic: false) and any
+    // legacy doc from before isPublic existed remain readable exactly as
+    // before via that same fallback.
     match /{path=**}/statuses/{statusId} {
-      allow read: if isSignedIn() && request.auth.uid in resource.data.visibleToUids;
+      allow list: if isSignedIn() && request.auth.uid in resource.data.visibleToUids;
+
+      allow get: if isSignedIn() && (
+        (resource.data.get('isPublic', false) == true &&
+          !(request.auth.uid in resource.data.get('privacyList', []))) ||
+        request.auth.uid in resource.data.visibleToUids
+      );
     }
 
     // ---------------------------------------------------------------

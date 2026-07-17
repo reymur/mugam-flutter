@@ -714,8 +714,18 @@ export const onStatusCreated = onDocumentCreated(
           : [ownerUid, ...friendUids];
     }
 
+    // isPublic backs firestore.rules' separate `allow get` rule (a direct
+    // single-doc read, e.g. viewing one person's status from their profile)
+    // — true for 'contacts'/'contactsExcept' (privacyList is still the
+    // exclusion list for 'contactsExcept'; the rule reads it directly, no
+    // separate computation needed here), false for 'onlyShareWith', whose
+    // explicit allowlist has no public-access equivalent. Independent of
+    // visibleToUids, which continues to gate the unchanged `allow list`
+    // rule the feed's collectionGroup query depends on.
+    const isPublic = privacyMode !== "onlyShareWith";
+
     try {
-      await snap.ref.update({ visibleToUids });
+      await snap.ref.update({ visibleToUids, isPublic });
     } catch (e) {
       // The status can be deleted (e.g. the user immediately deletes what
       // they just posted) before this trigger finishes its async friends

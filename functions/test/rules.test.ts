@@ -6,7 +6,18 @@ import {
   assertSucceeds,
   assertFails,
 } from "@firebase/rules-unit-testing";
-import { collection, doc, getDoc, getDocs, setDoc, serverTimestamp, Timestamp } from "firebase/firestore";
+import {
+  collection,
+  collectionGroup,
+  query,
+  where,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  serverTimestamp,
+  Timestamp,
+} from "firebase/firestore";
 import { PROJECT_ID, FIRESTORE_EMULATOR_PORT, db, waitFor } from "./helpers";
 
 // Reloads the real firestore.rules file content into the already-running
@@ -111,9 +122,47 @@ test("privacyMode 'contacts': a real contact CAN read", async () => {
   await assertSucceeds(getDoc(doc(contactDb, `users/${OWNER}/statuses/s-contacts`)));
 });
 
-test("privacyMode 'contacts': a non-contact CANNOT read", async () => {
+// 'contacts' is the public default (soon-to-be-relabeled "Hamı") — the
+// get/list split's whole point. onStatusCreated now writes isPublic: true
+// for this mode (functions/src/index.ts), so a direct getDoc() is
+// authorized for anyone signed in, not just friends. This deliberately
+// replaces the old "a non-contact CANNOT read" test, which asserted the
+// pre-split behavior this change intentionally overturns for get().
+test("privacyMode 'contacts' (Hamı/public default): a stranger (non-friend) CAN get() the status directly", async () => {
   const strangerDb = testEnv.authenticatedContext(STRANGER).firestore();
-  await assertFails(getDoc(doc(strangerDb, `users/${OWNER}/statuses/s-contacts`)));
+  await assertSucceeds(getDoc(doc(strangerDb, `users/${OWNER}/statuses/s-contacts`)));
+});
+
+// Proves the get/list split actually behaves differently for the exact
+// same status doc — the test above shows a stranger CAN get() it directly,
+// this shows they still can't see it via the friends-scoped collectionGroup
+// feed query, since `allow list` still only checks visibleToUids
+// (unchanged, deliberately not isPublic-aware). Same "succeeds-empty or
+// fails-cleanly are both acceptable" pattern as
+// status-feed-query.test.ts's own STRANGER test, since this rule shape can
+// legitimately produce either outcome for a query with zero matches.
+test("privacyMode 'contacts' (Hamı/public default): a stranger (non-friend) does NOT see it via the collectionGroup feed query", async () => {
+  const strangerDb = testEnv.authenticatedContext(STRANGER).firestore();
+  const q = query(
+    collectionGroup(strangerDb, "statuses"),
+    where("visibleToUids", "array-contains", STRANGER),
+  );
+
+  let outcome: "succeeded" | "failed";
+  let resultSize: number | null = null;
+  try {
+    const snap = await getDocs(q);
+    outcome = "succeeded";
+    resultSize = snap.size;
+  } catch {
+    outcome = "failed";
+  }
+
+  if (outcome === "succeeded") {
+    expect(resultSize).toBe(0);
+  } else {
+    expect(outcome).toBe("failed");
+  }
 });
 
 test("privacyMode 'contactsExcept': a contact NOT in privacyList CAN read", async () => {

@@ -599,6 +599,18 @@ class Status {
   // query — firestore.rules requires every list/query read to be provably
   // scoped this way, which an exists()-based check can't satisfy.
   final List<String> visibleToUids;
+  // Server-computed alongside visibleToUids by the same onStatusCreated
+  // trigger — true for 'contacts'/'contactsExcept', false for
+  // 'onlyShareWith' (see functions/src/index.ts). Backs firestore.rules'
+  // isPublic-based `allow get` rule (a single-doc read, e.g. viewing one
+  // person's status from their profile), which is now separate from the
+  // unchanged visibleToUids-based `allow list` rule the feed's
+  // collectionGroup query still depends on. Defaults to false for any
+  // status doc written before this field existed, same as messageCount/
+  // admins/createdBy's own predates-the-field defaults elsewhere in this
+  // file — those legacy docs simply aren't get()-able via the new public
+  // path, only via visibleToUids like before.
+  final bool isPublic;
 
   const Status({
     required this.id,
@@ -612,6 +624,7 @@ class Status {
     required this.privacyMode,
     this.privacyList = const [],
     this.visibleToUids = const [],
+    required this.isPublic,
   });
 
   factory Status.fromFirestore(String id, Map<String, dynamic> data) {
@@ -628,6 +641,7 @@ class Status {
       privacyList: List<String>.from(data['privacyList'] as List? ?? const []),
       visibleToUids:
           List<String>.from(data['visibleToUids'] as List? ?? const []),
+      isPublic: (data['isPublic'] as bool?) ?? false,
     );
   }
 }
