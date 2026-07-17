@@ -640,3 +640,70 @@ class StatusGroup {
 
   const StatusGroup({required this.ownerUid, required this.statuses});
 }
+
+// friendRequests/{requestId} — a Facebook-style friend request between two
+// users. requestId is deliberately NOT an auto-id: FirestoreService derives
+// it from the two uids (sorted, joined by '_'), so there can only ever be
+// one document for a given pair — this is what prevents both the "two
+// people send each other a request at the same instant" race and silent
+// duplicate requests, without needing a transaction or an extra query.
+//
+// Lifecycle: created with status 'pending' by whoever sends the request →
+// either transitions to 'accepted' (recipient only) or the document is
+// deleted outright. Deletion deliberately covers three distinct user
+// actions with one operation — sender cancels a still-pending request,
+// recipient declines a still-pending request, and either side unfriends an
+// already-accepted one — because at the data level all three are the same
+// thing: this pair no longer has a request/friendship. See firestore.rules
+// for the corresponding `allow delete` and functions/src/index.ts's
+// onFriendRequestDeleted for what it triggers.
+//
+// On acceptance, a Cloud Function (onFriendRequestUpdated) writes a
+// mirrored users/{uid}/friends/{otherUid} doc on both sides — nothing in
+// this app writes that subcollection directly, same rationale as the
+// existing users/{uid}/contacts/{otherUid} denormalization.
+enum FriendRequestStatus { pending, accepted }
+
+FriendRequestStatus _friendRequestStatusFromString(String value) {
+  return value == 'accepted'
+      ? FriendRequestStatus.accepted
+      : FriendRequestStatus.pending;
+}
+
+class FriendRequest {
+  final String id;
+  final String fromUid;
+  final String toUid;
+  final FriendRequestStatus status;
+  final Timestamp? createdAt;
+  final Timestamp? respondedAt;
+
+  const FriendRequest({
+    required this.id,
+    required this.fromUid,
+    required this.toUid,
+    required this.status,
+    this.createdAt,
+    this.respondedAt,
+  });
+
+  bool isBetween(String uidA, String uidB) =>
+      (fromUid == uidA && toUid == uidB) || (fromUid == uidB && toUid == uidA);
+
+  // Who the *other* party is, from the given viewer's perspective — used
+  // by the UI to decide whether the viewer sent or received this request.
+  String otherUid(String viewerUid) => fromUid == viewerUid ? toUid : fromUid;
+
+  factory FriendRequest.fromFirestore(String id, Map<String, dynamic> data) {
+    return FriendRequest(
+      id: id,
+      fromUid: (data['fromUid'] ?? '') as String,
+      toUid: (data['toUid'] ?? '') as String,
+      status: _friendRequestStatusFromString(
+        (data['status'] ?? 'pending') as String,
+      ),
+      createdAt: data['createdAt'] as Timestamp?,
+      respondedAt: data['respondedAt'] as Timestamp?,
+    );
+  }
+}
