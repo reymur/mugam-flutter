@@ -180,15 +180,17 @@ class _SkillTag extends StatelessWidget {
 
 // ── Profile header ──────────────────────────────────────────────────────────
 
-class _ProfileHeader extends StatelessWidget {
+class _ProfileHeader extends ConsumerWidget {
   const _ProfileHeader({required this.user, required this.onSettingsTap});
 
   final User user;
   final VoidCallback onSettingsTap;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final isMusician = user.role == 'musician';
+    final hasUnreadSettings =
+        ref.watch(hasUnreadFriendRequestsProvider(user.id));
     return Container(
       clipBehavior: Clip.hardEdge,
       decoration: const BoxDecoration(color: Color(0xFF15100A)),
@@ -368,6 +370,7 @@ class _ProfileHeader extends StatelessWidget {
               icon: Icons.settings,
               size: 24,
               onTap: onSettingsTap,
+              showBadge: hasUnreadSettings,
             ),
           ),
           // Edit — replaces the old full-width "Redaktə et" button.
@@ -399,29 +402,53 @@ class _HeaderIconButton extends StatelessWidget {
     required this.icon,
     required this.onTap,
     this.size = 20,
+    this.showBadge = false,
   });
 
   final IconData icon;
   final VoidCallback onTap;
   final double size;
+  // Optional unread-dot overlay — default false, so the shared edit/share
+  // usages of this widget stay visually unaffected; only the settings
+  // icon's usage site wires this to hasUnreadFriendRequestsProvider.
+  final bool showBadge;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: const Color(0x99000000),
-            shape: BoxShape.circle,
-            border: Border.all(color: kBorder),
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            customBorder: const CircleBorder(),
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0x99000000),
+                shape: BoxShape.circle,
+                border: Border.all(color: kBorder),
+              ),
+              child: Icon(icon, size: size, color: kGold),
+            ),
           ),
-          child: Icon(icon, size: size, color: kGold),
         ),
-      ),
+        if (showBadge)
+          Positioned(
+            top: -2,
+            right: -2,
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: kRed,
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0xFF15100A), width: 1.5),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

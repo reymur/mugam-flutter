@@ -1864,6 +1864,22 @@ class FirestoreService {
     }
   }
 
+  // UI-state write for the friend-requests unread dot — fire-and-forget
+  // from FriendRequestsScreen's initState the moment it opens. Silent on
+  // failure, matching this feature's existing rollback-safety posture
+  // (incomingFriendRequestsProvider errors already hide the whole Dost
+  // sorğuları row rather than surfacing a hard error): a failed write here
+  // just means the dot doesn't clear yet, not a broken screen.
+  Future<void> markFriendRequestsViewed(String uid) async {
+    try {
+      await _db.collection('users').doc(uid).update({
+        'lastViewedFriendRequestsAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {
+      // Silent — see comment above.
+    }
+  }
+
   // Logout cleanup, mirroring mugam-v2's pre-signOut steps: defensively
   // strip the user's uid from every chat's activeUsers (in case they logged
   // out without normally leaving a chat first, which would otherwise leave
@@ -2273,4 +2289,29 @@ final friendUidsProvider = StreamProvider.family<List<String>, String>((
   uid,
 ) {
   return ref.watch(firestoreServiceProvider).watchFriendUids(uid);
+});
+
+// Drives the unread dot on the settings gear icon + the Dost sorğuları row
+// (see ProfileSettingsScreen/profile_screen.dart's _HeaderIconButton) — a
+// plain Provider, not a StreamProvider: reading .asData?.value off its two
+// underlying streams already degrades to null/empty on loading or error
+// rather than throwing, so the same rollback-safety posture as
+// incomingFriendRequestsProvider's own AsyncError handling falls out of
+// this for free (no dot rather than a surfaced error). A request with a
+// null createdAt (server timestamp not yet landed, same benign race as
+// onStatusCreated elsewhere) is treated as unread — safer than assuming
+// it's old.
+final hasUnreadFriendRequestsProvider = Provider.family<bool, String>((
+  ref,
+  uid,
+) {
+  final incoming =
+      ref.watch(incomingFriendRequestsProvider(uid)).asData?.value ?? [];
+  if (incoming.isEmpty) return false;
+  final lastViewed =
+      ref.watch(currentUserProvider(uid)).asData?.value?.lastViewedFriendRequestsAt;
+  if (lastViewed == null) return true;
+  return incoming.any(
+    (r) => r.createdAt == null || r.createdAt!.compareTo(lastViewed) > 0,
+  );
 });

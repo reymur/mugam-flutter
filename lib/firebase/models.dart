@@ -28,6 +28,12 @@ class User {
   // user-configurable in Settings, range [100, 2048]. Defaults to 100 for
   // any user doc written before this field existed.
   final int maxUploadSizeMb;
+  // UI-state only, not sensitive — client-written the moment
+  // FriendRequestsScreen opens (see markFriendRequestsViewed), compared
+  // against each incoming FriendRequest.createdAt to drive the unread dot
+  // on the settings gear icon and the Dost sorğuları row. Deliberately a
+  // separate field from lastSeen above, which is presence-only.
+  final Timestamp? lastViewedFriendRequestsAt;
 
   const User({
     required this.id,
@@ -47,6 +53,7 @@ class User {
     this.verified = false,
     this.role = 'user',
     this.maxUploadSizeMb = 100,
+    this.lastViewedFriendRequestsAt,
   });
 
   factory User.fromFirestore(String id, Map<String, dynamic> data) {
@@ -68,6 +75,7 @@ class User {
       verified: (data['verified'] ?? false) as bool,
       role: (data['role'] ?? 'user') as String,
       maxUploadSizeMb: (data['maxUploadSizeMb'] ?? 100) as int,
+      lastViewedFriendRequestsAt: data['lastViewedFriendRequestsAt'] as Timestamp?,
     );
   }
 

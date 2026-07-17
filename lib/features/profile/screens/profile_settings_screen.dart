@@ -34,6 +34,7 @@ class ProfileSettingsScreen extends ConsumerWidget {
     // screen that can only ever say "Xəta baş verdi".
     final friendRequestsAvailable = !incomingAsync.hasError;
     final incomingCount = incomingAsync.asData?.value.length ?? 0;
+    final hasUnread = ref.watch(hasUnreadFriendRequestsProvider(currentUid));
 
     return Scaffold(
       backgroundColor: kBg,
@@ -96,7 +97,29 @@ class ProfileSettingsScreen extends ConsumerWidget {
           ),
           if (friendRequestsAvailable)
             ListTile(
-              leading: const Icon(Icons.people_alt, color: kGold),
+              leading: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.people_alt, color: kGold),
+                  // Unread dot — separate from the existing gold pending-
+                  // count badge in `trailing` below; this one tracks
+                  // "seen since last visit" (hasUnreadFriendRequestsProvider),
+                  // not raw pending count.
+                  if (hasUnread)
+                    Positioned(
+                      top: -2,
+                      right: -2,
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          color: kRed,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
               title: const Text(
                 'Dost sorğuları',
                 style: TextStyle(color: kText),
