@@ -1,16 +1,13 @@
 import 'package:firebase_auth/firebase_auth.dart' hide User;
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../../../core/cache/message_cache_service.dart';
 import '../../../core/theme/colors.dart';
-import '../../../firebase/auth_service.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import 'edit_profile_screen.dart';
+import 'profile_settings_screen.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -20,8 +17,6 @@ class ProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
-  int _activeTabIndex = 0;
-
   @override
   Widget build(BuildContext context) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -51,97 +46,34 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 children: [
                   _ProfileHeader(
                     user: user,
-                    onSettingsTap: () => setState(() => _activeTabIndex = 4),
+                    onSettingsTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const ProfileSettingsScreen(),
+                      ),
+                    ),
                   ),
-                  _TabsRow(
-                    activeIndex: _activeTabIndex,
-                    onTap: (i) => setState(() => _activeTabIndex = i),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 20, 14, 8),
+                    child: Text(
+                      'Haqqında',
+                      style: GoogleFonts.playfairDisplay(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: kText,
+                      ),
+                    ),
                   ),
-                  _TabContent(activeIndex: _activeTabIndex, user: user),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 30),
+                    child: _AboutTab(user: user),
+                  ),
                 ],
               ),
             );
           },
         ),
       ),
-    );
-  }
-}
-
-// ── Tab row ──────────────────────────────────────────────────────────────────
-
-class _TabsRow extends StatelessWidget {
-  const _TabsRow({required this.activeIndex, required this.onTap});
-
-  final int activeIndex;
-  final ValueChanged<int> onTap;
-
-  static const _tabs = [
-    'Haqqında',
-    'Video',
-    'Tədbirlər',
-    'Rəylər',
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(top: 16, bottom: 4),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        child: Row(
-          children: List.generate(_tabs.length, (i) {
-            final active = i == activeIndex;
-            return GestureDetector(
-              onTap: () => onTap(i),
-              child: Container(
-                margin: EdgeInsets.only(right: i < _tabs.length - 1 ? 8 : 0),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: active ? kGold : Colors.transparent,
-                  border: active ? null : Border.all(color: kBorder),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  _tabs[i],
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: active ? const Color(0xFF1A0E00) : kMuted,
-                  ),
-                ),
-              ),
-            );
-          }),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Tab content dispatcher ────────────────────────────────────────────────────
-
-class _TabContent extends StatelessWidget {
-  const _TabContent({required this.activeIndex, required this.user});
-
-  final int activeIndex;
-  final User user;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 8, 14, 30),
-      child: switch (activeIndex) {
-        0 => _AboutTab(user: user),
-        1 => const _Placeholder(emoji: '🎬', text: 'Tezliklə əlavə olunacaq'),
-        2 => const _Placeholder(emoji: '📅', text: 'Tezliklə əlavə olunacaq'),
-        3 => const _Placeholder(emoji: '⭐', text: 'Tezliklə əlavə olunacaq'),
-        _ => const _SettingsTab(),
-      },
     );
   }
 }
@@ -243,174 +175,6 @@ class _SkillTag extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-// ── Placeholder for tabs 1–4 ──────────────────────────────────────────────────
-
-class _Placeholder extends StatelessWidget {
-  const _Placeholder({required this.emoji, required this.text});
-
-  final String emoji;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 40),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(emoji, style: const TextStyle(fontSize: 48)),
-            const SizedBox(height: 12),
-            Text(text, style: const TextStyle(fontSize: 14, color: kMuted)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── Settings tab ──────────────────────────────────────────────────────────────
-
-class _SettingsTab extends ConsumerWidget {
-  const _SettingsTab();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final incomingAsync = ref.watch(incomingFriendRequestsProvider(currentUid));
-    // AsyncError here means the read was denied (e.g. firestore.rules for
-    // friendRequests was rolled back while this build is still installed on
-    // a device) — same "fail silent, not visibly broken" contract as
-    // UserProfileScreen._buildFriendButton's own error branch. Showing this
-    // entry point with a badge that can never load, leading to a screen
-    // that can only ever say "Xəta baş verdi", would be worse than not
-    // showing it at all.
-    if (incomingAsync.hasError) {
-      return Column(
-        children: [
-          ListTile(
-            leading: const Icon(Icons.star, color: kGold),
-            title: const Text(
-              'Seçilmiş mesajlar',
-              style: TextStyle(color: kText),
-            ),
-            trailing: const Icon(Icons.chevron_right, color: kMuted),
-            onTap: () => context.push('/starred'),
-          ),
-          ListTile(
-            leading: const Icon(Icons.logout, color: kRed),
-            title: const Text('Çıxış', style: TextStyle(color: kRed)),
-            onTap: () => _confirmLogout(context, ref),
-          ),
-        ],
-      );
-    }
-    final incomingCount = incomingAsync.asData?.value.length ?? 0;
-
-    return Column(
-      children: [
-        ListTile(
-          leading: const Icon(Icons.people_alt, color: kGold),
-          title: const Text(
-            'Dost sorğuları',
-            style: TextStyle(color: kText),
-          ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (incomingCount > 0) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: kGold,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '$incomingCount',
-                    style: const TextStyle(
-                      color: Color(0xFF1A0E00),
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
-              const Icon(Icons.chevron_right, color: kMuted),
-            ],
-          ),
-          onTap: () => context.push('/friend-requests'),
-        ),
-        ListTile(
-          leading: const Icon(Icons.star, color: kGold),
-          title: const Text(
-            'Seçilmiş mesajlar',
-            style: TextStyle(color: kText),
-          ),
-          trailing: const Icon(Icons.chevron_right, color: kMuted),
-          onTap: () => context.push('/starred'),
-        ),
-        ListTile(
-          leading: const Icon(Icons.logout, color: kRed),
-          title: const Text('Çıxış', style: TextStyle(color: kRed)),
-          onTap: () => _confirmLogout(context, ref),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _confirmLogout(BuildContext context, WidgetRef ref) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: kBg2,
-        title: const Text('Çıxış', style: TextStyle(color: kText)),
-        content: const Text(
-          'Hesabdan çıxmaq istəyirsiniz?',
-          style: TextStyle(color: kMuted),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Ləğv et', style: TextStyle(color: kMuted)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Çıxış', style: TextStyle(color: kRed)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    final service = ref.read(firestoreServiceProvider);
-    try {
-      if (uid != null && uid.isNotEmpty) {
-        await service.setUserPresence(uid, online: false);
-        await service.clearActiveUserFromAllChats(uid);
-      }
-      await ref.read(messageCacheServiceProvider).clearAll();
-      await AuthService().logout();
-      if (context.mounted) context.go('/login');
-    } catch (e, st) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Çıxış zamanı xəta baş verdi: $e'),
-            backgroundColor: kRed,
-          ),
-        );
-      }
-      FirebaseCrashlytics.instance.recordError(
-        e,
-        st,
-        reason: 'ProfileScreen: sign out failed',
-      );
-    }
   }
 }
 
