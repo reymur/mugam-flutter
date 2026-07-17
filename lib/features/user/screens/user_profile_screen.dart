@@ -279,7 +279,10 @@ class UserProfileScreen extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 12),
-            _buildFriendButton(context, ref, currentUid),
+            SizedBox(
+              width: double.infinity,
+              child: _buildFriendButton(context, ref, currentUid),
+            ),
           ],
         ],
       ),
