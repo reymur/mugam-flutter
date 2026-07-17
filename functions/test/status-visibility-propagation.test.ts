@@ -1,11 +1,10 @@
 import { getAdminApp, db, clearFirestore, waitFor } from "./helpers";
 
-// Proves the contact-change propagation added to onChatUpdated actually
-// runs against a real status's visibleToUids — not just the
-// contacts-collection side-effect already covered by
-// contacts-triggers.test.ts. Also exercises onStatusCreated's own
-// creation-time computation (B ends up in visibleToUids from sharing a
-// chat with A, with no explicit seeding).
+// Proves the friend-change propagation added to onFriendRequestUpdated/
+// onFriendRequestDeleted actually runs against a real status's
+// visibleToUids. Also exercises onStatusCreated's own creation-time
+// computation (B ends up in visibleToUids from being A's friend, with no
+// explicit seeding).
 beforeAll(() => {
   getAdminApp();
 });
@@ -19,21 +18,22 @@ async function getVisibleToUids(statusRef: FirebaseFirestore.DocumentReference):
   return (snap.data()?.visibleToUids ?? []) as string[];
 }
 
-test("removing B from A's only shared chat removes B from A's active 'contacts'-mode status.visibleToUids", async () => {
+test("unfriending B removes B from A's active 'contacts'-mode status.visibleToUids", async () => {
   const A = "A";
   const B = "B";
 
-  // A and B share a chat — this is the only chat connecting them.
-  const chatRef = db().collection("chats").doc();
-  await chatRef.set({ isGroup: false, members: [A, B] });
+  // A and B become friends via an accepted friend request.
+  const requestRef = db().collection("friendRequests").doc();
+  await requestRef.set({ fromUid: A, toUid: B, status: "pending" });
+  await requestRef.update({ status: "accepted" });
 
   await waitFor(async () => {
-    const snap = await db().collection("users").doc(A).collection("contacts").doc(B).get();
+    const snap = await db().collection("users").doc(A).collection("friends").doc(B).get();
     return snap.exists;
   });
 
   // A posts a 'contacts'-mode status with no visibleToUids field —
-  // onStatusCreated must compute it from A's current contacts (which
+  // onStatusCreated must compute it from A's current friends (which
   // includes B at this point).
   const statusRef = db().collection("users").doc(A).collection("statuses").doc();
   await statusRef.set({
@@ -51,9 +51,9 @@ test("removing B from A's only shared chat removes B from A's active 'contacts'-
   expect(afterCreate).toContain(A);
   expect(afterCreate).toContain(B);
 
-  // Remove B from the chat — no other chat connects A and B, so this is a
-  // genuine contact loss and must propagate into A's still-active status.
-  await chatRef.update({ members: [A] });
+  // Unfriend B — deleting the accepted request is a genuine friendship
+  // loss and must propagate into A's still-active status.
+  await requestRef.delete();
 
   await waitFor(async () => !(await getVisibleToUids(statusRef)).includes(B));
 
@@ -62,17 +62,16 @@ test("removing B from A's only shared chat removes B from A's active 'contacts'-
   expect(afterRemoval).toContain(A);
 });
 
-// Proves onChatCreated's own propagation (not just onChatUpdated's) — a
-// brand-new chat can make two users contacts for the very first time, and
-// that must reach an already-active status immediately rather than waiting
-// for some later membership-change event.
-test("A's first-ever chat with B adds B to A's already-active 'contacts'-mode status.visibleToUids", async () => {
+// Proves onFriendRequestUpdated's own propagation — accepting a friend
+// request for the very first time must reach an already-active status
+// immediately rather than waiting for some later event.
+test("A's friend request to B being accepted adds B to A's already-active 'contacts'-mode status.visibleToUids", async () => {
   const A = "A";
   const B = "B";
 
-  // A posts a 'contacts'-mode status before A and B have ever shared a
-  // chat — A has no contacts at all yet, so onStatusCreated computes
-  // visibleToUids as just [A].
+  // A posts a 'contacts'-mode status before A and B are friends — A has
+  // no friends at all yet, so onStatusCreated computes visibleToUids as
+  // just [A].
   const statusRef = db().collection("users").doc(A).collection("statuses").doc();
   await statusRef.set({
     ownerUid: A,
@@ -85,17 +84,18 @@ test("A's first-ever chat with B adds B to A's already-active 'contacts'-mode st
   });
 
   await waitFor(async () => (await getVisibleToUids(statusRef)).length > 0);
-  const beforeChat = await getVisibleToUids(statusRef);
-  expect(beforeChat).toContain(A);
-  expect(beforeChat).not.toContain(B);
+  const beforeFriends = await getVisibleToUids(statusRef);
+  expect(beforeFriends).toContain(A);
+  expect(beforeFriends).not.toContain(B);
 
-  // A and B's first-ever shared chat.
-  const chatRef = db().collection("chats").doc();
-  await chatRef.set({ isGroup: false, members: [A, B] });
+  // A and B's friend request gets accepted for the first time.
+  const requestRef = db().collection("friendRequests").doc();
+  await requestRef.set({ fromUid: A, toUid: B, status: "pending" });
+  await requestRef.update({ status: "accepted" });
 
   await waitFor(async () => (await getVisibleToUids(statusRef)).includes(B));
 
-  const afterChat = await getVisibleToUids(statusRef);
-  expect(afterChat).toContain(A);
-  expect(afterChat).toContain(B);
+  const afterAccept = await getVisibleToUids(statusRef);
+  expect(afterAccept).toContain(A);
+  expect(afterAccept).toContain(B);
 });

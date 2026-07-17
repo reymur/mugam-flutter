@@ -497,63 +497,6 @@ export const deleteGroupChat = onCall(
 );
 
 // ---------------------------------------------------------------------
-// users/{uid}/contacts/{otherUid} denormalization
-// ---------------------------------------------------------------------
-// Document existence = "these two users currently share at least one
-// chat." Never written by the client (no `allow write` for this
-// collection in firestore.rules at all — see that file) — maintained
-// exclusively by the three triggers below, on chats/{chatId} create/
-// update/delete. This is the real, stored signal the Status feature's
-// `contacts` privacy mode checks via isContact(), rather than
-// recomputing shared-chat membership on every single status read.
-// Returns true if this pair was NOT already contacts before this call (a
-// genuine gain, not a redundant re-write of an existing pair) — callers use
-// this to decide whether to propagate into any active status's
-// visibleToUids (see propagateContactChange below). Checked via a read
-// before the write because .set(..., {merge:true}) can't itself distinguish
-// "created" from "already existed" the way a plain .create() would.
-async function upsertContactPair(a: string, b: string): Promise<boolean> {
-  const refA = db.collection("users").doc(a).collection("contacts").doc(b);
-  const existedBefore = (await refA.get()).exists;
-  const since = FieldValue.serverTimestamp();
-  await Promise.all([
-    refA.set({ since }, { merge: true }),
-    db.collection("users").doc(b).collection("contacts").doc(a).set({ since }, { merge: true }),
-  ]);
-  return !existedBefore;
-}
-
-// SCALE NOTE (leave as code comment, not a bug): this recompute runs only
-// on membership-change events, not per status read — acceptable at
-// current scale. If a user's total chat count grows very large this
-// in-memory filter degrades and should be revisited with better indexing
-// at that point.
-async function sharesAnyChat(uidX: string, uidY: string): Promise<boolean> {
-  const snap = await db.collection("chats").where("members", "array-contains", uidX).get();
-  return snap.docs.some((doc) => {
-    const members: string[] = doc.data().members ?? [];
-    return members.includes(uidY);
-  });
-}
-
-// Returns true if the pair WAS contacts before this call and this call
-// actually deleted it (a genuine loss) — false both when there was never a
-// pair and when a surviving shared chat kept it intact. Same rationale as
-// upsertContactPair's return value above: callers need to know whether a
-// real transition happened before they touch any status's visibleToUids.
-async function removeContactPairIfNoSharedChat(uidX: string, uidY: string): Promise<boolean> {
-  if (await sharesAnyChat(uidX, uidY)) return false;
-  const refX = db.collection("users").doc(uidX).collection("contacts").doc(uidY);
-  const existedBefore = (await refX.get()).exists;
-  if (!existedBefore) return false;
-  await Promise.all([
-    refX.delete(),
-    db.collection("users").doc(uidY).collection("contacts").doc(uidX).delete(),
-  ]);
-  return true;
-}
-
-// ---------------------------------------------------------------------
 // users/{uid}/statuses/{statusId}.visibleToUids — denormalized audience
 // ---------------------------------------------------------------------
 // visibleToUids is the exact, server-computed set of uids allowed to read a
@@ -562,14 +505,13 @@ async function removeContactPairIfNoSharedChat(uidX: string, uidY: string): Prom
 // collectionGroup queries against, since exists()-based checks can't
 // support those). This block keeps it correct in both directions: computed
 // once at creation (onStatusCreated below) and kept in sync afterward as
-// the owner's contacts change (propagateContactChange, called from
-// onChatUpdated/onChatDeleted's own contact-pair add/remove logic above).
+// the owner's friends change (propagateFriendChange, called from
+// onFriendRequestUpdated/onFriendRequestDeleted below).
 
 // SCALE NOTE (leave as code comment, not a bug): bounded by how many
 // currently active (non-expired) statuses a single user can have at once,
 // which is naturally small (a person posts at most a handful of statuses
-// per day) — not a scale risk like the sharesAnyChat() chat-count one
-// flagged above.
+// per day).
 async function updateVisibleToUidsForOwner(
   ownerUid: string,
   otherUid: string,
@@ -589,8 +531,8 @@ async function updateVisibleToUidsForOwner(
       const data = doc.data();
       const privacyList: string[] = data.privacyList ?? [];
       // contactsExcept's allowlist-of-exclusions still applies to a
-      // newly-gained contact — never add someone the owner explicitly
-      // excluded, even though they now share a chat.
+      // newly-gained friend — never add someone the owner explicitly
+      // excluded, even though they're now friends.
       if (data.privacyMode === "contactsExcept" && privacyList.includes(otherUid)) continue;
       tasks.push(doc.ref.update({ visibleToUids: FieldValue.arrayUnion(otherUid) }));
     } else {
@@ -603,88 +545,15 @@ async function updateVisibleToUidsForOwner(
   await Promise.all(tasks);
 }
 
-// Symmetric: a contact-relationship change between a and b can affect BOTH
+// Symmetric: a friend-relationship change between a and b can affect BOTH
 // a's own active statuses (regarding b) and b's own active statuses
 // (regarding a) independently.
-async function propagateContactChange(a: string, b: string, gained: boolean): Promise<void> {
+async function propagateFriendChange(a: string, b: string, gained: boolean): Promise<void> {
   await Promise.all([
     updateVisibleToUidsForOwner(a, b, gained),
     updateVisibleToUidsForOwner(b, a, gained),
   ]);
 }
-
-export const onChatCreated = onDocumentCreated("chats/{chatId}", async (event) => {
-  const snap = event.data;
-  if (!snap) return;
-  const members: string[] = snap.data().members ?? [];
-
-  // Mirrors onChatUpdated's "added" branch below: a brand-new chat can
-  // make two users contacts for the very first time, and if either
-  // already has an active 'contacts'/'contactsExcept' status, the newly-
-  // gained contact must be added to its visibleToUids immediately — not
-  // only after some later membership-change event propagates it.
-  const tasks: Promise<unknown>[] = [];
-  for (let i = 0; i < members.length; i++) {
-    for (let j = i + 1; j < members.length; j++) {
-      tasks.push(
-        (async () => {
-          const gained = await upsertContactPair(members[i], members[j]);
-          if (gained) await propagateContactChange(members[i], members[j], true);
-        })(),
-      );
-    }
-  }
-  await Promise.all(tasks);
-});
-
-export const onChatUpdated = onDocumentUpdated("chats/{chatId}", async (event) => {
-  const beforeMembers: string[] = event.data?.before.data().members ?? [];
-  const afterMembers: string[] = event.data?.after.data().members ?? [];
-  const added = afterMembers.filter((uid) => !beforeMembers.includes(uid));
-  const removed = beforeMembers.filter((uid) => !afterMembers.includes(uid));
-
-  const tasks: Promise<unknown>[] = [];
-  for (const uid of added) {
-    for (const other of afterMembers) {
-      if (other === uid) continue;
-      tasks.push(
-        (async () => {
-          const gained = await upsertContactPair(uid, other);
-          if (gained) await propagateContactChange(uid, other, true);
-        })(),
-      );
-    }
-  }
-  for (const uid of removed) {
-    for (const other of afterMembers) {
-      tasks.push(
-        (async () => {
-          const lost = await removeContactPairIfNoSharedChat(uid, other);
-          if (lost) await propagateContactChange(uid, other, false);
-        })(),
-      );
-    }
-  }
-  await Promise.all(tasks);
-});
-
-export const onChatDeleted = onDocumentDeleted("chats/{chatId}", async (event) => {
-  const snap = event.data;
-  if (!snap) return;
-  const members: string[] = snap.data().members ?? [];
-  const tasks: Promise<unknown>[] = [];
-  for (let i = 0; i < members.length; i++) {
-    for (let j = i + 1; j < members.length; j++) {
-      tasks.push(
-        (async () => {
-          const lost = await removeContactPairIfNoSharedChat(members[i], members[j]);
-          if (lost) await propagateContactChange(members[i], members[j], false);
-        })(),
-      );
-    }
-  }
-  await Promise.all(tasks);
-});
 
 // ---------------------------------------------------------------------
 // friendRequests/{requestId} — Facebook-style friend requests. See
@@ -735,6 +604,7 @@ export const onFriendRequestUpdated = onDocumentUpdated(
       db.collection("users").doc(fromUid).collection("friends").doc(toUid).set({ since }),
       db.collection("users").doc(toUid).collection("friends").doc(fromUid).set({ since }),
     ]);
+    await propagateFriendChange(fromUid, toUid, true);
 
     const toSnap = await db.collection("users").doc(toUid).get();
     const toName: string =
@@ -766,10 +636,11 @@ export const onFriendRequestDeleted = onDocumentDeleted(
       db.collection("users").doc(fromUid).collection("friends").doc(toUid).delete(),
       db.collection("users").doc(toUid).collection("friends").doc(fromUid).delete(),
     ]);
+    await propagateFriendChange(fromUid, toUid, false);
   },
 );
 
-// Computes visibleToUids once at creation time, from the owner's contacts
+// Computes visibleToUids once at creation time, from the owner's friends
 // as they stand right now plus this status's own privacyMode/privacyList.
 // This is an onCreate trigger — it fires exactly once per document, and
 // the .update() below only ever touches a document that already exists by
@@ -795,19 +666,19 @@ export const onStatusCreated = onDocumentCreated(
       // statusVisibleTo() had for this mode.
       visibleToUids = [ownerUid, ...privacyList];
     } else {
-      const contactsSnap = await db.collection("users").doc(ownerUid).collection("contacts").get();
-      const contactUids = contactsSnap.docs.map((doc) => doc.id);
+      const friendsSnap = await db.collection("users").doc(ownerUid).collection("friends").get();
+      const friendUids = friendsSnap.docs.map((doc) => doc.id);
       visibleToUids =
         privacyMode === "contactsExcept"
-          ? [ownerUid, ...contactUids.filter((uid) => !privacyList.includes(uid))]
-          : [ownerUid, ...contactUids];
+          ? [ownerUid, ...friendUids.filter((uid) => !privacyList.includes(uid))]
+          : [ownerUid, ...friendUids];
     }
 
     try {
       await snap.ref.update({ visibleToUids });
     } catch (e) {
       // The status can be deleted (e.g. the user immediately deletes what
-      // they just posted) before this trigger finishes its async contacts
+      // they just posted) before this trigger finishes its async friends
       // read — same class of benign race as onNewMessage/onMessageDeleted's
       // messageCount counters above. Nothing to reconcile: a deleted
       // status has no visibility left to compute.

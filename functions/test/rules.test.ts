@@ -16,9 +16,9 @@ import { PROJECT_ID, FIRESTORE_EMULATOR_PORT, db, waitFor } from "./helpers";
 // happened to load at startup.
 //
 // visibleToUids-based rules rework: access is now gated on a denormalized
-// `visibleToUids` array rather than a live exists()-based contacts check
+// `visibleToUids` array rather than a live exists()-based friends check
 // (see firestore.rules' own comment on why — list/collectionGroup queries
-// can't be gated by exists()). These tests seed real contacts docs and
+// can't be gated by exists()). These tests seed real friends docs and
 // status docs WITHOUT visibleToUids, then wait for the real onStatusCreated
 // trigger to compute it — deliberately NOT hand-seeding visibleToUids
 // directly, because onStatusCreated is a real trigger running in this same
@@ -31,10 +31,10 @@ import { PROJECT_ID, FIRESTORE_EMULATOR_PORT, db, waitFor } from "./helpers";
 let testEnv: RulesTestEnvironment;
 
 const OWNER = "owner";
-const CONTACT = "contactUid"; // a real contact of OWNER, not in any privacyList
-const STRANGER = "strangerUid"; // not a contact at all
-const EXCEPTED = "exceptedUid"; // a real contact of OWNER, ALSO in a contactsExcept privacyList
-const ALLOWED = "allowedUid"; // in an onlyShareWith privacyList, NOT a contact at all
+const CONTACT = "contactUid"; // a real friend of OWNER, not in any privacyList
+const STRANGER = "strangerUid"; // not a friend at all
+const EXCEPTED = "exceptedUid"; // a real friend of OWNER, ALSO in a contactsExcept privacyList
+const ALLOWED = "allowedUid"; // in an onlyShareWith privacyList, NOT a friend at all
 
 beforeAll(async () => {
   testEnv = await initializeTestEnvironment({
@@ -61,11 +61,11 @@ beforeEach(async () => {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const d = context.firestore();
 
-    await setDoc(doc(d, `users/${OWNER}/contacts/${CONTACT}`), { since: new Date() });
-    await setDoc(doc(d, `users/${CONTACT}/contacts/${OWNER}`), { since: new Date() });
-    await setDoc(doc(d, `users/${OWNER}/contacts/${EXCEPTED}`), { since: new Date() });
-    await setDoc(doc(d, `users/${EXCEPTED}/contacts/${OWNER}`), { since: new Date() });
-    // STRANGER and ALLOWED deliberately get no contacts doc at all.
+    await setDoc(doc(d, `users/${OWNER}/friends/${CONTACT}`), { since: new Date() });
+    await setDoc(doc(d, `users/${CONTACT}/friends/${OWNER}`), { since: new Date() });
+    await setDoc(doc(d, `users/${OWNER}/friends/${EXCEPTED}`), { since: new Date() });
+    await setDoc(doc(d, `users/${EXCEPTED}/friends/${OWNER}`), { since: new Date() });
+    // STRANGER and ALLOWED deliberately get no friends doc at all.
 
     const base = {
       ownerUid: OWNER,
@@ -221,17 +221,17 @@ test("(control) viewer write using serverTimestamp() for viewedAt is ACCEPTED", 
   );
 });
 
-// contacts list access — needed by the Status creation privacy picker
+// friends list access — needed by the Status creation privacy picker
 // (choosing who's in a contactsExcept/onlyShareWith list). This is a real
 // list query (getDocs on the whole subcollection), not a single getDoc(),
 // same "prove it, don't just test one doc" bar as the feed query tests.
-test("contacts list: a user CAN read their own contacts (list query)", async () => {
+test("friends list: a user CAN read their own friends (list query)", async () => {
   const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
-  const snap = await assertSucceeds(getDocs(collection(ownerDb, `users/${OWNER}/contacts`)));
+  const snap = await assertSucceeds(getDocs(collection(ownerDb, `users/${OWNER}/friends`)));
   expect(snap.size).toBe(2); // CONTACT + EXCEPTED, seeded in beforeEach
 });
 
-test("contacts list: a user CANNOT read another user's contacts (list query)", async () => {
+test("friends list: a user CANNOT read another user's friends (list query)", async () => {
   const strangerDb = testEnv.authenticatedContext(STRANGER).firestore();
-  await assertFails(getDocs(collection(strangerDb, `users/${OWNER}/contacts`)));
+  await assertFails(getDocs(collection(strangerDb, `users/${OWNER}/friends`)));
 });

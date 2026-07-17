@@ -40,9 +40,9 @@ beforeEach(async () => {
   await testEnv.clearFirestore();
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const d = context.firestore();
-    await setDoc(doc(d, `users/${OWNER}/contacts/${CONTACT}`), { since: new Date() });
-    await setDoc(doc(d, `users/${CONTACT}/contacts/${OWNER}`), { since: new Date() });
-    // STRANGER deliberately gets no contacts doc at all.
+    await setDoc(doc(d, `users/${OWNER}/friends/${CONTACT}`), { since: new Date() });
+    await setDoc(doc(d, `users/${CONTACT}/friends/${OWNER}`), { since: new Date() });
+    // STRANGER deliberately gets no friends doc at all.
 
     // No visibleToUids here — the real onStatusCreated trigger computes it
     // (waited for below), same rationale as rules.test.ts's beforeEach.

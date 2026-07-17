@@ -102,34 +102,22 @@ service cloud.firestore {
         allow read, write: if isSignedIn() && request.auth.uid == userId;
       }
 
-      // users/{uid}/contacts/{otherUid} — "these two users share at least
-      // one chat," maintained exclusively by the onChatCreated/onChatUpdated/
-      // onChatDeleted triggers in functions/src/index.ts (Admin SDK, bypasses
-      // rules). Deliberately no `allow write` at all: a client write here
-      // would let a user forge a false "shares a chat with me" signal and
-      // have themselves added to a contacts-mode status's visibleToUids
-      // (via onStatusCreated / the propagation triggers reading this
-      // collection). Read is owner-only, and safe as both a get() AND a
-      // full-collection list query (unlike the old statuses isContact()/
-      // exists() problem) — the condition depends only on the path segment
-      // `userId` matching request.auth.uid, never on document field data, so
-      // Firestore can prove it statically for every possible result a list
-      // query could return. The client reads its own contacts list here for
-      // the Status creation privacy picker (choosing who's in a
-      // contactsExcept/onlyShareWith list).
-      match /contacts/{otherUid} {
-        allow read: if isSignedIn() && request.auth.uid == userId;
-      }
-
       // users/{uid}/friends/{friendUid} — "these two users are confirmed
       // friends," maintained exclusively by the onFriendRequestUpdated /
       // onFriendRequestDeleted triggers in functions/src/index.ts (Admin
       // SDK, bypasses rules) once a friendRequests/{requestId} doc reaches
-      // status 'accepted' (or is later deleted). Same rationale as
-      // contacts above: no `allow write` at all, so neither side can fake
-      // or unilaterally remove a friendship outside that trigger. Read is
-      // owner-only, for the same static-path-segment reason contacts'
-      // read rule gives.
+      // status 'accepted' (or is later deleted). Deliberately no `allow
+      // write` at all: a client write here would let a user forge a false
+      // friendship signal and have themselves added to a contacts-mode
+      // status's visibleToUids (via onStatusCreated / the propagation
+      // triggers reading this collection). Read is owner-only, and safe as
+      // both a get() AND a full-collection list query (unlike the old
+      // statuses isContact()/exists() problem) — the condition depends only
+      // on the path segment `userId` matching request.auth.uid, never on
+      // document field data, so Firestore can prove it statically for every
+      // possible result a list query could return. The client reads its own
+      // friends list here for the Status creation privacy picker (choosing
+      // who's in a contactsExcept/onlyShareWith list).
       match /friends/{friendUid} {
         allow read: if isSignedIn() && request.auth.uid == userId;
       }
@@ -141,8 +129,8 @@ service cloud.firestore {
       //
       // Access is gated on visibleToUids, a denormalized array of every uid
       // currently allowed to see this status — NOT recomputed from
-      // privacyMode/privacyList/contacts here. An exists()-based "is this
-      // reader a contact" check (the previous approach) only ever works for
+      // privacyMode/privacyList/friends here. An exists()-based "is this
+      // reader a friend" check (the previous approach) only ever works for
       // a single getDoc() of a known document id; it cannot support a real
       // list/collectionGroup query, because Firestore only allows a list
       // query when its security rule can be evaluated using solely the
@@ -151,10 +139,10 @@ service cloud.firestore {
       // rule that reads another document via exists()/get() can't gate a
       // list read. visibleToUids is written exclusively by Cloud Functions
       // (onStatusCreated at creation, then kept in sync by the
-      // contacts-change propagation in onChatUpdated/onChatDeleted — see
-      // functions/src/index.ts) specifically so `visibleToUids
-      // array-contains request.auth.uid` can be both the query filter AND
-      // the rule condition.
+      // friend-change propagation in onFriendRequestUpdated/
+      // onFriendRequestDeleted — see functions/src/index.ts) specifically
+      // so `visibleToUids array-contains request.auth.uid` can be both the
+      // query filter AND the rule condition.
       //
       // The read rule itself is declared separately, in a top-level
       // `match /{path=**}/statuses/{statusId}` block below (NOT here) —
@@ -185,7 +173,7 @@ service cloud.firestore {
           // confirmed via search that WhatsApp never shows viewers to each
           // other. A viewer may additionally get() their own single record
           // (viewerUid must equal their own uid, matching the path segment
-          // exactly the same provably-safe way as the contacts rule above)
+          // exactly the same provably-safe way as the friends rule above)
           // so the client can render "have I already viewed this status"
           // for the ring UI — this does NOT let them list or read anyone
           // else's viewer doc.

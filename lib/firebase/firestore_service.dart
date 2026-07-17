@@ -262,26 +262,6 @@ class FirestoreService {
     return await FirebaseStorage.instance.ref(path).getDownloadURL();
   }
 
-  // Read-side for the Status creation privacy picker's contacts
-  // multiselect (contactsExcept/onlyShareWith). users/{uid}/contacts/
-  // {otherUid} docs carry no meaningful fields of their own (see
-  // firestore.rules' own comment on that collection — only the otherUid
-  // path segment matters), so this just enumerates doc IDs and resolves
-  // each to a full User. Future.wait fan-out rather than a whereIn batch:
-  // no batching convention exists anywhere else in this file to reuse, and
-  // a contacts list is bounded by how many people you've actually chatted
-  // with, not global user count — same "not a scale concern" reasoning as
-  // hasViewedStatus's own doc comment above.
-  Future<List<User>> fetchMyContacts(String uid) async {
-    final snap = await _db
-        .collection('users')
-        .doc(uid)
-        .collection('contacts')
-        .get();
-    final users = await Future.wait(snap.docs.map((d) => fetchUserById(d.id)));
-    return users.whereType<User>().toList();
-  }
-
   // Storage path statuses/{ownerUid}/{fileName} — mirrors uploadChatImage's
   // chats/{chatId}/{fileName} shape below.
   String newStatusId(String ownerUid) {
@@ -2217,15 +2197,6 @@ final hasViewedStatusProvider = FutureProvider.autoDispose
             viewerUid: viewerUid,
           );
     });
-
-// autoDispose — read once when the Status creation privacy picker opens,
-// same "don't pin every combination ever seen" rationale as
-// hasViewedStatusProvider above; no keepAlive-with-grace-period dance like
-// userByIdProvider needs, since this isn't re-fetched on a scrolling
-// list's recycling.
-final myContactsProvider = FutureProvider.autoDispose.family<List<User>, String>(
-  (ref, uid) => ref.watch(firestoreServiceProvider).fetchMyContacts(uid),
-);
 
 // autoDispose — only ever watched via widget.chatId within chat_screen.dart's
 // own lifetime (plus message_info_screen.dart reading the same two), so

@@ -834,7 +834,7 @@ class _PrivacyPickerScreenState extends ConsumerState<PrivacyPickerScreen> {
   @override
   Widget build(BuildContext context) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final contactsAsync = ref.watch(myContactsProvider(currentUid));
+    final friendUidsAsync = ref.watch(friendUidsProvider(currentUid));
     final showMultiselect = _mode != _PrivacyMode.contacts;
 
     return Scaffold(
@@ -906,66 +906,23 @@ class _PrivacyPickerScreenState extends ConsumerState<PrivacyPickerScreen> {
                 decoration: const BoxDecoration(
                   border: Border(bottom: BorderSide(color: kBorder)),
                 ),
-                child: contactsAsync.when(
-                  data: (contacts) {
-                    final selected = contacts.where(
-                      (u) => _selectedUids.contains(u.id),
+                child: friendUidsAsync.when(
+                  data: (friendUids) {
+                    final selected = friendUids.where(
+                      (uid) => _selectedUids.contains(uid),
                     );
                     return ListView(
                       scrollDirection: Axis.horizontal,
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       children: [
-                        for (final u in selected)
+                        for (final uid in selected)
                           Padding(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 4,
                             ),
-                            child: GestureDetector(
-                              onTap: () => _toggleUser(u.id),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: kBg3,
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(color: kBorder),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      u.emoji,
-                                      style: const TextStyle(fontSize: 14),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    ConstrainedBox(
-                                      constraints: const BoxConstraints(
-                                        maxWidth: 80,
-                                      ),
-                                      child: Text(
-                                        u.name,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          color: kText,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 2),
-                                    const Text(
-                                      '✕',
-                                      style: TextStyle(
-                                        color: kMuted,
-                                        fontSize: 10,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                            child: _SelectedFriendChip(
+                              friendUid: uid,
+                              onTap: () => _toggleUser(uid),
                             ),
                           ),
                       ],
@@ -976,9 +933,9 @@ class _PrivacyPickerScreenState extends ConsumerState<PrivacyPickerScreen> {
                 ),
               ),
             Expanded(
-              child: contactsAsync.when(
-                data: (contacts) {
-                  if (contacts.isEmpty) {
+              child: friendUidsAsync.when(
+                data: (friendUids) {
+                  if (friendUids.isEmpty) {
                     return const Center(
                       child: Text(
                         'Kontakt tapılmadı',
@@ -987,51 +944,14 @@ class _PrivacyPickerScreenState extends ConsumerState<PrivacyPickerScreen> {
                     );
                   }
                   return ListView.builder(
-                    itemCount: contacts.length,
+                    itemCount: friendUids.length,
                     itemBuilder: (context, index) {
-                      final u = contacts[index];
-                      final selected = _selectedUids.contains(u.id);
-                      return ListTile(
-                        onTap: () => _toggleUser(u.id),
-                        leading: Container(
-                          width: 46,
-                          height: 46,
-                          decoration: BoxDecoration(
-                            color: kBg3,
-                            shape: BoxShape.circle,
-                            border: selected
-                                ? Border.all(color: kGold, width: 2)
-                                : null,
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            u.emoji,
-                            style: const TextStyle(fontSize: 20),
-                          ),
-                        ),
-                        title: Text(
-                          u.name,
-                          style: const TextStyle(color: kText, fontSize: 14),
-                        ),
-                        trailing: Container(
-                          width: 24,
-                          height: 24,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: selected ? kGold : Colors.transparent,
-                            border: Border.all(
-                              color: selected ? kGold : kBorder,
-                              width: 2,
-                            ),
-                          ),
-                          child: selected
-                              ? const Icon(
-                                  Icons.check,
-                                  size: 14,
-                                  color: Color(0xFF1A0E00),
-                                )
-                              : null,
-                        ),
+                      final uid = friendUids[index];
+                      final selected = _selectedUids.contains(uid);
+                      return _FriendPickerTile(
+                        friendUid: uid,
+                        selected: selected,
+                        onTap: () => _toggleUser(uid),
                       );
                     },
                   );
@@ -1049,6 +969,101 @@ class _PrivacyPickerScreenState extends ConsumerState<PrivacyPickerScreen> {
           ] else
             const Spacer(),
         ],
+      ),
+    );
+  }
+}
+
+// friendUidsProvider only gives back bare uids, so each row/chip resolves
+// its own user data via currentUserProvider — same pattern as
+// FriendsListScreen's _FriendTile.
+class _SelectedFriendChip extends ConsumerWidget {
+  final String friendUid;
+  final VoidCallback onTap;
+
+  const _SelectedFriendChip({required this.friendUid, required this.onTap});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final u = ref.watch(currentUserProvider(friendUid)).value;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: kBg3,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: kBorder),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(u?.emoji ?? '🎵', style: const TextStyle(fontSize: 14)),
+            const SizedBox(width: 4),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 80),
+              child: Text(
+                u?.name ?? '...',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: kText,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const SizedBox(width: 2),
+            const Text('✕', style: TextStyle(color: kMuted, fontSize: 10)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FriendPickerTile extends ConsumerWidget {
+  final String friendUid;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FriendPickerTile({
+    required this.friendUid,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final u = ref.watch(currentUserProvider(friendUid)).value;
+    return ListTile(
+      onTap: onTap,
+      leading: Container(
+        width: 46,
+        height: 46,
+        decoration: BoxDecoration(
+          color: kBg3,
+          shape: BoxShape.circle,
+          border: selected ? Border.all(color: kGold, width: 2) : null,
+        ),
+        alignment: Alignment.center,
+        child: Text(u?.emoji ?? '🎵', style: const TextStyle(fontSize: 20)),
+      ),
+      title: Text(
+        u?.name ?? '...',
+        style: const TextStyle(color: kText, fontSize: 14),
+      ),
+      trailing: Container(
+        width: 24,
+        height: 24,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: selected ? kGold : Colors.transparent,
+          border: Border.all(color: selected ? kGold : kBorder, width: 2),
+        ),
+        child: selected
+            ? const Icon(Icons.check, size: 14, color: Color(0xFF1A0E00))
+            : null,
       ),
     );
   }
