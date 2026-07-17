@@ -49,7 +49,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _ProfileHeader(user: user),
+                  _ProfileHeader(
+                    user: user,
+                    onSettingsTap: () => setState(() => _activeTabIndex = 4),
+                  ),
                   _TabsRow(
                     activeIndex: _activeTabIndex,
                     onTap: (i) => setState(() => _activeTabIndex = i),
@@ -78,7 +81,6 @@ class _TabsRow extends StatelessWidget {
     'Video',
     'Tədbirlər',
     'Rəylər',
-    '⚙️ Ayarlar',
   ];
 
   @override
@@ -415,9 +417,10 @@ class _SettingsTab extends ConsumerWidget {
 // ── Profile header ──────────────────────────────────────────────────────────
 
 class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader({required this.user});
+  const _ProfileHeader({required this.user, required this.onSettingsTap});
 
   final User user;
+  final VoidCallback onSettingsTap;
 
   @override
   Widget build(BuildContext context) {
@@ -555,7 +558,11 @@ class _ProfileHeader extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(height: 14),
-                // Stats
+                // Stats — Paylaş now lives here as a small icon right next
+                // to Reytinq (its own former full-width button below was
+                // removed; the icon-based edit/settings affordances above
+                // replace the old Redaktə et button and the tab-row's
+                // Ayarlar entry the same way).
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -567,86 +574,89 @@ class _ProfileHeader extends StatelessWidget {
                       value: user.rating.toStringAsFixed(1),
                       label: 'Reytinq',
                     ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                // Action buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                EditProfileScreen(user: user),
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: kGold,
-                          foregroundColor: const Color(0xFF1A0E00),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 10,
-                          ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          elevation: 0,
-                        ),
-                        child: const Text(
-                          'Redaktə et',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Bu funksiya tezliklə əlavə olunacaq',
-                              ),
-                              backgroundColor: kBg3,
+                    const SizedBox(width: 6),
+                    _HeaderIconButton(
+                      icon: Icons.share,
+                      size: 18,
+                      onTap: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Bu funksiya tezliklə əlavə olunacaq',
                             ),
-                          );
-                        },
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: kBorder),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(24),
+                            backgroundColor: kBg3,
                           ),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 10,
-                          ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          foregroundColor: kText,
-                        ),
-                        child: const Text(
-                          'Paylaş',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            color: kText,
-                          ),
-                        ),
-                      ),
+                        );
+                      },
                     ),
                   ],
                 ),
               ],
             ),
           ),
+          // Settings — moved out of the horizontal tab row (see _TabsRow):
+          // icon-only, top-left, same destination as before (activeIndex
+          // 4, still handled by _TabContent's default switch case).
+          Positioned(
+            top: 12,
+            left: 12,
+            child: _HeaderIconButton(
+              icon: Icons.settings,
+              size: 24,
+              onTap: onSettingsTap,
+            ),
+          ),
+          // Edit — replaces the old full-width "Redaktə et" button.
+          Positioned(
+            top: 12,
+            right: 12,
+            child: _HeaderIconButton(
+              icon: Icons.edit,
+              size: 20,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => EditProfileScreen(user: user)),
+              ),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+// Small circular icon-only affordance used for the header's edit/settings/
+// share actions — a translucent dark disc so a gold icon stays legible
+// against both the plain background and the decorative gold blur circle
+// behind the avatar, without needing full button chrome (label, padding,
+// border) for what's just a single tap target.
+class _HeaderIconButton extends StatelessWidget {
+  const _HeaderIconButton({
+    required this.icon,
+    required this.onTap,
+    this.size = 20,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: const Color(0x99000000),
+            shape: BoxShape.circle,
+            border: Border.all(color: kBorder),
+          ),
+          child: Icon(icon, size: size, color: kGold),
+        ),
       ),
     );
   }
