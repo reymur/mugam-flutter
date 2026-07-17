@@ -323,11 +323,33 @@ class UserProfileScreen extends ConsumerWidget {
         }
 
         if (req.status == FriendRequestStatus.accepted) {
-          return _friendActionButton(
-            label: '✓ Dostsunuz',
-            filled: false,
-            muted: true,
-            onPressed: () => _confirmUnfriend(context, service, req.id),
+          return GestureDetector(
+            onTap: () => _confirmUnfriend(context, service, req.id),
+            child: Container(
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: kGoldDim,
+                borderRadius: BorderRadius.circular(28),
+                border: Border.all(color: kGold, width: 1),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.check_circle, color: kGold, size: 18),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Dostsunuz',
+                    style: GoogleFonts.playfairDisplay(
+                      color: kGold,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           );
         }
 
