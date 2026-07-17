@@ -313,7 +313,7 @@ class UserProfileScreen extends ConsumerWidget {
         // No relationship yet — offer to send a request.
         if (req == null) {
           return _friendActionButton(
-            label: '👥 Dosta əlavə et',
+            label: '👥 Dostluq göndər',
             filled: true,
             onPressed: () => service.sendFriendRequest(
               fromUid: currentUid,
