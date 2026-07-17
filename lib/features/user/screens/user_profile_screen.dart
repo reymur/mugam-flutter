@@ -47,7 +47,7 @@ class UserProfileScreen extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildHero(context, isOwnProfile, agreementCount, liveUser),
+            _buildHero(context, ref, isOwnProfile, agreementCount, liveUser, currentUid),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
               child: Column(
@@ -79,9 +79,11 @@ class UserProfileScreen extends ConsumerWidget {
   // ---------------------------------------------------------------------------
   Widget _buildHero(
     BuildContext context,
+    WidgetRef ref,
     bool isOwnProfile,
     int agreementCount,
     User liveUser,
+    String currentUid,
   ) {
     final starCount = user.rating.round().clamp(0, 5);
     final starsStr =
@@ -276,8 +278,159 @@ class UserProfileScreen extends ConsumerWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 12),
+            _buildFriendButton(context, ref, currentUid),
           ],
         ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Friend button — mirrors the Row above's shape (Razılaşma/Mesaj), one
+  // full-width control below it whose label/action switches on the live
+  // friendRequests/{requestId} doc between the viewer and this profile.
+  // See lib/firebase/models.dart's FriendRequest and firestore.rules'
+  // friendRequests block for what each transition is actually allowed to
+  // do server-side; this widget only ever attempts transitions the rules
+  // already permit for the viewer's role in the relationship.
+  // ---------------------------------------------------------------------------
+  Widget _buildFriendButton(BuildContext context, WidgetRef ref, String currentUid) {
+    if (currentUid.isEmpty || user.id.isEmpty) return const SizedBox.shrink();
+
+    final reqAsync = ref.watch(
+      friendRequestBetweenProvider((uidA: currentUid, uidB: user.id)),
+    );
+    final service = ref.read(firestoreServiceProvider);
+
+    return reqAsync.when(
+      loading: () => const SizedBox(height: 48),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (req) {
+        // No relationship yet — offer to send a request.
+        if (req == null) {
+          return _friendActionButton(
+            label: '👥 Dosta əlavə et',
+            filled: true,
+            onPressed: () => service.sendFriendRequest(
+              fromUid: currentUid,
+              toUid: user.id,
+            ),
+          );
+        }
+
+        if (req.status == FriendRequestStatus.accepted) {
+          return _friendActionButton(
+            label: '✓ Dostsunuz',
+            filled: false,
+            muted: true,
+            onPressed: () => _confirmUnfriend(context, service, req.id),
+          );
+        }
+
+        // Still pending: the two parties see different actions.
+        final iAmSender = req.fromUid == currentUid;
+        if (iAmSender) {
+          return _friendActionButton(
+            label: '⏳ Təklif göndərildi (ləğv et)',
+            filled: false,
+            muted: true,
+            onPressed: () => service.removeFriendRequestOrFriendship(req.id),
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(
+              child: _friendActionButton(
+                label: '✅ Qəbul et',
+                filled: true,
+                onPressed: () => service.acceptFriendRequest(req.id),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _friendActionButton(
+                label: '❌ İmtina et',
+                filled: false,
+                onPressed: () =>
+                    service.removeFriendRequestOrFriendship(req.id),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _confirmUnfriend(
+    BuildContext context,
+    FirestoreService service,
+    String requestId,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        title: const Text('Dostluqdan çıxar?', style: TextStyle(color: kText)),
+        content: Text(
+          '${user.name} artıq dostlarınız siyahısından silinəcək.',
+          style: const TextStyle(color: kMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('İmtina', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Sil', style: TextStyle(color: kRed)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await service.removeFriendRequestOrFriendship(requestId);
+    }
+  }
+
+  Widget _friendActionButton({
+    required String label,
+    required bool filled,
+    required VoidCallback onPressed,
+    bool muted = false,
+  }) {
+    if (filled) {
+      return ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: kGold,
+          foregroundColor: const Color(0xFF1A0E00),
+          elevation: 0,
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+        ),
+        child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+      );
+    }
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        side: BorderSide(color: muted ? kMuted : kBorder),
+        foregroundColor: muted ? kMuted : kText,
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        padding: const EdgeInsets.symmetric(vertical: 14),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: muted ? kMuted : kText,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
   }

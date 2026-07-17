@@ -8,8 +8,8 @@ rules_version = '2';
 // this file was introduced with for the full field-by-field justification.
 //
 // Collections with a precise, deliberately-scoped rule below: users (+
-// pushTokens, starred subcollections), chats (+ messages subcollection),
-// personalEvents, agreements, invites.
+// pushTokens, starred, friends subcollections), chats (+ messages
+// subcollection), personalEvents, agreements, invites, friendRequests.
 //
 // Collections below given a "signed-in only" holding rule (unchanged from
 // today's behavior) because neither app's owner/actor field for them could
@@ -118,6 +118,19 @@ service cloud.firestore {
       // the Status creation privacy picker (choosing who's in a
       // contactsExcept/onlyShareWith list).
       match /contacts/{otherUid} {
+        allow read: if isSignedIn() && request.auth.uid == userId;
+      }
+
+      // users/{uid}/friends/{friendUid} — "these two users are confirmed
+      // friends," maintained exclusively by the onFriendRequestUpdated /
+      // onFriendRequestDeleted triggers in functions/src/index.ts (Admin
+      // SDK, bypasses rules) once a friendRequests/{requestId} doc reaches
+      // status 'accepted' (or is later deleted). Same rationale as
+      // contacts above: no `allow write` at all, so neither side can fake
+      // or unilaterally remove a friendship outside that trigger. Read is
+      // owner-only, for the same static-path-segment reason contacts'
+      // read rule gives.
+      match /friends/{friendUid} {
         allow read: if isSignedIn() && request.auth.uid == userId;
       }
 
@@ -421,6 +434,41 @@ service cloud.firestore {
         resource.data.get('musicianId', null) == request.auth.uid
       ) && changedKeys().hasOnly(['status']);
       allow delete: if isSignedIn() && resource.data.fromUid == request.auth.uid;
+    }
+
+    // ---------------------------------------------------------------
+    // friendRequests/{requestId}  (mugam-flutter — Facebook-style friend
+    // requests; see lib/firebase/models.dart's FriendRequest class for the
+    // full lifecycle rationale)
+    // ---------------------------------------------------------------
+    match /friendRequests/{requestId} {
+      allow read: if isSignedIn() && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.toUid == request.auth.uid
+      );
+      // Only the sender may create it, only about someone else, and only
+      // ever starting out pending — the client never gets to create an
+      // already-accepted request for itself.
+      allow create: if isSignedIn() &&
+        request.resource.data.fromUid == request.auth.uid &&
+        request.resource.data.toUid is string &&
+        request.resource.data.toUid != request.auth.uid &&
+        request.resource.data.status == 'pending';
+      // Accepting is the only update this collection ever allows, and only
+      // the recipient (toUid) may perform it, only while still pending,
+      // and only by touching status/respondedAt — never fromUid/toUid.
+      allow update: if isSignedIn() &&
+        resource.data.toUid == request.auth.uid &&
+        resource.data.status == 'pending' &&
+        request.resource.data.status == 'accepted' &&
+        changedKeys().hasOnly(['status', 'respondedAt']);
+      // Deletion covers cancel (sender, pending), decline (recipient,
+      // pending) and unfriend (either side, accepted) — see
+      // FriendRequest's doc comment for why these are one operation.
+      allow delete: if isSignedIn() && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.toUid == request.auth.uid
+      );
     }
 
     // ---------------------------------------------------------------

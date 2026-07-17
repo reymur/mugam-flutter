@@ -1991,6 +1991,103 @@ class FirestoreService {
       'readAgreementIds': FieldValue.arrayUnion([agreementId]),
     });
   }
+
+  // ---------------------------------------------------------------------
+  // Friends (friendRequests/{requestId} + users/{uid}/friends/{friendUid})
+  // See lib/firebase/models.dart's FriendRequest class for the full
+  // lifecycle rationale and firestore.rules for what each of these is
+  // actually allowed to do server-side.
+  // ---------------------------------------------------------------------
+
+  // Deterministic pair id — sorted so it's the same regardless of who's
+  // "from" and who's "to", which is what lets a single doc.get()/snapshot
+  // (rather than an OR of two queries) answer "what's the relationship
+  // between these two people right now."
+  String friendRequestDocId(String uidA, String uidB) {
+    final sorted = [uidA, uidB]..sort();
+    return '${sorted[0]}_${sorted[1]}';
+  }
+
+  // Drives the "Add friend" button's state on a profile screen: null (no
+  // relationship), pending (sent-by-me or sent-to-me — check
+  // .fromUid/.otherUid against the viewer), or accepted (already friends).
+  Stream<FriendRequest?> watchFriendRequestBetween(String uidA, String uidB) {
+    return _db
+        .collection('friendRequests')
+        .doc(friendRequestDocId(uidA, uidB))
+        .snapshots()
+        .map(
+          (doc) => doc.exists
+              ? FriendRequest.fromFirestore(doc.id, doc.data()!)
+              : null,
+        );
+  }
+
+  Future<void> sendFriendRequest({
+    required String fromUid,
+    required String toUid,
+  }) {
+    final id = friendRequestDocId(fromUid, toUid);
+    return _db.collection('friendRequests').doc(id).set({
+      'fromUid': fromUid,
+      'toUid': toUid,
+      'status': 'pending',
+      'createdAt': FieldValue.serverTimestamp(),
+      'respondedAt': null,
+    });
+  }
+
+  Future<void> acceptFriendRequest(String requestId) {
+    return _db.collection('friendRequests').doc(requestId).update({
+      'status': 'accepted',
+      'respondedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  // Covers cancel (sender, still pending), decline (recipient, still
+  // pending), and unfriend (either side, already accepted) — all three
+  // are the same delete at the data level; see firestore.rules for why one
+  // `allow delete` covers all of them.
+  Future<void> removeFriendRequestOrFriendship(String requestId) {
+    return _db.collection('friendRequests').doc(requestId).delete();
+  }
+
+  Stream<List<FriendRequest>> watchIncomingFriendRequests(String uid) {
+    return _db
+        .collection('friendRequests')
+        .where('toUid', isEqualTo: uid)
+        .where('status', isEqualTo: 'pending')
+        .snapshots()
+        .map(
+          (snap) => snap.docs
+              .map((doc) => FriendRequest.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
+  }
+
+  Stream<List<FriendRequest>> watchOutgoingFriendRequests(String uid) {
+    return _db
+        .collection('friendRequests')
+        .where('fromUid', isEqualTo: uid)
+        .where('status', isEqualTo: 'pending')
+        .snapshots()
+        .map(
+          (snap) => snap.docs
+              .map((doc) => FriendRequest.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        );
+  }
+
+  // Confirmed friends' uids only — server-maintained, see the
+  // users/{uid}/friends comment in firestore.rules.
+  Stream<List<String>> watchFriendUids(String uid) {
+    return _db
+        .collection('users')
+        .doc(uid)
+        .collection('friends')
+        .snapshots()
+        .map((snap) => snap.docs.map((doc) => doc.id).toList());
+  }
 }
 
 final firestoreServiceProvider = Provider<FirestoreService>(
@@ -2145,4 +2242,35 @@ final chatMediaProvider = StreamProvider.family<List<Message>, String>((
   chatId,
 ) {
   return ref.watch(firestoreServiceProvider).watchChatMedia(chatId);
+});
+
+// autoDispose — watched only while a specific profile screen is open (the
+// "Add friend" button's state), same "don't pin every pair ever viewed"
+// rationale as hasViewedStatusProvider/chatDataProvider above.
+final friendRequestBetweenProvider = StreamProvider.autoDispose
+    .family<FriendRequest?, ({String uidA, String uidB})>((ref, args) {
+      return ref
+          .watch(firestoreServiceProvider)
+          .watchFriendRequestBetween(args.uidA, args.uidB);
+    });
+
+final incomingFriendRequestsProvider =
+    StreamProvider.family<List<FriendRequest>, String>((ref, uid) {
+      return ref
+          .watch(firestoreServiceProvider)
+          .watchIncomingFriendRequests(uid);
+    });
+
+final outgoingFriendRequestsProvider =
+    StreamProvider.family<List<FriendRequest>, String>((ref, uid) {
+      return ref
+          .watch(firestoreServiceProvider)
+          .watchOutgoingFriendRequests(uid);
+    });
+
+final friendUidsProvider = StreamProvider.family<List<String>, String>((
+  ref,
+  uid,
+) {
+  return ref.watch(firestoreServiceProvider).watchFriendUids(uid);
 });

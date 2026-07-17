@@ -277,8 +277,71 @@ class _SettingsTab extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final incomingAsync = ref.watch(incomingFriendRequestsProvider(currentUid));
+    // AsyncError here means the read was denied (e.g. firestore.rules for
+    // friendRequests was rolled back while this build is still installed on
+    // a device) — same "fail silent, not visibly broken" contract as
+    // UserProfileScreen._buildFriendButton's own error branch. Showing this
+    // entry point with a badge that can never load, leading to a screen
+    // that can only ever say "Xəta baş verdi", would be worse than not
+    // showing it at all.
+    if (incomingAsync.hasError) {
+      return Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.star, color: kGold),
+            title: const Text(
+              'Seçilmiş mesajlar',
+              style: TextStyle(color: kText),
+            ),
+            trailing: const Icon(Icons.chevron_right, color: kMuted),
+            onTap: () => context.push('/starred'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.logout, color: kRed),
+            title: const Text('Çıxış', style: TextStyle(color: kRed)),
+            onTap: () => _confirmLogout(context, ref),
+          ),
+        ],
+      );
+    }
+    final incomingCount = incomingAsync.asData?.value.length ?? 0;
+
     return Column(
       children: [
+        ListTile(
+          leading: const Icon(Icons.people_alt, color: kGold),
+          title: const Text(
+            'Dost sorğuları',
+            style: TextStyle(color: kText),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (incomingCount > 0) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: kGold,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '$incomingCount',
+                    style: const TextStyle(
+                      color: Color(0xFF1A0E00),
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              const Icon(Icons.chevron_right, color: kMuted),
+            ],
+          ),
+          onTap: () => context.push('/friend-requests'),
+        ),
         ListTile(
           leading: const Icon(Icons.star, color: kGold),
           title: const Text(

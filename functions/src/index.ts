@@ -62,6 +62,32 @@ async function sendFcmPush(
   }
 }
 
+// Fans a push out to every device a single user has registered, reusing
+// the same expo/fcm split onNewMessage does inline below — extracted here
+// (rather than inlined a third time) only because the two friendRequests
+// triggers below both need the exact same "fetch pushTokens, dispatch by
+// token type" step onNewMessage already performs; onNewMessage itself is
+// left untouched to avoid risking its own working behavior.
+async function sendPushToUid(
+  uid: string,
+  title: string,
+  body: string,
+  data: Record<string, string>,
+): Promise<void> {
+  const tokensSnap = await db.collection("users").doc(uid).collection("pushTokens").get();
+  await Promise.all(
+    tokensSnap.docs.map(async (tokenDoc) => {
+      const token = tokenDoc.data().token as string | undefined;
+      if (!token) return;
+      if (isExpoToken(token)) {
+        await sendExpoPush(token, title, body, data);
+      } else {
+        await sendFcmPush(token, title, body, data);
+      }
+    }),
+  );
+}
+
 function previewText(type: string, text: string, fileName?: string): string {
   switch (type) {
     case "image":
@@ -659,6 +685,89 @@ export const onChatDeleted = onDocumentDeleted("chats/{chatId}", async (event) =
   }
   await Promise.all(tasks);
 });
+
+// ---------------------------------------------------------------------
+// friendRequests/{requestId} — Facebook-style friend requests. See
+// lib/firebase/models.dart's FriendRequest class for the full lifecycle
+// (requestId shape, why deletion covers cancel/decline/unfriend, and why
+// users/{uid}/friends is server-only) and firestore.rules for what the
+// client itself is allowed to write — everything below only reacts to
+// those already-validated writes, it doesn't re-validate them.
+// ---------------------------------------------------------------------
+
+export const onFriendRequestCreated = onDocumentCreated(
+  "friendRequests/{requestId}",
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const { fromUid, toUid } = snap.data();
+    if (!fromUid || !toUid) return;
+
+    const fromSnap = await db.collection("users").doc(fromUid).get();
+    const fromName: string =
+      fromSnap.data()?.name ?? fromSnap.data()?.displayName ?? "Bir istifadəçi";
+
+    await sendPushToUid(
+      toUid,
+      "Yeni dostluq təklifi",
+      `${fromName} sizə dostluq təklifi göndərdi`,
+      { type: "friend_request", requestId: event.params.requestId },
+    );
+  },
+);
+
+export const onFriendRequestUpdated = onDocumentUpdated(
+  "friendRequests/{requestId}",
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after) return;
+    // Only the pending → accepted transition does anything here — no other
+    // update is possible per firestore.rules, but this guard keeps the
+    // trigger a no-op if that ever changes rather than assuming it.
+    if (before.status === after.status || after.status !== "accepted") return;
+
+    const { fromUid, toUid } = after;
+    if (!fromUid || !toUid) return;
+
+    const since = FieldValue.serverTimestamp();
+    await Promise.all([
+      db.collection("users").doc(fromUid).collection("friends").doc(toUid).set({ since }),
+      db.collection("users").doc(toUid).collection("friends").doc(fromUid).set({ since }),
+    ]);
+
+    const toSnap = await db.collection("users").doc(toUid).get();
+    const toName: string =
+      toSnap.data()?.name ?? toSnap.data()?.displayName ?? "İstifadəçi";
+
+    await sendPushToUid(
+      fromUid,
+      "Dostluq təklifi qəbul edildi",
+      `${toName} dostluq təklifinizi qəbul etdi`,
+      { type: "friend_request_accepted", requestId: event.params.requestId },
+    );
+  },
+);
+
+export const onFriendRequestDeleted = onDocumentDeleted(
+  "friendRequests/{requestId}",
+  async (event) => {
+    const data = event.data?.data();
+    if (!data) return;
+    // A pending request being deleted was a cancel or a decline — no
+    // friends/ doc was ever written for it, so there's nothing to undo.
+    // Only an already-accepted pair needs its friends/ docs removed here.
+    if (data.status !== "accepted") return;
+
+    const { fromUid, toUid } = data;
+    if (!fromUid || !toUid) return;
+
+    await Promise.all([
+      db.collection("users").doc(fromUid).collection("friends").doc(toUid).delete(),
+      db.collection("users").doc(toUid).collection("friends").doc(fromUid).delete(),
+    ]);
+  },
+);
 
 // Computes visibleToUids once at creation time, from the owner's contacts
 // as they stand right now plus this status's own privacyMode/privacyList.
