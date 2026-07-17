@@ -93,7 +93,7 @@ class FirestoreService {
         .map(
           (snap) =>
               snap.docs
-                  .map((doc) => Chat.fromFirestore(doc.id, doc.data()))
+                  .map((doc) => Chat.fromFirestore(doc.id, doc.data(), uid))
                   // mugam-v2 marks a direct chat completed once the pair
                   // finalizes a Razılaşma (agreement) and starts a fresh
                   // chat doc the next time they talk — its own chat list
@@ -1894,6 +1894,7 @@ class FirestoreService {
         'readBy': FieldValue.arrayUnion([uid]),
         'lastReadAt.$uid': DateTime.now().toIso8601String(),
         'lastReadMsgId.$uid': lastMsgId,
+        'unreadCount.$uid': 0,
       });
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(

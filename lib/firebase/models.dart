@@ -133,7 +133,12 @@ class Chat {
     this.messageCount = 0,
   });
 
-  factory Chat.fromFirestore(String id, Map<String, dynamic> data) {
+  // uid is the viewing (signed-in) user — unreadCount is stored server-side
+  // as a per-user map ({uid: count}, see onNewMessage/markChatAsReadBy in
+  // functions/src/index.ts and firestore_service.dart), so this must read
+  // only that uid's own entry. Summing every entry in the map would show
+  // the combined unread count of every participant, not this user's own.
+  factory Chat.fromFirestore(String id, Map<String, dynamic> data, String uid) {
     return Chat(
       id: id,
       name: data['name'] ?? '',
@@ -144,19 +149,8 @@ class Chat {
           : null,
       unreadCount: () {
         final raw = data['unreadCount'];
-        if (raw == null) return 0;
         if (raw is int) return raw;
-        if (raw is Map) {
-          // per-user unread count map — sum all values or return 0
-          try {
-            return (raw.values.fold<int>(
-              0,
-              (acc, v) => acc + (v is int ? v : 0),
-            ));
-          } catch (_) {
-            return 0;
-          }
-        }
+        if (raw is Map) return (raw[uid] as num?)?.toInt() ?? 0;
         return 0;
       }(),
       members: List<String>.from(data['members'] as List? ?? const []),

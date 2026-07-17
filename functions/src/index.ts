@@ -140,6 +140,29 @@ export const onNewMessage = onDocumentCreated(
     }
 
     const members: string[] = chat.members ?? [];
+
+    // unreadCount is a per-user map ({uid: count}, same shape mugam-v2's own
+    // sendMessage already writes — see mugam-v2/src/firebase/firestore.ts)
+    // reset to 0 for a uid by markChatAsReadBy (firestore_service.dart) when
+    // that user opens the chat. Incremented for every member except the
+    // sender, deliberately including anyone in activeUsers (unlike the push
+    // recipients filter below) — activeUsers only means "has this chat
+    // screen open right now", not "has already read this exact message";
+    // mirrors mugam-v2's own unconditional increment.
+    if (members.length > 1) {
+      try {
+        const unreadUpdate: Record<string, FirebaseFirestore.FieldValue> = {};
+        for (const uid of members) {
+          if (uid !== senderId) {
+            unreadUpdate[`unreadCount.${uid}`] = FieldValue.increment(1);
+          }
+        }
+        await db.collection("chats").doc(chatId).update(unreadUpdate);
+      } catch (e) {
+        logger.warn("onNewMessage: unreadCount increment failed", e);
+      }
+    }
+
     const activeUsers: string[] = chat.activeUsers ?? [];
     const recipients = members.filter(
       (uid) => uid !== senderId && !activeUsers.includes(uid),
@@ -197,6 +220,23 @@ export const onNewMessage = onDocumentCreated(
 // counted it in the first place — messageCount can legitimately go
 // negative until enough new messages arrive to bring it back up. Clamping
 // that would hide the real state instead of letting it self-correct.
+// Deliberately does NOT touch unreadCount, unlike messageCount above.
+// unreadCount is per-user, and whether this specific deleted message was
+// still unread for a given recipient depends on whether they'd already
+// opened the chat since it arrived — the only per-user "last read" signal
+// available is lastReadAt.$uid (firestore_service.dart's markChatAsReadBy),
+// written as an ISO string by mugam-flutter only; mugam-v2's own
+// markChatAsRead zeroes unreadCount.$uid directly and never writes
+// lastReadAt at all. So for any recipient who last read via mugam-v2 (or
+// has never opened the chat from mugam-flutter), lastReadAt.$uid would be
+// absent even though they've genuinely read past this message — a
+// decrement keyed off it would misfire in exactly the same wrong direction
+// as a flat unconditional decrement for that whole class of users. The
+// unread map is already reset to 0 unconditionally the moment any user
+// next opens the chat (markChatAsReadBy), so any stale +1 from a deleted-
+// but-still-unread message self-corrects at that point same as
+// messageCount's own uncorrected legacy gap above — it never lingers past
+// the recipient's next real read.
 export const onMessageDeleted = onDocumentDeleted(
   "chats/{chatId}/messages/{messageId}",
   async (event) => {
