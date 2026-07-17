@@ -52,18 +52,6 @@ class ProfileSettingsScreen extends ConsumerWidget {
       body: ListView(
         children: [
           ListTile(
-            leading: const Icon(Icons.video_library, color: kGold),
-            title: const Text('Video', style: TextStyle(color: kText)),
-            trailing: const Icon(Icons.chevron_right, color: kMuted),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) =>
-                    const _ComingSoonScreen(title: 'Video', emoji: '🎬'),
-              ),
-            ),
-          ),
-          ListTile(
             leading: const Icon(Icons.event, color: kGold),
             title: const Text('Tədbirlər', style: TextStyle(color: kText)),
             trailing: const Icon(Icons.chevron_right, color: kMuted),
@@ -72,6 +60,18 @@ class ProfileSettingsScreen extends ConsumerWidget {
               MaterialPageRoute(
                 builder: (_) =>
                     const _ComingSoonScreen(title: 'Tədbirlər', emoji: '📅'),
+              ),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.video_library, color: kGold),
+            title: const Text('Video', style: TextStyle(color: kText)),
+            trailing: const Icon(Icons.chevron_right, color: kMuted),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    const _ComingSoonScreen(title: 'Video', emoji: '🎬'),
               ),
             ),
           ),
