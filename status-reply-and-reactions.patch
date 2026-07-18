@@ -1,0 +1,756 @@
+--- a/lib/firebase/models.dart
++++ b/lib/firebase/models.dart
+@@ -313,6 +313,22 @@
+   final String? replyToSenderName;
+   final String? replyToImageURL;
+   final String? replyToVideoURL;
++  // A reply to someone's status/story (WhatsApp-style swipe-up), as opposed
++  // to a reply to another chat message (replyToId above). Deliberately a
++  // SEPARATE set of fields rather than repurposing replyToId: replyToId's
++  // own tap handler (_scrollToMessage in chat_screen.dart) searches this
++  // chat's own message history for a doc with that id, which a statusId
++  // would never match — it would silently hang searching, then report "not
++  // found", rather than opening the status. replyToStatusOwnerUid is
++  // required alongside replyToStatusId because UserStatusViewerScreen (the
++  // screen this reply's own tap handler opens) needs the author's uid up
++  // front to fetch their status group — a status doc's id alone doesn't
++  // encode who posted it without a separate lookup.
++  final String? replyToStatusId;
++  final String? replyToStatusOwnerUid;
++  final String? replyToStatusType; // 'text' | 'image' | 'video'
++  final String? replyToStatusText;
++  final String? replyToStatusThumbnailURL;
+   final bool deletedForAll;
+   final List<String> deletedFor;
+   final String? deletedAt;
+@@ -398,6 +414,11 @@
+     this.replyToSenderName,
+     this.replyToImageURL,
+     this.replyToVideoURL,
++    this.replyToStatusId,
++    this.replyToStatusOwnerUid,
++    this.replyToStatusType,
++    this.replyToStatusText,
++    this.replyToStatusThumbnailURL,
+     this.deletedForAll = false,
+     this.deletedFor = const [],
+     this.deletedAt,
+@@ -413,6 +434,7 @@
+ 
+   factory Message.fromFirestore(String id, Map<String, dynamic> data) {
+     final replyTo = data['replyTo'] as Map<String, dynamic>?;
++    final replyToStatus = data['replyToStatus'] as Map<String, dynamic>?;
+     final rawReactions = data['reactions'] as Map<String, dynamic>? ?? {};
+     return Message(
+       id: id,
+@@ -443,6 +465,11 @@
+       replyToSenderName: replyTo?['senderName'] as String?,
+       replyToImageURL: replyTo?['imageURL'] as String?,
+       replyToVideoURL: replyTo?['videoURL'] as String?,
++      replyToStatusId: replyToStatus?['id'] as String?,
++      replyToStatusOwnerUid: replyToStatus?['ownerUid'] as String?,
++      replyToStatusType: replyToStatus?['type'] as String?,
++      replyToStatusText: replyToStatus?['text'] as String?,
++      replyToStatusThumbnailURL: replyToStatus?['thumbnailURL'] as String?,
+       deletedForAll: data['deletedForAll'] ?? false,
+       deletedFor: List<String>.from(data['deletedFor'] as List? ?? const []),
+       deletedAt: data['deletedAt'] as String?,
+--- a/lib/firebase/firestore_service.dart
++++ b/lib/firebase/firestore_service.dart
+@@ -1026,6 +1026,35 @@
+     return map;
+   }
+ 
++  // Mirrors _buildReplyTo above exactly, but as its own separate nested map
++  // (replyToStatus, not replyTo) — see Message.replyToStatusId's own doc
++  // comment for why a status reply is never written through the replyTo
++  // fields/map. ownerUid is required (not just id) because
++  // UserStatusViewerScreen needs it up front to fetch the author's status
++  // group; if it's missing there's nothing a tap handler could open, so
++  // treat that the same as replyToStatusId itself being absent.
++  Map<String, dynamic>? _buildReplyToStatus({
++    String? replyToStatusId,
++    String? replyToStatusOwnerUid,
++    String? replyToStatusType,
++    String? replyToStatusText,
++    String? replyToStatusThumbnailURL,
++  }) {
++    if (replyToStatusId == null || replyToStatusOwnerUid == null) {
++      return null;
++    }
++    final map = <String, dynamic>{
++      'id': replyToStatusId,
++      'ownerUid': replyToStatusOwnerUid,
++      'type': replyToStatusType ?? 'text',
++      'text': replyToStatusText ?? '',
++    };
++    if (replyToStatusThumbnailURL != null) {
++      map['thumbnailURL'] = replyToStatusThumbnailURL;
++    }
++    return map;
++  }
++
+   // Generates a message doc id client-side, up front, before any upload or
+   // send attempt — used by the pending-media queue so every retry of the
+   // same queued item writes to the same doc via sendXMessage's messageId
+@@ -1073,6 +1102,11 @@
+     String? replyToSenderName,
+     String? replyToImageURL,
+     String? replyToVideoURL,
++    String? replyToStatusId,
++    String? replyToStatusOwnerUid,
++    String? replyToStatusType,
++    String? replyToStatusText,
++    String? replyToStatusThumbnailURL,
+     // If provided, writes with .doc(messageId).set(...) instead of .add(...)
+     // — same idempotency purpose as sendImageMessage's messageId param, used
+     // by the offline pending-send queue so a retry of the same queued text
+@@ -1087,6 +1121,13 @@
+       replyToImageURL: replyToImageURL,
+       replyToVideoURL: replyToVideoURL,
+     );
++    final replyToStatus = _buildReplyToStatus(
++      replyToStatusId: replyToStatusId,
++      replyToStatusOwnerUid: replyToStatusOwnerUid,
++      replyToStatusType: replyToStatusType,
++      replyToStatusText: replyToStatusText,
++      replyToStatusThumbnailURL: replyToStatusThumbnailURL,
++    );
+     final data = {
+       'senderId': senderId,
+       'text': text,
+@@ -1097,6 +1138,7 @@
+       'imageURL': null,
+       'audioURL': null,
+       if (replyTo != null) 'replyTo': replyTo,
++      if (replyToStatus != null) 'replyToStatus': replyToStatus,
+     };
+     bool wrote = true;
+     if (messageId != null) {
+@@ -1188,6 +1230,11 @@
+     String? replyToSenderName,
+     String? replyToImageURL,
+     String? replyToVideoURL,
++    String? replyToStatusId,
++    String? replyToStatusOwnerUid,
++    String? replyToStatusType,
++    String? replyToStatusText,
++    String? replyToStatusThumbnailURL,
+     // If provided, writes with .doc(messageId).set(...) instead of .add(...)
+     // — makes retries of this exact same send idempotent (same id = same
+     // document, no duplicate) instead of creating a new document each retry.
+@@ -1201,6 +1248,13 @@
+       replyToImageURL: replyToImageURL,
+       replyToVideoURL: replyToVideoURL,
+     );
++    final replyToStatus = _buildReplyToStatus(
++      replyToStatusId: replyToStatusId,
++      replyToStatusOwnerUid: replyToStatusOwnerUid,
++      replyToStatusType: replyToStatusType,
++      replyToStatusText: replyToStatusText,
++      replyToStatusThumbnailURL: replyToStatusThumbnailURL,
++    );
+     final data = {
+       'senderId': senderId,
+       'text': caption,
+@@ -1215,6 +1269,7 @@
+       'audioURL': null,
+       'timestamp': now,
+       if (replyTo != null) 'replyTo': replyTo,
++      if (replyToStatus != null) 'replyToStatus': replyToStatus,
+     };
+     bool wrote = true;
+     if (messageId != null) {
+@@ -1289,6 +1344,11 @@
+     String? replyToSenderName,
+     String? replyToImageURL,
+     String? replyToVideoURL,
++    String? replyToStatusId,
++    String? replyToStatusOwnerUid,
++    String? replyToStatusType,
++    String? replyToStatusText,
++    String? replyToStatusThumbnailURL,
+     String? messageId,
+   }) async {
+     final now = FieldValue.serverTimestamp();
+@@ -1299,6 +1359,13 @@
+       replyToImageURL: replyToImageURL,
+       replyToVideoURL: replyToVideoURL,
+     );
++    final replyToStatus = _buildReplyToStatus(
++      replyToStatusId: replyToStatusId,
++      replyToStatusOwnerUid: replyToStatusOwnerUid,
++      replyToStatusType: replyToStatusType,
++      replyToStatusText: replyToStatusText,
++      replyToStatusThumbnailURL: replyToStatusThumbnailURL,
++    );
+     final data = {
+       'senderId': senderId,
+       'text': caption,
+@@ -1315,6 +1382,7 @@
+       'audioURL': null,
+       'timestamp': now,
+       if (replyTo != null) 'replyTo': replyTo,
++      if (replyToStatus != null) 'replyToStatus': replyToStatus,
+     };
+     bool wrote = true;
+     if (messageId != null) {
+@@ -1390,6 +1458,11 @@
+     String? replyToSenderName,
+     String? replyToImageURL,
+     String? replyToVideoURL,
++    String? replyToStatusId,
++    String? replyToStatusOwnerUid,
++    String? replyToStatusType,
++    String? replyToStatusText,
++    String? replyToStatusThumbnailURL,
+     String? messageId,
+   }) async {
+     final now = FieldValue.serverTimestamp();
+@@ -1400,6 +1473,13 @@
+       replyToImageURL: replyToImageURL,
+       replyToVideoURL: replyToVideoURL,
+     );
++    final replyToStatus = _buildReplyToStatus(
++      replyToStatusId: replyToStatusId,
++      replyToStatusOwnerUid: replyToStatusOwnerUid,
++      replyToStatusType: replyToStatusType,
++      replyToStatusText: replyToStatusText,
++      replyToStatusThumbnailURL: replyToStatusThumbnailURL,
++    );
+     final data = {
+       'senderId': senderId,
+       'text': caption,
+@@ -1415,6 +1495,7 @@
+       'audioURL': null,
+       'timestamp': now,
+       if (replyTo != null) 'replyTo': replyTo,
++      if (replyToStatus != null) 'replyToStatus': replyToStatus,
+     };
+     bool wrote = true;
+     if (messageId != null) {
+@@ -1487,6 +1568,11 @@
+     String? replyToSenderName,
+     String? replyToImageURL,
+     String? replyToVideoURL,
++    String? replyToStatusId,
++    String? replyToStatusOwnerUid,
++    String? replyToStatusType,
++    String? replyToStatusText,
++    String? replyToStatusThumbnailURL,
+     String? messageId,
+   }) async {
+     final now = FieldValue.serverTimestamp();
+@@ -1497,6 +1583,13 @@
+       replyToImageURL: replyToImageURL,
+       replyToVideoURL: replyToVideoURL,
+     );
++    final replyToStatus = _buildReplyToStatus(
++      replyToStatusId: replyToStatusId,
++      replyToStatusOwnerUid: replyToStatusOwnerUid,
++      replyToStatusType: replyToStatusType,
++      replyToStatusText: replyToStatusText,
++      replyToStatusThumbnailURL: replyToStatusThumbnailURL,
++    );
+     final data = {
+       'senderId': senderId,
+       'text': caption,
+@@ -1512,6 +1605,7 @@
+       'audioURL': null,
+       'timestamp': now,
+       if (replyTo != null) 'replyTo': replyTo,
++      if (replyToStatus != null) 'replyToStatus': replyToStatus,
+     };
+     bool wrote = true;
+     if (messageId != null) {
+@@ -1569,6 +1663,11 @@
+     String? replyToSenderName,
+     String? replyToImageURL,
+     String? replyToVideoURL,
++    String? replyToStatusId,
++    String? replyToStatusOwnerUid,
++    String? replyToStatusType,
++    String? replyToStatusText,
++    String? replyToStatusThumbnailURL,
+     String? messageId,
+   }) async {
+     final now = FieldValue.serverTimestamp();
+@@ -1579,6 +1678,13 @@
+       replyToImageURL: replyToImageURL,
+       replyToVideoURL: replyToVideoURL,
+     );
++    final replyToStatus = _buildReplyToStatus(
++      replyToStatusId: replyToStatusId,
++      replyToStatusOwnerUid: replyToStatusOwnerUid,
++      replyToStatusType: replyToStatusType,
++      replyToStatusText: replyToStatusText,
++      replyToStatusThumbnailURL: replyToStatusThumbnailURL,
++    );
+     final data = {
+       'senderId': senderId,
+       'text': caption,
+@@ -1592,6 +1698,7 @@
+       'imageURL': null,
+       'timestamp': now,
+       if (replyTo != null) 'replyTo': replyTo,
++      if (replyToStatus != null) 'replyToStatus': replyToStatus,
+     };
+     bool wrote = true;
+     if (messageId != null) {
+--- a/lib/features/status/screens/status_viewer_screen.dart
++++ b/lib/features/status/screens/status_viewer_screen.dart
+@@ -130,6 +130,14 @@
+   final String currentUid;
+   final bool isOwnGroup;
+   final VoidCallback onAdvanceToNextAuthor;
++  // Which of group.statuses to open on first frame, by id — e.g. a status-
++  // reply's quote-tap wants the exact segment that was replied to, not
++  // always the first one. Null (every existing call site) keeps the
++  // original always-start-at-0 behavior; a non-null id that no longer
++  // matches any status in the group (expired since the reply was sent)
++  // also falls back to 0 rather than throwing, in _StatusGroupPageState's
++  // own initState below.
++  final String? initialStatusId;
+ 
+   const _StatusGroupPage({
+     super.key,
+@@ -137,6 +145,7 @@
+     required this.currentUid,
+     required this.isOwnGroup,
+     required this.onAdvanceToNextAuthor,
++    this.initialStatusId,
+   });
+ 
+   @override
+@@ -149,6 +158,17 @@
+   bool _paused = false;
+   Duration? _videoDuration;
+   String? _markedViewedStatusId;
++  // Reply-to-status panel state (viewer side only — see isOwnGroup guard in
++  // build() below; the owner sees "Baxanlar" in this same screen position
++  // instead). _replyFocusNode's own listener (registered in initState)
++  // reuses the existing _paused flag for "pause while typing", same
++  // non-ref-counted simplification _openStatusViewers already makes for
++  // "pause while the viewers list is open" — this app has no case where
++  // two pause sources are ever actually active at once in practice, so a
++  // plain bool has always been enough.
++  final TextEditingController _replyController = TextEditingController();
++  final FocusNode _replyFocusNode = FocusNode();
++  bool _sendingReply = false;
+ 
+   // Drag-to-dismiss state, plus the snap-back controller for when a drag
+   // doesn't clear the dismiss threshold — same drag-then-animate-back
+@@ -163,16 +183,41 @@
+   @override
+   void initState() {
+     super.initState();
++    final targetId = widget.initialStatusId;
++    if (targetId != null) {
++      final foundIndex = widget.group.statuses.indexWhere(
++        (s) => s.id == targetId,
++      );
++      // -1 (not found — e.g. the specific replied-to status expired since)
++      // falls back to the existing default of 0 rather than an invalid
++      // index; _currentIndex is already 0 from its own field initializer
++      // above, so only overwrite it on an actual match.
++      if (foundIndex != -1) {
++        _currentIndex = foundIndex;
++      }
++    }
+     _snapController = AnimationController(
+       vsync: this,
+       duration: const Duration(milliseconds: 200),
+     );
++    // Rebuilds just to show/hide the send button as the field goes
++    // empty/non-empty — cheap (this whole screen already rebuilds on every
++    // progress-bar tick via setState in StatusProgressBar's own timer, see
++    // that widget), so no debounce/throttle needed for a plain text watch.
++    _replyController.addListener(() {
++      if (mounted) setState(() {});
++    });
++    _replyFocusNode.addListener(() {
++      if (mounted) setState(() => _paused = _replyFocusNode.hasFocus);
++    });
+     _maybeMarkViewed();
+   }
+ 
+   @override
+   void dispose() {
+     _snapController.dispose();
++    _replyController.dispose();
++    _replyFocusNode.dispose();
+     super.dispose();
+   }
+ 
+@@ -308,6 +353,67 @@
+     }
+   }
+ 
++  // Sends the typed reply as a normal chat message in the (possibly
++  // brand-new) 1:1 chat with this status's owner — see
++  // FirestoreService.getOrCreateDirectChat's own doc comment for why a
++  // reply may be the very first message between this pair. Unlike
++  // _markViewed above, a failure here MUST be surfaced (silently losing a
++  // reply the person thinks they sent is worse than the brief interruption
++  // of a SnackBar), matching _confirmAndDeleteStatus's own try/catch shape
++  // one section up rather than _markViewed's silent-log one.
++  Future<void> _sendStatusReply(Status status, {String? overrideText}) async {
++    // overrideText != null means a quick-emoji-reaction tap, not the typed
++    // field — sent independently of whatever's currently in _replyController
++    // (matching WhatsApp's own behavior: tapping a quick reaction doesn't
++    // touch, clear, or send an in-progress typed draft). Only a null
++    // overrideText (the actual send button / keyboard-submit path) reads
++    // from and clears the real text field below.
++    final text = overrideText ?? _replyController.text.trim();
++    if (text.isEmpty || _sendingReply) return;
++    setState(() => _sendingReply = true);
++    try {
++      final service = ref.read(firestoreServiceProvider);
++      final chatId = await service.getOrCreateDirectChat(
++        myUid: widget.currentUid,
++        otherUid: status.ownerUid,
++      );
++      await service.sendMessage(
++        chatId: chatId,
++        senderId: widget.currentUid,
++        text: text,
++        replyToStatusId: status.id,
++        replyToStatusOwnerUid: status.ownerUid,
++        replyToStatusType: status.type,
++        replyToStatusText: status.type == 'text'
++            ? (status.text ?? '')
++            : (status.caption ?? ''),
++        replyToStatusThumbnailURL: status.type == 'text'
++            ? null
++            : status.mediaUrl,
++      );
++      if (!mounted) return;
++      if (overrideText == null) {
++        _replyController.clear();
++        _replyFocusNode.unfocus();
++      }
++    } catch (e, st) {
++      FirebaseCrashlytics.instance.recordError(
++        e,
++        st,
++        reason: 'StatusViewerScreen: status reply send failed',
++      );
++      if (!mounted) return;
++      ScaffoldMessenger.of(context).showSnackBar(
++        const SnackBar(
++          content: Text('Cavab göndərilmədi'),
++          backgroundColor: kRed,
++        ),
++      );
++    } finally {
++      if (mounted) setState(() => _sendingReply = false);
++    }
++  }
++
+   void _goToIndex(int index) {
+     setState(() {
+       _currentIndex = index;
+@@ -472,6 +578,157 @@
+                       ),
+                     ),
+                   ),
++                )
++              else
++                // Viewer side (not the author): a WhatsApp-style reply bar,
++                // always visible (not just on tap) per product decision —
++                // AND an upward swipe also focuses it, exactly mirroring
++                // the owner-side gesture above rather than introducing a
++                // different interaction vocabulary for the same screen.
++                // Same "safe alongside the screen-wide dismiss
++                // GestureDetector" reasoning as that block: onVerticalDragEnd
++                // only, no onVerticalDragUpdate, so it never competes with
++                // the outer drag-to-dismiss for the same pointer motion.
++                Positioned(
++                  left: 12,
++                  right: 12,
++                  bottom: 24,
++                  child: SafeArea(
++                    top: false,
++                    child: Column(
++                      mainAxisSize: MainAxisSize.min,
++                      crossAxisAlignment: CrossAxisAlignment.stretch,
++                      children: [
++                        // Quick-reaction row — WhatsApp's own standard set.
++                        // Each tap sends that single emoji through the
++                        // exact same _sendStatusReply pipe as the typed
++                        // field below (a status reaction IS just a normal
++                        // reply whose text happens to be one emoji — see
++                        // this method's own overrideText param), rather
++                        // than a separate reaction-count field on the
++                        // status doc itself (that's how message reactions
++                        // work — toggleMessageReaction in
++                        // functions/src/index.ts — but status reactions
++                        // are a different, simpler WhatsApp mechanic with
++                        // no aggregate count anywhere).
++                        Container(
++                          margin: const EdgeInsets.only(bottom: 8),
++                          padding: const EdgeInsets.symmetric(
++                            horizontal: 12,
++                            vertical: 6,
++                          ),
++                          decoration: BoxDecoration(
++                            color: Colors.white.withAlpha(30),
++                            borderRadius: BorderRadius.circular(24),
++                            border: Border.all(
++                              color: Colors.white.withAlpha(80),
++                            ),
++                          ),
++                          child: Row(
++                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
++                            children:
++                                const ['❤️', '😂', '😮', '😢', '🙏', '👏']
++                                    .map(
++                                      (emoji) => GestureDetector(
++                                        onTap: () => unawaited(
++                                          _sendStatusReply(
++                                            status,
++                                            overrideText: emoji,
++                                          ),
++                                        ),
++                                        child: Text(
++                                          emoji,
++                                          style: const TextStyle(
++                                            fontSize: 26,
++                                          ),
++                                        ),
++                                      ),
++                                    )
++                                    .toList(),
++                          ),
++                        ),
++                        GestureDetector(
++                          onVerticalDragEnd: (details) {
++                            if (details.velocity.pixelsPerSecond.dy < -700) {
++                              _replyFocusNode.requestFocus();
++                            }
++                          },
++                          child: Container(
++                            padding: const EdgeInsets.symmetric(
++                              horizontal: 16,
++                              vertical: 6,
++                            ),
++                            decoration: BoxDecoration(
++                              color: Colors.white.withAlpha(30),
++                              borderRadius: BorderRadius.circular(24),
++                              border: Border.all(
++                                color: Colors.white.withAlpha(80),
++                              ),
++                            ),
++                            child: Row(
++                              children: [
++                                Expanded(
++                                  child: TextField(
++                                    controller: _replyController,
++                                    focusNode: _replyFocusNode,
++                                    style: const TextStyle(
++                                      color: kText,
++                                      fontSize: 14,
++                                    ),
++                                    maxLines: 4,
++                                    minLines: 1,
++                                    textInputAction: TextInputAction.send,
++                                    onSubmitted: (_) =>
++                                        unawaited(_sendStatusReply(status)),
++                                    decoration: const InputDecoration(
++                                      hintText: 'Cavab yaz...',
++                                      hintStyle: TextStyle(
++                                        color: kMuted,
++                                        fontSize: 14,
++                                      ),
++                                      border: InputBorder.none,
++                                      isDense: true,
++                                    ),
++                                  ),
++                                ),
++                                // Only shown once there's something to send —
++                                // an always-visible send button next to an
++                                // empty field invites a confusing empty-
++                                // message send attempt (silently a no-op,
++                                // per _sendStatusReply's own early-return
++                                // guard), same as leaving it out entirely
++                                // would, but this is clearer about why
++                                // nothing happens.
++                                if (_replyController.text.trim().isNotEmpty)
++                                  Padding(
++                                    padding: const EdgeInsets.only(left: 4),
++                                    child: _sendingReply
++                                        ? const SizedBox(
++                                            width: 20,
++                                            height: 20,
++                                            child: CircularProgressIndicator(
++                                              strokeWidth: 2,
++                                              color: kGold,
++                                            ),
++                                          )
++                                        : GestureDetector(
++                                            onTap: () => unawaited(
++                                              _sendStatusReply(status),
++                                            ),
++                                            child: const Icon(
++                                              Icons.send,
++                                              color: kGold,
++                                              size: 20,
++                                            ),
++                                          ),
++                                  ),
++                              ],
++                            ),
++                          ),
++                        ),
++                      ],
++                    ),
++                  ),
+                 ),
+             ],
+           ),
+@@ -637,12 +894,18 @@
+   // rationale), passing it here skips a redundant fetch. Falls back to
+   // userByIdProvider when omitted.
+   final User? initialUser;
++  // Optional — which specific status to open on first frame (e.g. a
++  // status-reply's quote tap in chat_screen.dart), forwarded as-is to
++  // _StatusGroupPage. Every existing call site omits this and keeps
++  // opening at the first status, unchanged.
++  final String? initialStatusId;
+ 
+   const UserStatusViewerScreen({
+     super.key,
+     required this.ownerUid,
+     required this.currentUid,
+     this.initialUser,
++    this.initialStatusId,
+   });
+ 
+   @override
+@@ -723,6 +986,7 @@
+             // introducing a distinct "last piece" gesture just for this
+             // entry point.
+             onAdvanceToNextAuthor: () => Navigator.of(context).pop(),
++            initialStatusId: widget.initialStatusId,
+           );
+         },
+       ),
+--- a/lib/features/chat/screens/chat_screen.dart
++++ b/lib/features/chat/screens/chat_screen.dart
+@@ -2244,9 +2244,38 @@
+                   children: [
+                     if (msg.forwardCount > 0)
+                       _forwardedLabel(msg.forwardCount, isMe),
+-                    if (msg.replyToId != null)
++                    if (msg.replyToId != null || msg.replyToStatusId != null)
+                       GestureDetector(
+-                        onTap: () => _scrollToMessage(msg.replyToId!),
++                        // Two completely separate reply kinds share this one
++                        // quote card: a reply to another chat message
++                        // (replyToId — existing _scrollToMessage lookup,
++                        // searches THIS chat's own history) vs a reply to
++                        // someone's status (replyToStatusId — opens
++                        // UserStatusViewerScreen instead). Deliberately
++                        // never routes a replyToStatusId through
++                        // _scrollToMessage: that method searches for a
++                        // matching message id in this chat's history, which
++                        // a status id would never match — it would just
++                        // page through the entire history hitting
++                        // "Mesaj tapılmadı" instead of opening the status.
++                        // ownerUid missing (a doc written before this field
++                        // existed) has nothing to open, so it's a no-op tap
++                        // rather than a crash.
++                        onTap: () {
++                          if (msg.replyToId != null) {
++                            _scrollToMessage(msg.replyToId!);
++                          } else if (msg.replyToStatusOwnerUid != null) {
++                            Navigator.of(context).push(
++                              MaterialPageRoute(
++                                builder: (_) => UserStatusViewerScreen(
++                                  ownerUid: msg.replyToStatusOwnerUid!,
++                                  currentUid: currentUid,
++                                  initialStatusId: msg.replyToStatusId,
++                                ),
++                              ),
++                            );
++                          }
++                        },
+                         child: Container(
+                           margin: const EdgeInsets.only(bottom: 8),
+                           clipBehavior: Clip.antiAlias,
+@@ -2281,7 +2310,18 @@
+                                           MainAxisAlignment.center,
+                                       children: [
+                                         Text(
+-                                          msg.replyToSenderName ?? '',
++                                          // A status reply has no
++                                          // replyToSenderName equivalent
++                                          // (there's no "sender" of a
++                                          // status the way there's a
++                                          // sender of a message) — a fixed
++                                          // "Status" label plays that same
++                                          // visual role instead, same gold/
++                                          // dark-brown accent color as the
++                                          // real sender-name case above it.
++                                          msg.replyToId != null
++                                              ? (msg.replyToSenderName ?? '')
++                                              : 'Status',
+                                           style: TextStyle(
+                                             fontSize: 13,
+                                             color: isMe
+@@ -2292,7 +2332,9 @@
+                                         ),
+                                         const SizedBox(height: 3),
+                                         Text(
+-                                          msg.replyToText ?? '',
++                                          msg.replyToId != null
++                                              ? (msg.replyToText ?? '')
++                                              : (msg.replyToStatusText ?? ''),
+                                           maxLines: 1,
+                                           overflow: TextOverflow.ellipsis,
+                                           style: TextStyle(
+@@ -2357,6 +2399,44 @@
+                                       size: 60,
+                                     ),
+                                   ),
++                                // Status-reply thumbnail — a plain network
++                                // image, deliberately NOT reusing
++                                // ImagePreviewCacheManager the way the
++                                // message-reply branch above does: that
++                                // cache is keyed by a real message's own
++                                // stableMediaKey, warmed by
++                                // ImageMessageBubble elsewhere in this same
++                                // chat, which a status's id was never
++                                // entered under. Covers both 'image' and
++                                // 'video' status types with one static
++                                // frame (thumbnailURL is already a flat
++                                // image for either — see
++                                // Message.replyToStatusThumbnailURL), so no
++                                // separate VideoThumbnailImage branch is
++                                // needed here the way there is above for a
++                                // real video message reply.
++                                if (msg.replyToId == null &&
++                                    msg.replyToStatusThumbnailURL != null)
++                                  SizedBox(
++                                    width: 60,
++                                    height: 60,
++                                    child: CachedNetworkImage(
++                                      imageUrl: msg.replyToStatusThumbnailURL!,
++                                      width: 60,
++                                      height: 60,
++                                      fit: BoxFit.cover,
++                                      placeholder: (ctx, url) =>
++                                          Container(color: kBg3),
++                                      errorWidget: (ctx, url, err) => Container(
++                                        color: kBg3,
++                                        child: const Icon(
++                                          Icons.broken_image,
++                                          color: kMuted,
++                                          size: 16,
++                                        ),
++                                      ),
++                                    ),
++                                  ),
+                               ],
+                             ),
+                           ),

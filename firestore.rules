@@ -290,9 +290,20 @@ service cloud.firestore {
       // more "any signed-in user reads any chat."
       allow read: if isMember();
 
-      // Chat creation is exclusively a mugam-v2 flow (mugam-flutter never
-      // creates a chats/ doc) — the creator must be listed in the members
-      // array they're writing.
+      // Group chats are created client-side by mugam-flutter itself (see
+      // createGroupChat below — no Cloud Function needed for creation,
+      // only for the creator-immunity-gated deleteGroupChat). Direct (1:1)
+      // chats are now ALSO created client-side by mugam-flutter, at a
+      // deterministic sorted-uid-pair doc id (see
+      // FirestoreService.getOrCreateDirectChat/directChatDocId) — this is
+      // what makes a simultaneous create from both sides race-safe without
+      // a transaction, since a second write to the same id is evaluated as
+      // `update` below, not a second `create`. mugam-v2 (still running on
+      // this same backend — see functions/src/index.ts's own Expo-push-
+      // dedup comment) separately creates both chat types itself with
+      // random addDoc() ids of its own, unaffected by any of this. Either
+      // way, the creator must be listed in the members array they're
+      // writing.
       allow create: if willBeMember();
 
       // Every ordinary field on a chat doc (lastMessage, lastMessageTime,

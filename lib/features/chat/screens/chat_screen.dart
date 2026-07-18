@@ -2244,9 +2244,38 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   children: [
                     if (msg.forwardCount > 0)
                       _forwardedLabel(msg.forwardCount, isMe),
-                    if (msg.replyToId != null)
+                    if (msg.replyToId != null || msg.replyToStatusId != null)
                       GestureDetector(
-                        onTap: () => _scrollToMessage(msg.replyToId!),
+                        // Two completely separate reply kinds share this one
+                        // quote card: a reply to another chat message
+                        // (replyToId — existing _scrollToMessage lookup,
+                        // searches THIS chat's own history) vs a reply to
+                        // someone's status (replyToStatusId — opens
+                        // UserStatusViewerScreen instead). Deliberately
+                        // never routes a replyToStatusId through
+                        // _scrollToMessage: that method searches for a
+                        // matching message id in this chat's history, which
+                        // a status id would never match — it would just
+                        // page through the entire history hitting
+                        // "Mesaj tapılmadı" instead of opening the status.
+                        // ownerUid missing (a doc written before this field
+                        // existed) has nothing to open, so it's a no-op tap
+                        // rather than a crash.
+                        onTap: () {
+                          if (msg.replyToId != null) {
+                            _scrollToMessage(msg.replyToId!);
+                          } else if (msg.replyToStatusOwnerUid != null) {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => UserStatusViewerScreen(
+                                  ownerUid: msg.replyToStatusOwnerUid!,
+                                  currentUid: currentUid,
+                                  initialStatusId: msg.replyToStatusId,
+                                ),
+                              ),
+                            );
+                          }
+                        },
                         child: Container(
                           margin: const EdgeInsets.only(bottom: 8),
                           clipBehavior: Clip.antiAlias,
@@ -2281,7 +2310,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                           MainAxisAlignment.center,
                                       children: [
                                         Text(
-                                          msg.replyToSenderName ?? '',
+                                          // A status reply has no
+                                          // replyToSenderName equivalent
+                                          // (there's no "sender" of a
+                                          // status the way there's a
+                                          // sender of a message) — a fixed
+                                          // "Status" label plays that same
+                                          // visual role instead, same gold/
+                                          // dark-brown accent color as the
+                                          // real sender-name case above it.
+                                          msg.replyToId != null
+                                              ? (msg.replyToSenderName ?? '')
+                                              : 'Status',
                                           style: TextStyle(
                                             fontSize: 13,
                                             color: isMe
@@ -2292,7 +2332,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                         ),
                                         const SizedBox(height: 3),
                                         Text(
-                                          msg.replyToText ?? '',
+                                          msg.replyToId != null
+                                              ? (msg.replyToText ?? '')
+                                              : (msg.replyToStatusText ?? ''),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                           style: TextStyle(
@@ -2355,6 +2397,44 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                     child: VideoThumbnailImage(
                                       videoURL: msg.replyToVideoURL!,
                                       size: 60,
+                                    ),
+                                  ),
+                                // Status-reply thumbnail — a plain network
+                                // image, deliberately NOT reusing
+                                // ImagePreviewCacheManager the way the
+                                // message-reply branch above does: that
+                                // cache is keyed by a real message's own
+                                // stableMediaKey, warmed by
+                                // ImageMessageBubble elsewhere in this same
+                                // chat, which a status's id was never
+                                // entered under. Covers both 'image' and
+                                // 'video' status types with one static
+                                // frame (thumbnailURL is already a flat
+                                // image for either — see
+                                // Message.replyToStatusThumbnailURL), so no
+                                // separate VideoThumbnailImage branch is
+                                // needed here the way there is above for a
+                                // real video message reply.
+                                if (msg.replyToId == null &&
+                                    msg.replyToStatusThumbnailURL != null)
+                                  SizedBox(
+                                    width: 60,
+                                    height: 60,
+                                    child: CachedNetworkImage(
+                                      imageUrl: msg.replyToStatusThumbnailURL!,
+                                      width: 60,
+                                      height: 60,
+                                      fit: BoxFit.cover,
+                                      placeholder: (ctx, url) =>
+                                          Container(color: kBg3),
+                                      errorWidget: (ctx, url, err) => Container(
+                                        color: kBg3,
+                                        child: const Icon(
+                                          Icons.broken_image,
+                                          color: kMuted,
+                                          size: 16,
+                                        ),
+                                      ),
                                     ),
                                   ),
                               ],

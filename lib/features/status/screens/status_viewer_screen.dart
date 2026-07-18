@@ -11,6 +11,7 @@ import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/status_video_player.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../widgets/status_progress_bar.dart';
+import 'status_viewers_screen.dart';
 
 // Fixed display duration for text/image statuses — video statuses instead
 // use their own real duration, reported by StatusVideoPlayer's
@@ -129,6 +130,14 @@ class _StatusGroupPage extends ConsumerStatefulWidget {
   final String currentUid;
   final bool isOwnGroup;
   final VoidCallback onAdvanceToNextAuthor;
+  // Which of group.statuses to open on first frame, by id — e.g. a status-
+  // reply's quote-tap wants the exact segment that was replied to, not
+  // always the first one. Null (every existing call site) keeps the
+  // original always-start-at-0 behavior; a non-null id that no longer
+  // matches any status in the group (expired since the reply was sent)
+  // also falls back to 0 rather than throwing, in _StatusGroupPageState's
+  // own initState below.
+  final String? initialStatusId;
 
   const _StatusGroupPage({
     super.key,
@@ -136,6 +145,7 @@ class _StatusGroupPage extends ConsumerStatefulWidget {
     required this.currentUid,
     required this.isOwnGroup,
     required this.onAdvanceToNextAuthor,
+    this.initialStatusId,
   });
 
   @override
@@ -148,6 +158,17 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
   bool _paused = false;
   Duration? _videoDuration;
   String? _markedViewedStatusId;
+  // Reply-to-status panel state (viewer side only — see isOwnGroup guard in
+  // build() below; the owner sees "Baxanlar" in this same screen position
+  // instead). _replyFocusNode's own listener (registered in initState)
+  // reuses the existing _paused flag for "pause while typing", same
+  // non-ref-counted simplification _openStatusViewers already makes for
+  // "pause while the viewers list is open" — this app has no case where
+  // two pause sources are ever actually active at once in practice, so a
+  // plain bool has always been enough.
+  final TextEditingController _replyController = TextEditingController();
+  final FocusNode _replyFocusNode = FocusNode();
+  bool _sendingReply = false;
 
   // Drag-to-dismiss state, plus the snap-back controller for when a drag
   // doesn't clear the dismiss threshold — same drag-then-animate-back
@@ -162,16 +183,41 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
   @override
   void initState() {
     super.initState();
+    final targetId = widget.initialStatusId;
+    if (targetId != null) {
+      final foundIndex = widget.group.statuses.indexWhere(
+        (s) => s.id == targetId,
+      );
+      // -1 (not found — e.g. the specific replied-to status expired since)
+      // falls back to the existing default of 0 rather than an invalid
+      // index; _currentIndex is already 0 from its own field initializer
+      // above, so only overwrite it on an actual match.
+      if (foundIndex != -1) {
+        _currentIndex = foundIndex;
+      }
+    }
     _snapController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
+    // Rebuilds just to show/hide the send button as the field goes
+    // empty/non-empty — cheap (this whole screen already rebuilds on every
+    // progress-bar tick via setState in StatusProgressBar's own timer, see
+    // that widget), so no debounce/throttle needed for a plain text watch.
+    _replyController.addListener(() {
+      if (mounted) setState(() {});
+    });
+    _replyFocusNode.addListener(() {
+      if (mounted) setState(() => _paused = _replyFocusNode.hasFocus);
+    });
     _maybeMarkViewed();
   }
 
   @override
   void dispose() {
     _snapController.dispose();
+    _replyController.dispose();
+    _replyFocusNode.dispose();
     super.dispose();
   }
 
@@ -202,6 +248,26 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
     if (_markedViewedStatusId == status.id) return;
     _markedViewedStatusId = status.id;
     unawaited(_markViewed(status.id));
+  }
+
+  // Shared by both the tap and the swipe-up gesture on the "Baxanlar"
+  // label below — pauses the segment timer/video while the viewers list
+  // is open (no RouteAware/lifecycle hook exists in this screen for
+  // "another route was pushed on top": confirmed _confirmAndDeleteStatus's
+  // own AlertDialog doesn't pause either, so this is done explicitly
+  // around the push/pop instead of relying on one).
+  Future<void> _openStatusViewers(Status status) async {
+    setState(() => _paused = true);
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => StatusViewersScreen(
+        ownerUid: widget.group.ownerUid,
+        statusId: status.id,
+      ),
+    );
+    if (mounted) setState(() => _paused = false);
   }
 
   // Deleting is destructive and immediate (no undo) — confirm first,
@@ -285,6 +351,67 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
         st,
         reason: 'StatusViewerScreen: markStatusViewed failed',
       );
+    }
+  }
+
+  // Sends the typed reply as a normal chat message in the (possibly
+  // brand-new) 1:1 chat with this status's owner — see
+  // FirestoreService.getOrCreateDirectChat's own doc comment for why a
+  // reply may be the very first message between this pair. Unlike
+  // _markViewed above, a failure here MUST be surfaced (silently losing a
+  // reply the person thinks they sent is worse than the brief interruption
+  // of a SnackBar), matching _confirmAndDeleteStatus's own try/catch shape
+  // one section up rather than _markViewed's silent-log one.
+  Future<void> _sendStatusReply(Status status, {String? overrideText}) async {
+    // overrideText != null means a quick-emoji-reaction tap, not the typed
+    // field — sent independently of whatever's currently in _replyController
+    // (matching WhatsApp's own behavior: tapping a quick reaction doesn't
+    // touch, clear, or send an in-progress typed draft). Only a null
+    // overrideText (the actual send button / keyboard-submit path) reads
+    // from and clears the real text field below.
+    final text = overrideText ?? _replyController.text.trim();
+    if (text.isEmpty || _sendingReply) return;
+    setState(() => _sendingReply = true);
+    try {
+      final service = ref.read(firestoreServiceProvider);
+      final chatId = await service.getOrCreateDirectChat(
+        myUid: widget.currentUid,
+        otherUid: status.ownerUid,
+      );
+      await service.sendMessage(
+        chatId: chatId,
+        senderId: widget.currentUid,
+        text: text,
+        replyToStatusId: status.id,
+        replyToStatusOwnerUid: status.ownerUid,
+        replyToStatusType: status.type,
+        replyToStatusText: status.type == 'text'
+            ? (status.text ?? '')
+            : (status.caption ?? ''),
+        replyToStatusThumbnailURL: status.type == 'text'
+            ? null
+            : status.mediaUrl,
+      );
+      if (!mounted) return;
+      if (overrideText == null) {
+        _replyController.clear();
+        _replyFocusNode.unfocus();
+      }
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'StatusViewerScreen: status reply send failed',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cavab göndərilmədi'),
+          backgroundColor: kRed,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _sendingReply = false);
     }
   }
 
@@ -429,13 +556,203 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
                   bottom: 24,
                   child: Center(
                     child: GestureDetector(
-                      onTap: () {
-                        // TODO: navigate to ViewersListScreen, not built yet
+                      onTap: () => unawaited(_openStatusViewers(status)),
+                      // Upward swipe on this label, matching WhatsApp's own
+                      // gesture — safe alongside the screen-wide dismiss
+                      // GestureDetector above: that one's own _dragY is
+                      // clamped to [0, ∞) (see _handleVerticalDragUpdate),
+                      // so an upward drag already has zero visible/
+                      // functional effect there (no dismiss, no snap-back
+                      // beyond a no-op) regardless of gesture-arena
+                      // resolution between the two. Threshold matches
+                      // _handleVerticalDragEnd's own velocityThreshold
+                      // (700) for a consistent "how hard a flick counts"
+                      // feel across both gestures on this screen.
+                      onVerticalDragEnd: (details) {
+                        if (details.velocity.pixelsPerSecond.dy < -700) {
+                          unawaited(_openStatusViewers(status));
+                        }
                       },
-                      child: const Text(
-                        'Baxanlar',
-                        style: TextStyle(color: kMuted, fontSize: 13),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.keyboard_arrow_up,
+                            color: kMuted,
+                            size: 20,
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.remove_red_eye_outlined,
+                                size: 14,
+                                color: kMuted,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${ref.watch(statusViewersProvider((ownerUid: widget.group.ownerUid, statusId: status.id))).value?.length ?? 0}',
+                                style: const TextStyle(
+                                  color: kMuted,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
+                    ),
+                  ),
+                )
+              else
+                // Viewer side (not the author): a WhatsApp-style reply bar,
+                // always visible (not just on tap) per product decision —
+                // AND an upward swipe also focuses it, exactly mirroring
+                // the owner-side gesture above rather than introducing a
+                // different interaction vocabulary for the same screen.
+                // Same "safe alongside the screen-wide dismiss
+                // GestureDetector" reasoning as that block: onVerticalDragEnd
+                // only, no onVerticalDragUpdate, so it never competes with
+                // the outer drag-to-dismiss for the same pointer motion.
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: 24,
+                  child: SafeArea(
+                    top: false,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Quick-reaction row — WhatsApp's own standard set.
+                        // Each tap sends that single emoji through the
+                        // exact same _sendStatusReply pipe as the typed
+                        // field below (a status reaction IS just a normal
+                        // reply whose text happens to be one emoji — see
+                        // this method's own overrideText param), rather
+                        // than a separate reaction-count field on the
+                        // status doc itself (that's how message reactions
+                        // work — toggleMessageReaction in
+                        // functions/src/index.ts — but status reactions
+                        // are a different, simpler WhatsApp mechanic with
+                        // no aggregate count anywhere).
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withAlpha(30),
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(
+                              color: Colors.white.withAlpha(80),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children:
+                                const ['❤️', '😂', '😮', '😢', '🙏', '👏']
+                                    .map(
+                                      (emoji) => GestureDetector(
+                                        onTap: () => unawaited(
+                                          _sendStatusReply(
+                                            status,
+                                            overrideText: emoji,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          emoji,
+                                          style: const TextStyle(
+                                            fontSize: 26,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                          ),
+                        ),
+                        GestureDetector(
+                          onVerticalDragEnd: (details) {
+                            if (details.velocity.pixelsPerSecond.dy < -700) {
+                              _replyFocusNode.requestFocus();
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withAlpha(30),
+                              borderRadius: BorderRadius.circular(24),
+                              border: Border.all(
+                                color: Colors.white.withAlpha(80),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: _replyController,
+                                    focusNode: _replyFocusNode,
+                                    style: const TextStyle(
+                                      color: kText,
+                                      fontSize: 14,
+                                    ),
+                                    maxLines: 4,
+                                    minLines: 1,
+                                    textInputAction: TextInputAction.send,
+                                    onSubmitted: (_) =>
+                                        unawaited(_sendStatusReply(status)),
+                                    decoration: const InputDecoration(
+                                      hintText: 'Cavab yaz...',
+                                      hintStyle: TextStyle(
+                                        color: kMuted,
+                                        fontSize: 14,
+                                      ),
+                                      border: InputBorder.none,
+                                      isDense: true,
+                                    ),
+                                  ),
+                                ),
+                                // Only shown once there's something to send —
+                                // an always-visible send button next to an
+                                // empty field invites a confusing empty-
+                                // message send attempt (silently a no-op,
+                                // per _sendStatusReply's own early-return
+                                // guard), same as leaving it out entirely
+                                // would, but this is clearer about why
+                                // nothing happens.
+                                if (_replyController.text.trim().isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 4),
+                                    child: _sendingReply
+                                        ? const SizedBox(
+                                            width: 20,
+                                            height: 20,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: kGold,
+                                            ),
+                                          )
+                                        : GestureDetector(
+                                            onTap: () => unawaited(
+                                              _sendStatusReply(status),
+                                            ),
+                                            child: const Icon(
+                                              Icons.send,
+                                              color: kGold,
+                                              size: 20,
+                                            ),
+                                          ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -603,12 +920,18 @@ class UserStatusViewerScreen extends ConsumerStatefulWidget {
   // rationale), passing it here skips a redundant fetch. Falls back to
   // userByIdProvider when omitted.
   final User? initialUser;
+  // Optional — which specific status to open on first frame (e.g. a
+  // status-reply's quote tap in chat_screen.dart), forwarded as-is to
+  // _StatusGroupPage. Every existing call site omits this and keeps
+  // opening at the first status, unchanged.
+  final String? initialStatusId;
 
   const UserStatusViewerScreen({
     super.key,
     required this.ownerUid,
     required this.currentUid,
     this.initialUser,
+    this.initialStatusId,
   });
 
   @override
@@ -689,6 +1012,7 @@ class _UserStatusViewerScreenState
             // introducing a distinct "last piece" gesture just for this
             // entry point.
             onAdvanceToNextAuthor: () => Navigator.of(context).pop(),
+            initialStatusId: widget.initialStatusId,
           );
         },
       ),

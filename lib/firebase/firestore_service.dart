@@ -306,6 +306,34 @@ class FirestoreService {
     return batch.commit();
   }
 
+  // Owner-only live list of who has viewed one specific status segment,
+  // most-recent-view-first — matches WhatsApp's own viewers-list ordering.
+  // firestore.rules' viewers/{viewerUid} `allow read` only lets ownerUid
+  // list the full subcollection (a non-owner's request would simply be
+  // rejected before this ever resolves, so no caller-side uid check is
+  // needed here — same trust boundary as watchStatusFeed relying on its
+  // own collectionGroup rule). Scoped to a single status's own viewers
+  // subcollection, bounded by however many people viewed that one status —
+  // not a scale concern, same reasoning as hasViewedStatus above.
+  Stream<List<StatusViewer>> watchStatusViewers({
+    required String ownerUid,
+    required String statusId,
+  }) {
+    return _db
+        .collection('users')
+        .doc(ownerUid)
+        .collection('statuses')
+        .doc(statusId)
+        .collection('viewers')
+        .orderBy('viewedAt', descending: true)
+        .snapshots()
+        .map(
+          (snap) => snap.docs
+              .map((d) => StatusViewer.fromFirestore(d.id, d.data()))
+              .toList(),
+        );
+  }
+
   // Plain client-side delete — firestore.rules already authorizes this
   // directly (`allow delete: if isSignedIn() && request.auth.uid ==
   // userId` on the status doc), no Cloud Function needed the way
@@ -456,6 +484,89 @@ class FirestoreService {
       'privacyList': privacyList,
     });
     return statusId;
+  }
+
+  // Deterministic pair id — sorted so it's the same regardless of who
+  // initiates, mirroring friendRequestDocId's own reasoning above. This is
+  // what lets set(..., merge: true) be race-safe with no transaction: a
+  // simultaneous tap from both sides either both hit `create` (whichever
+  // Firestore serializes first) or one `create` + one `update`, and
+  // firestore.rules' chats update rule already allows any current member
+  // to write as long as members/admins don't actually change (see that
+  // rule's own comment) — which merge-writing the identical members list
+  // never does.
+  String directChatDocId(String uidA, String uidB) {
+    final sorted = [uidA, uidB]..sort();
+    return '${sorted[0]}_${sorted[1]}';
+  }
+
+  // Finds or creates the 1:1 chat between two users, for flows (like a
+  // status reply/reaction) that may be the first-ever message between two
+  // friends. mugam-v2 is a live, still-running app on this same backend
+  // (see functions/src/index.ts's own Expo-push-dedup comment) that has
+  // always created 1:1 chats itself via a random addDoc() id — so a pair
+  // who already messaged through mugam-v2 in the past already has a chat
+  // doc, just not at this function's deterministic id. Checking the
+  // deterministic id ALONE first would miss that and create a second,
+  // parallel chat for the same pair — splitting their message history
+  // across two threads. Order matters:
+  //   1. Deterministic-id doc — covers every chat this function itself
+  //      has ever created.
+  //   2. Legacy fallback query (mirrors mugam-v2's own createOrGetDirectChat
+  //      lookup in mugam-v2/src/firebase/firestore.ts) — covers a
+  //      pre-existing mugam-v2-created chat for this pair. If more than
+  //      one such legacy chat somehow exists (a real prior inconsistency,
+  //      not something this function could cause going forward), picks
+  //      the most recently active one rather than an arbitrary/query-order
+  //      one, and never throws over it.
+  //   3. Only if neither exists — create at the deterministic id.
+  // Deliberately drops mugam-v2's initiatorUid/INVITES-collection fields —
+  // that's specific to its musician-matching flow and has no equivalent
+  // here (this app's friend system is symmetric — see [[mugam-friends]]).
+  Future<String> getOrCreateDirectChat({
+    required String myUid,
+    required String otherUid,
+  }) async {
+    final detId = directChatDocId(myUid, otherUid);
+    final detDoc = await _db.collection('chats').doc(detId).get();
+    if (detDoc.exists) return detId;
+
+    final legacyMatches = await _db
+        .collection('chats')
+        .where('members', arrayContains: myUid)
+        .get();
+    final legacyChats = legacyMatches.docs.where((d) {
+      final data = d.data();
+      if (data['isGroup'] == true) return false;
+      final members = List<String>.from(
+        data['members'] as List? ?? const [],
+      );
+      return members.contains(otherUid);
+    }).toList();
+    if (legacyChats.isNotEmpty) {
+      legacyChats.sort((a, b) {
+        final aTime = a.data()['lastMessageTime'] as Timestamp?;
+        final bTime = b.data()['lastMessageTime'] as Timestamp?;
+        if (aTime == null && bTime == null) return 0;
+        if (aTime == null) return 1;
+        if (bTime == null) return -1;
+        return bTime.compareTo(aTime);
+      });
+      return legacyChats.first.id;
+    }
+
+    final now = FieldValue.serverTimestamp();
+    await _db.collection('chats').doc(detId).set({
+      'isGroup': false,
+      'members': [myUid, otherUid],
+      'completed': false,
+      'preview': '',
+      'lastMessageAt': now,
+      'lastMessageTime': now,
+      'createdAt': now,
+      'unreadCount': <String, int>{},
+    }, SetOptions(merge: true));
+    return detId;
   }
 
   // Mirrors mugam-v2's createGroupChat() Firestore write shape exactly
@@ -916,6 +1027,35 @@ class FirestoreService {
     return map;
   }
 
+  // Mirrors _buildReplyTo above exactly, but as its own separate nested map
+  // (replyToStatus, not replyTo) — see Message.replyToStatusId's own doc
+  // comment for why a status reply is never written through the replyTo
+  // fields/map. ownerUid is required (not just id) because
+  // UserStatusViewerScreen needs it up front to fetch the author's status
+  // group; if it's missing there's nothing a tap handler could open, so
+  // treat that the same as replyToStatusId itself being absent.
+  Map<String, dynamic>? _buildReplyToStatus({
+    String? replyToStatusId,
+    String? replyToStatusOwnerUid,
+    String? replyToStatusType,
+    String? replyToStatusText,
+    String? replyToStatusThumbnailURL,
+  }) {
+    if (replyToStatusId == null || replyToStatusOwnerUid == null) {
+      return null;
+    }
+    final map = <String, dynamic>{
+      'id': replyToStatusId,
+      'ownerUid': replyToStatusOwnerUid,
+      'type': replyToStatusType ?? 'text',
+      'text': replyToStatusText ?? '',
+    };
+    if (replyToStatusThumbnailURL != null) {
+      map['thumbnailURL'] = replyToStatusThumbnailURL;
+    }
+    return map;
+  }
+
   // Generates a message doc id client-side, up front, before any upload or
   // send attempt — used by the pending-media queue so every retry of the
   // same queued item writes to the same doc via sendXMessage's messageId
@@ -963,6 +1103,11 @@ class FirestoreService {
     String? replyToSenderName,
     String? replyToImageURL,
     String? replyToVideoURL,
+    String? replyToStatusId,
+    String? replyToStatusOwnerUid,
+    String? replyToStatusType,
+    String? replyToStatusText,
+    String? replyToStatusThumbnailURL,
     // If provided, writes with .doc(messageId).set(...) instead of .add(...)
     // — same idempotency purpose as sendImageMessage's messageId param, used
     // by the offline pending-send queue so a retry of the same queued text
@@ -977,6 +1122,13 @@ class FirestoreService {
       replyToImageURL: replyToImageURL,
       replyToVideoURL: replyToVideoURL,
     );
+    final replyToStatus = _buildReplyToStatus(
+      replyToStatusId: replyToStatusId,
+      replyToStatusOwnerUid: replyToStatusOwnerUid,
+      replyToStatusType: replyToStatusType,
+      replyToStatusText: replyToStatusText,
+      replyToStatusThumbnailURL: replyToStatusThumbnailURL,
+    );
     final data = {
       'senderId': senderId,
       'text': text,
@@ -987,6 +1139,7 @@ class FirestoreService {
       'imageURL': null,
       'audioURL': null,
       if (replyTo != null) 'replyTo': replyTo,
+      if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
     bool wrote = true;
     if (messageId != null) {
@@ -1078,6 +1231,11 @@ class FirestoreService {
     String? replyToSenderName,
     String? replyToImageURL,
     String? replyToVideoURL,
+    String? replyToStatusId,
+    String? replyToStatusOwnerUid,
+    String? replyToStatusType,
+    String? replyToStatusText,
+    String? replyToStatusThumbnailURL,
     // If provided, writes with .doc(messageId).set(...) instead of .add(...)
     // — makes retries of this exact same send idempotent (same id = same
     // document, no duplicate) instead of creating a new document each retry.
@@ -1090,6 +1248,13 @@ class FirestoreService {
       replyToSenderName: replyToSenderName,
       replyToImageURL: replyToImageURL,
       replyToVideoURL: replyToVideoURL,
+    );
+    final replyToStatus = _buildReplyToStatus(
+      replyToStatusId: replyToStatusId,
+      replyToStatusOwnerUid: replyToStatusOwnerUid,
+      replyToStatusType: replyToStatusType,
+      replyToStatusText: replyToStatusText,
+      replyToStatusThumbnailURL: replyToStatusThumbnailURL,
     );
     final data = {
       'senderId': senderId,
@@ -1105,6 +1270,7 @@ class FirestoreService {
       'audioURL': null,
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
+      if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
     bool wrote = true;
     if (messageId != null) {
@@ -1179,6 +1345,11 @@ class FirestoreService {
     String? replyToSenderName,
     String? replyToImageURL,
     String? replyToVideoURL,
+    String? replyToStatusId,
+    String? replyToStatusOwnerUid,
+    String? replyToStatusType,
+    String? replyToStatusText,
+    String? replyToStatusThumbnailURL,
     String? messageId,
   }) async {
     final now = FieldValue.serverTimestamp();
@@ -1188,6 +1359,13 @@ class FirestoreService {
       replyToSenderName: replyToSenderName,
       replyToImageURL: replyToImageURL,
       replyToVideoURL: replyToVideoURL,
+    );
+    final replyToStatus = _buildReplyToStatus(
+      replyToStatusId: replyToStatusId,
+      replyToStatusOwnerUid: replyToStatusOwnerUid,
+      replyToStatusType: replyToStatusType,
+      replyToStatusText: replyToStatusText,
+      replyToStatusThumbnailURL: replyToStatusThumbnailURL,
     );
     final data = {
       'senderId': senderId,
@@ -1205,6 +1383,7 @@ class FirestoreService {
       'audioURL': null,
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
+      if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
     bool wrote = true;
     if (messageId != null) {
@@ -1280,6 +1459,11 @@ class FirestoreService {
     String? replyToSenderName,
     String? replyToImageURL,
     String? replyToVideoURL,
+    String? replyToStatusId,
+    String? replyToStatusOwnerUid,
+    String? replyToStatusType,
+    String? replyToStatusText,
+    String? replyToStatusThumbnailURL,
     String? messageId,
   }) async {
     final now = FieldValue.serverTimestamp();
@@ -1289,6 +1473,13 @@ class FirestoreService {
       replyToSenderName: replyToSenderName,
       replyToImageURL: replyToImageURL,
       replyToVideoURL: replyToVideoURL,
+    );
+    final replyToStatus = _buildReplyToStatus(
+      replyToStatusId: replyToStatusId,
+      replyToStatusOwnerUid: replyToStatusOwnerUid,
+      replyToStatusType: replyToStatusType,
+      replyToStatusText: replyToStatusText,
+      replyToStatusThumbnailURL: replyToStatusThumbnailURL,
     );
     final data = {
       'senderId': senderId,
@@ -1305,6 +1496,7 @@ class FirestoreService {
       'audioURL': null,
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
+      if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
     bool wrote = true;
     if (messageId != null) {
@@ -1377,6 +1569,11 @@ class FirestoreService {
     String? replyToSenderName,
     String? replyToImageURL,
     String? replyToVideoURL,
+    String? replyToStatusId,
+    String? replyToStatusOwnerUid,
+    String? replyToStatusType,
+    String? replyToStatusText,
+    String? replyToStatusThumbnailURL,
     String? messageId,
   }) async {
     final now = FieldValue.serverTimestamp();
@@ -1386,6 +1583,13 @@ class FirestoreService {
       replyToSenderName: replyToSenderName,
       replyToImageURL: replyToImageURL,
       replyToVideoURL: replyToVideoURL,
+    );
+    final replyToStatus = _buildReplyToStatus(
+      replyToStatusId: replyToStatusId,
+      replyToStatusOwnerUid: replyToStatusOwnerUid,
+      replyToStatusType: replyToStatusType,
+      replyToStatusText: replyToStatusText,
+      replyToStatusThumbnailURL: replyToStatusThumbnailURL,
     );
     final data = {
       'senderId': senderId,
@@ -1402,6 +1606,7 @@ class FirestoreService {
       'audioURL': null,
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
+      if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
     bool wrote = true;
     if (messageId != null) {
@@ -1459,6 +1664,11 @@ class FirestoreService {
     String? replyToSenderName,
     String? replyToImageURL,
     String? replyToVideoURL,
+    String? replyToStatusId,
+    String? replyToStatusOwnerUid,
+    String? replyToStatusType,
+    String? replyToStatusText,
+    String? replyToStatusThumbnailURL,
     String? messageId,
   }) async {
     final now = FieldValue.serverTimestamp();
@@ -1468,6 +1678,13 @@ class FirestoreService {
       replyToSenderName: replyToSenderName,
       replyToImageURL: replyToImageURL,
       replyToVideoURL: replyToVideoURL,
+    );
+    final replyToStatus = _buildReplyToStatus(
+      replyToStatusId: replyToStatusId,
+      replyToStatusOwnerUid: replyToStatusOwnerUid,
+      replyToStatusType: replyToStatusType,
+      replyToStatusText: replyToStatusText,
+      replyToStatusThumbnailURL: replyToStatusThumbnailURL,
     );
     final data = {
       'senderId': senderId,
@@ -1482,6 +1699,7 @@ class FirestoreService {
       'imageURL': null,
       'timestamp': now,
       if (replyTo != null) 'replyTo': replyTo,
+      if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
     bool wrote = true;
     if (messageId != null) {
@@ -2283,6 +2501,19 @@ final hasViewedStatusProvider = FutureProvider.autoDispose
             statusId: args.statusId,
             viewerUid: viewerUid,
           );
+    });
+
+// autoDispose — only ever watched while StatusViewersScreen (the owner's
+// "Baxanlar" list) is on-screen for one specific status, same rationale as
+// hasViewedStatusProvider's own autoDispose above.
+final statusViewersProvider = StreamProvider.autoDispose
+    .family<List<StatusViewer>, ({String ownerUid, String statusId})>((
+      ref,
+      args,
+    ) {
+      return ref
+          .watch(firestoreServiceProvider)
+          .watchStatusViewers(ownerUid: args.ownerUid, statusId: args.statusId);
     });
 
 // autoDispose — only ever watched via widget.chatId within chat_screen.dart's

@@ -313,6 +313,22 @@ class Message {
   final String? replyToSenderName;
   final String? replyToImageURL;
   final String? replyToVideoURL;
+  // A reply to someone's status/story (WhatsApp-style swipe-up), as opposed
+  // to a reply to another chat message (replyToId above). Deliberately a
+  // SEPARATE set of fields rather than repurposing replyToId: replyToId's
+  // own tap handler (_scrollToMessage in chat_screen.dart) searches this
+  // chat's own message history for a doc with that id, which a statusId
+  // would never match — it would silently hang searching, then report "not
+  // found", rather than opening the status. replyToStatusOwnerUid is
+  // required alongside replyToStatusId because UserStatusViewerScreen (the
+  // screen this reply's own tap handler opens) needs the author's uid up
+  // front to fetch their status group — a status doc's id alone doesn't
+  // encode who posted it without a separate lookup.
+  final String? replyToStatusId;
+  final String? replyToStatusOwnerUid;
+  final String? replyToStatusType; // 'text' | 'image' | 'video'
+  final String? replyToStatusText;
+  final String? replyToStatusThumbnailURL;
   final bool deletedForAll;
   final List<String> deletedFor;
   final String? deletedAt;
@@ -398,6 +414,11 @@ class Message {
     this.replyToSenderName,
     this.replyToImageURL,
     this.replyToVideoURL,
+    this.replyToStatusId,
+    this.replyToStatusOwnerUid,
+    this.replyToStatusType,
+    this.replyToStatusText,
+    this.replyToStatusThumbnailURL,
     this.deletedForAll = false,
     this.deletedFor = const [],
     this.deletedAt,
@@ -413,6 +434,7 @@ class Message {
 
   factory Message.fromFirestore(String id, Map<String, dynamic> data) {
     final replyTo = data['replyTo'] as Map<String, dynamic>?;
+    final replyToStatus = data['replyToStatus'] as Map<String, dynamic>?;
     final rawReactions = data['reactions'] as Map<String, dynamic>? ?? {};
     return Message(
       id: id,
@@ -443,6 +465,11 @@ class Message {
       replyToSenderName: replyTo?['senderName'] as String?,
       replyToImageURL: replyTo?['imageURL'] as String?,
       replyToVideoURL: replyTo?['videoURL'] as String?,
+      replyToStatusId: replyToStatus?['id'] as String?,
+      replyToStatusOwnerUid: replyToStatus?['ownerUid'] as String?,
+      replyToStatusType: replyToStatus?['type'] as String?,
+      replyToStatusText: replyToStatus?['text'] as String?,
+      replyToStatusThumbnailURL: replyToStatus?['thumbnailURL'] as String?,
       deletedForAll: data['deletedForAll'] ?? false,
       deletedFor: List<String>.from(data['deletedFor'] as List? ?? const []),
       deletedAt: data['deletedAt'] as String?,
@@ -735,6 +762,27 @@ class StatusGroup {
   final List<Status> statuses; // sorted by createdAt ascending
 
   const StatusGroup({required this.ownerUid, required this.statuses});
+}
+
+// One entry in a status owner's viewers/{viewerUid} subcollection — see
+// firestore.rules' match /viewers/{viewerUid} for the write shape this
+// mirrors (exactly one field, viewedAt, enforced server-side as
+// request.time). Owner-only readable as a list; a viewer may only read
+// their own single record (see FirestoreService.markStatusViewed and
+// hasViewedStatus, which already use this subcollection without needing
+// this model, since they only ever check/write a single known uid).
+class StatusViewer {
+  final String uid;
+  final DateTime viewedAt;
+
+  const StatusViewer({required this.uid, required this.viewedAt});
+
+  factory StatusViewer.fromFirestore(String uid, Map<String, dynamic> data) {
+    return StatusViewer(
+      uid: uid,
+      viewedAt: (data['viewedAt'] as Timestamp).toDate(),
+    );
+  }
 }
 
 // friendRequests/{requestId} — a Facebook-style friend request between two
