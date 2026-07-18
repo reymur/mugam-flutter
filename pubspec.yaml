@@ -39,6 +39,7 @@ dependencies:
   emoji_picker_flutter: any
   flutter_cache_manager: any
   share_plus: any
+  gal: any
   device_info_plus: any
   connectivity_plus: ^7.2.0
   workmanager: ^0.9.0+3

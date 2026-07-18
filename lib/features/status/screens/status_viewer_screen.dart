@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:gal/gal.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -333,6 +338,152 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
     }
   }
 
+  // Dispatches a selected action from _HeaderRow's own PopupMenuButton
+  // (a compact, anchored-to-the-"..."-button popover — matching the real
+  // WhatsApp reference screenshot exactly, which is NOT a full-width
+  // bottom sheet: that was this feature's own second pass, visually
+  // confirmed to be the wrong WhatsApp layout variant after Teymur
+  // compared two different real screenshots side by side). PopupMenuButton
+  // handles its own show/dismiss/positioning, so this method only needs to
+  // route the selected value — same shape as the original delete-only
+  // PopupMenuButton this whole feature grew out of.
+  void _handleStatusAction(Status status, String action) {
+    switch (action) {
+      case 'forward':
+        _forwardStatus(status);
+        break;
+      case 'share':
+        unawaited(_shareStatus(status));
+        break;
+      case 'save':
+        unawaited(_saveStatusToGallery(status));
+        break;
+      case 'delete':
+        unawaited(_confirmAndDeleteStatus(status));
+        break;
+    }
+  }
+
+  // Mirrors ChatAttachmentViewerScreen._shareMessage's own pattern exactly
+  // (download via DefaultCacheManager into a temp file, then
+  // SharePlus.instance.share) — the app's one existing precedent for
+  // sharing remote media out of the app, adapted from a Message's
+  // imageURL/videoURL to a Status's own single mediaUrl field. Text
+  // statuses share their text directly instead (ShareParams(text: ...)),
+  // since there's no media file to share for those.
+  Future<void> _shareStatus(Status status) async {
+    try {
+      if (status.type == 'text') {
+        await SharePlus.instance.share(ShareParams(text: status.text ?? ''));
+        return;
+      }
+      final url = status.mediaUrl;
+      if (url == null) return;
+      final cached = await DefaultCacheManager().getSingleFile(url);
+      final bytes = await cached.readAsBytes();
+      final tempDir = await getTemporaryDirectory();
+      final ext = status.type == 'video' ? 'mp4' : 'jpg';
+      final path = '${tempDir.path}/share_status_${status.id}.$ext';
+      await File(path).writeAsBytes(bytes);
+      await SharePlus.instance.share(ShareParams(files: [XFile(path)]));
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: '_StatusGroupPageState: status share failed',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Paylaşma alınmadı'),
+          backgroundColor: kRed,
+        ),
+      );
+    }
+  }
+
+  // NOT YET IMPLEMENTED — Forward needs a real ForwardSheet adaptation
+  // (that widget currently requires List<Message> + a sourceChatId — a
+  // Status doesn't fit that shape without deliberate, separately-reviewed
+  // changes to it, a heavily-used shared file). Surfaced explicitly here
+  // rather than silently doing nothing, so tapping it is never a dead end
+  // with no feedback.
+  void _forwardStatus(Status status) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Tezliklə əlavə olunacaq')),
+    );
+  }
+
+  // Mirrors _shareStatus's own download pattern exactly (DefaultCacheManager
+  // into a temp file), then hands that file to `gal` — the package Teymur
+  // confirmed for this — instead of SharePlus. Text statuses have no media
+  // to save, so they get an explanatory snackbar instead of a silent no-op.
+  Future<void> _saveStatusToGallery(Status status) async {
+    if (status.type == 'text') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Mətn statusunu qalereyaya yadda saxlamaq olmaz'),
+        ),
+      );
+      return;
+    }
+    try {
+      // Explicit request rather than relying on putImage/putVideo's own
+      // implicit request — makes a missing/denied permission surface as a
+      // clear GalException.accessDenied here instead of silently failing
+      // deeper inside the write call, which is what Teymur's on-device
+      // "Yadda saxlanmadı" (with no further detail) suggested was
+      // happening.
+      final hasAccess = await Gal.hasAccess();
+      if (!hasAccess) {
+        final granted = await Gal.requestAccess();
+        if (!granted) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Qalereyaya giriş icazəsi verilmədi'),
+              backgroundColor: kRed,
+            ),
+          );
+          return;
+        }
+      }
+      final url = status.mediaUrl;
+      if (url == null) return;
+      final cached = await DefaultCacheManager().getSingleFile(url);
+      final bytes = await cached.readAsBytes();
+      final tempDir = await getTemporaryDirectory();
+      final ext = status.type == 'video' ? 'mp4' : 'jpg';
+      final path = '${tempDir.path}/save_status_${status.id}.$ext';
+      await File(path).writeAsBytes(bytes);
+      if (status.type == 'video') {
+        await Gal.putVideo(path);
+      } else {
+        await Gal.putImage(path);
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Qalereyaya yadda saxlanıldı')),
+      );
+    } catch (e, st) {
+      // TEMPORARY — remove once the real on-device cause is confirmed via
+      // this raw output (Teymur's terminal, not a paraphrase of it).
+      debugPrint('SAVE_TO_GALLERY_ERROR: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: '_StatusGroupPageState: status save-to-gallery failed',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Yadda saxlanmadı'),
+          backgroundColor: kRed,
+        ),
+      );
+    }
+  }
+
   // A failed view-marking write must not interrupt viewing — same
   // try/catch + FirebaseCrashlytics.instance.recordError shape as
   // status_video_player.dart's _deactivateAudioSession, silently logged
@@ -558,9 +709,9 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
                       _HeaderRow(
                         user: user,
                         status: status,
-                        onClose: () => Navigator.of(context).pop(),
                         isOwnGroup: widget.isOwnGroup,
-                        onDelete: () => _confirmAndDeleteStatus(status),
+                        onAction: (action) =>
+                            _handleStatusAction(status, action),
                       ),
                     ],
                   ),
@@ -838,17 +989,40 @@ class _MediaContent extends StatelessWidget {
 class _HeaderRow extends StatelessWidget {
   final User? user;
   final Status status;
-  final VoidCallback onClose;
   final bool isOwnGroup;
-  final VoidCallback onDelete;
+  final ValueChanged<String> onAction;
 
   const _HeaderRow({
     required this.user,
     required this.status,
-    required this.onClose,
     required this.isOwnGroup,
-    required this.onDelete,
+    required this.onAction,
   });
+
+  // One row inside the PopupMenuButton below — label on the left, icon on
+  // the right, matching the real WhatsApp reference screenshot's own
+  // compact anchored-popover layout exactly (that screenshot is NOT a
+  // full-width bottom sheet — an earlier pass of this feature briefly
+  // built that instead, based on a different WhatsApp screenshot Teymur
+  // had sent, before comparing both side by side and confirming this
+  // compact popover is the one to match).
+  PopupMenuItem<String> _menuItem(
+    String value,
+    String label,
+    IconData icon, {
+    bool isDestructive = false,
+  }) {
+    final color = isDestructive ? kRed : kText;
+    return PopupMenuItem(
+      value: value,
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: TextStyle(color: color))),
+          Icon(icon, color: color, size: 20),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -887,33 +1061,35 @@ class _HeaderRow extends StatelessWidget {
             ],
           ),
         ),
-        // Own statuses get a "..." menu (currently just delete) instead
-        // of a plain close X — deleting removes this specific status
-        // fragment via the already-deployed backend (firestore.rules'
-        // owner-delete rule + onStatusDeleted's cascade cleanup). Other
-        // people's statuses keep the plain close X unchanged — deleting
-        // someone else's status was never possible and isn't offered.
-        // The existing drag-down-to-dismiss gesture still works as a
-        // close method either way, this only changes the button.
-        if (isOwnGroup)
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.white, size: 26),
-            color: kBg2,
-            onSelected: (value) {
-              if (value == 'delete') onDelete();
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'delete',
-                child: Text('Sil', style: TextStyle(color: kText)),
-              ),
-            ],
-          )
-        else
-          IconButton(
-            icon: const Icon(Icons.close, color: Colors.white, size: 26),
-            onPressed: onClose,
+        // Same "..." popover for both own and others' statuses now
+        // (Forward/Share/Save always, Delete only when isOwnGroup) —
+        // matches the WhatsApp reference screenshot, which uses its own
+        // back-arrow + swipe-down for closing rather than a dedicated X,
+        // so the old close-X IconButton is gone entirely, not just
+        // hidden for one branch.
+        PopupMenuButton<String>(
+          icon: const Icon(Icons.more_vert, color: Colors.white, size: 26),
+          color: kBg2,
+          // Default offset is Offset.zero, which anchors the menu's top
+          // edge right at the button itself — covering it entirely, as
+          // Teymur's on-device screenshot showed. The real WhatsApp
+          // reference keeps its own "..." visible, with the menu dropping
+          // down below it instead. A downward offset roughly matching the
+          // icon's own tap-target height achieves that without covering
+          // the button.
+          offset: const Offset(0, 40),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
           ),
+          onSelected: onAction,
+          itemBuilder: (context) => [
+            _menuItem('forward', 'Yönləndir', Icons.forward),
+            _menuItem('share', 'Paylaş', Icons.ios_share),
+            _menuItem('save', 'Yadda saxla', Icons.download),
+            if (isOwnGroup)
+              _menuItem('delete', 'Sil', Icons.delete_outline, isDestructive: true),
+          ],
+        ),
       ],
     );
   }
