@@ -34,6 +34,51 @@ class User {
   // on the settings gear icon and the Dost sorğuları row. Deliberately a
   // separate field from lastSeen above, which is presence-only.
   final Timestamp? lastViewedFriendRequestsAt;
+  // Denormalized onto the user doc by onStatusCreated (functions/src/
+  // index.ts) — the expiresAt of whichever status that trigger most
+  // recently saw, regardless of privacyMode/isPublic (the avatar ring this
+  // backs is a presence-style "do they currently have one" indicator, not a
+  // visibility check — every screen showing a ring already fetches this
+  // same User doc, same free-ride as isActuallyOnline below, avoiding an
+  // N+1 per-row status query). Deliberately NOT recomputed on expiry itself
+  // (no scheduled function exists, and Firestore's own TTL-based cleanup on
+  // statuses can lag up to 24h behind expiresAt — see Status.expiresAt's
+  // own comment) — hasActiveStatus below is what actually keeps this
+  // truthful moment-to-moment despite that, the same way isActuallyOnline
+  // cross-checks a possibly-stale `online` bool against lastSeen.
+  final Timestamp? mostRecentStatusExpiresAt;
+  // Denormalized alongside mostRecentStatusExpiresAt by the same
+  // onStatusCreated trigger (arrayUnion on create, arrayRemove by
+  // onStatusDeleted on delete — explicit or TTL-driven expiry, both fire
+  // the same trigger). What mostRecentStatusExpiresAt alone can't provide:
+  // a get()-able document id. A non-friend viewer can never list
+  // users/{ownerUid}/statuses (that query stays visibleToUids-gated,
+  // unchanged by the isPublic/get() split — see firestore.rules), so this
+  // is how such a viewer's client discovers which statusId(s) to get()
+  // once isPublic authorizes actually reading one. Defaults to an empty
+  // list for any user doc predating this field, same as every other
+  // predates-the-field default in this file.
+  final List<String> activeStatusIds;
+  // Denormalized alongside mostRecentStatusExpiresAt/activeStatusIds by the
+  // same onStatusCreated trigger, just the new status's createdAt instead
+  // of expiresAt — this is the "gold ring" side of ring parity: a fixed
+  // point in time this owner most recently posted, compared against a
+  // viewer's own lastViewedStatusOwnerAt entry for this owner (see
+  // hasUnviewedStatusFrom below) to tell a truly-unviewed status apart
+  // from one the viewer already saw. Never recomputed on expiry, same
+  // caveat as mostRecentStatusExpiresAt.
+  final Timestamp? mostRecentStatusCreatedAt;
+  // Lives on the VIEWER's own user doc (not the owner's) — keyed by
+  // ownerUid, one entry per status-author this viewer has ever viewed a
+  // status from. Written client-side, batched alongside the existing
+  // viewers/{viewerUid} write in FirestoreService.markStatusViewed (same
+  // call, same batch, no new server trigger) — see that method's own
+  // comment. Purely self-scoped ring-rendering state, not security-
+  // relevant the way viewers/{viewerUid}'s own viewedAt is (that field
+  // gates what the STATUS OWNER can see about who viewed them), so unlike
+  // that field this one carries no serverTimestamp()-enforcement rule.
+  // Defaults to an empty map for any user doc predating this field.
+  final Map<String, Timestamp> lastViewedStatusOwnerAt;
 
   const User({
     required this.id,
@@ -54,6 +99,10 @@ class User {
     this.role = 'user',
     this.maxUploadSizeMb = 100,
     this.lastViewedFriendRequestsAt,
+    this.mostRecentStatusExpiresAt,
+    this.activeStatusIds = const [],
+    this.mostRecentStatusCreatedAt,
+    this.lastViewedStatusOwnerAt = const {},
   });
 
   factory User.fromFirestore(String id, Map<String, dynamic> data) {
@@ -76,6 +125,13 @@ class User {
       role: (data['role'] ?? 'user') as String,
       maxUploadSizeMb: (data['maxUploadSizeMb'] ?? 100) as int,
       lastViewedFriendRequestsAt: data['lastViewedFriendRequestsAt'] as Timestamp?,
+      mostRecentStatusExpiresAt: data['mostRecentStatusExpiresAt'] as Timestamp?,
+      activeStatusIds:
+          List<String>.from(data['activeStatusIds'] as List? ?? const []),
+      mostRecentStatusCreatedAt: data['mostRecentStatusCreatedAt'] as Timestamp?,
+      lastViewedStatusOwnerAt:
+          (data['lastViewedStatusOwnerAt'] as Map<String, dynamic>? ?? const {})
+              .map((key, value) => MapEntry(key, value as Timestamp)),
     );
   }
 
@@ -90,6 +146,30 @@ class User {
     final seen = lastSeen;
     if (seen == null) return false;
     return DateTime.now().difference(seen.toDate()) < const Duration(minutes: 2);
+  }
+
+  // Same shape as isActuallyOnline above: a denormalized field alone isn't
+  // trustworthy (mostRecentStatusExpiresAt is only ever written forward by
+  // onStatusCreated, never cleared), so this cross-checks it against the
+  // current time client-side — exactly the same query-time expiry check
+  // watchStatusFeed's own expiresAt filter already relies on, just applied
+  // to this one denormalized timestamp instead of a live query.
+  bool get hasActiveStatus =>
+      mostRecentStatusExpiresAt != null &&
+      mostRecentStatusExpiresAt!.toDate().isAfter(DateTime.now());
+
+  // Gold/muted ring parity check: called on the VIEWER's own User instance
+  // (`this`), passed the status OWNER's User instance — mirrors where each
+  // field actually lives (lastViewedStatusOwnerAt on the viewer's doc,
+  // mostRecentStatusCreatedAt on the owner's doc). True ("gold", unviewed)
+  // when the owner has ever posted a status and either this viewer has
+  // never viewed anything from that owner, or their last view of that
+  // owner predates the owner's most recent post.
+  bool hasUnviewedStatusFrom(User owner) {
+    if (owner.mostRecentStatusCreatedAt == null) return false;
+    final lastViewed = lastViewedStatusOwnerAt[owner.id];
+    return lastViewed == null ||
+        lastViewed.toDate().isBefore(owner.mostRecentStatusCreatedAt!.toDate());
   }
 }
 

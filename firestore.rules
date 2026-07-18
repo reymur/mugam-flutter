@@ -65,16 +65,30 @@ service cloud.firestore {
 
       // Profile edits: only the owner, and — regardless of what else the
       // update touches — role/verified/goldRing/rating/reviews/gigs/
-      // followers may never change value via a client update. They're
-      // set once at registration (create, above) and from then on are
-      // either permanently fixed (verified/goldRing/role in both apps'
-      // actual code) or reserved for a future server-managed feature
-      // (rating/reviews/followers/gigs — no client in either app writes
-      // these post-creation today). Comparing request.resource.data.X to
-      // resource.data.X passes automatically for any update that doesn't
-      // touch X at all (a plain .update() call preserves untouched
-      // fields), so this never blocks the real profile-edit flows
-      // (updateUserProfile, setUserOnline, saveReadAgreementId).
+      // followers/mostRecentStatusExpiresAt/activeStatusIds may never
+      // change value via a client update. role/verified/goldRing/rating/
+      // reviews/followers/gigs are set once at registration (create,
+      // above) and from then on are either permanently fixed
+      // (verified/goldRing/role in both apps' actual code) or reserved for
+      // a future server-managed feature (rating/reviews/followers/gigs —
+      // no client in either app writes these post-creation today).
+      // mostRecentStatusExpiresAt/activeStatusIds are different — never
+      // set at registration, exclusively written by onStatusCreated/
+      // onStatusDeleted (functions/src/index.ts, Admin SDK, bypasses this
+      // rule entirely) — guarded here so a client can't self-write either
+      // to fake the avatar ring's hasActiveStatus, or corrupt
+      // activeStatusIds with a stale/forged entry (lib/firebase/
+      // models.dart). Not an access-control gap either way: forging a
+      // statusId into activeStatusIds doesn't itself grant read access to
+      // that status — get() is independently re-checked against the
+      // status doc's own isPublic/privacyList/visibleToUids every time,
+      // regardless of what this array contains; this guard is purely about
+      // keeping the array itself truthful. Comparing request.resource.data.X
+      // to resource.data.X passes
+      // automatically for any update that doesn't touch X at all (a plain
+      // .update() call preserves untouched fields), so this never blocks
+      // the real profile-edit flows (updateUserProfile, setUserOnline,
+      // saveReadAgreementId).
       allow update: if isSignedIn() && request.auth.uid == userId
         && request.resource.data.get('role', null) == resource.data.get('role', null)
         && request.resource.data.get('verified', null) == resource.data.get('verified', null)
@@ -83,6 +97,10 @@ service cloud.firestore {
         && request.resource.data.get('reviews', null) == resource.data.get('reviews', null)
         && request.resource.data.get('gigs', null) == resource.data.get('gigs', null)
         && request.resource.data.get('followers', null) == resource.data.get('followers', null)
+        && request.resource.data.get('mostRecentStatusExpiresAt', null) ==
+             resource.data.get('mostRecentStatusExpiresAt', null)
+        && request.resource.data.get('activeStatusIds', null) ==
+             resource.data.get('activeStatusIds', null)
         && validMaxUploadSizeMb();
 
       allow delete: if false;

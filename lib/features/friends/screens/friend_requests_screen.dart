@@ -5,6 +5,9 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../../shared/widgets/avatar_ring.dart';
+import '../../../shared/widgets/zoomable_image_viewer.dart';
+import '../../status/screens/status_viewer_screen.dart';
 import '../../user/screens/user_profile_screen.dart';
 
 // Incoming/outgoing friendRequests inbox, reached from ProfileScreen's
@@ -146,6 +149,25 @@ class _RequestTile extends ConsumerWidget {
     final userAsync = ref.watch(currentUserProvider(otherUid));
     final service = ref.read(firestoreServiceProvider);
     final user = userAsync.value;
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final hasActiveStatus = user?.hasActiveStatus == true;
+    final viewerUser = hasActiveStatus
+        ? ref.watch(currentUserProvider(currentUid)).value
+        : null;
+    final hasUnviewed =
+        hasActiveStatus && (viewerUser?.hasUnviewedStatusFrom(user!) ?? false);
+    const avatarBaseSize = 44.0;
+    final avatarBoxSize = avatarBaseSize * 1.2;
+    void openStatusViewer() => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => UserStatusViewerScreen(
+              ownerUid: user!.id,
+              currentUid: currentUid,
+              initialUser: user,
+            ),
+          ),
+        );
 
     return GestureDetector(
       onTap: incoming && user != null
@@ -164,16 +186,37 @@ class _RequestTile extends ConsumerWidget {
         child: Row(
           children: [
             SizedBox(
-              width: 44,
-              height: 44,
+              width: avatarBoxSize,
+              height: avatarBoxSize,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  CircleAvatar(
-                    radius: 22,
-                    backgroundColor: kBg3,
-                    child: Text(user?.emoji ?? '🎵', style: const TextStyle(fontSize: 20)),
-                  ),
+                  if (hasActiveStatus)
+                    GestureDetector(
+                      onTap: openStatusViewer,
+                      onLongPress: () => showAvatarLongPressMenu(
+                        context,
+                        photoURL: user?.photoURL,
+                        onViewStatus: openStatusViewer,
+                      ),
+                      child: AvatarRing(
+                        photoURL: user?.photoURL,
+                        fallbackEmoji: user?.emoji ?? '🎵',
+                        hasUnviewed: hasUnviewed,
+                        size: avatarBoxSize,
+                      ),
+                    )
+                  else
+                    GestureDetector(
+                      onTap: user?.photoURL != null
+                          ? () => showFullImage(context, user!.photoURL!)
+                          : null,
+                      child: CircleAvatar(
+                        radius: avatarBoxSize / 2,
+                        backgroundColor: kBg3,
+                        child: Text(user?.emoji ?? '🎵', style: const TextStyle(fontSize: 20)),
+                      ),
+                    ),
                   Positioned(
                     bottom: 0,
                     right: 0,

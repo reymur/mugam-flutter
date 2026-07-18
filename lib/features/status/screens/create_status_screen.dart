@@ -876,13 +876,13 @@ class _PrivacyPickerScreenState extends ConsumerState<PrivacyPickerScreen> {
       body: Column(
         children: [
           _PrivacyOptionTile(
-            label: 'Kontaktlar',
-            subtitle: 'Bütün kontaktlarınız görə bilər',
+            label: 'Hamı',
+            subtitle: 'Hamı görə bilər',
             selected: _mode == _PrivacyMode.contacts,
             onTap: () => setState(() => _mode = _PrivacyMode.contacts),
           ),
           _PrivacyOptionTile(
-            label: 'Kontaktlar, xaric...',
+            label: 'Kimlər görməsin',
             subtitle: 'Seçilmiş kontaktlar istisna olmaqla',
             selected: _mode == _PrivacyMode.contactsExcept,
             onTap: () =>

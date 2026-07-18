@@ -694,6 +694,7 @@ export const onStatusCreated = onDocumentCreated(
   async (event) => {
     const snap = event.data;
     if (!snap) return;
+    const { statusId } = event.params;
     const status = snap.data();
     const ownerUid: string = status.ownerUid;
     const privacyMode: string = status.privacyMode ?? "contacts";
@@ -734,6 +735,38 @@ export const onStatusCreated = onDocumentCreated(
       // status has no visibility left to compute.
       logger.warn("onStatusCreated: update failed (status likely deleted already)", e);
     }
+
+    // Denormalized onto the owner's own user doc so every avatar-showing
+    // screen can read User.hasActiveStatus off the same User doc it already
+    // fetches, without an extra per-row status query (see that getter's own
+    // comment, lib/firebase/models.dart). A separate try/catch from the
+    // status update above — a different document with a different failure
+    // mode, since the owner's own user doc practically always still exists
+    // even on the rare "deleted moments after creation" race above.
+    //
+    // activeStatusIds is the missing piece mostRecentStatusExpiresAt alone
+    // can't provide: a get()-able document id. A non-friend viewer's client
+    // can never list users/{ownerUid}/statuses (that stays visibleToUids-
+    // gated, unchanged — see firestore.rules' allow list), so without this
+    // array there would be no way for them to discover which statusId(s) to
+    // get() even once isPublic authorizes reading it. Symmetric with
+    // onStatusDeleted's arrayRemove below, which is what keeps this self-
+    // cleaning on both explicit delete and TTL-driven expiry cleanup.
+    try {
+      await db.collection("users").doc(ownerUid).update({
+        mostRecentStatusExpiresAt: status.expiresAt,
+        // Same denormalization as mostRecentStatusExpiresAt above, just
+        // createdAt instead of expiresAt — backs the gold/muted ring
+        // parity check (User.hasUnviewedStatusFrom, lib/firebase/
+        // models.dart), which needs the owner's latest post time to
+        // compare against a viewer's own lastViewedStatusOwnerAt entry for
+        // that owner.
+        mostRecentStatusCreatedAt: status.createdAt,
+        activeStatusIds: FieldValue.arrayUnion(statusId),
+      });
+    } catch (e) {
+      logger.warn("onStatusCreated: mostRecentStatusExpiresAt/mostRecentStatusCreatedAt/activeStatusIds update failed", e);
+    }
   },
 );
 
@@ -761,7 +794,32 @@ export const onStatusDeleted = onDocumentDeleted(
   async (event) => {
     const snap = event.data;
     if (!snap) return;
+    const { statusId } = event.params;
     const status = snap.data();
+    const ownerUid: string = status.ownerUid;
+
+    // activeStatusIds' cleanup half — see onStatusCreated's own comment for
+    // the full rationale. Fires here regardless of why this document was
+    // deleted: an explicit user-initiated delete (deleteStatus,
+    // firestore_service.dart) and Firestore's own TTL policy on expiresAt
+    // (see Status.expiresAt's doc comment, lib/firebase/models.dart) both
+    // perform a real document delete, and both fire onDocumentDeleted the
+    // same way — this is standard, documented Firestore/Cloud Functions
+    // behavior (TTL deletions are recorded and trigger events identically
+    // to any other delete), not something the local emulator can exercise
+    // directly: the Firestore emulator does not run a background TTL
+    // sweep, so this specific path (expiry-driven, rather than explicit-
+    // delete-driven) is unverified by this repo's own test suite and rests
+    // on that documented platform behavior instead. Independent try/catch,
+    // same reasoning as onStatusCreated's — the owner's user doc practically
+    // always still exists.
+    try {
+      await db.collection("users").doc(ownerUid).update({
+        activeStatusIds: FieldValue.arrayRemove(statusId),
+      });
+    } catch (e) {
+      logger.warn("onStatusDeleted: activeStatusIds update failed", e);
+    }
 
     // (1) viewers subcollection — chunked into ≤500-op batches (Firestore's
     // hard per-batch limit) and committed sequentially, matching this

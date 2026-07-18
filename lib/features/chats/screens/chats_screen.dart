@@ -7,6 +7,8 @@ import 'package:intl/intl.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../../shared/widgets/avatar_ring.dart';
+import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../settings/screens/app_settings_screen.dart';
 import '../../status/screens/create_status_screen.dart';
 import '../../status/screens/status_viewer_screen.dart';
@@ -240,6 +242,24 @@ class _ChatListItem extends ConsumerWidget {
         }
       }
     }
+    final hasActiveStatus = !chat.isGroup && other?.hasActiveStatus == true;
+    final viewerUser = hasActiveStatus
+        ? ref.watch(currentUserProvider(currentUid)).value
+        : null;
+    final hasUnviewed =
+        hasActiveStatus && (viewerUser?.hasUnviewedStatusFrom(other!) ?? false);
+    const avatarBaseSize = 48.0;
+    final avatarBoxSize = avatarBaseSize * 1.2;
+    void openStatusViewer() => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => UserStatusViewerScreen(
+              ownerUid: other!.id,
+              currentUid: currentUid,
+              initialUser: other,
+            ),
+          ),
+        );
 
     return GestureDetector(
       onTap: onTap,
@@ -251,25 +271,46 @@ class _ChatListItem extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 SizedBox(
-                  width: 48,
-                  height: 48,
+                  width: avatarBoxSize,
+                  height: avatarBoxSize,
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: kBg3,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: kBorder, width: 1.5),
+                      if (hasActiveStatus)
+                        GestureDetector(
+                          onTap: openStatusViewer,
+                          onLongPress: () => showAvatarLongPressMenu(
+                            context,
+                            photoURL: other?.photoURL,
+                            onViewStatus: openStatusViewer,
+                          ),
+                          child: AvatarRing(
+                            photoURL: other?.photoURL,
+                            fallbackEmoji: displayEmoji,
+                            hasUnviewed: hasUnviewed,
+                            size: avatarBoxSize,
+                          ),
+                        )
+                      else
+                        GestureDetector(
+                          onTap: other?.photoURL != null
+                              ? () => showFullImage(context, other!.photoURL!)
+                              : null,
+                          child: Container(
+                            width: avatarBoxSize,
+                            height: avatarBoxSize,
+                            decoration: BoxDecoration(
+                              color: kBg3,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: kBorder, width: 1.5),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              displayEmoji,
+                              style: const TextStyle(fontSize: 24),
+                            ),
+                          ),
                         ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          displayEmoji,
-                          style: const TextStyle(fontSize: 24),
-                        ),
-                      ),
                       if (!chat.isGroup)
                         Positioned(
                           bottom: 0,
@@ -302,14 +343,14 @@ class _ChatListItem extends ConsumerWidget {
                               overflow: TextOverflow.ellipsis,
                               style: GoogleFonts.nunito(
                                 fontWeight: FontWeight.w700,
-                                fontSize: 15,
+                                fontSize: 18,
                                 color: kText,
                               ),
                             ),
                           ),
                           Text(
                             _formatTime(chat.lastMessageTime),
-                            style: const TextStyle(fontSize: 11, color: kMuted),
+                            style: const TextStyle(fontSize: 13.2, color: kMuted),
                           ),
                         ],
                       ),
@@ -322,7 +363,7 @@ class _ChatListItem extends ConsumerWidget {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                fontSize: 13,
+                                fontSize: 15.6,
                                 color: kMuted,
                               ),
                             ),

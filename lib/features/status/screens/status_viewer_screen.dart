@@ -580,3 +580,130 @@ class _HeaderRow extends StatelessWidget {
     );
   }
 }
+
+// Entry point for opening one specific person's status directly — e.g. from
+// an avatar ring on a screen outside the friends-scoped feed (chat header,
+// musician list, add-participant picker, ...), where the target may not be
+// a friend at all. Deliberately kept in this same file rather than made a
+// separate top-level screen: it needs to hand its fetched StatusGroup to
+// _StatusGroupPage, which is private to this file — this file already has
+// several private helper widgets, so adding one more closely-related entry
+// point here (rather than removing that widget's privacy, or duplicating
+// its ~300 lines of gesture/playback logic elsewhere) is the smaller,
+// lower-risk change. StatusViewerScreen itself is NOT reused as-is: its
+// whole PageView is built around swiping across every group in the live
+// friends feed (statusFeedProvider), which doesn't apply here — a single
+// person's statuses, opened from outside that feed, with nothing else to
+// swipe to.
+class UserStatusViewerScreen extends ConsumerStatefulWidget {
+  final String ownerUid;
+  final String currentUid;
+  // Optional — when the caller already has the owner's User doc in hand
+  // (every avatar-ring site does, per activeStatusIds/hasActiveStatus's own
+  // rationale), passing it here skips a redundant fetch. Falls back to
+  // userByIdProvider when omitted.
+  final User? initialUser;
+
+  const UserStatusViewerScreen({
+    super.key,
+    required this.ownerUid,
+    required this.currentUid,
+    this.initialUser,
+  });
+
+  @override
+  ConsumerState<UserStatusViewerScreen> createState() =>
+      _UserStatusViewerScreenState();
+}
+
+class _UserStatusViewerScreenState
+    extends ConsumerState<UserStatusViewerScreen> {
+  Future<StatusGroup?>? _groupFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialUser != null) {
+      _groupFuture = _fetch(widget.initialUser!);
+    }
+  }
+
+  Future<StatusGroup?> _fetch(User owner) {
+    return ref
+        .read(firestoreServiceProvider)
+        .fetchStatusGroupForUser(owner: owner);
+  }
+
+  static const _loading = Scaffold(
+    backgroundColor: Colors.black,
+    body: Center(child: CircularProgressIndicator(color: kGold)),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    // initialUser omitted — resolve it ourselves first (userByIdProvider is
+    // the same one-shot per-uid fetch already used elsewhere in this app,
+    // e.g. message_info_screen.dart, for exactly this "not already in
+    // hand" case), then kick off _fetch exactly once via the same
+    // _groupFuture ??= pattern as _MyStatusItem/_OtherStatusItem's own
+    // initState-computed futures elsewhere in this file — recomputing it on
+    // every build would refire the fetch (and every per-status get() inside
+    // it) on any unrelated rebuild.
+    if (widget.initialUser == null) {
+      final ownerAsync = ref.watch(userByIdProvider(widget.ownerUid));
+      final owner = ownerAsync.value;
+      if (owner == null) {
+        return ownerAsync.hasError ? _errorScaffold() : _loading;
+      }
+      _groupFuture ??= _fetch(owner);
+    }
+
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: FutureBuilder<StatusGroup?>(
+        future: _groupFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(
+              child: CircularProgressIndicator(color: kGold),
+            );
+          }
+          final group = snapshot.data;
+          if (group == null) {
+            return const Center(
+              child: Text(
+                'Aktiv status yoxdur',
+                style: TextStyle(color: kMuted),
+              ),
+            );
+          }
+          return _StatusGroupPage(
+            key: ValueKey(group.ownerUid),
+            group: group,
+            currentUid: widget.currentUid,
+            isOwnGroup: group.ownerUid == widget.currentUid,
+            // Nothing else to swipe to — this viewer only ever shows the
+            // one requested person's group, so "advance" just closes it,
+            // matching StatusViewerScreen's own end-of-feed behavior
+            // (Navigator.pop when index == groups.length - 1) rather than
+            // introducing a distinct "last piece" gesture just for this
+            // entry point.
+            onAdvanceToNextAuthor: () => Navigator.of(context).pop(),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _errorScaffold() {
+    return const Scaffold(
+      backgroundColor: Colors.black,
+      body: Center(
+        child: Text(
+          'Status yüklənmədi',
+          style: TextStyle(color: kMuted),
+        ),
+      ),
+    );
+  }
+}

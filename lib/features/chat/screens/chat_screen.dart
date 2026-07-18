@@ -35,6 +35,9 @@ import '../../../core/settings/upload_limit_settings.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../../shared/widgets/avatar_ring.dart';
+import '../../../shared/widgets/zoomable_image_viewer.dart';
+import '../../status/screens/status_viewer_screen.dart';
 import 'about_contact_screen.dart';
 import 'chat_attachment_viewer_screen.dart';
 import 'custom_camera_backup/camera_capture_screen.dart';
@@ -2914,6 +2917,79 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               );
             }
             if (otherUidResolved == null) return titleColumn;
+            // Small AppBar-scale avatar — no existing precedent for one in
+            // this app's headers (only this and about_contact_screen.dart's
+            // full-size hero avatar showed the contact at all), so 36px is
+            // a fresh pick sized to sit comfortably alongside the two-line
+            // title (16px name + 11px status) without inflating the
+            // AppBar's own height. Wrapped in its OWN inner GestureDetector
+            // when otherUser has an active status, same "inner tap wins"
+            // pattern as every other avatar-ring site — tapping the avatar
+            // opens the status viewer, tapping the rest of the title (name/
+            // status text) still opens AboutContactScreen via the outer
+            // GestureDetector below.
+            const headerAvatarSize = 36.0;
+            final hasActiveStatus = otherUser?.hasActiveStatus == true;
+            final viewerUserForRing = hasActiveStatus
+                ? ref.watch(currentUserProvider(currentUid)).value
+                : null;
+            final hasUnviewed = hasActiveStatus &&
+                (viewerUserForRing?.hasUnviewedStatusFrom(otherUser!) ?? false);
+            final headerAvatar = Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: hasActiveStatus
+                  ? GestureDetector(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => UserStatusViewerScreen(
+                            ownerUid: otherUser!.id,
+                            currentUid: currentUid,
+                            initialUser: otherUser,
+                          ),
+                        ),
+                      ),
+                      onLongPress: () => showAvatarLongPressMenu(
+                        context,
+                        photoURL: otherUser?.photoURL,
+                        onViewStatus: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => UserStatusViewerScreen(
+                              ownerUid: otherUser!.id,
+                              currentUid: currentUid,
+                              initialUser: otherUser,
+                            ),
+                          ),
+                        ),
+                      ),
+                      child: AvatarRing(
+                        photoURL: otherUser?.photoURL,
+                        fallbackEmoji: otherUser?.emoji,
+                        hasUnviewed: hasUnviewed,
+                        size: headerAvatarSize * 1.2,
+                      ),
+                    )
+                  : GestureDetector(
+                      onTap: otherUser?.photoURL != null
+                          ? () => showFullImage(context, otherUser!.photoURL!)
+                          : null,
+                      child: Container(
+                        width: headerAvatarSize * 1.2,
+                        height: headerAvatarSize * 1.2,
+                        decoration: BoxDecoration(
+                          color: kBg3,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: kBorder, width: 1.5),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          otherUser?.emoji ?? '🎵',
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                      ),
+                    ),
+            );
             return GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: () => Navigator.push(
@@ -2925,7 +3001,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   ),
                 ),
               ),
-              child: titleColumn,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  headerAvatar,
+                  Flexible(child: titleColumn),
+                ],
+              ),
             );
           },
           loading: () => const Text('...', style: TextStyle(color: kText)),

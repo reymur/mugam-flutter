@@ -173,6 +173,72 @@ class FirestoreService {
         });
   }
 
+  // The non-feed counterpart to watchStatusFeed above — fetches one
+  // specific owner's active statuses directly via get(), for opening a
+  // status from an avatar ring outside the friends-scoped feed (e.g. a
+  // stranger's public 'Hamı'-mode status), not by finding them already
+  // present in a live query result. This is deliberately NOT a
+  // visibleToUids-based list query: per firestore.rules' own comment, ANY
+  // query against a statuses collection (collectionGroup or a plain
+  // per-owner subcollection query alike) is classified `list` and stays
+  // friends-only — the new isPublic-based public access only ever
+  // authorizes get()-ing one already-known document by its exact path, so
+  // `owner.activeStatusIds` (denormalized by onStatusCreated/
+  // onStatusDeleted, functions/src/index.ts) is what supplies those exact
+  // ids up front, one get() per id.
+  //
+  // Takes an already-resolved User rather than an ownerUid — every call
+  // site that would open this (the avatar-ring screens) already has the
+  // owner's User doc in hand (that's the whole reason activeStatusIds
+  // lives there rather than requiring a fresh fetch), so re-fetching it
+  // here would just be a redundant read for the common case. No currentUid
+  // param: unlike firestore.rules-side checks, the SDK attaches the
+  // signed-in user's own auth token to every get() automatically — there's
+  // nothing for this function to do with an explicit uid, the rule already
+  // evaluates request.auth.uid on its own.
+  Future<StatusGroup?> fetchStatusGroupForUser({
+    required User owner,
+  }) async {
+    final now = DateTime.now();
+    final results = await Future.wait(
+      owner.activeStatusIds.map((statusId) async {
+        try {
+          final doc = await _db
+              .collection('users')
+              .doc(owner.id)
+              .collection('statuses')
+              .doc(statusId)
+              .get();
+          if (!doc.exists) return null;
+          final status = Status.fromFirestore(doc.id, doc.data()!);
+          // Double-checked client-side even though the rule already
+          // filters non-visible ids down to the ones that actually
+          // returned data — activeStatusIds can lag behind a TTL-driven
+          // delete (see that field's own comment, models.dart) by up to
+          // 24h, during which a since-expired status's id could still be
+          // in the array and still get()-able (deletion hasn't happened
+          // yet), even though it should no longer be shown as "active".
+          if (!status.expiresAt.isAfter(now)) return null;
+          return status;
+        } on FirebaseException {
+          // Denied by firestore.rules' isPublic/privacyList/visibleToUids
+          // check — e.g. this specific status is 'contactsExcept' and
+          // currentUid is in that particular status's exclusion list, even
+          // though other ids in activeStatusIds (posted under a different
+          // privacyList, or before/after an exclusion changed) may still
+          // be visible. Expected, not an error: just means this one id
+          // doesn't belong in the resulting group.
+          return null;
+        }
+      }),
+    );
+
+    final statuses = results.whereType<Status>().toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    if (statuses.isEmpty) return null;
+    return StatusGroup(ownerUid: owner.id, statuses: statuses);
+  }
+
   // Single-doc check: has `viewerUid` already viewed this specific status.
   // One read per status currently shown in the feed — bounded by feed
   // size, not a scale concern (same reasoning as the SCALE NOTE comments
@@ -205,19 +271,39 @@ class FirestoreService {
   // the anti-spoofing rationale). Plain set(), no merge — the viewer doc
   // has exactly this one field, so there's nothing to preserve across
   // repeat views of the same status.
+  //
+  // Batched together with a second write to the VIEWER's own user doc —
+  // lastViewedStatusOwnerAt.{ownerUid} — rather than a separate call or a
+  // new server trigger (see User.lastViewedStatusOwnerAt's own comment,
+  // models.dart, and User.hasUnviewedStatusFrom for what reads it back).
+  // Piggybacking here keeps "one write fires exactly when a status is
+  // actually viewed" as a single atomic unit; there's no serverTimestamp()
+  // anti-spoofing requirement on this second field the way there is for
+  // viewedAt above (this one only affects the writer's own ring
+  // rendering, not what anyone else can see), but serverTimestamp() is
+  // still used for ordinary clock-skew correctness against the owner's
+  // server-written mostRecentStatusCreatedAt.
   Future<void> markStatusViewed({
     required String ownerUid,
     required String statusId,
     required String viewerUid,
   }) {
-    return _db
-        .collection('users')
-        .doc(ownerUid)
-        .collection('statuses')
-        .doc(statusId)
-        .collection('viewers')
-        .doc(viewerUid)
-        .set({'viewedAt': FieldValue.serverTimestamp()});
+    final batch = _db.batch();
+    batch.set(
+      _db
+          .collection('users')
+          .doc(ownerUid)
+          .collection('statuses')
+          .doc(statusId)
+          .collection('viewers')
+          .doc(viewerUid),
+      {'viewedAt': FieldValue.serverTimestamp()},
+    );
+    batch.update(
+      _db.collection('users').doc(viewerUid),
+      {'lastViewedStatusOwnerAt.$ownerUid': FieldValue.serverTimestamp()},
+    );
+    return batch.commit();
   }
 
   // Plain client-side delete — firestore.rules already authorizes this

@@ -10,6 +10,9 @@ import 'package:intl/intl.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../../shared/widgets/avatar_ring.dart';
+import '../../../shared/widgets/zoomable_image_viewer.dart';
+import '../../status/screens/status_viewer_screen.dart';
 
 // ---------------------------------------------------------------------------
 // Azerbaijani month names
@@ -2295,6 +2298,7 @@ class _EventFormModalState extends State<_EventFormModal> {
         allUsers: widget.allUsers.excludingUid(widget.currentUid),
         selectedUids: _selectedParticipantUids,
         onChanged: (uids) => setState(() => _selectedParticipantUids = uids),
+        currentUid: widget.currentUid,
       ),
     );
   }
@@ -2883,22 +2887,34 @@ class _ConflictDialog extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // _ParticipantPickerDialog
 // ---------------------------------------------------------------------------
-class _ParticipantPickerDialog extends StatefulWidget {
+class _ParticipantPickerDialog extends ConsumerStatefulWidget {
   final List<User> allUsers;
   final List<String> selectedUids;
   final ValueChanged<List<String>> onChanged;
+  // Needed for hasUnviewedStatusFrom below — the picker rows now show a
+  // status ring, which requires the VIEWER's own User doc (not just each
+  // row's), so unlike before this dialog can no longer stay a plain
+  // StatefulWidget with no Riverpod/uid access. Threaded in from the
+  // caller's own widget.currentUid (_openParticipantPicker below) rather
+  // than re-reading FirebaseAuth here, matching this dialog's own existing
+  // convention of taking currentUid as a constructor param instead of
+  // looking it up itself.
+  final String currentUid;
 
   const _ParticipantPickerDialog({
     required this.allUsers,
     required this.selectedUids,
     required this.onChanged,
+    required this.currentUid,
   });
 
   @override
-  State<_ParticipantPickerDialog> createState() => _ParticipantPickerDialogState();
+  ConsumerState<_ParticipantPickerDialog> createState() =>
+      _ParticipantPickerDialogState();
 }
 
-class _ParticipantPickerDialogState extends State<_ParticipantPickerDialog> {
+class _ParticipantPickerDialogState
+    extends ConsumerState<_ParticipantPickerDialog> {
   late List<String> _selected;
   String _search = '';
   final _searchController = TextEditingController();
@@ -2966,24 +2982,73 @@ class _ParticipantPickerDialogState extends State<_ParticipantPickerDialog> {
                 itemBuilder: (_, i) {
                   final m = filtered[i];
                   final sel = _selected.contains(m.id);
+                  final hasActiveStatus = m.hasActiveStatus;
+                  final viewerUser = hasActiveStatus
+                      ? ref.watch(currentUserProvider(widget.currentUid)).value
+                      : null;
+                  final hasUnviewed = hasActiveStatus &&
+                      (viewerUser?.hasUnviewedStatusFrom(m) ?? false);
+                  const avatarBaseSize = 36.0;
+                  final avatarBoxSize = avatarBaseSize * 1.2;
+                  void openStatusViewer() => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => UserStatusViewerScreen(
+                            ownerUid: m.id,
+                            currentUid: widget.currentUid,
+                            initialUser: m,
+                          ),
+                        ),
+                      );
                   return ListTile(
                     leading: SizedBox(
-                      width: 36,
-                      height: 36,
+                      width: avatarBoxSize,
+                      height: avatarBoxSize,
                       child: Stack(
                         clipBehavior: Clip.none,
                         children: [
-                          Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: kBg3,
-                              borderRadius: BorderRadius.circular(10),
+                          if (hasActiveStatus)
+                            GestureDetector(
+                              onTap: openStatusViewer,
+                              onLongPress: () => showAvatarLongPressMenu(
+                                context,
+                                photoURL: m.photoURL,
+                                onViewStatus: openStatusViewer,
+                              ),
+                              child: AvatarRing(
+                                photoURL: m.photoURL,
+                                fallbackEmoji: m.emoji,
+                                hasUnviewed: hasUnviewed,
+                                size: avatarBoxSize,
+                              ),
+                            )
+                          else
+                            // Unified to a circle to match AvatarRing above
+                            // and every other avatar in the app — this
+                            // dialog's avatar was previously the one
+                            // outlier still using a rounded-square shape
+                            // (BorderRadius.circular(10)), which would have
+                            // made rows visibly change shape depending on
+                            // hasActiveStatus if left as-is. Everything
+                            // else in this dialog (search field, dialog
+                            // corners) keeps its own unrelated rounded-rect
+                            // styling untouched.
+                            GestureDetector(
+                              onTap: m.photoURL != null
+                                  ? () => showFullImage(context, m.photoURL!)
+                                  : null,
+                              child: Container(
+                                width: avatarBoxSize,
+                                height: avatarBoxSize,
+                                decoration: const BoxDecoration(
+                                  color: kBg3,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Center(
+                                  child: Text(m.emoji, style: const TextStyle(fontSize: 18)),
+                                ),
+                              ),
                             ),
-                            child: Center(
-                              child: Text(m.emoji, style: const TextStyle(fontSize: 18)),
-                            ),
-                          ),
                           Positioned(
                             bottom: 0,
                             right: 0,

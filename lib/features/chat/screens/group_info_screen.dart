@@ -9,6 +9,9 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
+import '../../../shared/widgets/avatar_ring.dart';
+import '../../../shared/widgets/zoomable_image_viewer.dart';
+import '../../status/screens/status_viewer_screen.dart';
 
 // Group Info screen — mirrors mugam-v2's GroupInfo.tsx (header photo/name/
 // emoji, participant list with role badges + per-row admin actions,
@@ -566,21 +569,64 @@ class _ParticipantTile extends ConsumerWidget {
     final user = ref.watch(currentUserProvider(uid)).value;
     final name = isMe ? 'Siz' : (user?.name ?? 'İstifadəçi');
     final emoji = user?.emoji ?? '👤';
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final hasActiveStatus = user?.hasActiveStatus == true;
+    final viewerUser = (hasActiveStatus && !isMe)
+        ? ref.watch(currentUserProvider(currentUid)).value
+        : null;
+    // Never gold on your own row — matches the app's established
+    // "unviewed doesn't apply to yourself" convention.
+    final hasUnviewed = hasActiveStatus &&
+        !isMe &&
+        (viewerUser?.hasUnviewedStatusFrom(user!) ?? false);
+    const avatarBaseSize = 44.0;
+    final avatarBoxSize = avatarBaseSize * 1.2;
+    void openStatusViewer() => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => UserStatusViewerScreen(
+              ownerUid: user!.id,
+              currentUid: currentUid,
+              initialUser: user,
+            ),
+          ),
+        );
 
     return ListTile(
       leading: SizedBox(
-        width: 44,
-        height: 44,
+        width: avatarBoxSize,
+        height: avatarBoxSize,
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: const BoxDecoration(color: kBg3, shape: BoxShape.circle),
-              alignment: Alignment.center,
-              child: Text(emoji, style: const TextStyle(fontSize: 18)),
-            ),
+            if (hasActiveStatus)
+              GestureDetector(
+                onTap: openStatusViewer,
+                onLongPress: () => showAvatarLongPressMenu(
+                  context,
+                  photoURL: user?.photoURL,
+                  onViewStatus: openStatusViewer,
+                ),
+                child: AvatarRing(
+                  photoURL: user?.photoURL,
+                  fallbackEmoji: emoji,
+                  hasUnviewed: hasUnviewed,
+                  size: avatarBoxSize,
+                ),
+              )
+            else
+              GestureDetector(
+                onTap: user?.photoURL != null
+                    ? () => showFullImage(context, user!.photoURL!)
+                    : null,
+                child: Container(
+                  width: avatarBoxSize,
+                  height: avatarBoxSize,
+                  decoration: const BoxDecoration(color: kBg3, shape: BoxShape.circle),
+                  alignment: Alignment.center,
+                  child: Text(emoji, style: const TextStyle(fontSize: 18)),
+                ),
+              ),
             Positioned(
               bottom: 0,
               right: 0,
@@ -1056,30 +1102,69 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
                     itemBuilder: (context, index) {
                       final u = filtered[index];
                       final selected = _selectedUids.contains(u.id);
+                      final hasActiveStatus = u.hasActiveStatus;
+                      final viewerUser = hasActiveStatus
+                          ? ref.watch(currentUserProvider(widget.adminUid)).value
+                          : null;
+                      final hasUnviewed = hasActiveStatus &&
+                          (viewerUser?.hasUnviewedStatusFrom(u) ?? false);
+                      const avatarBaseSize = 40.0;
+                      final avatarBoxSize = avatarBaseSize * 1.2;
+                      void openStatusViewer() => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => UserStatusViewerScreen(
+                                ownerUid: u.id,
+                                currentUid: widget.adminUid,
+                                initialUser: u,
+                              ),
+                            ),
+                          );
                       return ListTile(
                         onTap: () => _toggleUser(u.id),
                         leading: SizedBox(
-                          width: 40,
-                          height: 40,
+                          width: avatarBoxSize,
+                          height: avatarBoxSize,
                           child: Stack(
                             clipBehavior: Clip.none,
                             children: [
-                              Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: kBg3,
-                                  shape: BoxShape.circle,
-                                  border: selected
-                                      ? Border.all(color: kGold, width: 2)
+                              if (hasActiveStatus)
+                                GestureDetector(
+                                  onTap: openStatusViewer,
+                                  onLongPress: () => showAvatarLongPressMenu(
+                                    context,
+                                    photoURL: u.photoURL,
+                                    onViewStatus: openStatusViewer,
+                                  ),
+                                  child: AvatarRing(
+                                    photoURL: u.photoURL,
+                                    fallbackEmoji: u.emoji,
+                                    hasUnviewed: hasUnviewed,
+                                    size: avatarBoxSize,
+                                  ),
+                                )
+                              else
+                                GestureDetector(
+                                  onTap: u.photoURL != null
+                                      ? () => showFullImage(context, u.photoURL!)
                                       : null,
+                                  child: Container(
+                                    width: avatarBoxSize,
+                                    height: avatarBoxSize,
+                                    decoration: BoxDecoration(
+                                      color: kBg3,
+                                      shape: BoxShape.circle,
+                                      border: selected
+                                          ? Border.all(color: kGold, width: 2)
+                                          : null,
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: Text(
+                                      u.emoji,
+                                      style: const TextStyle(fontSize: 18),
+                                    ),
+                                  ),
                                 ),
-                                alignment: Alignment.center,
-                                child: Text(
-                                  u.emoji,
-                                  style: const TextStyle(fontSize: 18),
-                                ),
-                              ),
                               Positioned(
                                 bottom: 0,
                                 right: 0,

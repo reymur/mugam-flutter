@@ -7,6 +7,9 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../../shared/widgets/avatar_ring.dart';
+import '../../../shared/widgets/zoomable_image_viewer.dart';
+import '../../status/screens/status_viewer_screen.dart';
 import '../../user/screens/user_profile_screen.dart';
 import '../../starred/screens/starred_messages_screen.dart';
 
@@ -170,15 +173,14 @@ class _AboutContactScreenState extends ConsumerState<AboutContactScreen> {
   }
 }
 
-class _ContactAvatar extends StatelessWidget {
+class _ContactAvatar extends ConsumerWidget {
   final User user;
   const _ContactAvatar({required this.user});
 
-  @override
-  Widget build(BuildContext context) {
+  Widget _plainAvatar() {
     return Container(
-      width: 140,
-      height: 140,
+      width: 140 * 1.2,
+      height: 140 * 1.2,
       decoration: BoxDecoration(
         color: kBg3,
         shape: BoxShape.circle,
@@ -195,6 +197,48 @@ class _ContactAvatar extends StatelessWidget {
               child: Text(user.emoji, style: const TextStyle(fontSize: 64)),
             )
           : null,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!user.hasActiveStatus) {
+      return GestureDetector(
+        onTap: user.photoURL != null
+            ? () => showFullImage(context, user.photoURL!)
+            : null,
+        child: _plainAvatar(),
+      );
+    }
+
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final viewerUser = ref.watch(currentUserProvider(currentUid)).value;
+    final hasUnviewed = viewerUser?.hasUnviewedStatusFrom(user) ?? false;
+
+    void openStatusViewer() => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => UserStatusViewerScreen(
+              ownerUid: user.id,
+              currentUid: currentUid,
+              initialUser: user,
+            ),
+          ),
+        );
+
+    return GestureDetector(
+      onTap: openStatusViewer,
+      onLongPress: () => showAvatarLongPressMenu(
+        context,
+        photoURL: user.photoURL,
+        onViewStatus: openStatusViewer,
+      ),
+      child: AvatarRing(
+        photoURL: user.photoURL,
+        fallbackEmoji: user.emoji,
+        hasUnviewed: hasUnviewed,
+        size: 140 * 1.2,
+      ),
     );
   }
 }

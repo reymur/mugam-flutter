@@ -6,6 +6,9 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../../shared/widgets/avatar_ring.dart';
+import '../../../shared/widgets/zoomable_image_viewer.dart';
+import '../../status/screens/status_viewer_screen.dart';
 
 const Color _kHeroBg = Color(0xFF15100A);
 
@@ -89,6 +92,29 @@ class UserProfileScreen extends ConsumerWidget {
     final starsStr =
         List.filled(starCount, '★').join() + List.filled(5 - starCount, '☆').join();
 
+    final hasActiveStatus = liveUser.hasActiveStatus;
+    final viewerUser = hasActiveStatus
+        ? ref.watch(currentUserProvider(currentUid)).value
+        : null;
+    // Never gold on your own profile — matches the rest of the app's
+    // "unviewed doesn't apply to yourself" convention (see
+    // status_feed_bar.dart's _MyStatusItem, hasUnviewed: false always).
+    final hasUnviewed = hasActiveStatus &&
+        !isOwnProfile &&
+        (viewerUser?.hasUnviewedStatusFrom(liveUser) ?? false);
+    const avatarBaseSize = 96.0;
+    final avatarBoxSize = avatarBaseSize * 1.2;
+    void openStatusViewer() => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => UserStatusViewerScreen(
+              ownerUid: liveUser.id,
+              currentUid: currentUid,
+              initialUser: liveUser,
+            ),
+          ),
+        );
+
     return Container(
       color: _kHeroBg,
       padding: const EdgeInsets.all(24),
@@ -97,25 +123,46 @@ class UserProfileScreen extends ConsumerWidget {
         children: [
           // Avatar with online dot
           SizedBox(
-            width: 96,
-            height: 96,
+            width: avatarBoxSize,
+            height: avatarBoxSize,
             child: Stack(
               children: [
-                Container(
-                  width: 96,
-                  height: 96,
-                  decoration: BoxDecoration(
-                    color: kBg3,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: user.goldRing ? kGold : kBorder,
-                      width: 3,
+                if (hasActiveStatus)
+                  GestureDetector(
+                    onTap: openStatusViewer,
+                    onLongPress: () => showAvatarLongPressMenu(
+                      context,
+                      photoURL: liveUser.photoURL,
+                      onViewStatus: openStatusViewer,
+                    ),
+                    child: AvatarRing(
+                      photoURL: liveUser.photoURL,
+                      fallbackEmoji: user.emoji,
+                      hasUnviewed: hasUnviewed,
+                      size: avatarBoxSize,
+                    ),
+                  )
+                else
+                  GestureDetector(
+                    onTap: liveUser.photoURL != null
+                        ? () => showFullImage(context, liveUser.photoURL!)
+                        : null,
+                    child: Container(
+                      width: avatarBoxSize,
+                      height: avatarBoxSize,
+                      decoration: BoxDecoration(
+                        color: kBg3,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: user.goldRing ? kGold : kBorder,
+                          width: 3,
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(user.emoji, style: const TextStyle(fontSize: 48)),
+                      ),
                     ),
                   ),
-                  child: Center(
-                    child: Text(user.emoji, style: const TextStyle(fontSize: 48)),
-                  ),
-                ),
                 Positioned(
                   bottom: 0,
                   right: 0,

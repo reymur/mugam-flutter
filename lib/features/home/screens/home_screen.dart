@@ -4,8 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
 import '../../../shared/widgets/topbar.dart';
+import '../../../shared/widgets/avatar_ring.dart';
+import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../../firebase/models.dart';
 import '../../../firebase/firestore_service.dart';
+import '../../status/screens/status_viewer_screen.dart';
 import '../../user/screens/user_profile_screen.dart';
 
 // ── Fallback mock data ────────────────────────────────────────────────────────
@@ -382,13 +385,32 @@ class _MusiciansSection extends ConsumerWidget {
   }
 }
 
-class _MusicianCard extends StatelessWidget {
+class _MusicianCard extends ConsumerWidget {
   final User musician;
 
   const _MusicianCard({required this.musician});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final hasActiveStatus = musician.hasActiveStatus;
+    final viewerUser = hasActiveStatus
+        ? ref.watch(currentUserProvider(currentUid)).value
+        : null;
+    final hasUnviewed =
+        hasActiveStatus && (viewerUser?.hasUnviewedStatusFrom(musician) ?? false);
+    const avatarBaseSize = 58.0;
+    final avatarBoxSize = avatarBaseSize * 1.2;
+    void openStatusViewer() => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => UserStatusViewerScreen(
+              ownerUid: musician.id,
+              currentUid: currentUid,
+              initialUser: musician,
+            ),
+          ),
+        );
     return GestureDetector(
       onTap: () => Navigator.push(
         context,
@@ -414,28 +436,49 @@ class _MusicianCard extends StatelessWidget {
               children: [
                 Center(
                   child: SizedBox(
-                    width: 58,
-                    height: 58,
+                    width: avatarBoxSize,
+                    height: avatarBoxSize,
                     child: Stack(
                       children: [
-                        Container(
-                          width: 58,
-                          height: 58,
-                          decoration: BoxDecoration(
-                            color: kBg3,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: musician.goldRing ? kGold : kBorder,
-                              width: 2,
+                        if (hasActiveStatus)
+                          GestureDetector(
+                            onTap: openStatusViewer,
+                            onLongPress: () => showAvatarLongPressMenu(
+                              context,
+                              photoURL: musician.photoURL,
+                              onViewStatus: openStatusViewer,
+                            ),
+                            child: AvatarRing(
+                              photoURL: musician.photoURL,
+                              fallbackEmoji: musician.emoji,
+                              hasUnviewed: hasUnviewed,
+                              size: avatarBoxSize,
+                            ),
+                          )
+                        else
+                          GestureDetector(
+                            onTap: musician.photoURL != null
+                                ? () => showFullImage(context, musician.photoURL!)
+                                : null,
+                            child: Container(
+                              width: avatarBoxSize,
+                              height: avatarBoxSize,
+                              decoration: BoxDecoration(
+                                color: kBg3,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: musician.goldRing ? kGold : kBorder,
+                                  width: 2,
+                                ),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  musician.emoji,
+                                  style: const TextStyle(fontSize: 24),
+                                ),
+                              ),
                             ),
                           ),
-                          child: Center(
-                            child: Text(
-                              musician.emoji,
-                              style: const TextStyle(fontSize: 24),
-                            ),
-                          ),
-                        ),
                         Positioned(
                           bottom: 0,
                           left: 0,

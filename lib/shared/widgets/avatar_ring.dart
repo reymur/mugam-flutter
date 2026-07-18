@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../../core/theme/colors.dart';
+import 'zoomable_image_viewer.dart';
 
 // Presentational only — no tap handling. The parent (feed bar) wires onTap.
 class AvatarRing extends StatelessWidget {
@@ -71,4 +72,55 @@ class AvatarRing extends StatelessWidget {
       ),
     );
   }
+}
+
+// Long-press menu for a status-ring avatar — every one of the 11
+// avatar-ring sites wires this identically, so it lives here once rather
+// than being copy-pasted 11 times. A plain tap on a ring avatar is
+// UNCHANGED (still opens the status viewer directly, per each site's own
+// existing onTap) — this only fires on long-press, offering the same
+// showFullImage(...) already used everywhere else in the app a photo can
+// be zoomed, as a second option alongside "view status". photoURL is
+// nullable because a fallback-emoji-only avatar has no photo to zoom —
+// the "Şəkli göstər" option simply no-ops in that case rather than being
+// hidden outright, keeping the menu shape identical across every avatar
+// regardless of whether this particular user has uploaded a photo.
+// Navigator.of(sheetContext).pop() happens before acting, not after, so
+// onViewStatus()/showFullImage() run against the caller's own screen
+// context (still valid) rather than the already-popped sheet's.
+Future<void> showAvatarLongPressMenu(
+  BuildContext context, {
+  required String? photoURL,
+  required VoidCallback onViewStatus,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: kBg2,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    ),
+    builder: (sheetContext) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.image_outlined, color: kGold),
+            title: const Text('Şəkli göstər', style: TextStyle(color: kText)),
+            onTap: () {
+              Navigator.of(sheetContext).pop();
+              if (photoURL != null) showFullImage(context, photoURL);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.visibility_outlined, color: kGold),
+            title: const Text('Statusu göstər', style: TextStyle(color: kText)),
+            onTap: () {
+              Navigator.of(sheetContext).pop();
+              onViewStatus();
+            },
+          ),
+        ],
+      ),
+    ),
+  );
 }

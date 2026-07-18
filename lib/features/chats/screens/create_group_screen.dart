@@ -5,7 +5,10 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
+import '../../../shared/widgets/avatar_ring.dart';
+import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../chat/screens/chat_screen.dart';
+import '../../status/screens/status_viewer_screen.dart';
 
 // Group-creation screen — mirrors mugam-v2's CreateGroup.tsx + UserPicker.tsx
 // exactly in structure (name+emoji row, search, selected-member chips,
@@ -325,27 +328,66 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                   itemBuilder: (context, index) {
                     final u = filtered[index];
                     final selected = _selectedUids.contains(u.id);
+                    final hasActiveStatus = u.hasActiveStatus;
+                    final viewerUser = hasActiveStatus
+                        ? ref.watch(currentUserProvider(currentUid)).value
+                        : null;
+                    final hasUnviewed = hasActiveStatus &&
+                        (viewerUser?.hasUnviewedStatusFrom(u) ?? false);
+                    const avatarBaseSize = 46.0;
+                    final avatarBoxSize = avatarBaseSize * 1.2;
+                    void openStatusViewer() => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => UserStatusViewerScreen(
+                              ownerUid: u.id,
+                              currentUid: currentUid,
+                              initialUser: u,
+                            ),
+                          ),
+                        );
                     return ListTile(
                       onTap: () => _toggleUser(u.id),
                       leading: SizedBox(
-                        width: 46,
-                        height: 46,
+                        width: avatarBoxSize,
+                        height: avatarBoxSize,
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
-                            Container(
-                              width: 46,
-                              height: 46,
-                              decoration: BoxDecoration(
-                                color: kBg3,
-                                shape: BoxShape.circle,
-                                border: selected
-                                    ? Border.all(color: kGold, width: 2)
+                            if (hasActiveStatus)
+                              GestureDetector(
+                                onTap: openStatusViewer,
+                                onLongPress: () => showAvatarLongPressMenu(
+                                  context,
+                                  photoURL: u.photoURL,
+                                  onViewStatus: openStatusViewer,
+                                ),
+                                child: AvatarRing(
+                                  photoURL: u.photoURL,
+                                  fallbackEmoji: u.emoji,
+                                  hasUnviewed: hasUnviewed,
+                                  size: avatarBoxSize,
+                                ),
+                              )
+                            else
+                              GestureDetector(
+                                onTap: u.photoURL != null
+                                    ? () => showFullImage(context, u.photoURL!)
                                     : null,
+                                child: Container(
+                                  width: avatarBoxSize,
+                                  height: avatarBoxSize,
+                                  decoration: BoxDecoration(
+                                    color: kBg3,
+                                    shape: BoxShape.circle,
+                                    border: selected
+                                        ? Border.all(color: kGold, width: 2)
+                                        : null,
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(u.emoji, style: const TextStyle(fontSize: 20)),
+                                ),
                               ),
-                              alignment: Alignment.center,
-                              child: Text(u.emoji, style: const TextStyle(fontSize: 20)),
-                            ),
                             Positioned(
                               bottom: 0,
                               right: 0,

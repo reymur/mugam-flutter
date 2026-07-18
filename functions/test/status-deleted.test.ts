@@ -1,3 +1,4 @@
+import { FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { getAdminApp, db, clearFirestore, waitFor, BUCKET } from "./helpers";
 
@@ -114,4 +115,60 @@ test("onStatusDeleted completes cleanly for a text status (mediaUrl null, no Sto
 
   const viewersSnap = await statusRef.collection("viewers").get();
   expect(viewersSnap.empty).toBe(true);
+});
+
+// 8. onStatusDeleted — activeStatusIds cleanup (arrayRemove). None of the
+// tests above seed a real users/{ownerUid} profile doc (only the statuses
+// subcollection), so onStatusDeleted's activeStatusIds write has always
+// hit NOT_FOUND and been silently swallowed by its own try/catch in every
+// test above — this is the first test in this file to actually seed one,
+// closing that gap.
+//
+// The target status is created for real (not hand-seeded onto the user
+// doc) specifically so the real onStatusCreated trigger is what populates
+// activeStatusIds with the real statusId — same rationale as
+// rules.test.ts's own top-of-file comment: hand-seeding a field a real
+// trigger will also write risks that trigger silently overwriting it
+// moments later. The unrelated id is added only AFTER that first write has
+// already landed, so there's no such race for it.
+test("onStatusDeleted removes only the deleted status's id from activeStatusIds, leaving unrelated ids intact", async () => {
+  const ownerUid = "A";
+  const userRef = db().collection("users").doc(ownerUid);
+  await userRef.set({ name: "Owner" });
+
+  const statusRef = db().collection("users").doc(ownerUid).collection("statuses").doc();
+  await statusRef.set({
+    ownerUid,
+    type: "text",
+    text: "hello",
+    createdAt: new Date(),
+    expiresAt: new Date(Date.now() + 86400000),
+    privacyMode: "contacts",
+    privacyList: [],
+  });
+
+  await waitFor(async () => {
+    const snap = await userRef.get();
+    return ((snap.data()?.activeStatusIds ?? []) as string[]).includes(statusRef.id);
+  });
+
+  const unrelatedId = "unrelated-status-id";
+  await userRef.update({ activeStatusIds: FieldValue.arrayUnion(unrelatedId) });
+
+  const beforeSnap = await userRef.get();
+  const before = beforeSnap.data()?.activeStatusIds as string[];
+  expect(before).toContain(statusRef.id);
+  expect(before).toContain(unrelatedId);
+
+  await statusRef.delete();
+
+  await waitFor(async () => {
+    const snap = await userRef.get();
+    return !((snap.data()?.activeStatusIds ?? []) as string[]).includes(statusRef.id);
+  });
+
+  const afterSnap = await userRef.get();
+  const after = afterSnap.data()?.activeStatusIds as string[];
+  expect(after).not.toContain(statusRef.id);
+  expect(after).toContain(unrelatedId);
 });
