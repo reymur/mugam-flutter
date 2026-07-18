@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -414,17 +416,128 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
     );
   }
 
+  // Frosted-glass look Teymur asked for (replacing the plain default
+  // gray-white SnackBar) — BackdropFilter blur + a translucent dark panel,
+  // matching this app's own dark theme rather than a plain white/gray
+  // Material default. onTap is optional; when null this behaves like an
+  // ordinary informational SnackBar. icon/iconColor are optional too (e.g.
+  // a green success check) — most callers don't need one.
+  void _showGlassSnackBar(
+    String message, {
+    VoidCallback? onTap,
+    Color? tint,
+    IconData? icon,
+    Color? iconColor,
+  }) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        content: GestureDetector(
+          onTap: onTap,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              child: Stack(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      color: (tint ?? kBg2).withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.15),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (icon != null) ...[
+                          Icon(icon, color: iconColor ?? kText, size: 20),
+                          const SizedBox(width: 10),
+                        ],
+                        Flexible(
+                          child: Text(
+                            message,
+                            style: const TextStyle(color: kText),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Soft light-from-above highlight — real glass catches
+                  // light unevenly near its top edge; a flat translucent
+                  // fill alone reads as plain dark tint, not glass. Purely
+                  // visual (IgnorePointer), sits above the color fill but
+                  // never intercepts the GestureDetector's own tap above.
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(14),
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.white.withValues(alpha: 0.14),
+                              Colors.white.withValues(alpha: 0.0),
+                            ],
+                            stops: const [0.0, 0.6],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // "Open where it's saved" — iOS has a well-established undocumented-but-
+  // stable scheme (photos-redirect://) for this, used widely by real apps.
+  // Android has no equivalent universal scheme; this content:// URI opens
+  // the device's default gallery app on many (not guaranteed all)
+  // manufacturers' skins — needs on-device confirmation on Teymur's own
+  // Android hardware specifically, unlike the iOS path which is standard.
+  // Neither path can open the SPECIFIC saved item, only the gallery app in
+  // general — a real platform limitation, not something achievable
+  // without a totally different mechanism (e.g. a native share-sheet
+  // "show in Photos" action, out of scope here).
+  Future<void> _openGalleryApp() async {
+    final uri = Platform.isIOS
+        ? Uri.parse('photos-redirect://')
+        : Uri.parse('content://media/external/images/media');
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened && mounted) {
+        _showGlassSnackBar('Qalereya tətbiqi açıla bilmədi');
+      }
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: '_StatusGroupPageState: open gallery app failed',
+      );
+      if (mounted) _showGlassSnackBar('Qalereya tətbiqi açıla bilmədi');
+    }
+  }
+
   // Mirrors _shareStatus's own download pattern exactly (DefaultCacheManager
   // into a temp file), then hands that file to `gal` — the package Teymur
   // confirmed for this — instead of SharePlus. Text statuses have no media
   // to save, so they get an explanatory snackbar instead of a silent no-op.
   Future<void> _saveStatusToGallery(Status status) async {
     if (status.type == 'text') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Mətn statusunu qalereyaya yadda saxlamaq olmaz'),
-        ),
-      );
+      _showGlassSnackBar('Mətn statusunu qalereyaya yadda saxlamaq olmaz');
       return;
     }
     try {
@@ -439,11 +552,9 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
         final granted = await Gal.requestAccess();
         if (!granted) {
           if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Qalereyaya giriş icazəsi verilmədi'),
-              backgroundColor: kRed,
-            ),
+          _showGlassSnackBar(
+            'Qalereyaya giriş icazəsi verilmədi',
+            tint: kRed,
           );
           return;
         }
@@ -462,25 +573,20 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
         await Gal.putImage(path);
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Qalereyaya yadda saxlanıldı')),
+      _showGlassSnackBar(
+        'Qalereyaya yadda saxlanıldı',
+        onTap: _openGalleryApp,
+        icon: Icons.check_circle,
+        iconColor: Colors.green,
       );
     } catch (e, st) {
-      // TEMPORARY — remove once the real on-device cause is confirmed via
-      // this raw output (Teymur's terminal, not a paraphrase of it).
-      debugPrint('SAVE_TO_GALLERY_ERROR: $e');
       FirebaseCrashlytics.instance.recordError(
         e,
         st,
         reason: '_StatusGroupPageState: status save-to-gallery failed',
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Yadda saxlanmadı'),
-          backgroundColor: kRed,
-        ),
-      );
+      _showGlassSnackBar('Yadda saxlanmadı', tint: kRed);
     }
   }
 
