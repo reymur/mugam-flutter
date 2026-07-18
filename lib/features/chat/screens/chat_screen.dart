@@ -2420,22 +2420,44 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                   SizedBox(
                                     width: 60,
                                     height: 60,
-                                    child: CachedNetworkImage(
-                                      imageUrl: msg.replyToStatusThumbnailURL!,
-                                      width: 60,
-                                      height: 60,
-                                      fit: BoxFit.cover,
-                                      placeholder: (ctx, url) =>
-                                          Container(color: kBg3),
-                                      errorWidget: (ctx, url, err) => Container(
-                                        color: kBg3,
-                                        child: const Icon(
-                                          Icons.broken_image,
-                                          color: kMuted,
-                                          size: 16,
-                                        ),
-                                      ),
-                                    ),
+                                    // For a video-type status reply,
+                                    // replyToStatusThumbnailURL holds the
+                                    // raw video file URL (see
+                                    // Message.replyToStatusType/
+                                    // _sendStatusReply's own
+                                    // status.mediaUrl assignment) — feeding
+                                    // that straight into CachedNetworkImage
+                                    // fails to decode it as an image
+                                    // (shows the broken-image icon every
+                                    // time). VideoThumbnailImage already
+                                    // generates a real frame client-side
+                                    // from a raw video URL — same widget
+                                    // already used a few lines up for the
+                                    // replyToVideoURL (message-reply) case.
+                                    child: msg.replyToStatusType == 'video'
+                                        ? VideoThumbnailImage(
+                                            videoURL:
+                                                msg.replyToStatusThumbnailURL!,
+                                            size: 60,
+                                          )
+                                        : CachedNetworkImage(
+                                            imageUrl: msg
+                                                .replyToStatusThumbnailURL!,
+                                            width: 60,
+                                            height: 60,
+                                            fit: BoxFit.cover,
+                                            placeholder: (ctx, url) =>
+                                                Container(color: kBg3),
+                                            errorWidget: (ctx, url, err) =>
+                                                Container(
+                                              color: kBg3,
+                                              child: const Icon(
+                                                Icons.broken_image,
+                                                color: kMuted,
+                                                size: 16,
+                                              ),
+                                            ),
+                                          ),
                                   ),
                               ],
                             ),

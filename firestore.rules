@@ -287,8 +287,17 @@ service cloud.firestore {
       }
 
       // Only current members can see a chat — this is the core fix: no
-      // more "any signed-in user reads any chat."
-      allow read: if isMember();
+      // more "any signed-in user reads any chat." resource == null is the
+      // one exception: a get() on a chat that doesn't exist yet (e.g.
+      // FirestoreService.getOrCreateDirectChat's own upfront existence
+      // check, before the chat is created) must not error out just
+      // because resource.data can't be evaluated on a null resource —
+      // Firestore's own documented pattern for this exact "get-before-
+      // create" case. Harmless for list queries (resource is always a
+      // real matched doc there, never null) and doesn't weaken anything
+      // for an EXISTING chat — isMember() is still required exactly as
+      // before in that case.
+      allow read: if resource == null || isMember();
 
       // Group chats are created client-side by mugam-flutter itself (see
       // createGroupChat below — no Cloud Function needed for creation,

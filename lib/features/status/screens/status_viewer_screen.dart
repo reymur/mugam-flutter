@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../../core/theme/colors.dart';
@@ -397,6 +398,14 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
         _replyController.clear();
         _replyFocusNode.unfocus();
       }
+      // Captured before popping — same "grab the reference before an
+      // imperative pop/async gap" pattern this app already uses elsewhere
+      // (e.g. _scrollToMessage's own ScaffoldMessenger capture), since
+      // this widget's own context becomes unsafe to derive new lookups
+      // from right after Navigator.pop schedules it for removal.
+      final router = GoRouter.of(context);
+      Navigator.of(context).pop();
+      router.push('/chat/$chatId');
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
         e,
@@ -463,6 +472,14 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
         details.velocity.pixelsPerSecond.dy > velocityThreshold;
     if (shouldDismiss) {
       Navigator.of(context).pop();
+      return;
+    }
+    if (details.velocity.pixelsPerSecond.dy < -velocityThreshold) {
+      if (widget.isOwnGroup) {
+        unawaited(_openStatusViewers(_currentStatus));
+      } else {
+        _replyFocusNode.requestFocus();
+      }
       return;
     }
     _snapBack();
@@ -549,6 +566,26 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
                   ),
                 ),
               ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 180,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [
+                          Colors.black.withAlpha(150),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
               if (widget.isOwnGroup)
                 Positioned(
                   left: 0,
@@ -557,45 +594,33 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
                   child: Center(
                     child: GestureDetector(
                       onTap: () => unawaited(_openStatusViewers(status)),
-                      // Upward swipe on this label, matching WhatsApp's own
-                      // gesture — safe alongside the screen-wide dismiss
-                      // GestureDetector above: that one's own _dragY is
-                      // clamped to [0, ∞) (see _handleVerticalDragUpdate),
-                      // so an upward drag already has zero visible/
-                      // functional effect there (no dismiss, no snap-back
-                      // beyond a no-op) regardless of gesture-arena
-                      // resolution between the two. Threshold matches
-                      // _handleVerticalDragEnd's own velocityThreshold
-                      // (700) for a consistent "how hard a flick counts"
-                      // feel across both gestures on this screen.
-                      onVerticalDragEnd: (details) {
-                        if (details.velocity.pixelsPerSecond.dy < -700) {
-                          unawaited(_openStatusViewers(status));
-                        }
-                      },
+                      // Swipe-up-to-open now handled screen-wide by
+                      // _handleVerticalDragEnd — no local
+                      // onVerticalDragEnd needed here anymore.
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           const Icon(
                             Icons.keyboard_arrow_up,
-                            color: kMuted,
-                            size: 20,
+                            color: kText,
+                            size: 34,
                           ),
-                          const SizedBox(height: 2),
+                          const SizedBox(height: 4),
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               const Icon(
                                 Icons.remove_red_eye_outlined,
-                                size: 14,
-                                color: kMuted,
+                                size: 20,
+                                color: kText,
                               ),
-                              const SizedBox(width: 4),
+                              const SizedBox(width: 6),
                               Text(
                                 '${ref.watch(statusViewersProvider((ownerUid: widget.group.ownerUid, statusId: status.id))).value?.length ?? 0}',
                                 style: const TextStyle(
-                                  color: kMuted,
-                                  fontSize: 13,
+                                  color: kText,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ],
@@ -673,13 +698,10 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
                                     .toList(),
                           ),
                         ),
-                        GestureDetector(
-                          onVerticalDragEnd: (details) {
-                            if (details.velocity.pixelsPerSecond.dy < -700) {
-                              _replyFocusNode.requestFocus();
-                            }
-                          },
-                          child: Container(
+                        // Swipe-up-to-focus now handled screen-wide by
+                        // _handleVerticalDragEnd — no local
+                        // onVerticalDragEnd needed here anymore.
+                        Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 16,
                               vertical: 6,
@@ -751,7 +773,6 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
                               ],
                             ),
                           ),
-                        ),
                       ],
                     ),
                   ),
