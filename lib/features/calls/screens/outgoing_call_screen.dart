@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/calls/call_engine_service.dart';
+import '../../../core/calls/callkit_service.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -23,6 +24,7 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
   bool _cancelling = false;
   bool _navigatedToActive = false;
   bool _started = false;
+  bool _leftLocally = false;
 
   @override
   void dispose() {
@@ -33,12 +35,28 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
       // reuses this exact running engine and must not have it pulled out
       // from under it here.
       unawaited(CallEngineService.instance.end());
+      // Same "only if NOT handing off to ActiveCallScreen" rule as the
+      // engine above — if we ARE handing off, ActiveCallScreen's own
+      // dispose() ends the CallKit session once, not this screen twice.
+      unawaited(CallKitService.instance.endCall(widget.callId));
     }
     super.dispose();
   }
 
   void _leave() {
-    if (!mounted) return;
+    if (!mounted || _leftLocally) return;
+    // Without this guard, cancelling before the callee answers calls
+    // _leave() TWICE: once directly from _cancel() below, and again
+    // asynchronously when this screen's own ref.listen reacts to the
+    // resulting Firestore status write ("ended") — the first pop()
+    // correctly removes this screen and reveals the originating chat,
+    // but the second, unguarded pop() then removes the chat screen too,
+    // landing on the chats list instead. Confirmed live: this only
+    // happened on cancel-before-answer, never on a normal accepted call
+    // (where this screen is torn down via pushReplacement before any
+    // second _leave() could fire) — matches ActiveCallScreen's own
+    // pre-existing _leftLocally guard, which this screen was missing.
+    _leftLocally = true;
     if (context.canPop()) {
       context.pop();
     } else {
@@ -66,13 +84,23 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
     if (mounted) _leave();
   }
 
-  Future<void> _ensureStarted(CallType type) async {
+  Future<void> _ensureStarted(Call call) async {
     if (_started) return;
     _started = true;
+    final isVideo = call.type == CallType.video;
     await CallEngineService.instance.start(
       firestoreService: ref.read(firestoreServiceProvider),
       callId: widget.callId,
-      isVideo: type == CallType.video,
+      isVideo: isVideo,
+    );
+    // One-off fetch (not the reactive userByIdProvider stream) — this
+    // fires once, at call-start, purely to label the native CallKit UI;
+    // it doesn't need to stay live-updated the way on-screen UI does.
+    final callee = await ref.read(firestoreServiceProvider).fetchUserById(call.calleeId);
+    await CallKitService.instance.reportOutgoingStarted(
+      callId: widget.callId,
+      calleeName: callee?.name ?? 'İstifadəçi',
+      isVideo: isVideo,
     );
   }
 
@@ -97,7 +125,7 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
         case CallStatus.accepted:
           if (!_navigatedToActive) {
             _navigatedToActive = true;
-            context.go('/call/active/${widget.callId}');
+            context.pushReplacement('/call/active/${widget.callId}');
           }
         case CallStatus.declined:
         case CallStatus.ended:
@@ -116,7 +144,7 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
           if (call == null) {
             return const Center(child: CircularProgressIndicator(color: kGold));
           }
-          WidgetsBinding.instance.addPostFrameCallback((_) => _ensureStarted(call.type));
+          WidgetsBinding.instance.addPostFrameCallback((_) => _ensureStarted(call));
 
           final calleeAsync = ref.watch(userByIdProvider(call.calleeId));
           final callee = calleeAsync.asData?.value;

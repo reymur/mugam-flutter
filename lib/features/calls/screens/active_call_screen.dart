@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../core/calls/call_engine_service.dart';
+import '../../../core/calls/callkit_service.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -38,14 +39,24 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
       callId: widget.callId,
       isVideo: type == CallType.video,
     );
+    // Starts the native call UI's connected-state timer. Called here
+    // (once our own engine join completes) rather than waiting for the
+    // remote party's media to actually arrive — an approximation, but a
+    // reasonable one: by this point the call is genuinely connected on
+    // our end, which is what setCallConnected's own docs call for
+    // ("when WebRTC/P2P is established").
+    await CallKitService.instance.reportConnected(widget.callId);
   }
 
   void _leave() {
     if (!mounted || _leftLocally) return;
     _leftLocally = true;
+    debugPrint('[CALL_NAV] _leave called, canPop=${context.canPop()}');
     if (context.canPop()) {
+      debugPrint('[CALL_NAV] calling context.pop()');
       context.pop();
     } else {
+      debugPrint('[CALL_NAV] calling context.go("/home") — canPop was false');
       context.go('/home');
     }
   }
@@ -78,11 +89,8 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
 
   @override
   void dispose() {
-    // Always the natural end of a call — win, lose, or draw, nothing after
-    // this screen reuses the engine, so it's safe to tear down here
-    // unconditionally (unlike OutgoingCallScreen, which must NOT tear down
-    // when handing off to this exact screen).
     unawaited(CallEngineService.instance.end());
+    unawaited(CallKitService.instance.endCall(widget.callId));
     super.dispose();
   }
 

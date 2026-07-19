@@ -5,12 +5,14 @@ import 'package:audio_session/audio_session.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 import 'core/cache/message_cache_service.dart';
 import 'core/calls/call_listener_service.dart';
+import 'core/calls/callkit_service.dart';
 import 'core/presence/presence_service.dart';
 import 'core/queue/background_queue_processor.dart';
 import 'core/queue/pending_message_queue_controller.dart';
@@ -18,9 +20,35 @@ import 'core/queue/pending_message_queue_service.dart';
 import 'core/settings/image_quality_settings.dart';
 import 'core/theme/colors.dart';
 import 'core/theme/typography.dart';
+import 'firebase/firestore_service.dart';
+// `show CallType` only — models.dart also declares its own `User` class,
+// which would otherwise collide with firebase_auth's `User` (already
+// imported below and used unqualified for _authSub's type).
+import 'firebase/models.dart' show CallType;
 import 'firebase/push_notification_service.dart';
 import 'firebase_options.dart';
 import 'navigation/app_router.dart';
+
+// Runs in a separate background isolate when a data-only FCM message
+// arrives while the app is backgrounded or fully killed (Android only —
+// iOS still needs PushKit for this, see CallKitService's own TODO).
+// @pragma('vm:entry-point') is required so the background isolate can
+// find this top-level function at all (Flutter tree-shakes it out
+// otherwise) — see flutter_callkit_incoming's own docs on this exact
+// requirement.
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  if (message.data['type'] != 'incoming_call') return;
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  final callId = message.data['callId'];
+  final callType = message.data['callType'];
+  if (callId == null) return;
+  await CallKitService.instance.showIncoming(
+    callId: callId,
+    callerName: 'Zəng',
+    isVideo: callType == 'video',
+  );
+}
 
 Future<void> main() async {
   // Everything (including runApp) runs inside this zone so errors that
@@ -38,6 +66,7 @@ Future<void> main() async {
 Future<void> _mainImpl() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   // Flutter-framework errors (failed builds, layout, etc.) go through
   // FlutterError.onError; everything else Dart-level (thrown in a callback,
   // a bad platform-channel response) goes through PlatformDispatcher.onError
@@ -116,7 +145,23 @@ class _MugamAppState extends ConsumerState<MugamApp> {
         PushNotificationService.instance.registerToken(user.uid);
         PresenceService.instance.start(user.uid);
         CallListenerService.instance.start(user.uid, (call) {
-          appRouter.push('/call/incoming/${call.id}');
+          // Only CallKitService here now — appRouter.push('/call/incoming/...')
+          // was pushing our OWN Flutter incoming-call screen SIMULTANEOUSLY
+          // with the real native CallKit/ConnectionService UI, confirmed
+          // live (screenshot showed both stacked on top of each other).
+          // Now that CallKit is the real, working incoming-call UI, our own
+          // screen is redundant for this path — accepting/declining happens
+          // through CallKitService's own onEvent listener instead.
+          CallKitService.instance.showIncoming(
+            callId: call.id,
+            // TODO: resolve the real caller's display name — this
+            // callback only receives the Call doc (has callerId, not a
+            // name), and fetching it here would require an async
+            // Firestore round-trip that'd delay the native call UI
+            // appearing, defeating the point of showing it immediately.
+            callerName: 'Zəng',
+            isVideo: call.type == CallType.video,
+          );
         });
       } else {
         PresenceService.instance.stop();
@@ -124,6 +169,7 @@ class _MugamAppState extends ConsumerState<MugamApp> {
       }
     });
     PushNotificationService.instance.setupForegroundPresentation();
+    CallKitService.instance.ensureListening(FirestoreService());
     PushNotificationService.instance.setupMessageOpenedHandler((data) {
       final chatId = data['chatId'];
       if (data['type'] == 'new_message' && chatId != null) {

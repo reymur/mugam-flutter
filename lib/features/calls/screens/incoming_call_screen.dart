@@ -56,7 +56,7 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen> {
       );
       if (!mounted) return;
       if (accept) {
-        context.go('/call/active/${widget.callId}');
+        context.pushReplacement('/call/active/${widget.callId}');
       } else {
         _leave();
       }
