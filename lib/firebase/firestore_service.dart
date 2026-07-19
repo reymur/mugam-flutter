@@ -376,6 +376,34 @@ class FirestoreService {
     return await FirebaseStorage.instance.ref(path).getDownloadURL();
   }
 
+  // Reverse direction — forwarding a status' photo/video into a chat. See
+  // functions/src/index.ts's copyStatusMediaToChat for the full
+  // rationale (status media can't just be reused directly in a chat
+  // message: firestore.rules' isValidatedMedia() requires a
+  // mediaOriginChatId + validatedUploads marker that only a real chat
+  // upload has, which the Cloud Function itself creates for the copy).
+  // Returns both the copied file's own download URL and its bare
+  // fileName (== mediaFileName), since the caller needs the fileName to
+  // pass as mediaOriginChatId's companion when sending the actual
+  // message — copyMediaToStatus's own caller (createStatus) never needed
+  // this, since a status doesn't carry mediaOriginChatId/mediaFileName
+  // fields at all.
+  Future<({String downloadUrl, String fileName})> copyStatusMediaToChat({
+    required String statusOwnerUid,
+    required String statusId,
+    required String targetChatId,
+  }) async {
+    final result = await _functions.httpsCallable('copyStatusMediaToChat').call({
+      'statusOwnerUid': statusOwnerUid,
+      'statusId': statusId,
+      'targetChatId': targetChatId,
+    });
+    final path = result.data['path'] as String;
+    final fileName = result.data['fileName'] as String;
+    final downloadUrl = await FirebaseStorage.instance.ref(path).getDownloadURL();
+    return (downloadUrl: downloadUrl, fileName: fileName);
+  }
+
   // Storage path statuses/{ownerUid}/{fileName} — mirrors uploadChatImage's
   // chats/{chatId}/{fileName} shape below.
   String newStatusId(String ownerUid) {

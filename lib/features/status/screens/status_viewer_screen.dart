@@ -11,7 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:open_filex/open_filex.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -19,6 +19,7 @@ import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/status_video_player.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../widgets/status_progress_bar.dart';
+import '../../chat/screens/forward_sheet.dart';
 import 'status_viewers_screen.dart';
 
 // Fixed display duration for text/image statuses — video statuses instead
@@ -404,15 +405,32 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
     }
   }
 
-  // NOT YET IMPLEMENTED — Forward needs a real ForwardSheet adaptation
-  // (that widget currently requires List<Message> + a sourceChatId — a
-  // Status doesn't fit that shape without deliberate, separately-reviewed
-  // changes to it, a heavily-used shared file). Surfaced explicitly here
-  // rather than silently doing nothing, so tapping it is never a dead end
-  // with no feedback.
+  // Text statuses reuse ForwardSheet's whole chat-picker UI via its
+  // statusText mode; media (image/video) statuses reuse it via
+  // mediaStatusOwnerUid/mediaStatusId/mediaStatusType instead — both
+  // modes documented on ForwardSheet's own constructor. The Cloud
+  // Function backing the media path (copyStatusMediaToChat,
+  // functions/src/index.ts — mirrors copyMediaToStatus's reverse
+  // direction) is written and test-verified (all 36 emulator tests
+  // passing) but NOT YET DEPLOYED — this UI wiring will only actually
+  // work end-to-end once that deploy happens.
   void _forwardStatus(Status status) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Tezliklə əlavə olunacaq')),
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kBg2,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => ForwardSheet(
+        sourceChatId: '',
+        currentUid: widget.currentUid,
+        statusText: status.type == 'text' ? (status.text ?? '') : null,
+        mediaStatusOwnerUid: status.type != 'text' ? status.ownerUid : null,
+        mediaStatusId: status.type != 'text' ? status.id : null,
+        mediaStatusType: status.type != 'text' ? status.type : null,
+        onDone: () {},
+      ),
     );
   }
 
@@ -502,32 +520,29 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
     );
   }
 
-  // "Open where it's saved" — iOS has a well-established undocumented-but-
-  // stable scheme (photos-redirect://) for this, used widely by real apps.
-  // Android has no equivalent universal scheme; this content:// URI opens
-  // the device's default gallery app on many (not guaranteed all)
-  // manufacturers' skins — needs on-device confirmation on Teymur's own
-  // Android hardware specifically, unlike the iOS path which is standard.
-  // Neither path can open the SPECIFIC saved item, only the gallery app in
-  // general — a real platform limitation, not something achievable
-  // without a totally different mechanism (e.g. a native share-sheet
-  // "show in Photos" action, out of scope here).
-  Future<void> _openGalleryApp() async {
-    final uri = Platform.isIOS
-        ? Uri.parse('photos-redirect://')
-        : Uri.parse('content://media/external/images/media');
+  // Opens the SAME temp file just downloaded/saved below with the OS's
+  // own registered handler for its type — exactly ChatAttachmentViewer's/
+  // FileMessageBubble's own established OpenFilex.open pattern
+  // (file_message_widgets.dart's own _open), already proven in this app.
+  // This is what actually shows the real saved file in the system's own
+  // photo/video viewer (typically the Gallery/Photos app itself, since
+  // that's what's registered for image/video MIME types) — unlike the
+  // two earlier attempts here (a raw content:// collection URI, then an
+  // AndroidIntent "browse gallery in general" hack), neither of which
+  // could show the SPECIFIC file, only the app in general at best.
+  Future<void> _openSavedFile(String path) async {
     try {
-      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!opened && mounted) {
-        _showGlassSnackBar('Qalereya tətbiqi açıla bilmədi');
+      final result = await OpenFilex.open(path);
+      if (result.type != ResultType.done && mounted) {
+        _showGlassSnackBar('Fayl açıla bilmədi');
       }
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
         e,
         st,
-        reason: '_StatusGroupPageState: open gallery app failed',
+        reason: '_StatusGroupPageState: open saved file failed',
       );
-      if (mounted) _showGlassSnackBar('Qalereya tətbiqi açıla bilmədi');
+      if (mounted) _showGlassSnackBar('Fayl açıla bilmədi');
     }
   }
 
@@ -575,7 +590,7 @@ class _StatusGroupPageState extends ConsumerState<_StatusGroupPage>
       if (!mounted) return;
       _showGlassSnackBar(
         'Qalereyaya yadda saxlanıldı',
-        onTap: _openGalleryApp,
+        onTap: () => _openSavedFile(path),
         icon: Icons.check_circle,
         iconColor: Colors.green,
       );

@@ -1,4 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required for LocationPickerScreen (Geolocator.getCurrentPosition) —
+         without these, Geolocator.requestPermission() can never actually
+         grant anything on Android, so location-sharing silently falls
+         back to LocationPickerScreen's hardcoded Baku fallback center
+         every time instead of the device's real GPS fix. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <application
         android:label="mugam_flutter"
         android:name="${applicationName}"
@@ -60,6 +67,26 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Required for canLaunchUrl(Uri.parse('waze://'))/
+             canLaunchUrl(Uri.parse('comgooglemaps://')) to correctly
+             detect these apps on Android 11+ package-visibility
+             restrictions. The earlier <package android:name="..."/> form
+             tried here first was NOT enough — that grants visibility for
+             lookups BY PACKAGE NAME (explicit intents, getPackageInfo),
+             but canLaunchUrl constructs an IMPLICIT intent
+             (ACTION_VIEW + a data scheme, no package name attached),
+             which needs a matching <intent> filter declaration instead —
+             confirmed via url_launcher's own documented Android 11+
+             requirement after Teymur found the app-picker never appeared
+             even with both apps genuinely installed. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="waze"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="comgooglemaps"/>
         </intent>
     </queries>
 </manifest>

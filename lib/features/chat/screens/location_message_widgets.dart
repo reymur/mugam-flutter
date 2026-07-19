@@ -72,49 +72,71 @@ class LocationMessageBubble extends StatelessWidget {
     if (lat == null || lng == null) return;
     final label = Uri.encodeComponent(senderLabel ?? 'Məkan');
 
-    if (!Platform.isIOS) {
-      // Android: geo: is handled by every installed maps app, and the OS
-      // shows its own native app-picker automatically whenever more than
-      // one app can handle it — no need to build one ourselves here (see
-      // the iOS branch below for why iOS doesn't get this for free).
-      final uri = Uri.parse('geo:$lat,$lng?q=$lat,$lng($label)');
-      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!opened && context.mounted) _showOpenFailedSnackbar(context);
-      return;
-    }
+    // Both platforms now build an explicit per-service candidate list
+    // rather than trusting a single shared URI scheme (geo: on Android,
+    // a bare custom scheme on iOS) to reliably reach the right app.
+    // Android's own OS-level "choose an app" dialog for geo: was assumed
+    // to make an explicit picker unnecessary there, but two real
+    // on-device reports this session (a non-Google-Maps app misreading
+    // the label-bearing q= form, then Waze itself opening the wrong
+    // coordinates even from the label-free form) showed geo: is
+    // interpreted inconsistently enough across real installed apps that
+    // it can't be trusted as the one shared mechanism — each app instead
+    // gets its own real, documented, unambiguous deep link, exactly like
+    // the iOS branch already did.
+    final candidates = <(String label, Uri uri, IconData icon, Color color)>[];
 
-    // iOS has no built-in disambiguation for custom URL schemes —
-    // launchUrl silently opens whichever app matches first, so replicate
-    // WhatsApp's own "Choose app" sheet: offer every installed maps app
-    // we can actually detect. Apple Maps is always the baseline; Google
-    // Maps/Waze only get added if canLaunchUrl confirms they're really
-    // installed (both schemes are declared in Info.plist's
-    // LSApplicationQueriesSchemes — required for canLaunchUrl to report
-    // anything but false on iOS 9+, per Apple's own restriction).
-    // iOS gives no public API for a regular app to fetch another app's
-    // real installed icon by bundle id — that's what makes the system
-    // Share Sheet's own "choose app" list able to show live icons, but
-    // it's not something a third-party app can replicate for a custom
-    // URL-scheme picker like this one. Each service gets its own
-    // recognizable icon+brand color instead (not exact logos, but
-    // distinguishable at a glance without needing bundled trademarked
-    // icon assets).
-    final candidates = <(String label, Uri uri, IconData icon, Color color)>[
-      (
+    if (Platform.isIOS) {
+      // iOS has no built-in disambiguation for custom URL schemes —
+      // launchUrl silently opens whichever app matches first, so
+      // replicate WhatsApp's own "Choose app" sheet: offer every
+      // installed maps app we can actually detect. Apple Maps is always
+      // the baseline; Google Maps/Waze only get added if canLaunchUrl
+      // confirms they're really installed (both schemes are declared in
+      // Info.plist's LSApplicationQueriesSchemes — required for
+      // canLaunchUrl to report anything but false on iOS 9+, per Apple's
+      // own restriction). iOS gives no public API for a regular app to
+      // fetch another app's real installed icon by bundle id — that's
+      // what makes the system Share Sheet's own "choose app" list able
+      // to show live icons, but it's not something a third-party app can
+      // replicate for a custom URL-scheme picker like this one. Each
+      // service gets its own recognizable icon+brand color instead (not
+      // exact logos, but distinguishable at a glance without needing
+      // bundled trademarked icon assets).
+      candidates.add((
         'Apple Maps',
         Uri.parse('https://maps.apple.com/?ll=$lat,$lng&q=$label'),
         Icons.map,
         const Color(0xFF007AFF),
-      ),
-    ];
-    if (await canLaunchUrl(Uri.parse('comgooglemaps://'))) {
+      ));
+      if (await canLaunchUrl(Uri.parse('comgooglemaps://'))) {
+        candidates.add((
+          'Google Maps',
+          Uri.parse('comgooglemaps://?center=$lat,$lng&q=$lat,$lng($label)'),
+          Icons.location_on,
+          const Color(0xFFEA4335),
+        ));
+      }
+    } else {
+      // Android — Google Maps is the always-present baseline here (its
+      // own universal maps.google.com link, not the ambiguous geo:
+      // scheme; opens the app directly if installed, else the web page,
+      // so no canLaunchUrl detection is even needed for it).
       candidates.add((
         'Google Maps',
-        Uri.parse('comgooglemaps://?center=$lat,$lng&q=$lat,$lng($label)'),
+        Uri.parse(
+          'https://www.google.com/maps/search/?api=1&query=$lat,$lng',
+        ),
         Icons.location_on,
         const Color(0xFFEA4335),
       ));
     }
+
+    // Waze uses the exact same real, documented deep link on both
+    // platforms (ll=lat,lng&navigate=yes) — the one already proven
+    // correct on iOS; the bug Teymur found was specifically the
+    // Android side going through the ambiguous shared geo: URI instead
+    // of this.
     if (await canLaunchUrl(Uri.parse('waze://'))) {
       candidates.add((
         'Waze',

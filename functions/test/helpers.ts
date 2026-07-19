@@ -12,9 +12,21 @@ let app: admin.app.App | undefined;
 // firebase emulators:exec injects FIRESTORE_EMULATOR_HOST /
 // FIREBASE_STORAGE_EMULATOR_HOST into this process's env automatically —
 // no explicit host/port wiring needed here.
+//
+// admin.apps.length check added for copy-status-media-to-chat.test.ts,
+// the first test to import a function straight from ../src/index —
+// that module's own top-level initializeApp() (firebase-admin/app, no
+// args) runs at import time, before this function ever gets called, so
+// calling admin.initializeApp() unconditionally a second time here would
+// throw "the default Firebase app already exists". The modular
+// (firebase-admin/app) and namespaced (firebase-admin) APIs share the
+// same underlying app registry in the Admin SDK, so admin.app() reuses
+// that same app correctly rather than needing a second one.
 export function getAdminApp(): admin.app.App {
   if (!app) {
-    app = admin.initializeApp({ projectId: PROJECT_ID, storageBucket: BUCKET });
+    app = admin.apps.length > 0
+      ? admin.app()
+      : admin.initializeApp({ projectId: PROJECT_ID, storageBucket: BUCKET });
   }
   return app;
 }

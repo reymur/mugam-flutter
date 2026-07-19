@@ -1154,7 +1154,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             chatId: widget.chatId,
             senderId: currentUid,
             text: text,
-            replyToId: replyingTo?.id,
+            // .stableMediaKey, not .id — a still-uploading media message
+            // being replied to is showing its synthetic pending bubble at
+            // this exact moment (PendingMediaMessage.toSyntheticMessage),
+            // whose own `id` is a throwaway 'local_...' placeholder that
+            // never matches the real Firestore doc once it lands. Using
+            // plain `.id` here (the bug Teymur found) meant a reply made
+            // during upload could never resolve its quote afterward —
+            // stableMediaKey is exactly the field Message already defines
+            // for this ("the one identifier that stays constant across a
+            // message's entire lifecycle").
+            replyToId: replyingTo?.stableMediaKey,
             replyToText: replyingTo != null
                 ? _replyPreviewText(replyingTo)
                 : null,
@@ -1272,7 +1282,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           videoHeight: videoHeight,
           videoHd: videoHd,
           previewBytes: previewBytes,
-          replyToId: replyingTo?.id,
+          replyToId: replyingTo?.stableMediaKey,
           replyToText: replyingTo != null
               ? _replyPreviewText(replyingTo)
               : null,
@@ -1389,7 +1399,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           imageWidth: imageProbe?.$1,
           imageHeight: imageProbe?.$2,
           previewBytes: previewBytes,
-          replyToId: replyingTo?.id,
+          replyToId: replyingTo?.stableMediaKey,
           replyToText: replyingTo != null
               ? _replyPreviewText(replyingTo)
               : null,
@@ -1448,7 +1458,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           sourceFilePath: picked.path!,
           fileName: picked.name,
           fileSizeBytes: picked.size,
-          replyToId: replyingTo?.id,
+          replyToId: replyingTo?.stableMediaKey,
           replyToText: replyingTo != null
               ? _replyPreviewText(replyingTo)
               : null,
@@ -1496,7 +1506,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           sourceFilePath: snapshotPath,
           latitude: lat,
           longitude: lng,
-          replyToId: replyingTo?.id,
+          replyToId: replyingTo?.stableMediaKey,
           replyToText: replyingTo != null
               ? _replyPreviewText(replyingTo)
               : null,
@@ -1912,7 +1922,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             type: 'audio',
             sourceFilePath: path,
             waveform: waveform,
-            replyToId: replyingTo?.id,
+            replyToId: replyingTo?.stableMediaKey,
             replyToText: replyingTo != null
                 ? _replyPreviewText(replyingTo)
                 : null,
@@ -2761,7 +2771,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final isDelete = _selectionPurpose == _SelectionPurpose.delete;
     return Container(
       color: kBg2,
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      // Same fix as the main composer bar below (build()) — see that
+      // Container's own comment for the full rationale.
+      padding: EdgeInsets.fromLTRB(
+        16,
+        8,
+        16,
+        8 + MediaQuery.of(context).padding.bottom,
+      ),
       child: Row(
         children: [
           GestureDetector(
@@ -3347,7 +3364,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           else
             Container(
               color: kBg2,
-              padding: const EdgeInsets.fromLTRB(12, 8, 8, 24),
+              // Bottom was a flat 24 — a guess tuned on whatever devices
+              // were tested on, not the real system nav-bar inset. Teymur
+              // confirmed this shows a visible gap above the nav bar on a
+              // newer-Android Samsung A06 specifically, only on this
+              // screen — this Container is never wrapped in SafeArea
+              // anywhere, so this hardcoded value was the ONLY thing ever
+              // accounting for that inset, and a fixed guess can't track
+              // however tall it actually is on a given device/Android
+              // version (edge-to-edge is mandatory from Android 15).
+              // MediaQuery.of(context).padding.bottom is the real value;
+              // +8 keeps a little breathing room on devices reporting 0
+              // (e.g. older 3-button nav, where Flutter's own window
+              // already excludes that space entirely).
+              padding: EdgeInsets.fromLTRB(
+                12,
+                8,
+                8,
+                8 + MediaQuery.of(context).padding.bottom,
+              ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [

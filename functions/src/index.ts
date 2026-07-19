@@ -389,6 +389,152 @@ export const copyMediaToStatus = onCall(
   },
 );
 
+// Reverse direction of copyMediaToStatus above — "forward a status'
+// photo/video into a chat". Same server-side-copy shape (no client
+// download/re-upload round trip), but with real extra authorization this
+// direction needs that the other one doesn't:
+//   - copyMediaToStatus's caller already has to be a chat member to have
+//     read the source message/media at all — trivially re-verified.
+//   - This function's caller could otherwise claim access to ANY status
+//     (including someone else's private one) just by supplying its
+//     ids — so visibleToUids (or ownership) is re-checked here against
+//     the real status document, exactly like firestore.rules' own
+//     visibleToUids-based read rule, since Admin SDK bypasses that rule
+//     entirely and this is the only place enforcing it for this flow.
+// mediaUrl is a Firebase Storage download URL, not a bare object path —
+// storagePathFromDownloadUrl() below extracts the real statuses/{ownerUid}/
+// {fileName} path from the status document's own trusted (already
+// permission-checked) field, rather than trusting anything client-supplied
+// for this — the client only ever sends ids, never a path or fileName.
+//
+// The destination lands at chats/{targetChatId}/{fileName} — the same
+// shape onChatMediaUploaded (this file, above) already watches for any
+// object finalize under chats/, so eventually it fires too and does its
+// own harmless redundant validatedUploads write. This function doesn't
+// wait for that: it writes the SAME validatedUploads/{targetChatId}/
+// files/{fileName} marker itself, synchronously, before returning — a
+// message sent by the client immediately after this call resolves must
+// never race that trigger's own async firing (Storage finalize triggers
+// are not guaranteed to complete before this call's response reaches the
+// client). Reuses the existing storagePathFromDownloadUrl helper below
+// (written for onStatusDeleted's own cascade cleanup) rather than
+// declaring a second function with the same job — its nullable return is
+// handled inline here instead of a throwing wrapper.
+export const copyStatusMediaToChat = onCall(
+  { region: FUNCTIONS_REGION },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const { statusOwnerUid, statusId, targetChatId } = (request.data ?? {}) as {
+      statusOwnerUid?: string;
+      statusId?: string;
+      targetChatId?: string;
+    };
+    if (!statusOwnerUid || !statusId || !targetChatId) {
+      throw new HttpsError(
+        "invalid-argument",
+        "statusOwnerUid, statusId and targetChatId are required.",
+      );
+    }
+
+    const chatSnap = await db.collection("chats").doc(targetChatId).get();
+    if (!chatSnap.exists) {
+      throw new HttpsError("not-found", "Target chat not found.");
+    }
+    const chatMembers: string[] = chatSnap.data()?.members ?? [];
+    if (!chatMembers.includes(uid)) {
+      throw new HttpsError(
+        "permission-denied",
+        "Not a member of the target chat.",
+      );
+    }
+
+    const statusSnap = await db
+      .collection("users")
+      .doc(statusOwnerUid)
+      .collection("statuses")
+      .doc(statusId)
+      .get();
+    if (!statusSnap.exists) {
+      throw new HttpsError("not-found", "Status not found.");
+    }
+    const statusData = statusSnap.data()!;
+    // Mirrors firestore.rules' own `allow get` on statuses/{statusId}
+    // exactly: isPublic (and not privacyList-excluded) OR visibleToUids —
+    // checking visibleToUids alone would wrongly reject forwarding a
+    // public status from someone who can legitimately view it via
+    // isPublic but isn't a friend (so isn't in visibleToUids at all).
+    const isPublic = statusData.isPublic === true;
+    const privacyList: string[] = statusData.privacyList ?? [];
+    const visibleToUids: string[] = statusData.visibleToUids ?? [];
+    const canView =
+      uid === statusOwnerUid ||
+      (isPublic && !privacyList.includes(uid)) ||
+      visibleToUids.includes(uid);
+    if (!canView) {
+      throw new HttpsError("permission-denied", "No access to this status.");
+    }
+    const mediaUrl: string | undefined = statusData.mediaUrl;
+    const mediaType: string | undefined = statusData.type;
+    if (!mediaUrl || (mediaType !== "image" && mediaType !== "video")) {
+      throw new HttpsError(
+        "invalid-argument",
+        "Status has no forwardable media.",
+      );
+    }
+
+    // Explicit bucket name — matches onStatusDeleted's own proven pattern
+    // (this file, below) rather than copyMediaToStatus's no-argument
+    // getStorage().bucket() above, which a real emulator test run just
+    // confirmed does NOT resolve to the right bucket in the demo-project
+    // test environment (getStorage().bucket() depends on the app's
+    // configured default bucket, which this app's own bare
+    // initializeApp() call at the top of this file never sets).
+    const bucket = getStorage().bucket("mugam-club.firebasestorage.app");
+    const sourcePath = storagePathFromDownloadUrl(mediaUrl);
+    if (!sourcePath) {
+      throw new HttpsError("internal", "Could not parse status media URL.");
+    }
+    const sourceFile = bucket.file(sourcePath);
+    const [exists] = await sourceFile.exists();
+    if (!exists) {
+      throw new HttpsError("not-found", "Source media no longer exists.");
+    }
+
+    const originalFileName = sourcePath.split("/").pop() ?? "file";
+    const destFileName = `${Date.now()}_${originalFileName}`;
+    const destPath = `chats/${targetChatId}/${destFileName}`;
+    const destFile = bucket.file(destPath);
+
+    await sourceFile.copy(destFile);
+    await destFile.setMetadata({
+      metadata: { uploaderUid: uid, chatId: targetChatId },
+    });
+    // Real values from the copied object itself — matches
+    // onChatMediaUploaded's own use of object.contentType/object.size
+    // exactly, rather than guessing a contentType from mediaType (which
+    // would be wrong for, e.g., a PNG status image) or leaving size null
+    // when the real value is one metadata call away.
+    const [destMetadata] = await destFile.getMetadata();
+
+    await db
+      .collection("validatedUploads")
+      .doc(targetChatId)
+      .collection("files")
+      .doc(destFileName)
+      .set({
+        uploaderUid: uid,
+        contentType: destMetadata.contentType ?? null,
+        size: destMetadata.size ? Number(destMetadata.size) : null,
+        validatedAt: FieldValue.serverTimestamp(),
+      });
+
+    return { path: destPath, fileName: destFileName, type: mediaType };
+  },
+);
+
 // Closes the gap between "a file landed in Storage" and "a message doc
 // claims to point at it" — Firestore rules can't inspect Storage state
 // directly, so without this, a client could write an arbitrary/external

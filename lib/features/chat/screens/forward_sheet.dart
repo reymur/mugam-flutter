@@ -34,13 +34,32 @@ class ForwardSheet extends ConsumerStatefulWidget {
   final String sourceChatId;
   final String currentUid;
   final VoidCallback onDone;
+  // Set (with messages left empty) when forwarding a text STATUS instead
+  // of chat message(s) — see _forwardTo's own branch below for why this
+  // is enough to reuse this whole screen (search, sections, new-group,
+  // caption-free single send) without a parallel picker UI.
+  final String? statusText;
+  // Set together (statusText left null) when forwarding a media (image/
+  // video) status instead — needs the Cloud Function copyStatusMediaToChat
+  // (functions/src/index.ts) to create a validated per-chat copy first,
+  // since status media otherwise has no mediaOriginChatId/validatedUploads
+  // marker firestore.rules' isValidatedMedia() requires. mediaStatusType
+  // is 'image' or 'video', deciding which of sendImageMessage/
+  // sendVideoMessage _forwardTo calls per target chat.
+  final String? mediaStatusOwnerUid;
+  final String? mediaStatusId;
+  final String? mediaStatusType;
 
   const ForwardSheet({
     super.key,
-    required this.messages,
+    this.messages = const [],
     required this.sourceChatId,
     required this.currentUid,
     required this.onDone,
+    this.statusText,
+    this.mediaStatusOwnerUid,
+    this.mediaStatusId,
+    this.mediaStatusType,
   });
 
   @override
@@ -89,12 +108,74 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
   // chat's batch), using the caption field's current text as an
   // override. Returns whether any individual forward failed, for the
   // caller's own success/partial-failure SnackBar.
+  //
+  // When widget.statusText is set (a text-status forward, messages left
+  // empty), sends that text as one plain message per chat instead —
+  // status media has no mediaOriginChatId/validatedUploads marker
+  // (firestore.rules' isValidatedMedia() requires one from the real
+  // onChatMediaUploaded Storage trigger), so forwardMessage's own media
+  // path simply doesn't apply here; a text status has no such
+  // requirement at all, so this needs nothing beyond a normal send.
+  //
+  // When widget.mediaStatusId is set instead (an image/video status
+  // forward), each target chat needs its OWN validated copy of the
+  // media — copyStatusMediaToChat (functions/src/index.ts) copies into
+  // that SPECIFIC chatId, so it's called once per chat here, not once
+  // overall, before sending the resulting URL as a normal image/video
+  // message.
   Future<bool> _forwardTo(Iterable<String> chatIds) async {
     final service = ref.read(firestoreServiceProvider);
     final captionText = _captionController.text.trim();
     final captionOverride = captionText.isEmpty ? null : captionText;
     var anyFailed = false;
     for (final chatId in chatIds) {
+      final statusText = widget.statusText;
+      if (statusText != null) {
+        try {
+          await service.sendMessage(
+            chatId: chatId,
+            senderId: widget.currentUid,
+            text: statusText,
+          );
+        } catch (_) {
+          anyFailed = true;
+        }
+        continue;
+      }
+      final mediaStatusId = widget.mediaStatusId;
+      final mediaStatusOwnerUid = widget.mediaStatusOwnerUid;
+      final mediaStatusType = widget.mediaStatusType;
+      if (mediaStatusId != null && mediaStatusOwnerUid != null && mediaStatusType != null) {
+        try {
+          final copied = await service.copyStatusMediaToChat(
+            statusOwnerUid: mediaStatusOwnerUid,
+            statusId: mediaStatusId,
+            targetChatId: chatId,
+          );
+          if (mediaStatusType == 'video') {
+            await service.sendVideoMessage(
+              chatId: chatId,
+              senderId: widget.currentUid,
+              videoURL: copied.downloadUrl,
+              caption: captionOverride ?? '',
+              mediaOriginChatId: chatId,
+              mediaFileName: copied.fileName,
+            );
+          } else {
+            await service.sendImageMessage(
+              chatId: chatId,
+              senderId: widget.currentUid,
+              imageURL: copied.downloadUrl,
+              caption: captionOverride ?? '',
+              mediaOriginChatId: chatId,
+              mediaFileName: copied.fileName,
+            );
+          }
+        } catch (_) {
+          anyFailed = true;
+        }
+        continue;
+      }
       for (final msg in widget.messages) {
         try {
           await service.forwardMessage(
@@ -326,6 +407,17 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
           backgroundColor: anyFailed ? kRed : null,
         ),
       );
+      // Land in the target chat, matching real WhatsApp's own behavior
+      // after forwarding to exactly one chat — with multiple targets
+      // there's no single destination to land in, so the SnackBar above
+      // is the only feedback, same as before this change.
+      if (_selectedChatIds.length == 1) {
+        navigator.push(
+          MaterialPageRoute(
+            builder: (_) => ChatScreen(chatId: _selectedChatIds.first),
+          ),
+        );
+      }
     }
   }
 
@@ -579,27 +671,33 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
                   },
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                child: TextField(
-                  controller: _captionController,
-                  style: const TextStyle(color: kText),
-                  decoration: InputDecoration(
-                    hintText: 'Mesaj əlavə edin...',
-                    hintStyle: const TextStyle(color: kMuted),
-                    filled: true,
-                    fillColor: kBg3,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(24),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
+              // No caption box for a text-status forward — real WhatsApp
+              // only shows one when forwarding media, since text forwards
+              // already ARE the content; widget.statusText's own send
+              // path above doesn't read this controller at all, so
+              // showing it here would silently do nothing if typed into.
+              if (widget.statusText == null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: TextField(
+                    controller: _captionController,
+                    style: const TextStyle(color: kText),
+                    decoration: InputDecoration(
+                      hintText: 'Mesaj əlavə edin...',
+                      hintStyle: const TextStyle(color: kMuted),
+                      filled: true,
+                      fillColor: kBg3,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
         ),

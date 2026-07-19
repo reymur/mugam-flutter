@@ -92,10 +92,14 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       }
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
+        _warnFallback();
         return;
       }
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return;
+      if (!serviceEnabled) {
+        _warnFallback();
+        return;
+      }
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
@@ -107,11 +111,35 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       setState(() => _center = target);
       _controller?.animateCamera(CameraUpdate.newLatLng(target));
     } catch (_) {
-      // Fine to fall back silently — the map still opens centered on
-      // _fallbackCenter, the user can pan manually.
+      // The map still opens centered on _fallbackCenter and the user can
+      // pan manually — but they need to actually SEE that this isn't
+      // their real position (see _warnFallback's own doc comment for the
+      // real-world incident that made this not-silent).
+      _warnFallback();
     } finally {
       if (mounted) setState(() => _locating = false);
     }
+  }
+
+  // Previously this failure path was silent: the map just opened on
+  // _fallbackCenter with no indication anything had gone wrong, so a user
+  // whose GPS fix failed (permission never granted, service off, or a
+  // slow/cold fix past the 8s timeLimit) could send that fixed Baku point
+  // believing it was their real location — confirmed on Android, where a
+  // missing AndroidManifest.xml <uses-permission> for
+  // ACCESS_FINE_LOCATION/ACCESS_COARSE_LOCATION meant requestPermission()
+  // could never actually grant anything, so every single location send
+  // silently used this same fallback point instead of a real GPS fix.
+  void _warnFallback() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Dəqiq məkanınız tapılmadı — xəritəni özünüz sürüşdürün',
+        ),
+        backgroundColor: kRed,
+      ),
+    );
   }
 
   // Composites GoogleMapController.takeSnapshot()'s bitmap (the actual map
