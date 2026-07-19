@@ -48,6 +48,19 @@ post_install do |installer|
       # silenced. Disabling the verifier itself is the only way to stop it;
       # this is a build-time-only static check, not a runtime behavior.
       config.build_settings['ENABLE_MODULE_VERIFIER'] = 'NO'
+      # permission_handler (voice/video calls) — since v8.0.0 this plugin
+      # compiles EVERY permission out by default on iOS/CocoaPods builds;
+      # only permissions explicitly enabled here actually work at runtime.
+      # Without this block, Permission.microphone/camera.request() hangs
+      # forever with no dialog and no error — the native handler for a
+      # disabled permission is a no-op that never completes the platform
+      # channel call. Only microphone/camera enabled — the only two this
+      # app actually requests (see CallEngineService).
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
+        '$(inherited)',
+        'PERMISSION_MICROPHONE=1',
+        'PERMISSION_CAMERA=1',
+      ]
     end
   end
 end
