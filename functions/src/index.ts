@@ -71,6 +71,48 @@ async function sendFcmPush(
   }
 }
 
+// Calls specifically need a SILENT push (data only, no `notification`
+// field) — a visible `notification` payload makes Android show its own
+// system banner independently of whatever the app itself does with the
+// data, which duplicated CallKit's own incoming-call UI (confirmed live:
+// user had to dismiss/accept both separately). The client's background
+// message handler (see main.dart) is what shows CallKit's UI from this
+// data payload — this function does NOT touch sendFcmPush/sendPushToUid,
+// which every other push type (new_message, friend_request) still uses
+// unchanged.
+async function sendCallDataPush(
+  token: string,
+  data: Record<string, string>,
+): Promise<void> {
+  try {
+    await messaging.send({
+      token,
+      data,
+      android: { priority: "high" },
+    });
+  } catch (e) {
+    logger.warn("Call data push failed", e);
+  }
+}
+
+async function sendCallPushToUid(uid: string, data: Record<string, string>): Promise<void> {
+  const tokensSnap = await db.collection("users").doc(uid).collection("pushTokens").get();
+  await Promise.all(
+    tokensSnap.docs.map(async (tokenDoc) => {
+      const token = tokenDoc.data().token as string | undefined;
+      if (!token) return;
+      if (isExpoToken(token)) {
+        // No CallKit/background-wake integration on the Expo (mugam-v2)
+        // side yet — fall back to a normal visible push there, same as
+        // before, rather than silently dropping the notification entirely.
+        await sendExpoPush(token, "Zəng", data.callType === "video" ? "Video zəng" : "Səsli zəng", data);
+      } else {
+        await sendCallDataPush(token, data);
+      }
+    }),
+  );
+}
+
 // Fans a push out to every device a single user has registered, reusing
 // the same expo/fcm split onNewMessage does inline below — extracted here
 // (rather than inlined a third time) only because the two friendRequests
@@ -1079,12 +1121,12 @@ export const startCall = onCall(
       createdAt: FieldValue.serverTimestamp(),
     });
 
-    await sendPushToUid(
-      calleeUid,
-      "Zəng",
-      type === "video" ? "Video zəng" : "Səsli zəng",
-      { type: "incoming_call", callId, callerId: uid, callType: type },
-    );
+    await sendCallPushToUid(calleeUid, {
+      type: "incoming_call",
+      callId,
+      callerId: uid,
+      callType: type,
+    });
 
     return { callId };
   },
