@@ -437,6 +437,23 @@ service cloud.firestore {
     }
 
     // ---------------------------------------------------------------
+    // calls/{callId}  (Agora call signaling)
+    // ---------------------------------------------------------------
+    // Written exclusively via startCall/respondToCall/endCall
+    // (functions/src/index.ts) — Admin SDK bypasses these rules entirely,
+    // so `allow write: if false` doesn't block those callables, only a
+    // client trying to create/update/delete a calls/ doc directly, which
+    // would skip startCall's own push-notification side effect or let
+    // either party forge the other's callerId/calleeId/status.
+    match /calls/{callId} {
+      allow read: if isSignedIn() && (
+        resource.data.callerId == request.auth.uid ||
+        resource.data.calleeId == request.auth.uid
+      );
+      allow write: if false;
+    }
+
+    // ---------------------------------------------------------------
     // personalEvents/{eventId}  (mugam-flutter's calendar/agreements)
     // ---------------------------------------------------------------
     match /personalEvents/{eventId} {

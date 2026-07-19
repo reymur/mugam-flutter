@@ -6,11 +6,20 @@ import { onDocumentCreated, onDocumentDeleted, onDocumentUpdated } from "firebas
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onObjectFinalized } from "firebase-functions/v2/storage";
 import { logger } from "firebase-functions";
+import { defineSecret } from "firebase-functions/params";
+import { RtcRole, RtcTokenBuilder } from "agora-token";
 
 initializeApp();
 const db = getFirestore();
 const messaging = getMessaging();
 const FUNCTIONS_REGION = "europe-west3";
+
+// Not a secret — Agora's own App ID is meant to ship in client builds
+// (it's how a client identifies which Agora project to talk to at all);
+// only the App Certificate below is sensitive, since that's what lets
+// this function mint a valid token.
+const AGORA_APP_ID = "f475311300aa4392a2e5ee7eff0e54ef";
+const agoraAppCertificate = defineSecret("AGORA_APP_CERTIFICATE");
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -995,5 +1004,144 @@ export const onStatusDeleted = onDocumentDeleted(
         }
       }
     }
+  },
+);
+
+// channelName is expected to be an existing calls/{callId} — startCall
+// (below) sets channelName == callId for exactly this reason, so this can
+// re-fetch that same doc and verify the caller is really one of its two
+// named participants (callerId/calleeId) before minting a token, matching
+// the membership check every other onCall function in this file already
+// does against its own resource.
+export const generateAgoraToken = onCall(
+  { region: FUNCTIONS_REGION, secrets: [agoraAppCertificate] },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const { channelName } = (request.data ?? {}) as { channelName?: string };
+    if (
+      !channelName ||
+      !/^[a-zA-Z0-9 !#$%&()+\-:;<=.>?@[\]^_{}|~,]{1,63}$/.test(channelName)
+    ) {
+      throw new HttpsError("invalid-argument", "Valid channelName is required.");
+    }
+    const callSnap = await db.collection("calls").doc(channelName).get();
+    if (!callSnap.exists) {
+      throw new HttpsError("not-found", "Call not found.");
+    }
+    const call = callSnap.data()!;
+    if (call.callerId !== uid && call.calleeId !== uid) {
+      throw new HttpsError("permission-denied", "Not a participant of this call.");
+    }
+    const token = RtcTokenBuilder.buildTokenWithUserAccount(
+      AGORA_APP_ID,
+      agoraAppCertificate.value(),
+      channelName,
+      uid,
+      RtcRole.PUBLISHER,
+      3600,
+      3600,
+    );
+    return { appId: AGORA_APP_ID, channelName, uid, token };
+  },
+);
+
+// calls/{callId} signaling — channelName is deliberately just the callId
+// itself (not a separately-generated value) so the client never has to
+// round-trip a second id: generateAgoraToken above already accepts any
+// caller-supplied channelName, and the callId this function returns is
+// exactly what both caller and callee (once they read the doc) pass to it.
+export const startCall = onCall(
+  { region: FUNCTIONS_REGION },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const { calleeUid, type } = (request.data ?? {}) as {
+      calleeUid?: string;
+      type?: "audio" | "video";
+    };
+    if (!calleeUid || !type) {
+      throw new HttpsError("invalid-argument", "calleeUid and type are required.");
+    }
+
+    const callRef = db.collection("calls").doc();
+    const callId = callRef.id;
+    await callRef.set({
+      callerId: uid,
+      calleeId: calleeUid,
+      status: "ringing",
+      type,
+      channelName: callId,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    await sendPushToUid(
+      calleeUid,
+      "Zəng",
+      type === "video" ? "Video zəng" : "Səsli zəng",
+      { type: "incoming_call", callId, callerId: uid, callType: type },
+    );
+
+    return { callId };
+  },
+);
+
+export const respondToCall = onCall(
+  { region: FUNCTIONS_REGION },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const { callId, accept } = (request.data ?? {}) as {
+      callId?: string;
+      accept?: boolean;
+    };
+    if (!callId || typeof accept !== "boolean") {
+      throw new HttpsError("invalid-argument", "callId and accept are required.");
+    }
+
+    const callRef = db.collection("calls").doc(callId);
+    const callSnap = await callRef.get();
+    if (!callSnap.exists) {
+      throw new HttpsError("not-found", "Call not found.");
+    }
+    if (callSnap.data()?.calleeId !== uid) {
+      throw new HttpsError("permission-denied", "Not the callee of this call.");
+    }
+
+    await callRef.update({ status: accept ? "accepted" : "declined" });
+    return { ok: true };
+  },
+);
+
+export const endCall = onCall(
+  { region: FUNCTIONS_REGION },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Sign-in required.");
+    }
+    const { callId } = (request.data ?? {}) as { callId?: string };
+    if (!callId) {
+      throw new HttpsError("invalid-argument", "callId is required.");
+    }
+
+    const callRef = db.collection("calls").doc(callId);
+    const callSnap = await callRef.get();
+    if (!callSnap.exists) {
+      throw new HttpsError("not-found", "Call not found.");
+    }
+    const call = callSnap.data()!;
+    if (call.callerId !== uid && call.calleeId !== uid) {
+      throw new HttpsError("permission-denied", "Not a participant of this call.");
+    }
+
+    await callRef.update({ status: "ended" });
+    return { ok: true };
   },
 );
