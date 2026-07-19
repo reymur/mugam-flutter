@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 import 'core/cache/message_cache_service.dart';
+import 'core/calls/call_listener_service.dart';
 import 'core/presence/presence_service.dart';
 import 'core/queue/background_queue_processor.dart';
 import 'core/queue/pending_message_queue_controller.dart';
@@ -114,8 +115,12 @@ class _MugamAppState extends ConsumerState<MugamApp> {
       if (user != null) {
         PushNotificationService.instance.registerToken(user.uid);
         PresenceService.instance.start(user.uid);
+        CallListenerService.instance.start(user.uid, (call) {
+          appRouter.push('/call/incoming/${call.id}');
+        });
       } else {
         PresenceService.instance.stop();
+        CallListenerService.instance.stop();
       }
     });
     PushNotificationService.instance.setupForegroundPresentation();

@@ -187,6 +187,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   List<Message>? _messagesPendingCacheFlush;
   final Map<String, Timer> _purgeTimers = {};
   bool _selectionMode = false;
+  bool _startingCall = false;
   _SelectionPurpose _selectionPurpose = _SelectionPurpose.forward;
   final Set<String> _selectedMessageIds = {};
   bool _hasJumpedToBottomInitially = false;
@@ -1528,6 +1529,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
     } else {
       _scrollToBottom();
+    }
+  }
+
+  Future<void> _startCall(String calleeUid, CallType type) async {
+    if (_startingCall) return;
+    setState(() => _startingCall = true);
+    try {
+      final callId = await ref.read(firestoreServiceProvider).startCall(
+        calleeUid: calleeUid,
+        type: type,
+      );
+      if (mounted) context.push('/call/outgoing/$callId');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e'), backgroundColor: kRed),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _startingCall = false);
     }
   }
 
@@ -3133,6 +3154,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           error: (_, _) => const Text('Chat', style: TextStyle(color: kText)),
         ),
         actions: [
+          if (!_selectionMode &&
+              chatDataAsync.value?['isGroup'] != true &&
+              otherUidResolved != null) ...[
+            IconButton(
+              icon: const Icon(Icons.videocam, color: kGold),
+              onPressed: _startingCall ? null : () => _startCall(otherUidResolved, CallType.video),
+            ),
+            IconButton(
+              icon: const Icon(Icons.call, color: kGold),
+              onPressed: _startingCall ? null : () => _startCall(otherUidResolved, CallType.audio),
+            ),
+          ],
           if (_selectionMode)
             TextButton(
               onPressed: _exitSelectionMode,

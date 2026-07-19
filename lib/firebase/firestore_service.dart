@@ -2005,6 +2005,58 @@ class FirestoreService {
     });
   }
 
+  Future<String> startCall({
+    required String calleeUid,
+    required CallType type,
+  }) async {
+    final result = await _functions.httpsCallable('startCall').call({
+      'calleeUid': calleeUid,
+      'type': type.name,
+    });
+    return (result.data as Map)['callId'] as String;
+  }
+
+  Future<void> respondToCall({
+    required String callId,
+    required bool accept,
+  }) async {
+    await _functions.httpsCallable('respondToCall').call({
+      'callId': callId,
+      'accept': accept,
+    });
+  }
+
+  Future<void> endCall({required String callId}) async {
+    await _functions.httpsCallable('endCall').call({'callId': callId});
+  }
+
+  Future<Map<String, dynamic>> generateAgoraToken({
+    required String channelName,
+  }) async {
+    final result = await _functions.httpsCallable('generateAgoraToken').call({
+      'channelName': channelName,
+    });
+    return Map<String, dynamic>.from(result.data as Map);
+  }
+
+  Stream<Call?> watchCall(String callId) {
+    return _db.collection('calls').doc(callId).snapshots().map(
+      (snap) => snap.exists ? Call.fromFirestore(snap.id, snap.data()!) : null,
+    );
+  }
+
+  // Слушает входящие звонки для текущего пользователя (status == ringing, calleeId == uid)
+  Stream<Call?> watchIncomingCalls(String uid) {
+    return _db
+        .collection('calls')
+        .where('calleeId', isEqualTo: uid)
+        .where('status', isEqualTo: 'ringing')
+        .snapshots()
+        .map((snap) => snap.docs.isEmpty
+            ? null
+            : Call.fromFirestore(snap.docs.first.id, snap.docs.first.data()));
+  }
+
   Future<void> deleteMessagePermanently({
     required String chatId,
     required String messageId,
@@ -2468,6 +2520,10 @@ final currentUserProvider = StreamProvider.family<User?, String>((
   uid,
 ) {
   return ref.watch(firestoreServiceProvider).watchUserById(uid);
+});
+
+final callProvider = StreamProvider.family<Call?, String>((ref, callId) {
+  return ref.watch(firestoreServiceProvider).watchCall(callId);
 });
 
 // One-off lookup, used only as a fallback when a message referenced by id

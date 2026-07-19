@@ -851,3 +851,48 @@ class FriendRequest {
     );
   }
 }
+
+enum CallStatus { ringing, accepted, declined, ended }
+
+enum CallType { audio, video }
+
+CallStatus _callStatusFromString(String value) => CallStatus.values.firstWhere(
+  (e) => e.name == value,
+  orElse: () => CallStatus.ringing,
+);
+
+CallType _callTypeFromString(String value) => CallType.values.firstWhere(
+  (e) => e.name == value,
+  orElse: () => CallType.audio,
+);
+
+class Call {
+  final String id; // == channelName, same as Cloud Functions' callId
+  final String callerId;
+  final String calleeId;
+  final CallStatus status;
+  final CallType type;
+  final Timestamp? createdAt;
+
+  const Call({
+    required this.id,
+    required this.callerId,
+    required this.calleeId,
+    required this.status,
+    required this.type,
+    this.createdAt,
+  });
+
+  String otherUid(String viewerUid) => callerId == viewerUid ? calleeId : callerId;
+
+  factory Call.fromFirestore(String id, Map<String, dynamic> data) {
+    return Call(
+      id: id,
+      callerId: (data['callerId'] ?? '') as String,
+      calleeId: (data['calleeId'] ?? '') as String,
+      status: _callStatusFromString((data['status'] ?? 'ringing') as String),
+      type: _callTypeFromString((data['type'] ?? 'audio') as String),
+      createdAt: data['createdAt'] as Timestamp?,
+    );
+  }
+}

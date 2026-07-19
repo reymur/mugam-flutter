@@ -4,6 +4,9 @@ import '../features/agreements/screens/agreements_screen.dart';
 import '../features/auth/screens/login_screen.dart';
 import '../features/auth/screens/register_screen.dart';
 import '../features/board/screens/board_screen.dart';
+import '../features/calls/screens/active_call_screen.dart';
+import '../features/calls/screens/incoming_call_screen.dart';
+import '../features/calls/screens/outgoing_call_screen.dart';
 import '../features/chat/screens/chat_screen.dart';
 import '../features/chats/screens/chats_screen.dart';
 import '../features/friends/screens/friend_requests_screen.dart';
@@ -51,6 +54,18 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/friends',
       builder: (c, s) => const FriendsListScreen(),
+    ),
+    GoRoute(
+      path: '/call/incoming/:callId',
+      builder: (c, s) => IncomingCallScreen(callId: s.pathParameters['callId']!),
+    ),
+    GoRoute(
+      path: '/call/outgoing/:callId',
+      builder: (c, s) => OutgoingCallScreen(callId: s.pathParameters['callId']!),
+    ),
+    GoRoute(
+      path: '/call/active/:callId',
+      builder: (c, s) => ActiveCallScreen(callId: s.pathParameters['callId']!),
     ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) =>
