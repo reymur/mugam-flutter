@@ -142,7 +142,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         ),
         title: Text(
           'Profili redaktə et',
-          style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText),
+          style: GoogleFonts.nunito(fontSize: 18, color: kText),
         ),
         actions: [
           TextButton(

@@ -130,7 +130,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
         ),
         title: Text(
           'Yeni qrup',
-          style: GoogleFonts.playfairDisplay(fontSize: 16, color: kText),
+          style: GoogleFonts.nunito(fontSize: 16, color: kText),
         ),
         centerTitle: true,
         actions: [
@@ -414,7 +414,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                       ),
                       title: Text(
                         u.name,
-                        style: GoogleFonts.playfairDisplay(
+                        style: GoogleFonts.nunito(
                           fontSize: 14,
                           color: kText,
                         ),

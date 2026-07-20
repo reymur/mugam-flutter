@@ -41,7 +41,7 @@ class Topbar extends StatelessWidget {
                 children: [
                   Text(
                     'Muğam Club',
-                    style: GoogleFonts.playfairDisplay(
+                    style: GoogleFonts.nunito(
                       fontSize: 20,
                       fontWeight: FontWeight.w800,
                       color: kGold2,

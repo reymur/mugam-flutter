@@ -52,7 +52,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
         ),
         title: Text(
           'Mesajlar',
-          style: GoogleFonts.playfairDisplay(fontSize: 20, color: kText),
+          style: GoogleFonts.nunito(fontSize: 20, color: kText),
         ),
         actions: [
           IconButton(
@@ -140,7 +140,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
                           const SizedBox(height: 12),
                           Text(
                             'Hələ mesaj yoxdur',
-                            style: GoogleFonts.playfairDisplay(
+                            style: GoogleFonts.nunito(
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
                               color: kText,

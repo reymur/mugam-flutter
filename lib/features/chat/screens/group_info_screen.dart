@@ -372,7 +372,7 @@ class _GroupInfoScreenState extends ConsumerState<GroupInfoScreen> {
         ),
         title: Text(
           'Qrup haqqında',
-          style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText),
+          style: GoogleFonts.nunito(fontSize: 18, color: kText),
         ),
       ),
       body: metaAsync.when(
@@ -435,7 +435,7 @@ class _GroupInfoScreenState extends ConsumerState<GroupInfoScreen> {
                     Text(
                       name,
                       textAlign: TextAlign.center,
-                      style: GoogleFonts.playfairDisplay(
+                      style: GoogleFonts.nunito(
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
                         color: kText,
@@ -656,7 +656,7 @@ class _ParticipantTile extends ConsumerWidget {
       ),
       title: Text(
         name,
-        style: GoogleFonts.playfairDisplay(fontSize: 14, color: kText),
+        style: GoogleFonts.nunito(fontSize: 14, color: kText),
       ),
       // Creator label takes precedence over admin — a creator is never
       // shown as just "Admin" even though createGroupChat also seeds them
@@ -1033,7 +1033,7 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
                   Expanded(
                     child: Text(
                       'İştirakçı əlavə et',
-                      style: GoogleFonts.playfairDisplay(
+                      style: GoogleFonts.nunito(
                         fontSize: 16,
                         color: kText,
                       ),
@@ -1202,7 +1202,7 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
                         ),
                         title: Text(
                           u.name,
-                          style: GoogleFonts.playfairDisplay(
+                          style: GoogleFonts.nunito(
                             fontSize: 14,
                             color: kText,
                           ),

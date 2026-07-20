@@ -62,7 +62,7 @@ class StatusViewersScreen extends ConsumerWidget {
                     Expanded(
                       child: Text(
                         'Baxanlar',
-                        style: GoogleFonts.playfairDisplay(
+                        style: GoogleFonts.nunito(
                           fontSize: 18,
                           color: kText,
                         ),
@@ -137,7 +137,7 @@ class _ViewerTile extends ConsumerWidget {
       ),
       title: Text(
         name,
-        style: GoogleFonts.playfairDisplay(fontSize: 14, color: kText),
+        style: GoogleFonts.nunito(fontSize: 14, color: kText),
       ),
       // 'd MMM, HH:mm' — same DateFormat already used by
       // MessageInfoScreen._formatInfoTime for this app's other per-person

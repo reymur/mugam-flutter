@@ -76,7 +76,7 @@ class _AboutContactScreenState extends ConsumerState<AboutContactScreen> {
         ),
         title: Text(
           'Kontakt haqqında',
-          style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText),
+          style: GoogleFonts.nunito(fontSize: 18, color: kText),
         ),
       ),
       body: userAsync.when(
@@ -100,7 +100,7 @@ class _AboutContactScreenState extends ConsumerState<AboutContactScreen> {
                 Text(
                   user.name,
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.playfairDisplay(
+                  style: GoogleFonts.nunito(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
                     color: kText,

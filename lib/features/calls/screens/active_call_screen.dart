@@ -194,7 +194,7 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
                     Text(
                       other?.name ?? 'İstifadəçi',
                       textAlign: TextAlign.center,
-                      style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText, fontWeight: FontWeight.w600),
+                      style: GoogleFonts.nunito(fontSize: 18, color: kText, fontWeight: FontWeight.w600),
                     ),
                     if (showingRemoteVideo) ...[
                       const SizedBox(height: 2),

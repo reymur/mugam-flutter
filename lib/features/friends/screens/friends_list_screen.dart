@@ -36,7 +36,7 @@ class FriendsListScreen extends ConsumerWidget {
         ),
         title: Text(
           'Dostlar',
-          style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText),
+          style: GoogleFonts.nunito(fontSize: 18, color: kText),
         ),
       ),
       body: friendUidsAsync.when(

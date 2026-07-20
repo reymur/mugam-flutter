@@ -307,7 +307,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
               Text(
                 label,
                 textAlign: TextAlign.center,
-                style: GoogleFonts.playfairDisplay(
+                style: GoogleFonts.nunito(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
                   color: active ? kText : kMuted,
@@ -434,7 +434,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           const SizedBox(height: 12),
           Text(
             'Hələ müqavilə yoxdur',
-            style: GoogleFonts.playfairDisplay(
+            style: GoogleFonts.nunito(
               fontSize: 20,
               fontWeight: FontWeight.bold,
               color: kText,
@@ -539,7 +539,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                 children: [
                   Text(
                     e.partnerName ?? 'Naməlum',
-                    style: GoogleFonts.playfairDisplay(
+                    style: GoogleFonts.nunito(
                       fontSize: 15,
                       fontWeight: FontWeight.bold,
                       color: unread ? kText : kMuted,
@@ -626,7 +626,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         }),
         Text(
           '$monthName ${_currentCalendarMonth.year}',
-          style: GoogleFonts.playfairDisplay(
+          style: GoogleFonts.nunito(
             fontSize: 26,
             fontWeight: FontWeight.bold,
             color: kText,
@@ -1159,7 +1159,7 @@ class _EventCard extends StatelessWidget {
                     children: [
                       Text(
                         initiatorName,
-                        style: GoogleFonts.playfairDisplay(
+                        style: GoogleFonts.nunito(
                           fontSize: 16,
                           color: kGold,
                         ),
@@ -1413,7 +1413,7 @@ class _AgreementDetailScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: kBg2,
         title: Text('Müqavilə',
-            style: GoogleFonts.playfairDisplay(color: kGold, fontSize: 18)),
+            style: GoogleFonts.nunito(color: kGold, fontSize: 18)),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: kGold),
           onPressed: onBack,
@@ -1489,7 +1489,7 @@ class _AgreementDetailScreen extends StatelessWidget {
             ],
             const SizedBox(height: 20),
             Text('Tərəflər',
-                style: GoogleFonts.playfairDisplay(
+                style: GoogleFonts.nunito(
                     fontSize: 16, fontWeight: FontWeight.bold, color: kText)),
             const SizedBox(height: 8),
             Container(
@@ -1597,7 +1597,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: kBg2,
         title: Text('Tədbir',
-            style: GoogleFonts.playfairDisplay(color: kGold, fontSize: 18)),
+            style: GoogleFonts.nunito(color: kGold, fontSize: 18)),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: kGold),
           onPressed: onBack,
@@ -1657,7 +1657,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
                   child: Column(
                     children: [
                       Text(initiatorName,
-                          style: GoogleFonts.playfairDisplay(fontSize: 16, color: kGold)),
+                          style: GoogleFonts.nunito(fontSize: 16, color: kGold)),
                       if (initiatorInstrument.isNotEmpty)
                         Text(initiatorInstrument,
                             style: TextStyle(fontSize: 11, color: kGold.withAlpha(204))),
@@ -1689,7 +1689,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
             if (!isOwner && event.ownerUid.isNotEmpty) ...[
               const SizedBox(height: 20),
               Text('Təşkilatçı',
-                  style: GoogleFonts.playfairDisplay(
+                  style: GoogleFonts.nunito(
                       fontSize: 16, fontWeight: FontWeight.bold, color: kText)),
               const SizedBox(height: 8),
               Container(
@@ -1713,7 +1713,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
             if (event.participantUids.isNotEmpty) ...[
               const SizedBox(height: 20),
               Text('İştirakçılar',
-                  style: GoogleFonts.playfairDisplay(
+                  style: GoogleFonts.nunito(
                       fontSize: 16, fontWeight: FontWeight.bold, color: kText)),
               const SizedBox(height: 8),
               Container(
@@ -1813,7 +1813,7 @@ class _ConflictEventScreenState extends State<_ConflictEventScreen> {
         ),
         title: Text(
           widget.categoryTitle,
-          style: GoogleFonts.playfairDisplay(fontSize: 18, color: kGold),
+          style: GoogleFonts.nunito(fontSize: 18, color: kGold),
         ),
       ),
       body: Padding(
@@ -2321,7 +2321,7 @@ class _EventFormModalState extends State<_EventFormModal> {
             Center(
               child: Text(
                 widget.existingEvent != null ? 'Tədbiri Redaktə et' : 'Yeni Tədbir',
-                style: GoogleFonts.playfairDisplay(
+                style: GoogleFonts.nunito(
                   fontSize: 18,
                   color: kText,
                   fontWeight: FontWeight.bold,
@@ -2757,7 +2757,7 @@ class _ConflictDialog extends StatelessWidget {
           children: [
             Text(
               '⚠️ Bu tarixdə tədbir var',
-              style: GoogleFonts.playfairDisplay(
+              style: GoogleFonts.nunito(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: kRed,
@@ -2778,7 +2778,7 @@ class _ConflictDialog extends StatelessWidget {
                   if (conflict.type.isNotEmpty) ...[
                     Text(
                       conflict.type,
-                      style: GoogleFonts.playfairDisplay(
+                      style: GoogleFonts.nunito(
                         color: kGold,
                         fontSize: 18,
                         fontWeight: FontWeight.bold,

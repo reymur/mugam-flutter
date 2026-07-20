@@ -12,7 +12,7 @@ class SearchScreen extends StatelessWidget {
       body: Center(
         child: Text(
           'AXTAR',
-          style: GoogleFonts.playfairDisplay(
+          style: GoogleFonts.nunito(
             color: kGold,
             fontSize: 28,
             fontWeight: FontWeight.bold,

@@ -158,7 +158,7 @@ class MessageInfoScreen extends ConsumerWidget {
         ),
         title: Text(
           'Məlumat',
-          style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText),
+          style: GoogleFonts.nunito(fontSize: 18, color: kText),
         ),
       ),
       body: body,

@@ -28,7 +28,7 @@ class StarredMessagesScreen extends ConsumerWidget {
         backgroundColor: kBg2,
         title: Text(
           title ?? 'Seçilmiş mesajlar',
-          style: GoogleFonts.playfairDisplay(fontSize: 20, color: kText),
+          style: GoogleFonts.nunito(fontSize: 20, color: kText),
         ),
       ),
       body: starredAsync.when(
@@ -55,7 +55,7 @@ class StarredMessagesScreen extends ConsumerWidget {
                     const SizedBox(height: 12),
                     Text(
                       'Seçilmiş mesaj yoxdur',
-                      style: GoogleFonts.playfairDisplay(
+                      style: GoogleFonts.nunito(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
                         color: kText,

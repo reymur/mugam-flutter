@@ -57,7 +57,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     padding: const EdgeInsets.fromLTRB(14, 20, 14, 8),
                     child: Text(
                       'Haqqında',
-                      style: GoogleFonts.playfairDisplay(
+                      style: GoogleFonts.nunito(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                         color: kText,
@@ -138,7 +138,7 @@ class _InfoCard extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
               title,
-              style: GoogleFonts.playfairDisplay(
+              style: GoogleFonts.nunito(
                 fontSize: 15,
                 fontWeight: FontWeight.bold,
                 color: kText,
@@ -280,7 +280,7 @@ class _ProfileHeader extends ConsumerWidget {
                 Text(
                   user.name,
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.playfairDisplay(
+                  style: GoogleFonts.nunito(
                     fontSize: 22,
                     fontWeight: FontWeight.w800,
                     color: kText,
@@ -499,7 +499,7 @@ class _StatItem extends StatelessWidget {
       children: [
         Text(
           value,
-          style: GoogleFonts.playfairDisplay(
+          style: GoogleFonts.nunito(
             fontSize: 20,
             fontWeight: FontWeight.bold,
             color: kGold2,

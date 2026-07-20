@@ -21,7 +21,7 @@ class CallAvatarPanel extends StatelessWidget {
             child: Text(emoji ?? '🎵', style: const TextStyle(fontSize: 50)),
           ),
           const SizedBox(height: 20),
-          Text(name, style: GoogleFonts.playfairDisplay(fontSize: 24, color: kText, fontWeight: FontWeight.w600)),
+          Text(name, style: GoogleFonts.nunito(fontSize: 24, color: kText, fontWeight: FontWeight.w600)),
           if (subtitle != null) ...[
             const SizedBox(height: 8),
             Text(subtitle!, style: const TextStyle(color: kMuted, fontSize: 15)),

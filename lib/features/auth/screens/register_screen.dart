@@ -165,7 +165,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       children: [
         Text(
           'Qeydiyyat',
-          style: GoogleFonts.playfairDisplay(
+          style: GoogleFonts.nunito(
             fontSize: 26,
             fontWeight: FontWeight.bold,
             color: kText,
@@ -513,7 +513,7 @@ class _Logo extends StatelessWidget {
         const SizedBox(height: 14),
         Text(
           'Muğam Club',
-          style: GoogleFonts.playfairDisplay(
+          style: GoogleFonts.nunito(
             fontSize: 28,
             color: kGold2,
             fontWeight: FontWeight.w600,

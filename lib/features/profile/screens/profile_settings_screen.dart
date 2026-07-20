@@ -47,7 +47,7 @@ class ProfileSettingsScreen extends ConsumerWidget {
         ),
         title: Text(
           'Ayarlar',
-          style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText),
+          style: GoogleFonts.nunito(fontSize: 18, color: kText),
         ),
       ),
       body: ListView(
@@ -249,7 +249,7 @@ class _ComingSoonScreen extends StatelessWidget {
         ),
         title: Text(
           title,
-          style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText),
+          style: GoogleFonts.nunito(fontSize: 18, color: kText),
         ),
       ),
       body: Center(

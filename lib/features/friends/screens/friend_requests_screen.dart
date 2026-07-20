@@ -55,7 +55,7 @@ class _FriendRequestsScreenState extends ConsumerState<FriendRequestsScreen> {
           ),
           title: Text(
             'Dost sorğuları',
-            style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText),
+            style: GoogleFonts.nunito(fontSize: 18, color: kText),
           ),
           bottom: TabBar(
             indicatorColor: kGold,

@@ -3029,7 +3029,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               children: [
                 Text(
                   displayName,
-                  style: GoogleFonts.playfairDisplay(fontSize: 16, color: kText),
+                  style: GoogleFonts.nunito(fontSize: 16, color: kText),
                 ),
                 if (!isGroup)
                   Text(

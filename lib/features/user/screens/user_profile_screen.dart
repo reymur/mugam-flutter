@@ -43,7 +43,7 @@ class UserProfileScreen extends ConsumerWidget {
         ),
         title: Text(
           'Profil',
-          style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText),
+          style: GoogleFonts.nunito(fontSize: 18, color: kText),
         ),
       ),
       body: SingleChildScrollView(
@@ -192,7 +192,7 @@ class UserProfileScreen extends ConsumerWidget {
           Text(
             user.name,
             textAlign: TextAlign.center,
-            style: GoogleFonts.playfairDisplay(
+            style: GoogleFonts.nunito(
               fontSize: 24,
               fontWeight: FontWeight.w800,
               color: kText,
@@ -396,7 +396,7 @@ class UserProfileScreen extends ConsumerWidget {
                   const SizedBox(width: 8),
                   Text(
                     'Dostsunuz',
-                    style: GoogleFonts.playfairDisplay(
+                    style: GoogleFonts.nunito(
                       color: kGold,
                       fontWeight: FontWeight.w700,
                       fontSize: 15,
@@ -432,7 +432,7 @@ class UserProfileScreen extends ConsumerWidget {
             RichText(
               textAlign: TextAlign.center,
               text: TextSpan(
-                style: GoogleFonts.playfairDisplay(
+                style: GoogleFonts.nunito(
                   fontSize: 16,
                   color: kText,
                   height: 1.4,
@@ -609,7 +609,7 @@ class UserProfileScreen extends ConsumerWidget {
   Widget _sectionTitle(String title) {
     return Text(
       title,
-      style: GoogleFonts.playfairDisplay(
+      style: GoogleFonts.nunito(
         fontSize: 18,
         fontWeight: FontWeight.bold,
         color: kText,
@@ -804,7 +804,7 @@ class _StatColumn extends StatelessWidget {
         children: [
           Text(
             value,
-            style: GoogleFonts.playfairDisplay(
+            style: GoogleFonts.nunito(
               fontSize: 20,
               fontWeight: FontWeight.bold,
               color: kGold2,

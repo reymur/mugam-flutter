@@ -239,7 +239,7 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
                     titleContent: Text(
                       callee?.name ?? 'İstifadəçi',
                       textAlign: TextAlign.center,
-                      style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText, fontWeight: FontWeight.w600),
+                      style: GoogleFonts.nunito(fontSize: 18, color: kText, fontWeight: FontWeight.w600),
                     ),
                   ),
                   Align(

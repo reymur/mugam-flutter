@@ -115,7 +115,7 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen> {
                 titleContent: Text(
                   caller?.name ?? 'İstifadəçi',
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.playfairDisplay(fontSize: 18, color: kText, fontWeight: FontWeight.w600),
+                  style: GoogleFonts.nunito(fontSize: 18, color: kText, fontWeight: FontWeight.w600),
                 ),
               ),
               Align(

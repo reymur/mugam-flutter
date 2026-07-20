@@ -331,7 +331,7 @@ class _MusiciansSection extends ConsumerWidget {
             children: [
               Text(
                 'Musiqiçilər',
-                style: GoogleFonts.playfairDisplay(
+                style: GoogleFonts.nunito(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: kText,
@@ -510,7 +510,7 @@ class _MusicianCard extends ConsumerWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.playfairDisplay(
+                  style: GoogleFonts.nunito(
                     fontSize: 13,
                     fontWeight: FontWeight.bold,
                     color: kText,
@@ -610,7 +610,7 @@ class _EventsSection extends ConsumerWidget {
             children: [
               Text(
                 'Tədbirlər',
-                style: GoogleFonts.playfairDisplay(
+                style: GoogleFonts.nunito(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: kText,
@@ -678,7 +678,7 @@ class _EventCard extends StatelessWidget {
               children: [
                 Text(
                   event.day,
-                  style: GoogleFonts.playfairDisplay(
+                  style: GoogleFonts.nunito(
                     fontSize: 22,
                     fontWeight: FontWeight.w800,
                     color: const Color(0xFF1A0E00),
@@ -704,7 +704,7 @@ class _EventCard extends StatelessWidget {
                   event.title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.playfairDisplay(
+                  style: GoogleFonts.nunito(
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
                     color: kText,
@@ -797,7 +797,7 @@ class _RoomsSection extends ConsumerWidget {
             children: [
               Text(
                 'Otaqlar',
-                style: GoogleFonts.playfairDisplay(
+                style: GoogleFonts.nunito(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                   color: kText,
@@ -882,7 +882,7 @@ class _RoomCard extends StatelessWidget {
                     children: [
                       Text(
                         room.name,
-                        style: GoogleFonts.playfairDisplay(
+                        style: GoogleFonts.nunito(
                           fontSize: 15,
                           fontWeight: FontWeight.bold,
                           color: kText,
