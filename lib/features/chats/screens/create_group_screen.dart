@@ -383,9 +383,17 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                                     border: selected
                                         ? Border.all(color: kGold, width: 2)
                                         : null,
+                                    image: u.photoURL != null
+                                        ? DecorationImage(
+                                            image: NetworkImage(u.photoURL!),
+                                            fit: BoxFit.cover,
+                                          )
+                                        : null,
                                   ),
                                   alignment: Alignment.center,
-                                  child: Text(u.emoji, style: const TextStyle(fontSize: 20)),
+                                  child: u.photoURL == null
+                                      ? Text(u.emoji, style: const TextStyle(fontSize: 20))
+                                      : null,
                                 ),
                               ),
                             Positioned(

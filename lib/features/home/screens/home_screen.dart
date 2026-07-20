@@ -470,13 +470,21 @@ class _MusicianCard extends ConsumerWidget {
                                   color: musician.goldRing ? kGold : kBorder,
                                   width: 2,
                                 ),
+                                image: musician.photoURL != null
+                                    ? DecorationImage(
+                                        image: NetworkImage(musician.photoURL!),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : null,
                               ),
-                              child: Center(
-                                child: Text(
-                                  musician.emoji,
-                                  style: const TextStyle(fontSize: 24),
-                                ),
-                              ),
+                              child: musician.photoURL == null
+                                  ? Center(
+                                      child: Text(
+                                        musician.emoji,
+                                        style: const TextStyle(fontSize: 24),
+                                      ),
+                                    )
+                                  : null,
                             ),
                           ),
                         Positioned(

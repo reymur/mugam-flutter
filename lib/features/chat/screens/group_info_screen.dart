@@ -622,9 +622,20 @@ class _ParticipantTile extends ConsumerWidget {
                 child: Container(
                   width: avatarBoxSize,
                   height: avatarBoxSize,
-                  decoration: const BoxDecoration(color: kBg3, shape: BoxShape.circle),
+                  decoration: BoxDecoration(
+                    color: kBg3,
+                    shape: BoxShape.circle,
+                    image: user?.photoURL != null
+                        ? DecorationImage(
+                            image: NetworkImage(user!.photoURL!),
+                            fit: BoxFit.cover,
+                          )
+                        : null,
+                  ),
                   alignment: Alignment.center,
-                  child: Text(emoji, style: const TextStyle(fontSize: 18)),
+                  child: user?.photoURL == null
+                      ? Text(emoji, style: const TextStyle(fontSize: 18))
+                      : null,
                 ),
               ),
             Positioned(
@@ -1157,12 +1168,20 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
                                       border: selected
                                           ? Border.all(color: kGold, width: 2)
                                           : null,
+                                      image: u.photoURL != null
+                                          ? DecorationImage(
+                                              image: NetworkImage(u.photoURL!),
+                                              fit: BoxFit.cover,
+                                            )
+                                          : null,
                                     ),
                                     alignment: Alignment.center,
-                                    child: Text(
-                                      u.emoji,
-                                      style: const TextStyle(fontSize: 18),
-                                    ),
+                                    child: u.photoURL == null
+                                        ? Text(
+                                            u.emoji,
+                                            style: const TextStyle(fontSize: 18),
+                                          )
+                                        : null,
                                   ),
                                 ),
                               Positioned(

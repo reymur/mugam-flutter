@@ -179,6 +179,15 @@ class Chat {
   final String emoji;
   final String lastMessage;
   final DateTime? lastMessageTime;
+  // uids who deleted-for-themselves the message that lastMessage currently
+  // denormalizes — lastMessage/lastMessageTime stay the one shared value
+  // for every member (WhatsApp parity: deleting for yourself never changes
+  // what anyone else sees), so a viewer whose own uid is in this list shows
+  // the "Bu mesajı sildiniz" placeholder instead of lastMessage; every other
+  // member keeps seeing the real preview. Reset to [] whenever lastMessage
+  // itself changes to a different message (see firestore_service.dart's
+  // send*/​_refreshLastMessagePreview).
+  final List<String> lastMessageDeletedFor;
   final int unreadCount;
   final List<String> members;
   final bool isGroup;
@@ -203,6 +212,7 @@ class Chat {
     required this.emoji,
     required this.lastMessage,
     this.lastMessageTime,
+    this.lastMessageDeletedFor = const [],
     required this.unreadCount,
     required this.members,
     required this.isGroup,
@@ -227,6 +237,9 @@ class Chat {
       lastMessageTime: data['lastMessageTime'] != null
           ? (data['lastMessageTime'] as Timestamp).toDate()
           : null,
+      lastMessageDeletedFor: List<String>.from(
+        data['lastMessageDeletedFor'] as List? ?? const [],
+      ),
       unreadCount: () {
         final raw = data['unreadCount'];
         if (raw is int) return raw;

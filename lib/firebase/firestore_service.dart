@@ -90,27 +90,26 @@ class FirestoreService {
         .collection('chats')
         .where('members', arrayContains: uid)
         .snapshots()
-        .map(
-          (snap) =>
-              snap.docs
-                  .map((doc) => Chat.fromFirestore(doc.id, doc.data(), uid))
-                  // mugam-v2 marks a direct chat completed once the pair
-                  // finalizes a Razılaşma (agreement) and starts a fresh
-                  // chat doc the next time they talk — its own chat list
-                  // hides completed chats the same way, so without this
-                  // filter every past agreement's chat resurfaces as a
-                  // separate duplicate entry for the same person.
-                  .where((chat) => !chat.completed)
-                  .toList()
-                ..sort((a, b) {
-                  if (a.lastMessageTime == null && b.lastMessageTime == null) {
-                    return 0;
-                  }
-                  if (a.lastMessageTime == null) return 1;
-                  if (b.lastMessageTime == null) return -1;
-                  return b.lastMessageTime!.compareTo(a.lastMessageTime!);
-                }),
-        );
+        .map((snap) {
+          return snap.docs
+              .map((doc) => Chat.fromFirestore(doc.id, doc.data(), uid))
+              // mugam-v2 marks a direct chat completed once the pair
+              // finalizes a Razılaşma (agreement) and starts a fresh
+              // chat doc the next time they talk — its own chat list
+              // hides completed chats the same way, so without this
+              // filter every past agreement's chat resurfaces as a
+              // separate duplicate entry for the same person.
+              .where((chat) => !chat.completed)
+              .toList()
+            ..sort((a, b) {
+              if (a.lastMessageTime == null && b.lastMessageTime == null) {
+                return 0;
+              }
+              if (a.lastMessageTime == null) return 1;
+              if (b.lastMessageTime == null) return -1;
+              return b.lastMessageTime!.compareTo(a.lastMessageTime!);
+            });
+        });
   }
 
   // The feed's real-time source: every currently-active status (across all
@@ -1183,6 +1182,7 @@ class FirestoreService {
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': text,
       'lastMessageTime': now,
+      'lastMessageDeletedFor': [],
     });
   }
 
@@ -1318,6 +1318,7 @@ class FirestoreService {
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🖼 Şəkil',
       'lastMessageTime': now,
+      'lastMessageDeletedFor': [],
       // Every chat was backfilled with an accurate starting value (one-off
       // migration, run before this line ever shipped) — safe to always use
       // a plain atomic increment, no "field missing" fallback needed.
@@ -1431,6 +1432,7 @@ class FirestoreService {
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🎥 Video',
       'lastMessageTime': now,
+      'lastMessageDeletedFor': [],
     });
   }
 
@@ -1544,6 +1546,7 @@ class FirestoreService {
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '📄 $fileName',
       'lastMessageTime': now,
+      'lastMessageDeletedFor': [],
     });
   }
 
@@ -1654,6 +1657,7 @@ class FirestoreService {
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '📍 Məkan',
       'lastMessageTime': now,
+      'lastMessageDeletedFor': [],
     });
   }
 
@@ -1747,6 +1751,7 @@ class FirestoreService {
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🎤 Səs mesajı',
       'lastMessageTime': now,
+      'lastMessageDeletedFor': [],
     });
   }
 
@@ -1969,8 +1974,15 @@ class FirestoreService {
         'mediaImageCount': FieldValue.increment(-1),
       });
     }
+    await _refreshLastMessagePreview(chatId);
   }
 
+  // "Delete for me" never touches the shared lastMessage/lastMessageTime —
+  // every other member must keep seeing the real preview. But if the
+  // message being hidden IS the chat's current last message, record that
+  // this uid personally deleted it (lastMessageDeletedFor) so this one
+  // viewer's own chat-list card can swap in the "Bu mesajı sildiniz"
+  // placeholder instead — see chats_screen.dart's _ChatListItem.
   Future<void> deleteMessageForMe({
     required String chatId,
     required String messageId,
@@ -1984,6 +1996,12 @@ class FirestoreService {
         .update({
           'deletedFor': FieldValue.arrayUnion([uid]),
         });
+    final last = await _findLastMessage(chatId);
+    if (last?.key == messageId) {
+      await _db.collection('chats').doc(chatId).update({
+        'lastMessageDeletedFor': FieldValue.arrayUnion([uid]),
+      });
+    }
   }
 
   // Reactions are written exclusively by the toggleMessageReaction Cloud
@@ -2067,6 +2085,70 @@ class FirestoreService {
         .collection('messages')
         .doc(messageId)
         .delete();
+    await _refreshLastMessagePreview(chatId);
+  }
+
+  // The newest message in the chat that isn't deletedForAll — i.e. the
+  // message lastMessage/lastMessageTime should currently denormalize.
+  // Capped at the 50 most recent messages: if every one of those 50 were
+  // deletedForAll (very unlikely — would need 50 consecutive "delete for
+  // everyone"s with nothing sent since), this falls through to "chat looks
+  // empty" rather than paying for an unbounded scan on every delete.
+  Future<MapEntry<String, Map<String, dynamic>>?> _findLastMessage(
+    String chatId,
+  ) async {
+    final snap = await _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages')
+        .orderBy('timestamp', descending: true)
+        .limit(50)
+        .get();
+    for (final doc in snap.docs) {
+      final data = doc.data();
+      if (data['deletedForAll'] != true) {
+        return MapEntry(doc.id, data);
+      }
+    }
+    return null;
+  }
+
+  // Doesn't know whether the just-deleted message was the chat's current
+  // lastMessage, so this unconditionally recomputes it from the real
+  // subcollection state — a no-op write when an older message was deleted.
+  // Not called from deleteMessageForMe: that only hides a message for one
+  // viewer, so the shared chat-doc preview (seen by every member) must stay
+  // unchanged.
+  Future<void> _refreshLastMessagePreview(String chatId) async {
+    final last = await _findLastMessage(chatId);
+    final data = last?.value;
+    await _db.collection('chats').doc(chatId).update({
+      'lastMessage': data == null ? '' : _previewTextFor(data),
+      'lastMessageTime': data?['timestamp'],
+      // Carries over whichever deletedFor the newly-picked message already
+      // had (e.g. someone had earlier "deleted for me" this now-promoted
+      // message) rather than assuming nobody has.
+      'lastMessageDeletedFor': List<String>.from(
+        data?['deletedFor'] as List? ?? const [],
+      ),
+    });
+  }
+
+  String _previewTextFor(Map<String, dynamic> data) {
+    switch (data['type']) {
+      case 'image':
+        return '🖼 Şəkil';
+      case 'video':
+        return '🎥 Video';
+      case 'file':
+        return '📄 ${data['fileName'] ?? ''}';
+      case 'location':
+        return '📍 Məkan';
+      case 'audio':
+        return '🎤 Səs mesajı';
+      default:
+        return (data['text'] ?? '') as String;
+    }
   }
 
   Future<void> starMessage({

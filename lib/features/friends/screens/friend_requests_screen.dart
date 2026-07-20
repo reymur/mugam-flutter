@@ -214,7 +214,12 @@ class _RequestTile extends ConsumerWidget {
                       child: CircleAvatar(
                         radius: avatarBoxSize / 2,
                         backgroundColor: kBg3,
-                        child: Text(user?.emoji ?? '🎵', style: const TextStyle(fontSize: 20)),
+                        backgroundImage: user?.photoURL != null
+                            ? NetworkImage(user!.photoURL!)
+                            : null,
+                        child: user?.photoURL == null
+                            ? Text(user?.emoji ?? '🎵', style: const TextStyle(fontSize: 20))
+                            : null,
                       ),
                     ),
                   Positioned(

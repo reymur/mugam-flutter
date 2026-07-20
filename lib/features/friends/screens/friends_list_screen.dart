@@ -146,12 +146,20 @@ class _FriendTile extends ConsumerWidget {
                           color: kBg3,
                           shape: BoxShape.circle,
                           border: Border.all(color: kBorder, width: 1.5),
+                          image: user?.photoURL != null
+                              ? DecorationImage(
+                                  image: NetworkImage(user!.photoURL!),
+                                  fit: BoxFit.cover,
+                                )
+                              : null,
                         ),
                         alignment: Alignment.center,
-                        child: Text(
-                          user?.emoji ?? '🎵',
-                          style: const TextStyle(fontSize: 24),
-                        ),
+                        child: user?.photoURL == null
+                            ? Text(
+                                user?.emoji ?? '🎵',
+                                style: const TextStyle(fontSize: 24),
+                              )
+                            : null,
                       ),
                     ),
                   Positioned(

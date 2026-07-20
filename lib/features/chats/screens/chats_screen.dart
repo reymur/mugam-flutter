@@ -303,12 +303,20 @@ class _ChatListItem extends ConsumerWidget {
                               color: kBg3,
                               shape: BoxShape.circle,
                               border: Border.all(color: kBorder, width: 1.5),
+                              image: other?.photoURL != null
+                                  ? DecorationImage(
+                                      image: NetworkImage(other!.photoURL!),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : null,
                             ),
                             alignment: Alignment.center,
-                            child: Text(
-                              displayEmoji,
-                              style: const TextStyle(fontSize: 24),
-                            ),
+                            child: other?.photoURL == null
+                                ? Text(
+                                    displayEmoji,
+                                    style: const TextStyle(fontSize: 24),
+                                  )
+                                : null,
                           ),
                         ),
                       if (!chat.isGroup)
@@ -359,12 +367,20 @@ class _ChatListItem extends ConsumerWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              chat.lastMessage,
+                              chat.lastMessageDeletedFor.contains(currentUid)
+                                  ? '🚫 Bu mesajı sildiniz'
+                                  : chat.lastMessage,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 15.6,
                                 color: kMuted,
+                                fontStyle:
+                                    chat.lastMessageDeletedFor.contains(
+                                      currentUid,
+                                    )
+                                    ? FontStyle.italic
+                                    : FontStyle.normal,
                               ),
                             ),
                           ),

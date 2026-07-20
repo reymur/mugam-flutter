@@ -157,10 +157,18 @@ class UserProfileScreen extends ConsumerWidget {
                           color: user.goldRing ? kGold : kBorder,
                           width: 3,
                         ),
+                        image: liveUser.photoURL != null
+                            ? DecorationImage(
+                                image: NetworkImage(liveUser.photoURL!),
+                                fit: BoxFit.cover,
+                              )
+                            : null,
                       ),
-                      child: Center(
-                        child: Text(user.emoji, style: const TextStyle(fontSize: 48)),
-                      ),
+                      child: liveUser.photoURL == null
+                          ? Center(
+                              child: Text(user.emoji, style: const TextStyle(fontSize: 48)),
+                            )
+                          : null,
                     ),
                   ),
                 Positioned(

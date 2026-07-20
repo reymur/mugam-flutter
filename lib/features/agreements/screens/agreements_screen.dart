@@ -3040,13 +3040,21 @@ class _ParticipantPickerDialogState
                               child: Container(
                                 width: avatarBoxSize,
                                 height: avatarBoxSize,
-                                decoration: const BoxDecoration(
+                                decoration: BoxDecoration(
                                   color: kBg3,
                                   shape: BoxShape.circle,
+                                  image: m.photoURL != null
+                                      ? DecorationImage(
+                                          image: NetworkImage(m.photoURL!),
+                                          fit: BoxFit.cover,
+                                        )
+                                      : null,
                                 ),
-                                child: Center(
-                                  child: Text(m.emoji, style: const TextStyle(fontSize: 18)),
-                                ),
+                                child: m.photoURL == null
+                                    ? Center(
+                                        child: Text(m.emoji, style: const TextStyle(fontSize: 18)),
+                                      )
+                                    : null,
                               ),
                             ),
                           Positioned(
