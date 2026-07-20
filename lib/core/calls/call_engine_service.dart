@@ -99,7 +99,17 @@ class CallEngineService extends ChangeNotifier {
   }) async {
     _activeCallId = callId;
     _isVideo = isVideo;
-    _speakerOn = isVideo;
+    // Default to speaker regardless of call type, not just for video —
+    // this runs before the callee has answered, while the ringback tone
+    // is playing (see OutgoingCallScreen). At that point the user isn't
+    // holding the phone to their ear yet, they're looking at the screen
+    // waiting, so a quiet earpiece-routed ringback is wrong regardless of
+    // whether this ends up being a voice or video call. The speaker
+    // toggle button remains fully manual/available the whole time either
+    // way — this only changes the STARTING default, confirmed live: a
+    // voice call defaulted to earpiece and the ringback was inaudible
+    // unless the user manually tapped speaker first.
+    _speakerOn = true;
     _state = CallEngineState.connecting;
     _error = null;
     _permissionPermanentlyDenied = false;
@@ -170,7 +180,9 @@ class CallEngineService extends ChangeNotifier {
       // channel is actually joined. Runtime toggling after join still uses
       // setEnableSpeakerphone (see toggleSpeaker() below), matching the
       // SDK docs exactly.
+      debugPrint('[CALL_AUDIO] calling setDefaultAudioRouteToSpeakerphone($_speakerOn), BEFORE join');
       await engine.setDefaultAudioRouteToSpeakerphone(_speakerOn);
+      debugPrint('[CALL_AUDIO] setDefaultAudioRouteToSpeakerphone($_speakerOn) returned OK');
 
       await engine.joinChannelWithUserAccount(
         token: token,
@@ -223,10 +235,14 @@ class CallEngineService extends ChangeNotifier {
 
   Future<void> toggleSpeaker() async {
     final next = !_speakerOn;
+    debugPrint('[CALL_AUDIO] toggleSpeaker: calling setEnableSpeakerphone($next), engine null=${_engine == null}');
     try {
       await _engine?.setEnableSpeakerphone(next);
+      debugPrint('[CALL_AUDIO] setEnableSpeakerphone($next) returned OK');
       _speakerOn = next;
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[CALL_AUDIO] setEnableSpeakerphone EXCEPTION: $e');
+    }
     notifyListeners();
   }
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -25,9 +26,26 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
   bool _navigatedToActive = false;
   bool _started = false;
   bool _leftLocally = false;
+  // Neither CallKit (iOS) nor ConnectionService (Android) expose any
+  // system-level "ringback tone" for OUTGOING calls — confirmed against
+  // both platforms' own docs (CXProviderConfiguration.ringtoneSound only
+  // customizes the INCOMING ringtone; Android's telecom.Connection has no
+  // audio-playback API at all). Every VoIP app (WhatsApp, Telegram, Zoom
+  // included) bundles and plays its own ringback locally for exactly this
+  // reason — there's nothing to hear on the wire until the callee
+  // actually answers.
+  final AudioPlayer _ringbackPlayer = AudioPlayer();
+  bool _ringbackStarted = false;
+  // Firestore's call-status listener can briefly flicker between values
+  // right at the transition moment (confirmed live via [RINGBACK] logs:
+  // status bounced ringing<->other 4 times within ~1.6s right as a call
+  // ended) — once we've legitimately left the ringing phase, never treat
+  // a flicker back to "ringing" as a real reason to restart the ringback.
+  bool _ringingPhaseEnded = false;
 
   @override
   void dispose() {
+    _ringbackPlayer.dispose();
     if (!_navigatedToActive) {
       // Only tear the engine down if we're leaving WITHOUT handing off to
       // ActiveCallScreen for this same call (cancelled, declined, or ended
@@ -41,6 +59,37 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
       unawaited(CallKitService.instance.endCall(widget.callId));
     }
     super.dispose();
+  }
+
+  Future<void> _startRingback() async {
+    if (_ringingPhaseEnded || _ringbackStarted) return;
+    _ringbackStarted = true;
+    try {
+      await _ringbackPlayer.setAsset('assets/sounds/phone-tone.wav');
+      await _ringbackPlayer.setLoopMode(LoopMode.one);
+      // Explicit max volume — belt-and-suspenders alongside the boosted
+      // source file itself (peak -1.1dB), in case just_audio's own
+      // default volume isn't already 1.0 in this context.
+      await _ringbackPlayer.setVolume(1.0);
+      await _ringbackPlayer.play();
+    } catch (_) {}
+  }
+
+  Future<void> _stopRingback() async {
+    if (!_ringbackStarted) return;
+    _ringbackStarted = false;
+    try {
+      // A hard stop() mid-waveform can produce an audible click — ramp
+      // volume down first (just_audio has no built-in fade-out) so
+      // playback always ends at/near silence, not mid-cycle.
+      const steps = 6;
+      const stepDuration = Duration(milliseconds: 25);
+      for (var i = steps - 1; i >= 0; i--) {
+        await _ringbackPlayer.setVolume(i / steps);
+        await Future.delayed(stepDuration);
+      }
+      await _ringbackPlayer.stop();
+    } catch (_) {}
   }
 
   void _leave() {
@@ -75,7 +124,19 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
 
   Future<void> _cancel() async {
     if (_cancelling || _navigatedToActive) return;
+    // Symmetric with the CallStatus.declined/ended branch in the
+    // ref.listen switch below — without this, setState() here triggers
+    // an immediate rebuild while callProvider still momentarily reports
+    // the OLD "ringing" status (Firestore's endCall write hasn't
+    // propagated back yet), so build() calls _startRingback() again
+    // right as the screen is closing — confirmed live via
+    // [SCREEN_LIFECYCLE] logs: ringback briefly restarted (fade-in)
+    // between _cancel() and DISPOSED, producing an audible click on
+    // cancel that the earlier loop-seam fade fix didn't touch (different
+    // bug, same symptom).
+    _ringingPhaseEnded = true;
     setState(() => _cancelling = true);
+    unawaited(_stopRingback());
     try {
       await ref.read(firestoreServiceProvider).endCall(callId: widget.callId);
     } catch (_) {
@@ -123,12 +184,16 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
       }
       switch (call.status) {
         case CallStatus.accepted:
+          _ringingPhaseEnded = true;
+          unawaited(_stopRingback());
           if (!_navigatedToActive) {
             _navigatedToActive = true;
             context.pushReplacement('/call/active/${widget.callId}');
           }
         case CallStatus.declined:
         case CallStatus.ended:
+          _ringingPhaseEnded = true;
+          unawaited(_stopRingback());
           if (!_navigatedToActive) _leave();
         case CallStatus.ringing:
           break;
@@ -145,6 +210,9 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
             return const Center(child: CircularProgressIndicator(color: kGold));
           }
           WidgetsBinding.instance.addPostFrameCallback((_) => _ensureStarted(call));
+          if (call.status == CallStatus.ringing) {
+            unawaited(_startRingback());
+          }
 
           final calleeAsync = ref.watch(userByIdProvider(call.calleeId));
           final callee = calleeAsync.asData?.value;

@@ -88,4 +88,5 @@ flutter:
   assets:
     - assets/sounds/record_start.wav
     - assets/sounds/record_stop.wav
+    - assets/sounds/phone-tone.wav
     - assets/sounds/success_send.wav
