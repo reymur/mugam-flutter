@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -160,6 +161,7 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
     final callee = await ref.read(firestoreServiceProvider).fetchUserById(call.calleeId);
     await CallKitService.instance.reportOutgoingStarted(
       callId: widget.callId,
+      callkitId: call.callkitUuid,
       calleeName: callee?.name ?? 'İstifadəçi',
       isVideo: isVideo,
     );
@@ -223,23 +225,50 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
             listenable: CallEngineService.instance,
             builder: (context, _) {
               final svc = CallEngineService.instance;
+              // engine.startPreview() is already running by the time engine
+              // is non-null (CallEngineService._start enables/previews the
+              // camera before joining the channel) — showing it fullscreen
+              // here, before the callee even answers, is what WhatsApp's own
+              // outgoing-call screen does. Falls back to the avatar panel for
+              // voice calls, a permission/join error, or the camera toggled
+              // off — same cases CallAvatarPanel already covered.
+              final showingLocalPreview =
+                  isVideo && svc.engine != null && svc.state != CallEngineState.error && !svc.cameraOff;
               return Stack(
                 children: [
-                  CallAvatarPanel(
-                    name: callee?.name ?? 'İstifadəçi',
-                    emoji: callee?.emoji,
-                    subtitle: svc.state == CallEngineState.error
-                        ? (svc.error ?? 'Xəta baş verdi')
-                        : '$typeLabel...',
-                  ),
+                  if (showingLocalPreview)
+                    Positioned.fill(
+                      child: AgoraVideoView(
+                        controller: VideoViewController(
+                          rtcEngine: svc.engine!,
+                          canvas: const VideoCanvas(uid: 0),
+                        ),
+                      ),
+                    )
+                  else
+                    CallAvatarPanel(
+                      name: callee?.name ?? 'İstifadəçi',
+                      emoji: callee?.emoji,
+                      subtitle: svc.state == CallEngineState.error
+                          ? (svc.error ?? 'Xəta baş verdi')
+                          : '$typeLabel...',
+                    ),
                   CallTopBar(
                     onMinimize: () => _showStub(context),
                     onAddParticipant: () => _showStub(context),
                     onChat: () => _showStub(context),
-                    titleContent: Text(
-                      callee?.name ?? 'İstifadəçi',
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.nunito(fontSize: 18, color: kText, fontWeight: FontWeight.w600),
+                    titleContent: Column(
+                      children: [
+                        Text(
+                          callee?.name ?? 'İstifadəçi',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.nunito(fontSize: 18, color: kText, fontWeight: FontWeight.w600),
+                        ),
+                        if (showingLocalPreview) ...[
+                          const SizedBox(height: 2),
+                          Text('$typeLabel...', style: const TextStyle(color: kMuted, fontSize: 13)),
+                        ],
+                      ],
                     ),
                   ),
                   Align(

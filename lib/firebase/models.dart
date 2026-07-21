@@ -886,6 +886,15 @@ class Call {
   final CallStatus status;
   final CallType type;
   final Timestamp? createdAt;
+  // CallKit (iOS)/ConnectionService (Android) call id — a real UUID,
+  // deliberately distinct from `id` above. Generated once, server-side, by
+  // startCall (see its own comment on why) — never generate a second one
+  // client-side, caller and callee must show the exact same value.
+  final String callkitUuid;
+  // Caller's display name, resolved server-side by startCall so the
+  // callee's native call UI can show it immediately (no extra Firestore
+  // round-trip client-side, which would delay that UI appearing at all).
+  final String callerName;
 
   const Call({
     required this.id,
@@ -893,6 +902,8 @@ class Call {
     required this.calleeId,
     required this.status,
     required this.type,
+    required this.callkitUuid,
+    required this.callerName,
     this.createdAt,
   });
 
@@ -905,6 +916,8 @@ class Call {
       calleeId: (data['calleeId'] ?? '') as String,
       status: _callStatusFromString((data['status'] ?? 'ringing') as String),
       type: _callTypeFromString((data['type'] ?? 'audio') as String),
+      callkitUuid: (data['callkitUuid'] ?? '') as String,
+      callerName: (data['callerName'] ?? 'Zəng') as String,
       createdAt: data['createdAt'] as Timestamp?,
     );
   }

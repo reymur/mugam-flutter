@@ -52,7 +52,7 @@ class _CallTopIconButton extends StatelessWidget {
       child: InkWell(
         customBorder: const CircleBorder(),
         onTap: onPressed,
-        child: SizedBox(width: 40, height: 40, child: Icon(icon, color: kText, size: 20)),
+        child: SizedBox(width: 40, height: 40, child: Icon(icon, color: kText, size: 23)),
       ),
     );
   }

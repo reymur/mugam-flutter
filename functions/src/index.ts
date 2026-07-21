@@ -8,6 +8,7 @@ import { onObjectFinalized } from "firebase-functions/v2/storage";
 import { logger } from "firebase-functions";
 import { defineSecret } from "firebase-functions/params";
 import { RtcRole, RtcTokenBuilder } from "agora-token";
+import { randomUUID } from "crypto";
 
 initializeApp();
 const db = getFirestore();
@@ -89,6 +90,16 @@ async function sendCallDataPush(
       token,
       data,
       android: { priority: "high" },
+      // content-available:1 is what lets APNs wake a backgrounded (not
+      // force-quit — that still needs the PushKit/VoIP work tracked
+      // separately, see CallKitService's own TODO) app to run
+      // _firebaseMessagingBackgroundHandler at all for a data-only
+      // message; apns-priority 5 is Apple's required priority for
+      // content-available pushes (10 is silently downgraded/rejected).
+      apns: {
+        headers: { "apns-priority": "5" },
+        payload: { aps: { "content-available": 1 } },
+      },
     });
   } catch (e) {
     logger.warn("Call data push failed", e);
@@ -1112,20 +1123,49 @@ export const startCall = onCall(
 
     const callRef = db.collection("calls").doc();
     const callId = callRef.id;
+    // CallKit (iOS) requires its own id to be a real UUID — a Firestore
+    // auto-doc id like `callId` isn't one, and the plugin silently no-ops
+    // showCallkitIncoming when it fails to parse one (see
+    // CallKitService.showIncoming's own comment on this). Generated once,
+    // here, and handed to both sides via the call doc (caller reads it back
+    // through callProvider once this returns) and this push payload
+    // (callee's FCM background handler has no other way to get it without
+    // an extra Firestore round-trip) — never generated independently on
+    // either client, or caller and callee would show mismatched CallKit ids
+    // for the same call.
+    const callkitUuid = randomUUID();
+    // Resolved here, server-side, and handed to the callee the same two
+    // ways as callkitUuid above (call doc + push payload) — so the
+    // callee's native CallKit UI can show the real caller name immediately
+    // instead of a placeholder, without an extra round-trip on their end
+    // (which would delay the native UI showing at all, defeating the
+    // purpose — see showIncoming's own callerName param).
+    const callerSnap = await db.collection("users").doc(uid).get();
+    // users/{uid} docs use `displayName`, not `name` — matches the same
+    // name/displayName fallback the client's own User.fromFirestore uses.
+    const callerData = callerSnap.data();
+    const callerName =
+      (callerData?.name as string | undefined) ||
+      (callerData?.displayName as string | undefined) ||
+      "Zəng";
     await callRef.set({
       callerId: uid,
       calleeId: calleeUid,
       status: "ringing",
       type,
       channelName: callId,
+      callkitUuid,
+      callerName,
       createdAt: FieldValue.serverTimestamp(),
     });
 
     await sendCallPushToUid(calleeUid, {
       type: "incoming_call",
       callId,
+      callkitUuid,
       callerId: uid,
       callType: type,
+      callerName,
     });
 
     return { callId };

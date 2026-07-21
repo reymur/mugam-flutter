@@ -30,7 +30,7 @@ class CallActionButton extends StatelessWidget {
         child: SizedBox(
           width: 64,
           height: 64,
-          child: Icon(icon, color: iconColor, size: 30),
+          child: Icon(icon, color: iconColor, size: 41.4),
         ),
       ),
     );

@@ -41,11 +41,18 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   if (message.data['type'] != 'incoming_call') return;
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   final callId = message.data['callId'];
+  final callkitId = message.data['callkitUuid'];
   final callType = message.data['callType'];
-  if (callId == null) return;
+  final callerName = message.data['callerName'];
+  // callkitId, not just callId, must be present — it's the value startCall
+  // generated server-side (see Call.callkitUuid's comment) specifically so
+  // this background isolate doesn't have to do its own Firestore round-trip
+  // (which would delay the native call UI) just to get a valid CallKit id.
+  if (callId == null || callkitId == null) return;
   await CallKitService.instance.showIncoming(
     callId: callId,
-    callerName: 'Zəng',
+    callkitId: callkitId,
+    callerName: callerName ?? 'Zəng',
     isVideo: callType == 'video',
   );
 }
@@ -154,12 +161,10 @@ class _MugamAppState extends ConsumerState<MugamApp> {
           // through CallKitService's own onEvent listener instead.
           CallKitService.instance.showIncoming(
             callId: call.id,
-            // TODO: resolve the real caller's display name — this
-            // callback only receives the Call doc (has callerId, not a
-            // name), and fetching it here would require an async
-            // Firestore round-trip that'd delay the native call UI
-            // appearing, defeating the point of showing it immediately.
-            callerName: 'Zəng',
+            callkitId: call.callkitUuid,
+            // Resolved server-side by startCall (see Call.callerName's own
+            // comment) — no extra round-trip needed here anymore.
+            callerName: call.callerName,
             isVideo: call.type == CallType.video,
           );
         });

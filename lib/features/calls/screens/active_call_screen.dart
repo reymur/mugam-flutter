@@ -29,6 +29,11 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
   bool _started = false;
 
   Future<void> _ensureStarted(CallType type) async {
+    // TEMP DIAGNOSTIC (see conversation, 2026-07-21): confirms whether this
+    // State instance's own guard is what's letting reportConnected() fire
+    // more than once, vs. the plugin re-firing natively on its own. Remove
+    // once CallKitService.reportConnected's matching temp log is removed.
+    debugPrint('[CALLKIT] ActiveCallScreen._ensureStarted called for callId=${widget.callId}, hashCode=$hashCode, _started=$_started');
     if (_started) return;
     _started = true;
     // No-op if OutgoingCallScreen already started (and possibly finished
@@ -183,7 +188,19 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
                   ),
                 )
               else
-                CallAvatarPanel(name: other?.name ?? 'İstifadəçi', emoji: other?.emoji, subtitle: subtitle),
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  // Clears the action-button row (~16 top/bottom padding +
+                  // ~64 icon/label height each, see the Align(bottomCenter)
+                  // below) plus its own SafeArea inset, so the avatar block
+                  // sits just above the buttons instead of floating in the
+                  // middle of a mostly-empty screen (voice calls have no
+                  // video filling the rest of the Stack).
+                  child: Padding(
+                    padding: EdgeInsets.only(bottom: 140 + MediaQuery.of(context).padding.bottom),
+                    child: CallAvatarPanel(name: other?.name ?? 'İstifadəçi', emoji: other?.emoji, subtitle: subtitle),
+                  ),
+                ),
 
               CallTopBar(
                 onMinimize: () => _showStub(context),
@@ -269,7 +286,20 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
                               CallActionButton(color: kRed, icon: Icons.call_end, onPressed: _ending ? null : _endCall),
                             ],
                           )
+                        // mainAxisSize: min is load-bearing here — without
+                        // it a Column defaults to MainAxisSize.max, filling
+                        // the entire loose vertical space SafeArea/Align
+                        // give it, and with no mainAxisAlignment set
+                        // (defaults to start) its two button rows then sit
+                        // at the TOP of that expanded space — visually
+                        // indistinguishable from this whole block rendering
+                        // at the top of the screen instead of the bottom,
+                        // even though the outer Align(bottomCenter) was
+                        // correctly positioning the (wrongly-sized) Column
+                        // all along. Confirmed live (2026-07-21) with a
+                        // magenta debug background filling the full screen.
                         : Column(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -337,7 +367,7 @@ class _MiniIconButton extends StatelessWidget {
       child: InkWell(
         customBorder: const CircleBorder(),
         onTap: onPressed,
-        child: SizedBox(width: 30, height: 30, child: Icon(icon, color: kText, size: 16)),
+        child: SizedBox(width: 30, height: 30, child: Icon(icon, color: kText, size: 18.4)),
       ),
     );
   }
@@ -373,7 +403,7 @@ class _LabeledCallButton extends StatelessWidget {
           child: InkWell(
             customBorder: const CircleBorder(),
             onTap: onPressed,
-            child: SizedBox(width: 56, height: 56, child: Icon(icon, color: iconColor, size: 26)),
+            child: SizedBox(width: 56, height: 56, child: Icon(icon, color: iconColor, size: 35.9)),
           ),
         ),
         const SizedBox(height: 6),
