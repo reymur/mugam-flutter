@@ -291,30 +291,12 @@ class CallKitService {
     );
   }
 
-  // TEMP DIAGNOSTIC (see conversation, 2026-07-21): the plugin's native
-  // side re-fires reportOutgoingCall(...connectedAt:) repeatedly (every
-  // ~1-3s) after a call connects — confirmed via device console — which
-  // shows up on-screen as the remote video texture briefly going black on
-  // each repeat. Dart-side call site (ActiveCallScreen._ensureStarted) is
-  // guarded and should only invoke this once per screen instance, and a
-  // recorded screen capture confirms the screen itself isn't being
-  // recreated (UI chrome/timer stayed continuous throughout). This log
-  // line exists to settle definitively whether Dart is nonetheless calling
-  // this more than once (bug on our side, findable from the call count) or
-  // exactly once (bug is native-side, likely CallKit re-touching
-  // connectedData on its own — see Call.swift's connectedData didSet,
-  // which fires on every reassignment, and its only caller in this
-  // codebase, CallManager.connectedCall(), takes no argument that could
-  // distinguish "first" vs "repeat"). Remove once resolved.
   Future<void> reportConnected(String callId) async {
-    debugPrint('[CALLKIT] reportConnected: calling setCallConnected for callId=$callId');
     final callkitId = _callkitIdByCallId[callId];
     if (callkitId == null) {
-      debugPrint('[CALLKIT] reportConnected: no callkitId for callId=$callId, skipping');
       return;
     }
     await FlutterCallkitIncoming.setCallConnected(callkitId);
-    debugPrint('[CALLKIT] reportConnected: setCallConnected returned for callId=$callId callkitId=$callkitId');
   }
 
   // FIXED (2026-07-21, see git history for the original TODO this

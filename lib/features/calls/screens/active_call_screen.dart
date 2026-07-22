@@ -29,11 +29,6 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
   bool _started = false;
 
   Future<void> _ensureStarted(CallType type) async {
-    // TEMP DIAGNOSTIC (see conversation, 2026-07-21): confirms whether this
-    // State instance's own guard is what's letting reportConnected() fire
-    // more than once, vs. the plugin re-firing natively on its own. Remove
-    // once CallKitService.reportConnected's matching temp log is removed.
-    debugPrint('[CALLKIT] ActiveCallScreen._ensureStarted called for callId=${widget.callId}, hashCode=$hashCode, _started=$_started');
     if (_started) return;
     _started = true;
     // No-op if OutgoingCallScreen already started (and possibly finished
