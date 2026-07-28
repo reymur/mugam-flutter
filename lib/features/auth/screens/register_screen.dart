@@ -2,9 +2,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../../../core/constants/musician_options.dart';
+import '../../../core/models/activity_type.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/auth_service.dart';
+import '../../../shared/widgets/activity_type_sheet.dart';
+import '../../../shared/widgets/city_picker_sheet.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -21,7 +23,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _authService = AuthService();
 
   String? _role;
-  String? _instrument;
+  ActivityType? _activityType;
   String? _city;
   bool _showPassword = false;
   bool _showConfirmPassword = false;
@@ -60,8 +62,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() => _errorMessage = 'Şifrələr uyğun gəlmir');
       return;
     }
-    if (_role == 'musiqici' && _instrument == null) {
-      setState(() => _errorMessage = 'Alət seçin');
+    if (_role == 'musiqici' && _activityType == null) {
+      setState(() => _errorMessage = 'Fəaliyyət növü seçin');
       return;
     }
     if (_city == null) {
@@ -79,7 +81,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         email: _emailController.text.trim(),
         password: _passwordController.text,
         displayName: _nameController.text.trim(),
-        instrument: _instrument ?? '',
+        activityType: _activityType,
         city: _city!,
         role: _role!,
       );
@@ -139,14 +141,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
               _buildConfirmPasswordField(),
               if (_role == 'musiqici') ...[
                 const SizedBox(height: 20),
-                _buildLabel('ALƏT SEÇ'),
+                _buildLabel('FƏALİYYƏT NÖVÜ'),
                 const SizedBox(height: 10),
-                _buildInstrumentGrid(),
+                _buildActivityTypeSelector(),
               ],
               const SizedBox(height: 20),
               _buildLabel('ŞƏHƏRİ SEÇ'),
               const SizedBox(height: 10),
-              _buildCityGrid(),
+              _buildCitySelector(),
               const SizedBox(height: 28),
               _buildRegisterButton(),
               const SizedBox(height: 24),
@@ -241,7 +243,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return GestureDetector(
       onTap: () => setState(() {
         _role = value;
-        if (value == 'qonaq') _instrument = null;
+        if (value == 'qonaq') _activityType = null;
       }),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
@@ -340,70 +342,74 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  Widget _buildInstrumentGrid() {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: kInstruments.map((instr) {
-        final selected = _instrument == instr;
-        return GestureDetector(
-          onTap: () => setState(() => _instrument = instr),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: selected ? kGoldDim : kCard,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: selected ? kGold : kBorder,
-                width: selected ? 1.5 : 1,
+  Widget _buildActivityTypeSelector() {
+    return GestureDetector(
+      onTap: _openActivityTypePicker,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: kCard,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: kBorder),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.music_note_outlined, color: kGold, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _activityType?.toDisplayLabel() ?? 'Fəaliyyət növünü seçin',
+                style: TextStyle(
+                  fontSize: 15,
+                  color: _activityType != null ? kText : kMuted,
+                ),
               ),
             ),
-            child: Text(
-              instr,
-              style: TextStyle(
-                fontSize: 13,
-                color: selected ? kGold : kText,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-              ),
-            ),
-          ),
-        );
-      }).toList(),
+            const Icon(Icons.keyboard_arrow_down, color: kMuted, size: 22),
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _buildCityGrid() {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: kCities.map((cityName) {
-        final selected = _city == cityName;
-        return GestureDetector(
-          onTap: () => setState(() => _city = cityName),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: selected ? kGoldDim : kCard,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: selected ? kGold : kBorder,
-                width: selected ? 1.5 : 1,
+  Future<void> _openActivityTypePicker() async {
+    final result = await ActivityTypeSheet.show(context, initial: _activityType);
+    if (result != null) setState(() => _activityType = result);
+  }
+
+  Widget _buildCitySelector() {
+    return GestureDetector(
+      onTap: _openCityPicker,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: kCard,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: kBorder),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.location_on_outlined, color: kGold, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _city ?? 'Şəhər seçin',
+                style: TextStyle(
+                  fontSize: 15,
+                  color: _city != null ? kText : kMuted,
+                ),
               ),
             ),
-            child: Text(
-              '📍 $cityName',
-              style: TextStyle(
-                fontSize: 13,
-                color: selected ? kGold : kText,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-              ),
-            ),
-          ),
-        );
-      }).toList(),
+            const Icon(Icons.keyboard_arrow_down, color: kMuted, size: 22),
+          ],
+        ),
+      ),
     );
+  }
+
+  Future<void> _openCityPicker() async {
+    final selected = await CityPickerSheet.show(context, initial: _city);
+    if (selected != null) setState(() => _city = selected);
   }
 
   InputDecoration _inputDecoration(String hint) {

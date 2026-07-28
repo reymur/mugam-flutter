@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../../core/models/activity_type.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -199,12 +200,34 @@ class UserProfileScreen extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 4),
-          // Instrument
-          Text(
-            user.instrument,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 15, color: kGold, fontWeight: FontWeight.bold),
-          ),
+          // Activity type: category heading + full, untruncated breakdown of
+          // every specific choice — unlike the home-screen card, which only
+          // ever shows the short cardLabel().
+          Builder(builder: (context) {
+            final activity = formatActivityForProfile(user.activityType, user.instrument);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                if (activity.heading.isNotEmpty)
+                  Text(
+                    activity.heading,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 15, color: kGold, fontWeight: FontWeight.bold),
+                  ),
+                for (final line in activity.details) ...[
+                  const SizedBox(height: 3),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Text(
+                      line,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 13, color: kMuted),
+                    ),
+                  ),
+                ],
+              ],
+            );
+          }),
           const SizedBox(height: 12),
           // Meta row: city + available badge
           Wrap(

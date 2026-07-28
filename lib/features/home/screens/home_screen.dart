@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../../core/models/activity_type.dart';
 import '../../../core/theme/colors.dart';
 import '../../../shared/widgets/topbar.dart';
 import '../../../shared/widgets/avatar_ring.dart';
@@ -196,16 +197,18 @@ class _HeroBanner extends StatelessWidget {
       ),
       child: Stack(
         children: [
+          // Large faded instrument silhouette watermark, replacing the
+          // small corner-blur circle this card used to have — no bundled
+          // image asset exists for a real tar silhouette in this project,
+          // so a big low-opacity emoji glyph stands in for one; same
+          // visual intent (a decorative shape behind the text, not meant
+          // to read as sharp branded artwork) without a new asset.
           Positioned(
-            top: -40,
-            right: -60,
-            child: Container(
-              width: 200,
-              height: 200,
-              decoration: const BoxDecoration(
-                color: Color(0x1FD4A03C),
-                shape: BoxShape.circle,
-              ),
+            right: 15,
+            bottom: 20,
+            child: Opacity(
+              opacity: 0.12,
+              child: Text('🎻', style: TextStyle(fontSize: 180)),
             ),
           ),
           Padding(
@@ -213,47 +216,53 @@ class _HeroBanner extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'MUĞAM GECƏSİ',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: kGold,
-                    letterSpacing: 1.5,
-                    fontWeight: FontWeight.bold,
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: kGold.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('🎼', style: TextStyle(fontSize: 12)),
+                      const SizedBox(width: 6),
+                      Text(
+                        'RƏSMİ KLUB',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: kGold,
+                          letterSpacing: 1.2,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 Text(
-                  'Muğam Gecəsi - Bakıda',
-                  style: GoogleFonts.playfairDisplay(
-                    fontSize: 22,
+                  'Azərbaycan\nMusiqiçilərinin Evi',
+                  style: GoogleFonts.nunito(
+                    fontSize: 26,
                     fontWeight: FontWeight.bold,
                     color: kText,
-                    height: 30 / 22,
+                    height: 32 / 26,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 10),
                 const Text(
-                  '18 May, Hüseynov Sarayı - Azərbaycan musiqisinin ən gözəl gecəsi',
+                  'Müğənni, ifaçı, prodüser — hamı burada. Toy, konsert, '
+                  'layihə üçün musiqiçi tap.',
                   style: TextStyle(
                     fontSize: 13,
                     color: kMuted,
                     height: 20 / 13,
                   ),
                 ),
-                const SizedBox(height: 8),
-                const Opacity(
-                  opacity: 0.4,
-                  child: Text(
-                    '♦ ◆ ♦ ◆ ♦',
-                    style: TextStyle(
-                      color: kGold,
-                      letterSpacing: 4,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 16),
                 Row(
                   children: [
                     ElevatedButton(
@@ -271,7 +280,7 @@ class _HeroBanner extends StatelessWidget {
                         elevation: 0,
                       ),
                       child: const Text(
-                        'Bilet al',
+                        'Musiqiçi Tap',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.bold,
@@ -293,7 +302,7 @@ class _HeroBanner extends StatelessWidget {
                         foregroundColor: kText,
                       ),
                       child: const Text(
-                        'Ətraflı',
+                        'Elan Ver',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.bold,
@@ -518,7 +527,9 @@ class _MusicianCard extends ConsumerWidget {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  musician.instrument,
+                  formatActivityForCard(musician.activityType, musician.instrument),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 11,

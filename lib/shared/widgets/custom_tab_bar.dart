@@ -40,14 +40,22 @@ class CustomTabBar extends StatelessWidget {
         top: false,
         child: SizedBox(
           height: kNavH,
-          child: Row(
-            children: List.generate(_kTabs.length, (i) {
+          // Scrollable with a fixed per-tab width, replacing the old
+          // Row(Expanded...) that squeezed all 10 tabs to fit the screen
+          // — matches the reference design, which shows the row
+          // horizontally scrollable with trailing tabs (e.g. "PROFİL")
+          // visibly cut off at the edge until swiped into view.
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: _kTabs.length,
+            itemBuilder: (context, i) {
               final (emoji, label) = _kTabs[i];
               final isActive = i == currentIndex;
-              return Expanded(
-                child: GestureDetector(
-                  onTap: () => onTap(i),
-                  behavior: HitTestBehavior.opaque,
+              return GestureDetector(
+                onTap: () => onTap(i),
+                behavior: HitTestBehavior.opaque,
+                child: SizedBox(
+                  width: 64,
                   child: _TabItem(
                     emoji: emoji,
                     label: label,
@@ -56,7 +64,7 @@ class CustomTabBar extends StatelessWidget {
                   ),
                 ),
               );
-            }),
+            },
           ),
         ),
       ),

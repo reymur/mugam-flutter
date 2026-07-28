@@ -90,3 +90,12 @@ flutter:
     - assets/sounds/record_stop.wav
     - assets/sounds/phone-tone.wav
     - assets/sounds/success_send.wav
+    - assets/icons/guitar.png
+    - assets/icons/clarinet.png
+    - assets/icons/keyboard.png
+    - assets/icons/microphone.png
+    - assets/icons/drums.png
+    - assets/icons/speaker.png
+    - assets/icons/video_camera.png
+    - assets/icons/camera.png
+    - assets/icons/isiq_sistemleri.png

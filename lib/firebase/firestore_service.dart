@@ -8,6 +8,7 @@ import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/models/activity_type.dart';
 import 'models.dart';
 
 // Live-tail window size for watchMessages (finding #4) — how many of the
@@ -50,16 +51,24 @@ class FirestoreService {
     required String uid,
     required String displayName,
     required String bio,
-    required String instrument,
+    required ActivityType? activityType,
     required String city,
     required bool available,
     String? photoURL,
   }) async {
+    // instrument/specialty stay derived display strings — every screen that
+    // reads them as plain text (search, profile chips, etc.) keeps working
+    // unchanged. activityInstruments is the flat leaf list, kept separately
+    // because Firestore can only array-contains-filter a flat array, not
+    // reach into activityType's nested map.
+    final instrumentLabel = activityType?.toDisplayLabel() ?? '';
     await _db.collection('users').doc(uid).update({
       'displayName': displayName,
       'bio': bio,
-      'instrument': instrument,
-      'specialty': instrument,
+      'instrument': instrumentLabel,
+      'specialty': instrumentLabel,
+      'activityType': activityType?.toMap(),
+      'activityInstruments': activityType?.toSearchableInstruments() ?? [],
       'city': city,
       'available': available,
       'updatedAt': FieldValue.serverTimestamp(),

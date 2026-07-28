@@ -71,13 +71,16 @@ class Topbar extends StatelessWidget {
                     child: Container(
                       width: 36,
                       height: 36,
-                      decoration: BoxDecoration(
+                      decoration: const BoxDecoration(
                         color: kCard,
-                        border: Border.all(color: kBorder),
-                        borderRadius: BorderRadius.circular(10),
+                        shape: BoxShape.circle,
                       ),
                       alignment: Alignment.center,
-                      child: const Text('🔔', style: TextStyle(fontSize: 15)),
+                      child: const Icon(
+                        Icons.notifications_none_rounded,
+                        color: kMuted,
+                        size: 19,
+                      ),
                     ),
                   ),
                   if (notificationCount > 0)
@@ -113,17 +116,16 @@ class Topbar extends StatelessWidget {
                 onTap: onLanguageTap,
                 child: Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: kCard,
-                    border: Border.all(color: kBorder),
-                    borderRadius: BorderRadius.circular(20),
+                    borderRadius: BorderRadius.circular(18),
                   ),
                   child: const Text(
                     'AZ',
                     style: TextStyle(
                       fontSize: 12,
-                      color: kGold,
+                      color: kText,
                       fontWeight: FontWeight.bold,
                     ),
                   ),

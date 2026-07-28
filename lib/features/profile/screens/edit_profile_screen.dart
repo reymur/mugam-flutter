@@ -6,10 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
-import '../../../core/constants/musician_options.dart';
+import '../../../core/models/activity_type.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../../shared/widgets/activity_type_sheet.dart';
+import '../../../shared/widgets/city_picker_sheet.dart';
 
 class EditProfileScreen extends ConsumerStatefulWidget {
   final User user;
@@ -23,7 +25,7 @@ class EditProfileScreen extends ConsumerStatefulWidget {
 class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   late final TextEditingController _nameController;
   late final TextEditingController _bioController;
-  String? _instrument;
+  ActivityType? _activityType;
   String? _city;
   late bool _available;
   String? _localAvatarPath;
@@ -37,11 +39,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     super.initState();
     _nameController = TextEditingController(text: widget.user.name);
     _bioController = TextEditingController(text: widget.user.bio);
-    _instrument = kInstruments.firstWhere(
-      (i) => i == widget.user.instrument,
-      orElse: () => widget.user.instrument,
-    );
-    if (_instrument != null && _instrument!.isEmpty) _instrument = null;
+    _activityType = widget.user.activityType;
     _city = widget.user.city.isEmpty ? null : widget.user.city;
     _available = widget.user.available;
   }
@@ -108,7 +106,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
         uid: widget.user.id,
         displayName: _nameController.text.trim(),
         bio: _bioController.text.trim(),
-        instrument: _instrument ?? '',
+        activityType: _activityType,
         city: _city ?? '',
         available: _available,
         photoURL: photoURL,
@@ -183,13 +181,13 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
               const SizedBox(height: 8),
               _buildBioField(),
               const SizedBox(height: 20),
-              _buildLabel('ALƏT'),
+              _buildLabel('FƏALİYYƏT NÖVÜ'),
               const SizedBox(height: 10),
-              _buildInstrumentGrid(),
+              _buildActivityTypeSelector(),
               const SizedBox(height: 20),
               _buildLabel('ŞƏHƏR'),
               const SizedBox(height: 10),
-              _buildCityGrid(),
+              _buildCitySelector(),
               const SizedBox(height: 20),
               _buildAvailabilityToggle(),
               const SizedBox(height: 32),
@@ -296,70 +294,74 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     );
   }
 
-  Widget _buildInstrumentGrid() {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: kInstruments.map((instr) {
-        final selected = _instrument == instr;
-        return GestureDetector(
-          onTap: () => setState(() => _instrument = instr),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: selected ? kGoldDim : kCard,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: selected ? kGold : kBorder,
-                width: selected ? 1.5 : 1,
+  Widget _buildActivityTypeSelector() {
+    return GestureDetector(
+      onTap: _openActivityTypePicker,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: kCard,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: kBorder),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.music_note_outlined, color: kGold, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _activityType?.toDisplayLabel() ?? 'Fəaliyyət növünü seçin',
+                style: TextStyle(
+                  fontSize: 15,
+                  color: _activityType != null ? kText : kMuted,
+                ),
               ),
             ),
-            child: Text(
-              instr,
-              style: TextStyle(
-                fontSize: 13,
-                color: selected ? kGold : kText,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-              ),
-            ),
-          ),
-        );
-      }).toList(),
+            const Icon(Icons.keyboard_arrow_down, color: kMuted, size: 22),
+          ],
+        ),
+      ),
     );
   }
 
-  Widget _buildCityGrid() {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: kCities.map((cityName) {
-        final selected = _city == cityName;
-        return GestureDetector(
-          onTap: () => setState(() => _city = cityName),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: selected ? kGoldDim : kCard,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: selected ? kGold : kBorder,
-                width: selected ? 1.5 : 1,
+  Future<void> _openActivityTypePicker() async {
+    final result = await ActivityTypeSheet.show(context, initial: _activityType);
+    if (result != null) setState(() => _activityType = result);
+  }
+
+  Widget _buildCitySelector() {
+    return GestureDetector(
+      onTap: _openCityPicker,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: kCard,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: kBorder),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.location_on_outlined, color: kGold, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _city ?? 'Şəhər seçin',
+                style: TextStyle(
+                  fontSize: 15,
+                  color: _city != null ? kText : kMuted,
+                ),
               ),
             ),
-            child: Text(
-              '📍 $cityName',
-              style: TextStyle(
-                fontSize: 13,
-                color: selected ? kGold : kText,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-              ),
-            ),
-          ),
-        );
-      }).toList(),
+            const Icon(Icons.keyboard_arrow_down, color: kMuted, size: 22),
+          ],
+        ),
+      ),
     );
+  }
+
+  Future<void> _openCityPicker() async {
+    final selected = await CityPickerSheet.show(context, initial: _city);
+    if (selected != null) setState(() => _city = selected);
   }
 
   Widget _buildAvailabilityToggle() {

@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../core/models/activity_type.dart';
+
 extension UserListFiltering on List<User> {
   List<User> excludingUid(String uid) => where((u) => u.id != uid).toList();
 }
@@ -11,6 +13,13 @@ class User {
   final String name;
   final String emoji;
   final String instrument;
+  // Structured "Fəaliyyət növü" selection — `instrument` above stays a
+  // derived display string (ActivityType.toDisplayLabel()) for every screen
+  // that just prints/searches it as text; this is the queryable/structured
+  // source of truth, written alongside it by EditProfileScreen. Null for
+  // any user doc that predates this field, or that never set an activity
+  // type.
+  final ActivityType? activityType;
   final String city;
   final double rating;
   final int reviews;
@@ -85,6 +94,7 @@ class User {
     required this.name,
     required this.emoji,
     required this.instrument,
+    this.activityType,
     required this.city,
     required this.rating,
     required this.reviews,
@@ -111,6 +121,9 @@ class User {
       name: (data['name'] ?? data['displayName'] ?? 'İstifadəçi') as String,
       emoji: (data['emoji'] ?? '🎵') as String,
       instrument: (data['instrument'] ?? data['specialty'] ?? '') as String,
+      activityType: ActivityType.fromMap(
+        data['activityType'] as Map<String, dynamic>?,
+      ),
       city: (data['city'] ?? '') as String,
       rating: ((data['rating'] ?? 0) as num).toDouble(),
       reviews: (data['reviews'] ?? 0) as int,

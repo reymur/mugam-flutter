@@ -166,12 +166,43 @@ class CallEngineService extends ChangeNotifier {
           // _remoteUid, so no separate handling is needed here.
         },
         onConnectionStateChanged: (connection, state, reason) {},
+        // TEMP DIAGNOSTIC (2026-07-22): checking whether the OS/SDK silently
+        // reroutes audio away from the speaker mid-call (e.g. proximity
+        // sensor switching to earpiece under channelProfileCommunication)
+        // without any explicit toggleSpeaker() call from us. Remove once
+        // the earpiece-during-video-call report is diagnosed.
+        onAudioRoutingChanged: (routing) {
+          debugPrint('[CALL_AUDIO] onAudioRoutingChanged: routing=$routing (${AudioRouteExt.fromValue(routing)})');
+        },
       ));
 
       await engine.enableAudio();
       if (isVideo) {
         await engine.enableVideo();
         await engine.startPreview();
+        // Higher-bitrate/sample-rate profile for less lossy encoding on
+        // video calls — confirmed live to be safe on its own (no routing
+        // impact). audioScenarioGameStreaming was tried alongside this to
+        // move playback onto media volume (Android's STREAM_VOICE_CALL is
+        // capped much lower and sounded quiet even maxed out), but it
+        // fights channelProfileCommunication's Android MODE_IN_COMMUNICATION
+        // proximity-based routing — confirmed live via onAudioRoutingChanged
+        // firing repeated routeSpeakerphone/routeEarpiece flip-flops
+        // mid-call. Left at audioScenarioDefault (the implicit default,
+        // stated explicitly here so the tradeoff is documented) — volume is
+        // handled instead via adjustPlaybackSignalVolume below, which
+        // doesn't touch OS-level routing at all.
+        await engine.setAudioProfile(
+          profile: AudioProfileType.audioProfileMusicHighQuality,
+          scenario: AudioScenarioType.audioScenarioDefault,
+        );
+        // See setAudioProfile's comment above — this boosts perceived
+        // loudness without touching audio routing (unlike
+        // audioScenarioGameStreaming, which caused route flip-flopping).
+        // 100 is SDK-defined "original volume"; 175 picked as a moderate
+        // step up rather than jumping toward the 400 ceiling, to reduce
+        // clipping risk — adjust after a live listening test.
+        await engine.adjustPlaybackSignalVolume(175);
       }
       // setEnableSpeakerphone requires an active channel — calling it here
       // (before joinChannelWithUserAccount below) throws errNotReady (-3).
@@ -199,6 +230,31 @@ class CallEngineService extends ChangeNotifier {
 
       _state = CallEngineState.joined;
       notifyListeners();
+
+      if (isVideo) {
+        // Community-confirmed workaround (flutter_callkit_incoming#502) for
+        // a race between Android's self-managed Telecom connection settling
+        // its own CallAudioState (confirmed live: it lands on EARPIECE via
+        // CallkitConnectionService's onAudioStateChanged, asynchronously,
+        // after the connection is created) and our own
+        // setDefaultAudioRouteToSpeakerphone call above — Telecom wins the
+        // race and silently pulls physical audio back to the earpiece even
+        // though the SDK still reports routeSpeakerphone. Re-asserting
+        // setEnableSpeakerphone once Telecom's own setup has almost
+        // certainly finished settling papers over it. 3s matches the delay
+        // reported working in that issue; unlike setDefaultAudioRouteTo
+        // Speakerphone this uses setEnableSpeakerphone since the channel is
+        // already joined by this point.
+        Future.delayed(const Duration(seconds: 3), () {
+          if (_engine != engine || _activeCallId != callId) return;
+          debugPrint('[CALL_AUDIO] calling setEnableSpeakerphone($_speakerOn), retry after 3s (Telecom race workaround)');
+          engine.setEnableSpeakerphone(_speakerOn).then((_) {
+            debugPrint('[CALL_AUDIO] setEnableSpeakerphone($_speakerOn) retry after 3s returned OK');
+          }).catchError((e) {
+            debugPrint('[CALL_AUDIO] setEnableSpeakerphone($_speakerOn) retry after 3s EXCEPTION: $e');
+          });
+        });
+      }
     } catch (e) {
       _error = '$e';
       _state = CallEngineState.error;
