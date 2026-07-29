@@ -865,6 +865,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
 
       cells.add(_buildDayCell(
         day: day,
+        weekday: dayDate.weekday,
         isSelected: isSelected,
         isToday: isToday,
         hasEvents: hasEvents,
@@ -890,6 +891,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   // gets a gradient + small glow instead of a flat gold pill.
   Widget _buildDayCell({
     required int day,
+    required int weekday,
     required bool isSelected,
     required bool isToday,
     required bool hasEvents,
@@ -901,6 +903,20 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     Color textColor = kText;
     Border? border;
     List<BoxShadow>? glow;
+    // Weekend NUMBER glow (approved preview) — text-only, never touches the
+    // cell's own bgColor/glow above. Sunday brighter than Saturday. Only
+    // applies to a "plain" day: isSelected/hasEvents already pick their own
+    // definitive textColor above and take priority over this.
+    List<Shadow>? textGlow;
+    if (!isSelected && !hasEvents) {
+      if (weekday == DateTime.sunday) {
+        textColor = kGold2;
+        textGlow = [Shadow(color: kGold2.withAlpha(200), blurRadius: 10)];
+      } else if (weekday == DateTime.saturday) {
+        textColor = kGold;
+        textGlow = [Shadow(color: kGold.withAlpha(140), blurRadius: 6)];
+      }
+    }
 
     if (isSelected) {
       bgColor = kGold;
@@ -950,6 +966,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                       fontSize: 16,
                       color: textColor,
                       fontWeight: isSelected || hasEvents ? FontWeight.bold : FontWeight.normal,
+                      shadows: textGlow,
                     ),
                   ),
                 ),
