@@ -9,23 +9,26 @@ import 'algolia_search_service.dart';
 // Shared debounced-search + pagination controller for the "type a name to
 // pick a user" pattern used by the group/event participant pickers
 // (group_info_screen.dart's _AddParticipantsSheet, create_group_screen.dart,
-// agreements_screen.dart's _ParticipantPickerDialog). search_screen.dart has
-// its own richer version of this (city/instrument/rating/online filters, a
-// live-refresh timer for the online filter) and is deliberately left as its
-// own thing rather than routed through this — none of that extra complexity
-// applies to a plain "search by name, exclude a few uids" picker, and it
-// already works.
+// agreements_screen.dart's _ParticipantPickerDialog) and, with a full
+// SearchFilters-built filters string via updateFilters, chats_screen.dart's
+// own city/instrument/rating/online filter button (reuses filter_sheet.dart's
+// FilterSheet/SearchFilters — same widget as search_screen.dart). Everything
+// else about search_screen.dart's own online-filter live-refresh timer stays
+// specific to that screen rather than moving here — nothing else needs it.
 //
-// excludeUids is fixed at construction — every current caller only ever
-// excludes a static set (the signed-in user, or a group's existing members)
-// that doesn't change over the picker's lifetime, so there's no need for a
-// dynamic filter API here.
+// excludeUids is fixed at construction — every static-list caller (the
+// three pickers above) only ever excludes a fixed set (the signed-in user,
+// or a group's existing members) that doesn't change over the picker's
+// lifetime. Pass `filters` instead when the caller needs to change filters
+// later (SearchFilters.toAlgoliaFilters already folds in its own
+// NOT objectID exclusion, so the two constructor params are mutually
+// exclusive in practice, not combined).
 class UserSearchController extends ChangeNotifier {
-  UserSearchController({Iterable<String> excludeUids = const []})
-      : _filters = excludeUidsClauses(excludeUids).join(' AND ');
+  UserSearchController({Iterable<String> excludeUids = const [], String? filters})
+      : _filters = filters ?? excludeUidsClauses(excludeUids).join(' AND ');
 
   final AlgoliaSearchService _service = AlgoliaSearchService();
-  final String _filters;
+  String _filters;
   Timer? _debounce;
   int _requestId = 0;
   String _query = '';
@@ -50,6 +53,14 @@ class UserSearchController extends ChangeNotifier {
     _query = query;
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 250), () => _fetch(page: 0));
+  }
+
+  // Replaces the filters string and re-runs the current query from page 0 —
+  // for callers whose filters can change after construction (chats_screen.dart's
+  // filter button), unlike the fixed excludeUids the picker callers use.
+  void updateFilters(String filters) {
+    _filters = filters;
+    _fetch(page: 0);
   }
 
   Future<void> loadMore() async {
