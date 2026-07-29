@@ -30,7 +30,7 @@ class ChatsScreen extends ConsumerStatefulWidget {
 }
 
 class _ChatsScreenState extends ConsumerState<ChatsScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _searchScrollController = ScrollController();
   late final String _currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -44,6 +44,15 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
     vsync: this,
     duration: const Duration(milliseconds: 380),
   );
+  // Idle "breathing" pulse on the resting line (opacity + width) — the
+  // preview's own CSS `shimmer`/`haloShimmer` keyframes, missed on the
+  // first port (only the open/close morph got wired up, leaving the real
+  // line static). Blended out via (1-t) below as the box opens, so it
+  // never jitters the actual search field.
+  late final AnimationController _shimmerController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2600),
+  )..repeat(reverse: true);
   bool _searchExpanded = false;
   // Same city/instrument/rating/available/online filters as search_screen.dart
   // — reuses its FilterSheet/SearchFilters as-is (see _openFilters below)
@@ -140,6 +149,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
   @override
   void dispose() {
     _searchAnimController.dispose();
+    _shimmerController.dispose();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _searchScrollController.removeListener(_onSearchScroll);
@@ -244,12 +254,20 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
           // more than half open (showContent below) — avoids ever laying a
           // real TextField out inside a near-zero-height box.
           AnimatedBuilder(
-            animation: _searchAnimController,
+            animation: Listenable.merge([_searchAnimController, _shimmerController]),
             builder: (context, _) {
               final rawT = _searchAnimController.value;
               final t = Curves.easeOutCubic.transform(rawT);
               final showContent = t > 0.5;
               final contentT = ((t - 0.5) / 0.5).clamp(0.0, 1.0);
+
+              // Idle breathing pulse, blended out by (1-t) as the box opens
+              // (0 effect once fully expanded — the real field must never
+              // jitter). shimmerRaw oscillates 0->1->0 via repeat(reverse:
+              // true); easeInOut softens the direction changes at each end.
+              final shimmerRaw = Curves.easeInOut.transform(_shimmerController.value);
+              final pulseOpacity = 1 - (0.25 * (1 - shimmerRaw)) * (1 - t);
+              final pulseScale = 1 - (0.03 * (1 - shimmerRaw)) * (1 - t);
 
               return Padding(
                 padding: const EdgeInsets.only(left: 16, right: 16, top: 2, bottom: 4),
@@ -258,7 +276,11 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                     Expanded(
                       child: GestureDetector(
                         onTap: t < 0.5 ? _toggleSearch : null,
-                        child: Stack(
+                        child: Transform.scale(
+                          scaleX: pulseScale,
+                          child: Opacity(
+                            opacity: pulseOpacity.clamp(0.0, 1.0),
+                            child: Stack(
                           alignment: Alignment.center,
                           clipBehavior: Clip.none,
                           children: [
@@ -266,14 +288,14 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                               Opacity(
                                 opacity: (1 - t).clamp(0.0, 1.0),
                                 child: ImageFiltered(
-                                  imageFilter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                                  imageFilter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
                                   child: Container(
-                                    height: 12,
+                                    height: 8,
                                     margin: EdgeInsets.symmetric(
                                       horizontal: 16 * (1 - t),
                                     ),
                                     decoration: BoxDecoration(
-                                      color: kGold2,
+                                      color: kGold2.withAlpha(160),
                                       borderRadius: BorderRadius.circular(999),
                                     ),
                                   ),
@@ -341,6 +363,8 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                                   : null,
                             ),
                           ],
+                        ),
+                          ),
                         ),
                       ),
                     ),
