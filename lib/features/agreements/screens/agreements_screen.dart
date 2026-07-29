@@ -199,7 +199,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
 
     final personalEvents = personalEventsAsync.asData?.value ?? [];
     final eventsAsParticipant = eventsAsParticipantAsync.asData?.value ?? [];
-    final allUsers = ref.watch(allUsersProvider).asData?.value ?? [];
+    final allUsersAsync = ref.watch(allUsersProvider);
+    final allUsers = allUsersAsync.asData?.value ?? [];
 
     final agreeEvents = _agreeEvents(personalEvents);
     final hasUnread = agreeEvents.any(_isUnread);
@@ -211,7 +212,19 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     // addPostFrameCallback (can't show a bottom sheet mid-build) and guarded
     // by _autoOpenedForPartner so it only fires once per push, not on every
     // rebuild this screen goes through afterward (filter/tab changes, etc.).
-    if (widget.initialParticipantUid != null && !_autoOpenedForPartner) {
+    //
+    // Also gated on allUsersAsync.hasValue — on a cold app start,
+    // allUsersProvider's Firestore stream hasn't delivered its first
+    // snapshot yet by the time this first build runs, so allUsers would
+    // still be [] here. Without this guard, the modal opened immediately
+    // with that empty list baked in (a StatefulWidget's constructor param,
+    // never rebuilt afterward), so the pre-selected participant chip showed
+    // uid instead of name until the sheet was closed and reopened. Waiting
+    // for hasValue lets this rerun (build() reruns on every allUsersProvider
+    // emission, same as always) once real data is actually in.
+    if (widget.initialParticipantUid != null &&
+        !_autoOpenedForPartner &&
+        allUsersAsync.hasValue) {
       _autoOpenedForPartner = true;
       final partnerUid = widget.initialParticipantUid!;
       WidgetsBinding.instance.addPostFrameCallback((_) {
