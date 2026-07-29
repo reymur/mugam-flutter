@@ -21,6 +21,7 @@ import 'create_group_screen.dart';
 
 const Color _kOnGold = Color(0xFF1A0E00);
 const double _kSearchRowHeight = 46;
+const double _kSearchCollapsedRowHeight = 16;
 
 class ChatsScreen extends ConsumerStatefulWidget {
   const ChatsScreen({super.key});
@@ -252,18 +253,23 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
               final contentT = ((t - 0.5) / 0.5).clamp(0.0, 1.0);
 
               return Padding(
-                padding: const EdgeInsets.only(left: 16, right: 16, top: 2, bottom: 4),
+                padding: const EdgeInsets.only(left: 16, right: 16, top: 0, bottom: 0),
                 child: Row(
                   children: [
                     Expanded(
                       child: GestureDetector(
                         onTap: t < 0.5 ? _toggleSearch : null,
                         child: SizedBox(
-                          // Fixed row height (not animated) — a static
-                          // gold line sits centered in it while collapsed;
-                          // the field Container below grows to fill it as
-                          // t increases.
-                          height: _kSearchRowHeight,
+                          // Collapsed row is a compact box that grows to
+                          // the full field height as t goes 0->1 — kept
+                          // separate from _kSearchRowHeight so the
+                          // collapsed line doesn't carry the expanded
+                          // field's full-height empty space around it. The
+                          // line itself is bottom-anchored (Positioned
+                          // bottom: 11) rather than centered, so trimming
+                          // this height only pulls space off its top.
+                          height: _kSearchCollapsedRowHeight +
+                              (_kSearchRowHeight - _kSearchCollapsedRowHeight) * t,
                           child: Stack(
                           alignment: Alignment.center,
                           clipBehavior: Clip.none,
@@ -279,7 +285,11 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                             // 8/16 — a glow around a thin line, not a
                             // cloud.
                             if (t < 0.95)
-                              Opacity(
+                              Positioned(
+                                bottom: 11,
+                                left: 0,
+                                right: 0,
+                                child: Opacity(
                                 opacity: ((1 - t) * 0.55).clamp(0.0, 1.0),
                                 child: Stack(
                                   alignment: Alignment.center,
@@ -320,6 +330,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                                       ),
                                     ),
                                   ],
+                                ),
                                 ),
                               ),
                             Container(
