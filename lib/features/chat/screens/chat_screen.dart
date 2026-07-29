@@ -117,6 +117,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _messageFocusNode = FocusNode();
   bool _composerHadFocusBeforeMenu = false;
+  // Anchors _showChatMenu's showMenu() call to this exact button's position
+  // (see that method's own comment for why this replaced PopupMenuButton).
+  final GlobalKey _moreMenuButtonKey = GlobalKey();
   final ItemScrollController _itemScrollController = ItemScrollController();
   final ItemPositionsListener _itemPositionsListener =
       ItemPositionsListener.create();
@@ -523,6 +526,50 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (_composerHadFocusBeforeMenu && mounted) {
       _messageFocusNode.requestFocus();
     }
+  }
+
+  // Manually anchored showMenu() (via _moreMenuButtonKey) instead of
+  // PopupMenuButton's own built-in button+positioning — see the call site's
+  // own comment (chat_screen.dart's AppBar actions) for why: PopupMenuButton
+  // anchored its menu right at the button itself, overlapping the video/call
+  // icons next to it while open. Anchoring at the button's BOTTOM edge (a
+  // zero-height rect, not its full top-to-bottom bounds) plus a small extra
+  // downward offset opens the menu clearly underneath the whole icon row
+  // instead of overlapping it.
+  Future<void> _showChatMenu(BuildContext context, String otherUid) async {
+    final button = _moreMenuButtonKey.currentContext?.findRenderObject() as RenderBox?;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    if (button == null) return;
+    const belowButtonOffset = Offset(0, 8);
+    final bottomLeft = button.localToGlobal(
+          button.size.bottomLeft(Offset.zero),
+          ancestor: overlay,
+        ) +
+        belowButtonOffset;
+    final bottomRight = button.localToGlobal(
+          button.size.bottomRight(Offset.zero),
+          ancestor: overlay,
+        ) +
+        belowButtonOffset;
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(bottomLeft, bottomRight),
+      Offset.zero & overlay.size,
+    );
+    await showMenu<void>(
+      context: context,
+      position: position,
+      items: [
+        PopupMenuItem<void>(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => AgreementsScreen(initialParticipantUid: otherUid),
+            ),
+          ),
+          child: const Text('İş yazdır'),
+        ),
+      ],
+    );
   }
 
   // Floating + a margin tall enough to clear the composer (and the reply
@@ -3171,21 +3218,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             // participant (see AgreementsScreen.initialParticipantUid).
             // Only makes sense for a 1:1 chat (an agreement is between this
             // user and exactly one other party) — groups get no equivalent.
-            PopupMenuButton<void>(
+            //
+            // A plain IconButton + manual showMenu (anchored via
+            // _moreMenuButtonKey) rather than PopupMenuButton's own built-in
+            // button+menu: PopupMenuButton's internal positioning made the
+            // video/call icons next to it visually disappear for as long as
+            // the menu stayed open (they came back fine once it closed) —
+            // this sidesteps whatever about that combination triggered it.
+            IconButton(
+              key: _moreMenuButtonKey,
               icon: const Icon(Icons.more_vert, color: kGold),
-              itemBuilder: (context) => [
-                PopupMenuItem<void>(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => AgreementsScreen(
-                        initialParticipantUid: otherUidResolved,
-                      ),
-                    ),
-                  ),
-                  child: const Text('İş yazdır'),
-                ),
-              ],
+              onPressed: () => _showChatMenu(context, otherUidResolved),
             ),
           ],
           if (_selectionMode)
