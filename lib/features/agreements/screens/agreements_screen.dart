@@ -14,6 +14,7 @@ import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../status/screens/status_viewer_screen.dart';
+import '../../user/screens/user_profile_screen.dart';
 
 // ---------------------------------------------------------------------------
 // Azerbaijani month names
@@ -1170,6 +1171,18 @@ class _EventCard extends StatelessWidget {
     }
   }
 
+  // No-op if uid isn't in allUsers (e.g. stale/removed account) — same
+  // silent-skip other callers of _findUser already tolerate (see the ??
+  // fallbacks around it) rather than pushing a screen with no User to show.
+  void _openUserProfile(BuildContext context, String? uid) {
+    final u = uid == null ? null : _findUser(uid);
+    if (u == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => UserProfileScreen(user: u)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final initiatorUid = isOwn ? currentUid : event.ownerUid;
@@ -1192,10 +1205,7 @@ class _EventCard extends StatelessWidget {
             // Initiator pill
             Center(
               child: GestureDetector(
-                onTap: () {
-                  // TODO: Open UserProfileScreen for initiatorUid
-                  debugPrint('TODO: Open user profile for $initiatorUid');
-                },
+                onTap: () => _openUserProfile(context, initiatorUid),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
@@ -1275,10 +1285,7 @@ class _EventCard extends StatelessWidget {
                   final instr = m?.instrument ?? '';
                   final isMe = mUid == currentUid;
                   return GestureDetector(
-                    onTap: () {
-                      // TODO: Open UserProfileScreen for mUid
-                      debugPrint('TODO: Open user profile for $mUid');
-                    },
+                    onTap: () => _openUserProfile(context, mUid),
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
@@ -1422,6 +1429,23 @@ class _AgreementDetailScreen extends StatelessWidget {
     required this.onBack,
   });
 
+  User? _findUser(String uid) {
+    try {
+      return allUsers.firstWhere((m) => m.id == uid);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _openUserProfile(BuildContext context, String? uid) {
+    final u = uid == null ? null : _findUser(uid);
+    if (u == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => UserProfileScreen(user: u)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isCancelled = event.status == 'cancelled';
@@ -1553,10 +1577,7 @@ class _AgreementDetailScreen extends StatelessWidget {
                         ? 'İmtina etdi'
                         : 'Göndərən (Təklif edən)',
                     highlighted: event.ownerUid == currentUid,
-                    onTap: () {
-                      // TODO: Open UserProfileScreen for event.ownerUid
-                      debugPrint('TODO: Open user profile for ${event.ownerUid}');
-                    },
+                    onTap: () => _openUserProfile(context, event.ownerUid),
                   ),
                   const Divider(color: kBorder, height: 1),
                   _PartyRow(
@@ -1565,10 +1586,7 @@ class _AgreementDetailScreen extends StatelessWidget {
                         ? 'İmtina etdi'
                         : 'Qəbul edən',
                     highlighted: event.ownerUid != currentUid,
-                    onTap: () {
-                      // TODO: Open UserProfileScreen for event.partnerUid
-                      debugPrint('TODO: Open user profile for ${event.partnerUid}');
-                    },
+                    onTap: () => _openUserProfile(context, event.partnerUid),
                   ),
                 ],
               ),
@@ -1631,6 +1649,15 @@ class _PersonalEventDetailScreen extends StatelessWidget {
     }
   }
 
+  void _openUserProfile(BuildContext context, String? uid) {
+    final u = uid == null ? null : _findUser(uid);
+    if (u == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => UserProfileScreen(user: u)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isOwner = event.ownerUid == currentUid;
@@ -1691,10 +1718,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
             // Initiator pill
             Center(
               child: GestureDetector(
-                onTap: () {
-                  // TODO: Open UserProfileScreen for initiatorUid
-                  debugPrint('TODO: Open user profile for $initiatorUid');
-                },
+                onTap: () => _openUserProfile(context, initiatorUid),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   decoration: BoxDecoration(
@@ -1749,10 +1773,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
                   name: _findUser(event.ownerUid)?.name ?? event.partnerName ?? 'Naməlum',
                   label: 'Təşkilatçı',
                   highlighted: false,
-                  onTap: () {
-                    // TODO: Open UserProfileScreen for event.ownerUid
-                    debugPrint('TODO: Open user profile for ${event.ownerUid}');
-                  },
+                  onTap: () => _openUserProfile(context, event.ownerUid),
                 ),
               ),
             ],
@@ -1777,10 +1798,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
                         name: _findUser(event.participantUids[i])?.name ?? event.participantUids[i],
                         label: _findUser(event.participantUids[i])?.instrument ?? 'İştirakçı',
                         highlighted: event.participantUids[i] == currentUid,
-                        onTap: () {
-                          // TODO: Open UserProfileScreen for event.participantUids[i]
-                          debugPrint('TODO: Open user profile for ${event.participantUids[i]}');
-                        },
+                        onTap: () => _openUserProfile(context, event.participantUids[i]),
                       ),
                     ],
                   ],
@@ -2458,54 +2476,63 @@ class _EventFormModalState extends State<_EventFormModal> {
                       color: kMuted,
                       fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
+              // "+ Əlavə et" deliberately lives in its own row below the
+              // chips' Wrap, not as the last item inside that same Wrap —
+              // as a Wrap child, it used to reflow to a new position every
+              // time a chip was added/removed (jumping up a line, sliding
+              // along the last row, etc.). A fixed row underneath keeps it
+              // in the same place regardless of how many chips there are or
+              // how they wrap.
               Wrap(
                 spacing: 6,
                 runSpacing: 6,
-                children: [
-                  ..._selectedParticipantUids.map((uid) {
-                    User? m;
-                    try {
-                      m = widget.allUsers.firstWhere((x) => x.id == uid);
-                    } catch (_) {}
-                    return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: kGold.withAlpha(38),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: kGold),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            '${m?.emoji ?? '🎵'} ${m?.name ?? uid}',
-                            style: const TextStyle(color: kGold, fontSize: 12),
-                          ),
-                          const SizedBox(width: 6),
-                          GestureDetector(
-                            onTap: () => setState(
-                                () => _selectedParticipantUids.remove(uid)),
-                            child: const Text('×',
-                                style: TextStyle(color: kRed, fontSize: 16)),
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
-                  GestureDetector(
-                    onTap: _openParticipantPicker,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: kBg3,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: kBorder),
-                      ),
-                      child: const Text('+ Əlavə et',
-                          style: TextStyle(color: kMuted, fontSize: 12)),
+                children: _selectedParticipantUids.map((uid) {
+                  User? m;
+                  try {
+                    m = widget.allUsers.firstWhere((x) => x.id == uid);
+                  } catch (_) {}
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: kGold.withAlpha(38),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: kGold),
                     ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '${m?.emoji ?? '🎵'} ${m?.name ?? uid}',
+                          style: const TextStyle(color: kGold, fontSize: 12),
+                        ),
+                        const SizedBox(width: 6),
+                        GestureDetector(
+                          onTap: () => setState(
+                              () => _selectedParticipantUids.remove(uid)),
+                          child: const Text('×',
+                              style: TextStyle(color: kRed, fontSize: 16)),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: GestureDetector(
+                  onTap: _openParticipantPicker,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: kBg3,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: kBorder),
+                    ),
+                    child: const Text('+ Əlavə et',
+                        style: TextStyle(color: kMuted, fontSize: 12)),
                   ),
-                ],
+                ),
               ),
             ],
             const SizedBox(height: 16),
