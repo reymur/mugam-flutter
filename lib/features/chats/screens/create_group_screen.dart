@@ -10,6 +10,7 @@ import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../chat/screens/chat_screen.dart';
+import '../../search/screens/filter_sheet.dart';
 import '../../status/screens/status_viewer_screen.dart';
 
 // Group-creation screen — mirrors mugam-v2's CreateGroup.tsx + UserPicker.tsx
@@ -38,8 +39,9 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   late final String _currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+  SearchFilters _filters = const SearchFilters();
   late final UserSearchController _searchCtrl = UserSearchController(
-    excludeUids: [_currentUid],
+    filters: _filters.toAlgoliaFilters(_currentUid),
   );
   String _emoji = '👥';
   final Set<String> _selectedUids = {};
@@ -134,6 +136,18 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
           backgroundColor: kRed,
         ),
       );
+    }
+  }
+
+  Future<void> _openFilters() async {
+    final result = await FilterSheet.show(
+      context,
+      initial: _filters,
+      nameController: _searchController,
+    );
+    if (result != null) {
+      setState(() => _filters = result);
+      _searchCtrl.updateFilters(_filters.toAlgoliaFilters(_currentUid));
     }
   }
 
@@ -294,21 +308,81 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
 
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: TextField(
-              controller: _searchController,
-              style: const TextStyle(color: kText),
-              onChanged: _searchCtrl.search,
-              decoration: InputDecoration(
-                hintText: 'Axtar...',
-                hintStyle: const TextStyle(color: kMuted),
-                filled: true,
-                fillColor: kBg3,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    style: const TextStyle(color: kText),
+                    onChanged: _searchCtrl.search,
+                    decoration: InputDecoration(
+                      hintText: 'Axtar...',
+                      hintStyle: const TextStyle(color: kMuted),
+                      filled: true,
+                      fillColor: kBg3,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                  ),
                 ),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-              ),
+                const SizedBox(width: 10),
+                InkWell(
+                  onTap: _openFilters,
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      color: _filters.activeCount > 0 ? kGold : kBg3,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: _filters.activeCount > 0 ? kGold : kBorder,
+                      ),
+                    ),
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Center(
+                          child: Icon(
+                            Icons.tune_rounded,
+                            color: _filters.activeCount > 0
+                                ? const Color(0xFF1A0E00)
+                                : kMuted,
+                          ),
+                        ),
+                        if (_filters.activeCount > 0)
+                          Positioned(
+                            right: -4,
+                            top: -4,
+                            child: Container(
+                              padding: const EdgeInsets.all(3),
+                              constraints: const BoxConstraints(
+                                minWidth: 16,
+                                minHeight: 16,
+                              ),
+                              decoration: const BoxDecoration(
+                                color: kRed,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Text(
+                                '${_filters.activeCount}',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
 

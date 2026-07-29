@@ -70,8 +70,14 @@ class SearchFilters {
   // (wanted.any(userInstruments.contains)) — a user matches if they have
   // at least one of the selected activity type's leaf instruments, not all
   // of them.
-  String toAlgoliaFilters(String excludeUid) {
-    final clauses = <String>['NOT objectID:"${escapeAlgoliaFilterValue(excludeUid)}"'];
+  String toAlgoliaFilters(String excludeUid) =>
+      toAlgoliaFiltersExcluding([excludeUid]);
+
+  // Same as toAlgoliaFilters, but for callers excluding more than one uid
+  // (e.g. a group's existing members, or already-selected participants) —
+  // one NOT objectID clause per uid, AND-joined with the rest.
+  String toAlgoliaFiltersExcluding(Iterable<String> excludeUids) {
+    final clauses = <String>[...excludeUidsClauses(excludeUids)];
     if (city != null) clauses.add('city:"${escapeAlgoliaFilterValue(city!)}"');
     if (minRating > 0) clauses.add('rating >= $minRating');
     if (onlyAvailable) clauses.add('available:true');
@@ -197,8 +203,12 @@ class _FilterSheetState extends State<FilterSheet> {
                       color: kText,
                     ),
                   ),
-                  if (!_filters.isEmpty)
-                    TextButton(
+                  Visibility(
+                    visible: !_filters.isEmpty,
+                    maintainSize: true,
+                    maintainAnimation: true,
+                    maintainState: true,
+                    child: TextButton(
                       onPressed: () => setState(() {
                         widget.nameController.clear();
                         _filters = const SearchFilters();
@@ -208,6 +218,7 @@ class _FilterSheetState extends State<FilterSheet> {
                         style: TextStyle(color: kGold, fontWeight: FontWeight.bold),
                       ),
                     ),
+                  ),
                 ],
               ),
             ),
