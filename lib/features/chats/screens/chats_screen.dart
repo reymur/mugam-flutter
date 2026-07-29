@@ -280,7 +280,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                             // cloud.
                             if (t < 0.95)
                               Opacity(
-                                opacity: (1 - t).clamp(0.0, 1.0),
+                                opacity: ((1 - t) * 0.7).clamp(0.0, 1.0),
                                 child: Stack(
                                   alignment: Alignment.center,
                                   children: [
@@ -288,7 +288,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                                       imageFilter: ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4),
                                       child: Container(
                                         height: 2,
-                                        margin: const EdgeInsets.symmetric(horizontal: 16),
+                                        margin: const EdgeInsets.symmetric(horizontal: 4),
                                         decoration: BoxDecoration(
                                           borderRadius: BorderRadius.circular(2),
                                           gradient: LinearGradient(
@@ -305,7 +305,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                                     ),
                                     Container(
                                       height: 2,
-                                      margin: const EdgeInsets.symmetric(horizontal: 16),
+                                      margin: const EdgeInsets.symmetric(horizontal: 4),
                                       decoration: BoxDecoration(
                                         borderRadius: BorderRadius.circular(2),
                                         gradient: LinearGradient(
