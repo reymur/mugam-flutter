@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -34,25 +32,16 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _searchScrollController = ScrollController();
   late final String _currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-  // Search starts hidden — a thin glowing line sits where the field would
-  // be, and both the AppBar search icon and the line itself expand it (see
-  // _toggleSearch). Single controller drives the AppBar icon's
-  // search<->close morph and the line<->field morph in build() together, so
-  // they always stay in lockstep. Approved via an HTML/CSS preview before
-  // porting — see that preview for the visual reference this reproduces.
+  // Search starts hidden — just empty, collapsed space where the field
+  // would be — and the AppBar search icon expands it (see _toggleSearch).
+  // Drives both the AppBar icon's search<->close morph and the field's
+  // height/opacity here in build(), so they stay in lockstep. (An earlier
+  // version put a decorative glowing line in the collapsed state; removed
+  // per explicit feedback — collapsed is just empty now, no line.)
   late final AnimationController _searchAnimController = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 380),
   );
-  // Idle "breathing" pulse on the resting line (opacity + width) — the
-  // preview's own CSS `shimmer`/`haloShimmer` keyframes, missed on the
-  // first port (only the open/close morph got wired up, leaving the real
-  // line static). Blended out via (1-t) below as the box opens, so it
-  // never jitters the actual search field.
-  late final AnimationController _shimmerController = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 2600),
-  )..repeat(reverse: true);
   bool _searchExpanded = false;
   // Same city/instrument/rating/available/online filters as search_screen.dart
   // — reuses its FilterSheet/SearchFilters as-is (see _openFilters below)
@@ -149,7 +138,6 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
   @override
   void dispose() {
     _searchAnimController.dispose();
-    _shimmerController.dispose();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _searchScrollController.removeListener(_onSearchScroll);
@@ -246,28 +234,20 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
               );
             },
           ),
-          // Collapsed: a thin glowing line, tappable to open. Expanded: the
-          // field + filter button. Same AnimationController the AppBar icon
-          // above uses — one element morphs shape/decoration (not two
-          // cross-fading over each other), matching the approved preview.
-          // Content (TextField/filter button) only mounts once the box is
-          // more than half open (showContent below) — avoids ever laying a
-          // real TextField out inside a near-zero-height box.
+          // Collapsed: just empty space (no decorative line — removed per
+          // explicit feedback), tappable to open. Expanded: the field +
+          // filter button. Same AnimationController the AppBar icon above
+          // uses, so both stay in lockstep. Content (TextField/filter
+          // button) only mounts once the box is more than half open
+          // (showContent below) — avoids ever laying a real TextField out
+          // inside a near-zero-height box.
           AnimatedBuilder(
-            animation: Listenable.merge([_searchAnimController, _shimmerController]),
+            animation: _searchAnimController,
             builder: (context, _) {
               final rawT = _searchAnimController.value;
               final t = Curves.easeOutCubic.transform(rawT);
               final showContent = t > 0.5;
               final contentT = ((t - 0.5) / 0.5).clamp(0.0, 1.0);
-
-              // Idle breathing pulse, blended out by (1-t) as the box opens
-              // (0 effect once fully expanded — the real field must never
-              // jitter). shimmerRaw oscillates 0->1->0 via repeat(reverse:
-              // true); easeInOut softens the direction changes at each end.
-              final shimmerRaw = Curves.easeInOut.transform(_shimmerController.value);
-              final pulseOpacity = 1 - (0.25 * (1 - shimmerRaw)) * (1 - t);
-              final pulseScale = 1 - (0.03 * (1 - shimmerRaw)) * (1 - t);
 
               return Padding(
                 padding: const EdgeInsets.only(left: 16, right: 16, top: 2, bottom: 4),
@@ -276,104 +256,42 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                     Expanded(
                       child: GestureDetector(
                         onTap: t < 0.5 ? _toggleSearch : null,
-                        child: Transform.scale(
-                          scaleX: pulseScale,
-                          child: Opacity(
-                            opacity: pulseOpacity.clamp(0.0, 1.0),
-                            child: Stack(
-                          alignment: Alignment.center,
-                          clipBehavior: Clip.none,
-                          children: [
-                            // The glow is a blurred COPY of the same
-                            // tapering gradient below, not a BoxShadow —
-                            // BoxShadow follows the Container's own
-                            // rectangular bounds regardless of how its fill
-                            // fades, so it doesn't taper at the ends the way
-                            // the gradient does. A cropped close-up on a
-                            // real device confirmed exactly that: one
-                            // uniform glowing bar with a hard horizontal
-                            // cutoff, not a tapered line. Blurring the
-                            // gradient itself keeps the taper intact, just
-                            // softened. Small sigma (4), not 8/16 — this is
-                            // a glow around a thin line, not a cloud.
-                            if (t < 0.95)
-                              Opacity(
-                                opacity: ((1 - t) * 0.85).clamp(0.0, 1.0),
-                                child: ImageFiltered(
-                                  imageFilter: ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4),
-                                  child: Container(
-                                    height: 2,
-                                    margin: EdgeInsets.symmetric(
-                                      horizontal: 16 * (1 - t),
-                                    ),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(2),
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          kGold2.withAlpha(0),
-                                          kGold2,
-                                          kGold2,
-                                          kGold2.withAlpha(0),
-                                        ],
-                                        stops: const [0, 0.1, 0.9, 1],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            Container(
-                              height: 2 + (_kSearchRowHeight - 2) * t,
-                              width: double.infinity,
-                              margin: EdgeInsets.symmetric(horizontal: 16 * (1 - t)),
-                              decoration: BoxDecoration(
-                                color: Color.lerp(Colors.transparent, kBg3, t),
-                                borderRadius: BorderRadius.circular(2 + 10 * t),
-                                border: Border.all(
-                                  color: Color.lerp(Colors.transparent, kBorder, t) ??
-                                      kBorder,
-                                ),
-                                gradient: t < 0.4
-                                    ? LinearGradient(
-                                        colors: [
-                                          kGold2.withAlpha(0),
-                                          kGold2,
-                                          kGold2,
-                                          kGold2.withAlpha(0),
-                                        ],
-                                        stops: const [0, 0.1, 0.9, 1],
-                                      )
-                                    : null,
-                              ),
-                              child: showContent
-                                  ? Opacity(
-                                      opacity: contentT,
-                                      child: Row(
-                                        children: [
-                                          const SizedBox(width: 14),
-                                          const Icon(Icons.search, color: kMuted, size: 18),
-                                          const SizedBox(width: 8),
-                                          Expanded(
-                                            child: TextField(
-                                              controller: _searchController,
-                                              autofocus: true,
-                                              style: const TextStyle(color: kText),
-                                              decoration: const InputDecoration(
-                                                isCollapsed: true,
-                                                border: InputBorder.none,
-                                                hintText: 'Axtar...',
-                                                hintStyle: TextStyle(color: kMuted),
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 14),
-                                        ],
-                                      ),
-                                    )
-                                  : null,
+                        child: Container(
+                          height: _kSearchRowHeight * t,
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: Color.lerp(Colors.transparent, kBg3, t),
+                            borderRadius: BorderRadius.circular(12 * t),
+                            border: Border.all(
+                              color: Color.lerp(Colors.transparent, kBorder, t) ?? kBorder,
                             ),
-                          ],
-                        ),
                           ),
+                          child: showContent
+                              ? Opacity(
+                                  opacity: contentT,
+                                  child: Row(
+                                    children: [
+                                      const SizedBox(width: 14),
+                                      const Icon(Icons.search, color: kMuted, size: 18),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: TextField(
+                                          controller: _searchController,
+                                          autofocus: true,
+                                          style: const TextStyle(color: kText),
+                                          decoration: const InputDecoration(
+                                            isCollapsed: true,
+                                            border: InputBorder.none,
+                                            hintText: 'Axtar...',
+                                            hintStyle: TextStyle(color: kMuted),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 14),
+                                    ],
+                                  ),
+                                )
+                              : null,
                         ),
                       ),
                     ),
