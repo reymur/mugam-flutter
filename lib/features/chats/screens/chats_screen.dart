@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -256,7 +258,71 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                     Expanded(
                       child: GestureDetector(
                         onTap: t < 0.5 ? _toggleSearch : null,
-                        child: Container(
+                        child: SizedBox(
+                          // Fixed row height (not animated) — a static
+                          // gold line sits centered in it while collapsed;
+                          // the field Container below grows to fill it as
+                          // t increases.
+                          height: _kSearchRowHeight,
+                          child: Stack(
+                          alignment: Alignment.center,
+                          clipBehavior: Clip.none,
+                          children: [
+                            // Plain gold line + tapered glow, no shimmer/
+                            // pulse animation this time — just present
+                            // while collapsed, fading out as the field
+                            // opens. Glow is a blurred COPY of the same
+                            // tapering gradient (not a BoxShadow, which
+                            // follows the Container's own rectangular
+                            // bounds and doesn't taper — confirmed wrong on
+                            // a real device earlier). Small sigma (4), not
+                            // 8/16 — a glow around a thin line, not a
+                            // cloud.
+                            if (t < 0.95)
+                              Opacity(
+                                opacity: (1 - t).clamp(0.0, 1.0),
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    ImageFiltered(
+                                      imageFilter: ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+                                      child: Container(
+                                        height: 2,
+                                        margin: const EdgeInsets.symmetric(horizontal: 16),
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(2),
+                                          gradient: LinearGradient(
+                                            colors: [
+                                              kGold2.withAlpha(0),
+                                              kGold2,
+                                              kGold2,
+                                              kGold2.withAlpha(0),
+                                            ],
+                                            stops: const [0, 0.1, 0.9, 1],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    Container(
+                                      height: 2,
+                                      margin: const EdgeInsets.symmetric(horizontal: 16),
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(2),
+                                        gradient: LinearGradient(
+                                          colors: [
+                                            kGold2.withAlpha(0),
+                                            kGold2,
+                                            kGold2,
+                                            kGold2.withAlpha(0),
+                                          ],
+                                          stops: const [0, 0.1, 0.9, 1],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            Container(
                           height: _kSearchRowHeight * t,
                           width: double.infinity,
                           decoration: BoxDecoration(
@@ -292,6 +358,9 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                                   ),
                                 )
                               : null,
+                        ),
+                          ],
+                        ),
                         ),
                       ),
                     ),
