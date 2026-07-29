@@ -27,6 +27,10 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
   bool _ending = false;
   bool _leftLocally = false;
   bool _started = false;
+  // WhatsApp-style swap: false (default) is your own camera small/PiP and
+  // the other party full-screen; tapping the PiP flips which feed is
+  // full-screen vs small — toggled in the PiP GestureDetector below.
+  bool _pipShowsRemote = false;
 
   Future<void> _ensureStarted(CallType type) async {
     if (_started) return;
@@ -165,23 +169,44 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
 
         final engine = svc.engine;
         final isVideo = svc.isVideo;
-        final showingRemoteVideo = isVideo && engine != null && svc.remoteUid != null;
+        final remoteAvailable = isVideo && engine != null && svc.remoteUid != null;
+        final localAvailable = isVideo && engine != null && svc.joined && !svc.cameraOff;
         final subtitle = svc.remoteUid != null ? _formatDuration(svc.elapsed) : 'Qoşulur...';
+
+        // _pipShowsRemote flips which feed is full-screen vs the small PiP
+        // corner — see the field's own doc comment above and the PiP
+        // GestureDetector below that toggles it.
+        final mainIsLocal = _pipShowsRemote;
+        final mainAvailable = mainIsLocal ? localAvailable : remoteAvailable;
+        final pipAvailable = mainIsLocal ? remoteAvailable : localAvailable;
+
+        Widget videoView({required bool local}) => AgoraVideoView(
+          controller: local
+              ? VideoViewController(rtcEngine: engine!, canvas: const VideoCanvas(uid: 0))
+              : VideoViewController.remote(
+                  rtcEngine: engine!,
+                  canvas: VideoCanvas(uid: svc.remoteUid),
+                  connection: RtcConnection(channelId: widget.callId),
+                ),
+        );
+
+        Widget localMiniControls() => Column(
+          children: [
+            _MiniIconButton(icon: Icons.cameraswitch, onPressed: svc.switchCamera),
+            const SizedBox(height: 6),
+            _MiniIconButton(
+              icon: svc.lowLightOn ? Icons.wb_sunny : Icons.nightlight_round,
+              onPressed: svc.toggleLowLight,
+            ),
+          ],
+        );
 
         return Scaffold(
           backgroundColor: kBg,
           body: Stack(
             children: [
-              if (showingRemoteVideo)
-                Positioned.fill(
-                  child: AgoraVideoView(
-                    controller: VideoViewController.remote(
-                      rtcEngine: engine,
-                      canvas: VideoCanvas(uid: svc.remoteUid),
-                      connection: RtcConnection(channelId: widget.callId),
-                    ),
-                  ),
-                )
+              if (mainAvailable)
+                Positioned.fill(child: videoView(local: mainIsLocal))
               else
                 Align(
                   alignment: Alignment.bottomCenter,
@@ -197,6 +222,18 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
                   ),
                 ),
 
+              // When swapped, your own camera fills the screen — its
+              // camera-switch/low-light controls move here (top-right,
+              // below CallTopBar) instead of sitting on the now-small PiP,
+              // which shows the other party and has nothing local to
+              // control.
+              if (mainIsLocal && mainAvailable)
+                Positioned(
+                  top: MediaQuery.of(context).padding.top + 112,
+                  right: 16,
+                  child: localMiniControls(),
+                ),
+
               CallTopBar(
                 onMinimize: () => _showStub(context),
                 onAddParticipant: () => _showStub(context),
@@ -208,7 +245,7 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
                       textAlign: TextAlign.center,
                       style: GoogleFonts.nunito(fontSize: 18, color: kText, fontWeight: FontWeight.w600),
                     ),
-                    if (showingRemoteVideo) ...[
+                    if (remoteAvailable) ...[
                       const SizedBox(height: 2),
                       Text(subtitle, style: const TextStyle(color: kMuted, fontSize: 13)),
                     ],
@@ -216,39 +253,29 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
                 ),
               ),
 
-              if (isVideo && engine != null && svc.joined && !svc.cameraOff)
+              if (isVideo && engine != null && pipAvailable)
                 Positioned(
                   right: 16,
                   bottom: 160,
                   child: Stack(
                     children: [
-                      SizedBox(
-                        width: 110,
-                        height: 150,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(14),
-                          child: AgoraVideoView(
-                            controller: VideoViewController(
-                              rtcEngine: engine,
-                              canvas: const VideoCanvas(uid: 0),
-                            ),
+                      GestureDetector(
+                        onTap: () => setState(() => _pipShowsRemote = !_pipShowsRemote),
+                        child: SizedBox(
+                          width: 110,
+                          height: 150,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(14),
+                            child: videoView(local: !mainIsLocal),
                           ),
                         ),
                       ),
-                      Positioned(
-                        top: 6,
-                        right: 6,
-                        child: Column(
-                          children: [
-                            _MiniIconButton(icon: Icons.cameraswitch, onPressed: svc.switchCamera),
-                            const SizedBox(height: 6),
-                            _MiniIconButton(
-                              icon: svc.lowLightOn ? Icons.wb_sunny : Icons.nightlight_round,
-                              onPressed: svc.toggleLowLight,
-                            ),
-                          ],
+                      if (!mainIsLocal)
+                        Positioned(
+                          top: 6,
+                          right: 6,
+                          child: localMiniControls(),
                         ),
-                      ),
                     ],
                   ),
                 ),
