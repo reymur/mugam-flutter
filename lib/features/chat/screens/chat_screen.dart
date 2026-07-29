@@ -597,7 +597,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               // gives it depth against the chat behind it.
               boxShadow: [
                 BoxShadow(
-                  color: kGold.withAlpha(80),
+                  // kGold2 — the brighter gold variant (colors.dart) —
+                  // rather than upping kGold's alpha alone: same size/
+                  // spread as before, just a more vivid gold.
+                  color: kGold2.withAlpha(110),
                   blurRadius: 20,
                   spreadRadius: 2,
                 ),
