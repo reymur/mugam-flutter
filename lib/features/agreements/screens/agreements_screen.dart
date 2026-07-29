@@ -2501,9 +2501,23 @@ class _EventFormModalState extends State<_EventFormModal> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          '${m?.emoji ?? '🎵'} ${m?.name ?? uid}',
-                          style: const TextStyle(color: kGold, fontSize: 12),
+                        GestureDetector(
+                          // Pushed (not replaced) on top of this still-open
+                          // sheet, so popping UserProfileScreen naturally
+                          // lands back here with every field/participant
+                          // exactly as left — no extra state to restore.
+                          onTap: m == null
+                              ? null
+                              : () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => UserProfileScreen(user: m!),
+                                  ),
+                                ),
+                          child: Text(
+                            '${m?.emoji ?? '🎵'} ${m?.name ?? uid}',
+                            style: const TextStyle(color: kGold, fontSize: 12),
+                          ),
                         ),
                         const SizedBox(width: 6),
                         GestureDetector(
