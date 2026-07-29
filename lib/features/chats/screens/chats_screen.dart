@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -281,17 +283,44 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                             child: Stack(
                           alignment: Alignment.center,
                           clipBehavior: Clip.none,
-                          // No separate blurred halo layer — a sigma-16
-                          // ImageFiltered blur on an 8px bar spreads visibly
-                          // past 100px (Gaussian blur's effective radius is
-                          // several times sigma), swallowing the thin line
-                          // underneath and reading as one soft blob instead
-                          // of "thin line + gentle glow". The line's own
-                          // BoxShadow below (no spreadRadius, so it doesn't
-                          // enlarge the base shape before blurring) is the
-                          // only light source now — same simplification
-                          // already verified in the HTML preview.
                           children: [
+                            // The glow is a blurred COPY of the same
+                            // tapering gradient below, not a BoxShadow —
+                            // BoxShadow follows the Container's own
+                            // rectangular bounds regardless of how its fill
+                            // fades, so it doesn't taper at the ends the way
+                            // the gradient does. A cropped close-up on a
+                            // real device confirmed exactly that: one
+                            // uniform glowing bar with a hard horizontal
+                            // cutoff, not a tapered line. Blurring the
+                            // gradient itself keeps the taper intact, just
+                            // softened. Small sigma (4), not 8/16 — this is
+                            // a glow around a thin line, not a cloud.
+                            if (t < 0.95)
+                              Opacity(
+                                opacity: ((1 - t) * 0.85).clamp(0.0, 1.0),
+                                child: ImageFiltered(
+                                  imageFilter: ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+                                  child: Container(
+                                    height: 2,
+                                    margin: EdgeInsets.symmetric(
+                                      horizontal: 16 * (1 - t),
+                                    ),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(2),
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          kGold2.withAlpha(0),
+                                          kGold2,
+                                          kGold2,
+                                          kGold2.withAlpha(0),
+                                        ],
+                                        stops: const [0, 0.1, 0.9, 1],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
                             Container(
                               height: 2 + (_kSearchRowHeight - 2) * t,
                               width: double.infinity,
@@ -313,21 +342,6 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                                         ],
                                         stops: const [0, 0.1, 0.9, 1],
                                       )
-                                    : null,
-                                // No spreadRadius — spread enlarges the
-                                // shape's own base before blurring, which
-                                // combined with a wide blurRadius is what
-                                // read as a blob rather than a thin line
-                                // with a soft glow.
-                                boxShadow: t < 0.95
-                                    ? [
-                                        BoxShadow(
-                                          color: kGold2.withAlpha(
-                                            (230 * (1 - t)).round(),
-                                          ),
-                                          blurRadius: 8 * (1 - t),
-                                        ),
-                                      ]
                                     : null,
                               ),
                               child: showContent
