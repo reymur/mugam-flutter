@@ -316,9 +316,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                       offset: const Offset(0, 8),
                     ),
                     BoxShadow(
-                      color: kGold.withAlpha(140),
-                      blurRadius: 24,
-                      spreadRadius: 1,
+                      color: kGold2.withAlpha(170),
+                      blurRadius: 18,
                     ),
                   ],
                 ),
@@ -715,7 +714,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
             fontWeight: FontWeight.w800,
             color: kGold2,
             shadows: [
-              Shadow(color: kGold.withAlpha(140), blurRadius: 18),
+              Shadow(color: kGold2.withAlpha(170), blurRadius: 12),
             ],
           ),
         ),
@@ -745,20 +744,31 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   Widget _calNavBtn(String label, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(13),
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white.withAlpha(10),
-              borderRadius: BorderRadius.circular(13),
-              border: Border.all(color: kGold.withAlpha(46)),
-            ),
-            child: Center(
-              child: Text(label, style: const TextStyle(fontSize: 22, color: kGold2)),
+      // Glow lives on this outer, unclipped Container — a BoxShadow inside
+      // the ClipRRect below would just get clipped away at its rounded
+      // edge (same lesson as chat_screen.dart's "İş yazdır" menu glow).
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(13),
+          boxShadow: [
+            BoxShadow(color: kGold2.withAlpha(70), blurRadius: 12),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(13),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.white.withAlpha(20),
+                borderRadius: BorderRadius.circular(13),
+                border: Border.all(color: kGold.withAlpha(60)),
+              ),
+              child: Center(
+                child: Text(label, style: const TextStyle(fontSize: 22, color: kGold2)),
+              ),
             ),
           ),
         ),
@@ -899,7 +909,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       bgColor = kGold.withAlpha(28);
       textColor = kGold2;
       glow = [
-        BoxShadow(color: kGold.withAlpha(90), blurRadius: 14, spreadRadius: 1),
+        BoxShadow(color: kGold2.withAlpha(120), blurRadius: 10),
       ];
     }
     if (isToday && !isSelected) {
@@ -909,61 +919,73 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
-      child: Center(
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: bgColor,
-                shape: BoxShape.circle,
-                border: border,
-                boxShadow: glow,
-              ),
-              child: Center(
-                child: Text(
-                  '$day',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: textColor,
-                    fontWeight: isSelected || hasEvents ? FontWeight.bold : FontWeight.normal,
+      // Glass tile behind every cell (not just selected/event/today ones,
+      // which is all the previous version drew) — a plain day used to have
+      // no background at all, so the grid only looked "glassy" wherever a
+      // special state already added its own circle.
+      child: Container(
+        margin: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: Colors.white.withAlpha(16),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withAlpha(28)),
+        ),
+        child: Center(
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  shape: BoxShape.circle,
+                  border: border,
+                  boxShadow: glow,
+                ),
+                child: Center(
+                  child: Text(
+                    '$day',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: textColor,
+                      fontWeight: isSelected || hasEvents ? FontWeight.bold : FontWeight.normal,
+                    ),
                   ),
                 ),
               ),
-            ),
-            if (hasEvents && !isSelected)
-              Positioned(
-                top: -4,
-                right: -6,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                  constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [kGold2, kGold],
+              if (hasEvents && !isSelected)
+                Positioned(
+                  top: -4,
+                  right: -6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [kGold2, kGold],
+                      ),
+                      borderRadius: BorderRadius.circular(999),
+                      boxShadow: [
+                        BoxShadow(color: kGold.withAlpha(140), blurRadius: 6),
+                      ],
                     ),
-                    borderRadius: BorderRadius.circular(999),
-                    boxShadow: [
-                      BoxShadow(color: kGold.withAlpha(140), blurRadius: 6),
-                    ],
-                  ),
-                  child: Center(
-                    child: Text(
-                      '$eventCount',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: Color(0xFF1A0E00),
-                        fontWeight: FontWeight.bold,
+                    child: Center(
+                      child: Text(
+                        '$eventCount',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Color(0xFF1A0E00),
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
