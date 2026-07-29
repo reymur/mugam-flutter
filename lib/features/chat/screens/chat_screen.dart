@@ -555,18 +555,57 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       Rect.fromPoints(bottomLeft, bottomRight),
       Offset.zero & overlay.size,
     );
+    // showMenu's own chrome is made fully transparent (color/elevation/
+    // shadowColor below) and every bit of visible surface — blur, tint,
+    // border, shadow — comes from this custom child instead. Plain
+    // Material chrome here (kCard, near-black) was barely distinguishable
+    // from the chat background behind it, which is the same near-black;
+    // BackdropFilter's blur is what actually separates the two regardless
+    // of how close their colors are, with the tint/border/shadow as a
+    // second, color-based cue on top.
+    const menuRadius = 14.0;
     await showMenu<void>(
       context: context,
       position: position,
+      color: Colors.transparent,
+      elevation: 0,
+      shadowColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(menuRadius)),
       items: [
         PopupMenuItem<void>(
+          padding: EdgeInsets.zero,
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => AgreementsScreen(initialParticipantUid: otherUid),
             ),
           ),
-          child: const Text('İş yazdır'),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(menuRadius),
+            child: BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                decoration: BoxDecoration(
+                  color: kCard.withAlpha(190),
+                  borderRadius: BorderRadius.circular(menuRadius),
+                  border: Border.all(color: kGold.withAlpha(80)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withAlpha(140),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: const Text(
+                  'İş yazdır',
+                  style: TextStyle(color: kText, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ),
         ),
       ],
     );
