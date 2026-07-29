@@ -171,7 +171,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
             padding: const EdgeInsets.only(
               left: 16,
               right: 16,
-              top: 12,
+              top: 2,
               bottom: 4,
             ),
             child: Row(

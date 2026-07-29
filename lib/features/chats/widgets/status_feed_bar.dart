@@ -20,7 +20,7 @@ import '../../../shared/widgets/avatar_ring.dart';
 const double _kAvatarSize = 64;
 const double _kLabelSpacing = 4; // the SizedBox between ring and label
 const double _kLabelLineHeight = 16; // one line at fontSize: 11
-const double _kListVerticalPadding = 8 + 8; // ListView's own top+bottom
+const double _kListVerticalPadding = 8 + 2; // ListView's own top+bottom
 const double _kBarSafetyMargin = 8;
 const double _kBarHeight =
     _kAvatarSize +
@@ -83,7 +83,7 @@ class StatusFeedBar extends ConsumerWidget {
       height: _kBarHeight,
       child: ListView(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
         children: [
           _MyStatusItem(
             currentUid: currentUid,
