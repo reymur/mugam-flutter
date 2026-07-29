@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,10 +29,22 @@ class ChatsScreen extends ConsumerStatefulWidget {
   ConsumerState<ChatsScreen> createState() => _ChatsScreenState();
 }
 
-class _ChatsScreenState extends ConsumerState<ChatsScreen> {
+class _ChatsScreenState extends ConsumerState<ChatsScreen>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _searchScrollController = ScrollController();
   late final String _currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+  // Search starts hidden — a thin glowing line sits where the field would
+  // be, and both the AppBar search icon and the line itself expand it (see
+  // _toggleSearch). Single controller drives the AppBar icon's
+  // search<->close morph and the line<->field morph in build() together, so
+  // they always stay in lockstep. Approved via an HTML/CSS preview before
+  // porting — see that preview for the visual reference this reproduces.
+  late final AnimationController _searchAnimController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 380),
+  );
+  bool _searchExpanded = false;
   // Same city/instrument/rating/available/online filters as search_screen.dart
   // — reuses its FilterSheet/SearchFilters as-is (see _openFilters below)
   // rather than a separate, chat-specific filter set.
@@ -62,6 +76,24 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
   void _onSearchChanged() {
     setState(() {}); // toggle between the chats list and search results
     _searchCtrl.search(_searchController.text);
+  }
+
+  // Closing also clears whatever was typed/filtered — collapsed means "not
+  // actively searching" (matches _isSearching), not "paused with state kept
+  // around for whenever it's reopened".
+  void _toggleSearch() {
+    if (_searchExpanded) {
+      setState(() {
+        _searchExpanded = false;
+        _filters = const SearchFilters();
+      });
+      _searchAnimController.reverse();
+      _searchController.clear();
+      _searchCtrl.updateFilters(_filters.toAlgoliaFilters(_currentUid));
+    } else {
+      setState(() => _searchExpanded = true);
+      _searchAnimController.forward();
+    }
   }
 
   Future<void> _openFilters() async {
@@ -107,6 +139,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
 
   @override
   void dispose() {
+    _searchAnimController.dispose();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     _searchScrollController.removeListener(_onSearchScroll);
@@ -138,6 +171,42 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
           style: GoogleFonts.nunito(fontSize: 20, color: kText),
         ),
         actions: [
+          // Search icon morphs into a close (✕) icon while expanded — same
+          // AnimationController as the line<->field morph below, so both
+          // stay in lockstep. Positioned before group_add, per the approved
+          // preview ("between the title and the group icon").
+          AnimatedBuilder(
+            animation: _searchAnimController,
+            builder: (context, _) {
+              final t = _searchAnimController.value;
+              return IconButton(
+                onPressed: _toggleSearch,
+                icon: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Opacity(
+                        opacity: (1 - t).clamp(0.0, 1.0),
+                        child: Transform.rotate(
+                          angle: t * 0.6,
+                          child: const Icon(Icons.search, color: kGold),
+                        ),
+                      ),
+                      Opacity(
+                        opacity: t,
+                        child: Transform.rotate(
+                          angle: (1 - t) * -0.6,
+                          child: const Icon(Icons.close, color: kGold),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.group_add, color: kGold),
             onPressed: () => Navigator.push(
@@ -167,109 +236,176 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
               );
             },
           ),
-          Padding(
-            padding: const EdgeInsets.only(
-              left: 16,
-              right: 16,
-              top: 2,
-              bottom: 4,
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  // Fixed height + expands:true forces the field's actual
-                  // render box to exactly _kSearchRowHeight — deterministic,
-                  // unlike tuning contentPadding to approximate a target
-                  // height from font-dependent line-height math (only ever
-                  // an estimate, and the filter button next to it is a
-                  // literal fixed-size Container, not derived from text
-                  // metrics at all).
-                  child: SizedBox(
-                    height: _kSearchRowHeight,
-                    child: TextField(
-                      controller: _searchController,
-                      style: const TextStyle(color: kText),
-                      expands: true,
-                      maxLines: null,
-                      minLines: null,
-                      textAlignVertical: TextAlignVertical.center,
-                      decoration: InputDecoration(
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14),
-                        filled: true,
-                        fillColor: kBg3,
-                        hintText: '🔍 Axtar...',
-                        hintStyle: const TextStyle(color: kMuted),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: kBorder),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: kBorder),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: kGold),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                InkWell(
-                  onTap: _openFilters,
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    width: _kSearchRowHeight,
-                    height: _kSearchRowHeight,
-                    decoration: BoxDecoration(
-                      color: _filters.activeCount > 0 ? kGold : kBg3,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: _filters.activeCount > 0 ? kGold : kBorder,
-                      ),
-                    ),
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        Center(
-                          child: Icon(
-                            Icons.tune_rounded,
-                            color: _filters.activeCount > 0 ? _kOnGold : kMuted,
-                          ),
-                        ),
-                        if (_filters.activeCount > 0)
-                          Positioned(
-                            right: -4,
-                            top: -4,
-                            child: Container(
-                              padding: const EdgeInsets.all(3),
-                              constraints: const BoxConstraints(
-                                minWidth: 16,
-                                minHeight: 16,
-                              ),
-                              decoration: const BoxDecoration(
-                                color: kRed,
-                                shape: BoxShape.circle,
-                              ),
-                              child: Text(
-                                '${_filters.activeCount}',
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
+          // Collapsed: a thin glowing line, tappable to open. Expanded: the
+          // field + filter button. Same AnimationController the AppBar icon
+          // above uses — one element morphs shape/decoration (not two
+          // cross-fading over each other), matching the approved preview.
+          // Content (TextField/filter button) only mounts once the box is
+          // more than half open (showContent below) — avoids ever laying a
+          // real TextField out inside a near-zero-height box.
+          AnimatedBuilder(
+            animation: _searchAnimController,
+            builder: (context, _) {
+              final rawT = _searchAnimController.value;
+              final t = Curves.easeOutCubic.transform(rawT);
+              final showContent = t > 0.5;
+              final contentT = ((t - 0.5) / 0.5).clamp(0.0, 1.0);
+
+              return Padding(
+                padding: const EdgeInsets.only(left: 16, right: 16, top: 2, bottom: 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: t < 0.5 ? _toggleSearch : null,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          clipBehavior: Clip.none,
+                          children: [
+                            if (t < 0.95)
+                              Opacity(
+                                opacity: (1 - t).clamp(0.0, 1.0),
+                                child: ImageFiltered(
+                                  imageFilter: ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                                  child: Container(
+                                    height: 12,
+                                    margin: EdgeInsets.symmetric(
+                                      horizontal: 16 * (1 - t),
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: kGold2,
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                  ),
                                 ),
+                              ),
+                            Container(
+                              height: 2 + (_kSearchRowHeight - 2) * t,
+                              width: double.infinity,
+                              margin: EdgeInsets.symmetric(horizontal: 16 * (1 - t)),
+                              decoration: BoxDecoration(
+                                color: Color.lerp(Colors.transparent, kBg3, t),
+                                borderRadius: BorderRadius.circular(2 + 10 * t),
+                                border: Border.all(
+                                  color: Color.lerp(Colors.transparent, kBorder, t) ??
+                                      kBorder,
+                                ),
+                                gradient: t < 0.4
+                                    ? LinearGradient(
+                                        colors: [
+                                          kGold2.withAlpha(0),
+                                          kGold2,
+                                          kGold2,
+                                          kGold2.withAlpha(0),
+                                        ],
+                                        stops: const [0, 0.1, 0.9, 1],
+                                      )
+                                    : null,
+                                boxShadow: t < 0.9
+                                    ? [
+                                        BoxShadow(
+                                          color: kGold2.withAlpha(
+                                            (217 * (1 - t)).round(),
+                                          ),
+                                          blurRadius: 12 * (1 - t) + 2,
+                                          spreadRadius: 2 * (1 - t),
+                                        ),
+                                      ]
+                                    : null,
+                              ),
+                              child: showContent
+                                  ? Opacity(
+                                      opacity: contentT,
+                                      child: Row(
+                                        children: [
+                                          const SizedBox(width: 14),
+                                          const Icon(Icons.search, color: kMuted, size: 18),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: TextField(
+                                              controller: _searchController,
+                                              autofocus: true,
+                                              style: const TextStyle(color: kText),
+                                              decoration: const InputDecoration(
+                                                isCollapsed: true,
+                                                border: InputBorder.none,
+                                                hintText: 'Axtar...',
+                                                hintStyle: TextStyle(color: kMuted),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 14),
+                                        ],
+                                      ),
+                                    )
+                                  : null,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (showContent)
+                      Opacity(
+                        opacity: contentT,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 10),
+                          child: InkWell(
+                            onTap: _openFilters,
+                            borderRadius: BorderRadius.circular(12),
+                            child: Container(
+                              width: _kSearchRowHeight,
+                              height: _kSearchRowHeight,
+                              decoration: BoxDecoration(
+                                color: _filters.activeCount > 0 ? kGold : kBg3,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: _filters.activeCount > 0 ? kGold : kBorder,
+                                ),
+                              ),
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  Center(
+                                    child: Icon(
+                                      Icons.tune_rounded,
+                                      color: _filters.activeCount > 0 ? _kOnGold : kMuted,
+                                    ),
+                                  ),
+                                  if (_filters.activeCount > 0)
+                                    Positioned(
+                                      right: -4,
+                                      top: -4,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(3),
+                                        constraints: const BoxConstraints(
+                                          minWidth: 16,
+                                          minHeight: 16,
+                                        ),
+                                        decoration: const BoxDecoration(
+                                          color: kRed,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Text(
+                                          '${_filters.activeCount}',
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
                           ),
-                      ],
-                    ),
-                  ),
+                        ),
+                      ),
+                  ],
                 ),
-              ],
-            ),
+              );
+            },
           ),
           Expanded(
             child: _isSearching
