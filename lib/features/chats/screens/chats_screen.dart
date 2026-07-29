@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -23,12 +24,69 @@ class ChatsScreen extends ConsumerStatefulWidget {
 }
 
 class _ChatsScreenState extends ConsumerState<ChatsScreen> {
-  String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _searchScrollController = ScrollController();
+  late final String _currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+  // A query searches Algolia across every user (same as search_screen.dart),
+  // not just this user's own chats — a brand-new account with zero
+  // conversations would otherwise have no way to find anyone to message
+  // from this tab at all. Empty query keeps the original behavior: the
+  // existing chats list, unfiltered.
+  late final UserSearchController _searchCtrl = UserSearchController(
+    excludeUids: [_currentUid],
+  );
+  bool _openingChat = false;
+
+  bool get _isSearching => _searchController.text.isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(_onSearchChanged);
+    _searchScrollController.addListener(_onSearchScroll);
+  }
+
+  void _onSearchChanged() {
+    setState(() {}); // toggle between the chats list and search results
+    _searchCtrl.search(_searchController.text);
+  }
+
+  void _onSearchScroll() {
+    if (!_searchCtrl.hasMore || _searchCtrl.isLoading || _searchCtrl.isLoadingMore) {
+      return;
+    }
+    if (_searchScrollController.position.pixels >=
+        _searchScrollController.position.maxScrollExtent - 200) {
+      _searchCtrl.loadMore();
+    }
+  }
+
+  // Same find-or-create semantics whether `user` is someone already chatted
+  // with (getOrCreateDirectChat just resolves back to that existing chat —
+  // see its own doc comment, firestore_service.dart) or a brand-new contact
+  // discovered only through this search.
+  Future<void> _openChatWith(User user) async {
+    if (_openingChat) return;
+    setState(() => _openingChat = true);
+    try {
+      final chatId = await ref.read(firestoreServiceProvider).getOrCreateDirectChat(
+            myUid: _currentUid,
+            otherUid: user.id,
+          );
+      if (!mounted) return;
+      context.push('/chat/$chatId');
+    } finally {
+      if (mounted) setState(() => _openingChat = false);
+    }
+  }
 
   @override
   void dispose() {
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
+    _searchScrollController.removeListener(_onSearchScroll);
+    _searchScrollController.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -94,7 +152,6 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
             child: TextField(
               controller: _searchController,
               style: const TextStyle(color: kText),
-              onChanged: (v) => setState(() => _searchQuery = v.toLowerCase()),
               decoration: InputDecoration(
                 filled: true,
                 fillColor: kBg3,
@@ -116,83 +173,137 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
             ),
           ),
           Expanded(
-            child: chatsAsync.when(
-              loading: () =>
-                  const Center(child: CircularProgressIndicator(color: kGold)),
-              error: (err, stack) => Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    err.toString(),
-                    style: const TextStyle(color: kRed, fontSize: 12),
-                  ),
-                ),
-              ),
-              data: (chats) {
-                if (chats.isEmpty) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 32),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text('💬', style: TextStyle(fontSize: 52)),
-                          const SizedBox(height: 12),
-                          Text(
-                            'Hələ mesaj yoxdur',
-                            style: GoogleFonts.nunito(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: kText,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Musiqiçilərlə əlaqə saxlamaq üçün onların profilinə keçin',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 13, color: kMuted),
-                          ),
-                        ],
+            child: _isSearching
+                ? _buildUserSearchResults()
+                : chatsAsync.when(
+                    loading: () => const Center(
+                      child: CircularProgressIndicator(color: kGold),
+                    ),
+                    error: (err, stack) => Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          err.toString(),
+                          style: const TextStyle(color: kRed, fontSize: 12),
+                        ),
                       ),
                     ),
-                  );
-                }
+                    data: (chats) {
+                      if (chats.isEmpty) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 32),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text('💬', style: TextStyle(fontSize: 52)),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'Hələ mesaj yoxdur',
+                                  style: GoogleFonts.nunito(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    color: kText,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Musiqiçilərlə əlaqə saxlamaq üçün onların profilinə keçin',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(fontSize: 13, color: kMuted),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
 
-                // Known follow-up: search still matches against the chat
-                // doc's static `name` field, which for 1:1 chats is written
-                // from the initiator's perspective and can be wrong for the
-                // recipient (see _ChatListItem, which resolves the correct
-                // name dynamically for display). Not fixed here — lower
-                // priority, separate from the display bug this fix targets.
-                final filtered = chats
-                    .where((c) => c.name.toLowerCase().contains(_searchQuery))
-                    .toList();
-
-                if (filtered.isEmpty) {
-                  return const Center(
-                    child: Text(
-                      'Axtarış nəticəsi tapılmadı',
-                      style: TextStyle(color: kMuted, fontSize: 14),
-                    ),
-                  );
-                }
-
-                return ListView.builder(
-                  itemCount: filtered.length,
-                  itemBuilder: (context, index) {
-                    final chat = filtered[index];
-                    return _ChatListItem(
-                      chat: chat,
-                      currentUid: currentUid,
-                      onTap: () => context.push('/chat/${chat.id}'),
-                    );
-                  },
-                );
-              },
-            ),
+                      return ListView.builder(
+                        itemCount: chats.length,
+                        itemBuilder: (context, index) {
+                          final chat = chats[index];
+                          return _ChatListItem(
+                            chat: chat,
+                            currentUid: currentUid,
+                            onTap: () => context.push('/chat/${chat.id}'),
+                          );
+                        },
+                      );
+                    },
+                  ),
           ),
         ],
       ),
+    );
+  }
+
+  // Query non-empty: search every user via Algolia (same data source/
+  // debounce/pagination as search_screen.dart — see UserSearchController),
+  // not just this user's own chats. Tapping a result finds-or-creates the
+  // 1:1 chat and opens it, whether or not one already existed.
+  Widget _buildUserSearchResults() {
+    return ListenableBuilder(
+      listenable: _searchCtrl,
+      builder: (context, _) {
+        if (_searchCtrl.isLoading) {
+          return const Center(child: CircularProgressIndicator(color: kGold));
+        }
+        if (_searchCtrl.error != null) {
+          return Center(
+            child: Text(_searchCtrl.error!, style: const TextStyle(color: kMuted)),
+          );
+        }
+
+        final results = _searchCtrl.results;
+        if (results.isEmpty) {
+          return const Center(
+            child: Text(
+              'Axtarış nəticəsi tapılmadı',
+              style: TextStyle(color: kMuted, fontSize: 14),
+            ),
+          );
+        }
+
+        return ListView.builder(
+          controller: _searchScrollController,
+          itemCount: results.length + (_searchCtrl.isLoadingMore ? 1 : 0),
+          itemBuilder: (context, index) {
+            if (index >= results.length) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(child: CircularProgressIndicator(color: kGold)),
+              );
+            }
+            final user = results[index];
+            return ListTile(
+              enabled: !_openingChat,
+              onTap: () => _openChatWith(user),
+              leading: AvatarRing(
+                photoURL: user.photoURL,
+                fallbackEmoji: user.emoji,
+                hasUnviewed: false,
+                size: 48,
+              ),
+              title: Text(
+                user.name,
+                style: GoogleFonts.nunito(fontWeight: FontWeight.w700, color: kText),
+              ),
+              subtitle: Text(
+                [user.instrument, user.city].where((s) => s.isNotEmpty).join(' · '),
+                style: const TextStyle(color: kMuted, fontSize: 12.5),
+              ),
+              trailing: Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: user.isActuallyOnline ? kGreen : kMuted,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
