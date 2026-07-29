@@ -83,13 +83,12 @@ class FirestoreService {
     );
   }
 
-  Stream<List<User>> watchMusicians() {
-    return _watchUsers(_db.collection('users').where('role', isEqualTo: 'musician'));
-  }
-
-  // Unfiltered by role — screens that need to pick from any registered
-  // user (e.g. tagging event participants), unlike watchMusicians() above
-  // which powers the home screen's musician-only feed.
+  // Every registered user, regardless of role — the home feed used to
+  // filter to role == 'musician' here, which made every 'qonaq'-registered
+  // user permanently invisible to everyone. Visibility no longer depends on
+  // role; musiciansProvider/allUsersProvider are now equivalent aliases,
+  // kept separate because call sites read as "musicians feed" vs. "any
+  // user picker" (tagging event participants, etc.).
   Stream<List<User>> watchAllUsers() {
     return _watchUsers(_db.collection('users'));
   }
@@ -2567,7 +2566,7 @@ final firestoreServiceProvider = Provider<FirestoreService>(
 );
 
 final musiciansProvider = StreamProvider<List<User>>(
-  (ref) => ref.watch(firestoreServiceProvider).watchMusicians(),
+  (ref) => ref.watch(firestoreServiceProvider).watchAllUsers(),
 );
 
 final allUsersProvider = StreamProvider<List<User>>(

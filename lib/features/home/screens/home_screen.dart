@@ -14,74 +14,6 @@ import '../../user/screens/user_profile_screen.dart';
 
 // ── Fallback mock data ────────────────────────────────────────────────────────
 
-const List<User> _fallbackMusicians = [
-  User(
-    id: '',
-    name: 'Anar Musayev',
-    instrument: 'Kaman',
-    city: 'Bakı',
-    emoji: '🎻',
-    available: true,
-    online: true,
-    goldRing: true,
-    rating: 4.9,
-    reviews: 31,
-    bio: '',
-  ),
-  User(
-    id: '',
-    name: 'Leyla Həsənova',
-    instrument: 'Tar',
-    city: 'Gəncə',
-    emoji: '🎵',
-    available: false,
-    online: false,
-    goldRing: false,
-    rating: 4.7,
-    reviews: 18,
-    bio: '',
-  ),
-  User(
-    id: '',
-    name: 'Rəşad Əliyev',
-    instrument: 'Nağara',
-    city: 'Bakı',
-    emoji: '🥁',
-    available: true,
-    online: true,
-    goldRing: false,
-    rating: 4.8,
-    reviews: 25,
-    bio: '',
-  ),
-  User(
-    id: '',
-    name: 'Günel Vəliyeva',
-    instrument: 'Vokal',
-    city: 'Sumqayıt',
-    emoji: '🎤',
-    available: true,
-    online: false,
-    goldRing: false,
-    rating: 5.0,
-    reviews: 12,
-    bio: '',
-  ),
-  User(
-    id: '',
-    name: 'Tural Quliyev',
-    instrument: 'Qarmon',
-    city: 'Bakı',
-    emoji: '🪗',
-    available: false,
-    online: true,
-    goldRing: false,
-    rating: 4.6,
-    reviews: 23,
-    bio: '',
-  ),
-];
-
 const List<Event> _fallbackEvents = [
   Event(
     id: '',
@@ -361,8 +293,12 @@ class _MusiciansSection extends ConsumerWidget {
           height: 240,
           child: asyncMusicians.when(
             data: (list) {
-              final visible = list.excludingUid(currentUid);
-              final musicians = visible.isEmpty ? _fallbackMusicians : visible;
+              final musicians = list.excludingUid(currentUid);
+              if (musicians.isEmpty) {
+                return const _EmptyMusicians(
+                  message: 'Musiqiçi tapılmadı',
+                );
+              }
               return ListView.builder(
                 scrollDirection: Axis.horizontal,
                 itemCount: musicians.length,
@@ -377,19 +313,35 @@ class _MusiciansSection extends ConsumerWidget {
             loading: () => const Center(
               child: CircularProgressIndicator(color: kGold),
             ),
-            error: (_, _) => ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: _fallbackMusicians.length,
-              itemBuilder: (context, index) => Padding(
-                padding: EdgeInsets.only(
-                  right: index == _fallbackMusicians.length - 1 ? 0 : 12,
-                ),
-                child: _MusicianCard(musician: _fallbackMusicians[index]),
-              ),
+            error: (_, _) => const _EmptyMusicians(
+              message: 'Musiqiçilər yüklənmədi',
             ),
           ),
         ),
       ],
+    );
+  }
+}
+
+class _EmptyMusicians extends StatelessWidget {
+  final String message;
+
+  const _EmptyMusicians({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.people_outline_rounded, color: kMuted, size: 32),
+          const SizedBox(height: 8),
+          Text(
+            message,
+            style: const TextStyle(color: kMuted, fontSize: 13),
+          ),
+        ],
+      ),
     );
   }
 }
