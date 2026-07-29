@@ -590,8 +590,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 decoration: BoxDecoration(
                   color: kCard.withAlpha(190),
                   borderRadius: BorderRadius.circular(menuRadius),
-                  border: Border.all(color: kGold.withAlpha(80)),
+                  // Soft gold glow, not a hard outline — a wide-blurred,
+                  // slightly-spread shadow radiating evenly on all sides
+                  // (no offset) reads as light around the card rather than
+                  // a drawn border. Layered under the black shadow below,
+                  // which still gives it depth against the chat behind it.
                   boxShadow: [
+                    BoxShadow(
+                      color: kGold.withAlpha(110),
+                      blurRadius: 24,
+                      spreadRadius: 2,
+                    ),
                     BoxShadow(
                       color: Colors.black.withAlpha(140),
                       blurRadius: 18,
