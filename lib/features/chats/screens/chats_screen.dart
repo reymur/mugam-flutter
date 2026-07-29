@@ -171,7 +171,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
               left: 16,
               right: 16,
               top: 12,
-              bottom: 8,
+              bottom: 4,
             ),
             child: Row(
               children: [
@@ -180,6 +180,8 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
                     controller: _searchController,
                     style: const TextStyle(color: kText),
                     decoration: InputDecoration(
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                       filled: true,
                       fillColor: kBg3,
                       hintText: '🔍 Axtar...',

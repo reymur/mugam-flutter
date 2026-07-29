@@ -207,6 +207,8 @@ class _SearchScreenState extends State<SearchScreen> with WidgetsBindingObserver
                       controller: _nameController,
                       style: const TextStyle(color: kText),
                       decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 14),
                         hintText: 'İstifadəçi axtar...',
                         hintStyle: const TextStyle(color: kMuted),
                         prefixIcon: const Icon(Icons.search, color: kMuted),
