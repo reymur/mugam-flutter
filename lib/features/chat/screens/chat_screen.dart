@@ -580,37 +580,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               builder: (_) => AgreementsScreen(initialParticipantUid: otherUid),
             ),
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(menuRadius),
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                decoration: BoxDecoration(
-                  color: kCard.withAlpha(190),
-                  borderRadius: BorderRadius.circular(menuRadius),
-                  // Soft gold glow, not a hard outline — a wide-blurred,
-                  // slightly-spread shadow radiating evenly on all sides
-                  // (no offset) reads as light around the card rather than
-                  // a drawn border. Layered under the black shadow below,
-                  // which still gives it depth against the chat behind it.
-                  boxShadow: [
-                    BoxShadow(
-                      color: kGold.withAlpha(110),
-                      blurRadius: 24,
-                      spreadRadius: 2,
-                    ),
-                    BoxShadow(
-                      color: Colors.black.withAlpha(140),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
+          // The glow/shadow lives on THIS outer, unclipped Container —
+          // BoxShadow paints beyond its own box's bounds, but the previous
+          // version put it on the container INSIDE ClipRRect, which clips
+          // away anything painted past the rounded-rect edge, glow
+          // included (that's why no glow showed at all). ClipRRect now
+          // only wraps the blur+tint layer, which does need to be clipped
+          // to rounded corners.
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(menuRadius),
+              // Soft gold glow, not a hard outline — a wide-blurred,
+              // slightly-spread shadow radiating evenly on all sides (no
+              // offset) reads as light around the card rather than a drawn
+              // border. Layered under the black shadow below, which still
+              // gives it depth against the chat behind it.
+              boxShadow: [
+                BoxShadow(
+                  color: kGold.withAlpha(160),
+                  blurRadius: 28,
+                  spreadRadius: 4,
                 ),
-                child: const Text(
-                  'İş yazdır',
-                  style: TextStyle(color: kText, fontWeight: FontWeight.w600),
+                BoxShadow(
+                  color: Colors.black.withAlpha(140),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(menuRadius),
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                  decoration: BoxDecoration(color: kCard.withAlpha(190)),
+                  child: const Text(
+                    'İş yazdır',
+                    style: TextStyle(color: kText, fontWeight: FontWeight.w600),
+                  ),
                 ),
               ),
             ),
