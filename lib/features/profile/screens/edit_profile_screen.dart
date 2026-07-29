@@ -10,7 +10,7 @@ import '../../../core/models/activity_type.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
-import '../../../shared/widgets/activity_type_sheet.dart';
+import '../../../shared/widgets/activity_type_screen.dart';
 import '../../../shared/widgets/city_picker_sheet.dart';
 
 class EditProfileScreen extends ConsumerStatefulWidget {
@@ -325,7 +325,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   }
 
   Future<void> _openActivityTypePicker() async {
-    final result = await ActivityTypeSheet.show(context, initial: _activityType);
+    final result = await ActivityTypeScreen.push(context, initial: _activityType);
     if (result != null) setState(() => _activityType = result);
   }
 

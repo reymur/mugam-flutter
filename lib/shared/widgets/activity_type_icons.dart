@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/models/activity_type.dart';
+import '../../core/theme/colors.dart';
 
 // Category glyph for each "Fəaliyyət növü" bottom-sheet entry — all 9 are
 // supplied photos (assets/icons/). The source files are portrait product
@@ -34,5 +35,43 @@ Widget categoryGlyph(ActivityCategory category, {required double size}) {
         child: Image.asset(asset, fit: BoxFit.cover),
       ),
     ),
+  );
+}
+
+// Per-instrument glyphs for every leaf option across simli/nefes/klavish/
+// zerb — muganni's roles (Muğam ifaçısı, Xanəndə, Şanson, Aparıcı) and every
+// category's "Digər" aren't physical instruments, so they fall through to
+// the placeholder note glyph.
+const Map<String, String> _instrumentAssets = {
+  'Gitara': 'assets/icons/gitara.png',
+  'Saz': 'assets/icons/saz.png',
+  'Skripka': 'assets/icons/skripka.png',
+  'Kanun': 'assets/icons/kanun.png',
+  'Tar': 'assets/icons/tar.jpg',
+  'Kamança': 'assets/icons/kamanca.png',
+  'Ud': 'assets/icons/ud.png',
+  'Klarnet': 'assets/icons/klarnet.png',
+  'Balaban': 'assets/icons/balaban.png',
+  'Zurna': 'assets/icons/zurna.png',
+  'Tütək': 'assets/icons/tutek.png',
+  'Saksafon': 'assets/icons/saksafon.png',
+  'Qaboy': 'assets/icons/qaboy.png',
+  'Sintezator': 'assets/icons/sintezator.png',
+  'Qarmon': 'assets/icons/qarmon.png',
+  'Udarnik': 'assets/icons/udarnik.png',
+  'Nağara': 'assets/icons/nagara.png',
+  'Zərb': 'assets/icons/zerb.png',
+  'Dəf': 'assets/icons/def.png',
+  'Davul': 'assets/icons/davul.png',
+};
+
+Widget instrumentGlyph(String label, {required double size}) {
+  final asset = _instrumentAssets[label];
+  if (asset == null) {
+    return Icon(Icons.music_note_rounded, size: size * 0.55, color: kMuted);
+  }
+  return ClipRRect(
+    borderRadius: BorderRadius.circular(size * 0.22),
+    child: Image.asset(asset, width: size, height: size, fit: BoxFit.cover),
   );
 }

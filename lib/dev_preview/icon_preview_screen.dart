@@ -4,12 +4,12 @@ import 'package:google_fonts/google_fonts.dart';
 import '../core/models/activity_type.dart';
 import '../core/theme/colors.dart';
 import '../shared/widgets/activity_type_icons.dart';
-import '../shared/widgets/activity_type_sheet.dart';
+import '../shared/widgets/activity_type_screen.dart';
 
 // DEV-ONLY visual review screen for the "Fəaliyyət növü" category glyphs —
-// renders the real categoryGlyph() used by ActivityTypeSheet for all 9
+// renders the real categoryGlyph() used by ActivityTypeScreen for all 9
 // categories, so image-asset swaps can be checked before/without touching
-// the sheet itself. Run via `flutter run -t lib/dev_preview/icon_preview_main.dart`.
+// the screen itself. Run via `flutter run -t lib/dev_preview/icon_preview_main.dart`.
 class IconPreviewScreen extends StatelessWidget {
   const IconPreviewScreen({super.key});
 
@@ -34,8 +34,8 @@ class IconPreviewScreen extends StatelessWidget {
       ),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: kGold,
-        onPressed: () => ActivityTypeSheet.show(context),
-        label: const Text('Open real sheet'),
+        onPressed: () => ActivityTypeScreen.push(context),
+        label: const Text('Open real screen'),
       ),
       body: SafeArea(
         child: Center(
