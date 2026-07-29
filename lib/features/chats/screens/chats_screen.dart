@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -283,24 +281,17 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                             child: Stack(
                           alignment: Alignment.center,
                           clipBehavior: Clip.none,
+                          // No separate blurred halo layer — a sigma-16
+                          // ImageFiltered blur on an 8px bar spreads visibly
+                          // past 100px (Gaussian blur's effective radius is
+                          // several times sigma), swallowing the thin line
+                          // underneath and reading as one soft blob instead
+                          // of "thin line + gentle glow". The line's own
+                          // BoxShadow below (no spreadRadius, so it doesn't
+                          // enlarge the base shape before blurring) is the
+                          // only light source now — same simplification
+                          // already verified in the HTML preview.
                           children: [
-                            if (t < 0.95)
-                              Opacity(
-                                opacity: (1 - t).clamp(0.0, 1.0),
-                                child: ImageFiltered(
-                                  imageFilter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                                  child: Container(
-                                    height: 8,
-                                    margin: EdgeInsets.symmetric(
-                                      horizontal: 16 * (1 - t),
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: kGold2.withAlpha(160),
-                                      borderRadius: BorderRadius.circular(999),
-                                    ),
-                                  ),
-                                ),
-                              ),
                             Container(
                               height: 2 + (_kSearchRowHeight - 2) * t,
                               width: double.infinity,
@@ -323,14 +314,18 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                                         stops: const [0, 0.1, 0.9, 1],
                                       )
                                     : null,
-                                boxShadow: t < 0.9
+                                // No spreadRadius — spread enlarges the
+                                // shape's own base before blurring, which
+                                // combined with a wide blurRadius is what
+                                // read as a blob rather than a thin line
+                                // with a soft glow.
+                                boxShadow: t < 0.95
                                     ? [
                                         BoxShadow(
                                           color: kGold2.withAlpha(
-                                            (217 * (1 - t)).round(),
+                                            (230 * (1 - t)).round(),
                                           ),
-                                          blurRadius: 12 * (1 - t) + 2,
-                                          spreadRadius: 2 * (1 - t),
+                                          blurRadius: 8 * (1 - t),
                                         ),
                                       ]
                                     : null,
