@@ -77,7 +77,13 @@ bool _sameDay(DateTime a, DateTime b) =>
 // AgreementsScreen
 // ---------------------------------------------------------------------------
 class AgreementsScreen extends ConsumerStatefulWidget {
-  const AgreementsScreen({super.key});
+  // Set by "İş yazdır" (chat_screen.dart's 1:1 chat menu) to jump straight
+  // into creating a new tədbir/agreement with that specific person already
+  // selected as participant, instead of landing on the normal tab view.
+  // null for this screen's usual home (bottom-nav "/agreements" tab).
+  final String? initialParticipantUid;
+
+  const AgreementsScreen({super.key, this.initialParticipantUid});
 
   @override
   ConsumerState<AgreementsScreen> createState() => _AgreementsScreenState();
@@ -97,6 +103,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   );
   int? _selectedCalendarDay;
   List<String> _readAgreementIds = [];
+  bool _autoOpenedForPartner = false;
 
   static const int _kCalendarInitialPage = 1200;
   late final DateTime _calendarAnchorMonth;
@@ -196,6 +203,30 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     final agreeEvents = _agreeEvents(personalEvents);
     final hasUnread = agreeEvents.any(_isUnread);
 
+    // "İş yazdır" entry point (chat_screen.dart) — open the same
+    // create-event sheet the calendar tab's own FAB uses (_openAddModal,
+    // mode: 'time-only', which is what shows the participant picker — see
+    // its own comment), pre-selecting this specific partner. Scheduled via
+    // addPostFrameCallback (can't show a bottom sheet mid-build) and guarded
+    // by _autoOpenedForPartner so it only fires once per push, not on every
+    // rebuild this screen goes through afterward (filter/tab changes, etc.).
+    if (widget.initialParticipantUid != null && !_autoOpenedForPartner) {
+      _autoOpenedForPartner = true;
+      final partnerUid = widget.initialParticipantUid!;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _openAddModal(
+          context,
+          initialDate: DateTime.now(),
+          personalEvents: personalEvents,
+          eventsAsParticipant: eventsAsParticipant,
+          allUsers: allUsers,
+          mode: 'time-only',
+          initialParticipantUids: [partnerUid],
+        );
+      });
+    }
+
     // If a detail screen is showing, render it on top
     if (_selectedAgreement != null) {
       return _AgreementDetailScreen(
@@ -269,6 +300,16 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       ),
       child: Row(
         children: [
+          // Only shown when this screen was pushed standalone (e.g. "İş
+          // yazdır") rather than reached via its usual bottom-nav "/agreements"
+          // tab — that tab has no back destination and never sets
+          // initialParticipantUid, so this stays absent there exactly like
+          // before this button existed.
+          if (widget.initialParticipantUid != null)
+            IconButton(
+              icon: const Icon(Icons.arrow_back, color: kGold),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
           _buildHeaderTab(
             label: '📋 Müqavilələr',
             view: 'agreements',
@@ -909,6 +950,11 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     required List<User> allUsers,
     PersonalEvent? existingEvent,
     String mode = 'time-only',
+    // Pre-selects a participant when creating a brand-new event (e.g. "İş
+    // yazdır" from a 1:1 chat's menu, chat_screen.dart) — ignored for
+    // existingEvent != null, which always shows that event's own already-
+    // saved participantUids instead.
+    List<String> initialParticipantUids = const [],
   }) async {
     final allCombined = [...personalEvents, ...eventsAsParticipant];
     await showModalBottomSheet<void>(
@@ -921,7 +967,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         initialType: existingEvent?.type ?? '',
         initialLocation: existingEvent?.location ?? '',
         initialNotes: existingEvent?.notes ?? '',
-        initialParticipantUids: existingEvent?.participantUids ?? [],
+        initialParticipantUids: existingEvent?.participantUids ?? initialParticipantUids,
         allUsers: allUsers,
         existingEvent: existingEvent,
         allCombinedEvents: allCombined,

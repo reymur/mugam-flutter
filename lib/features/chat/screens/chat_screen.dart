@@ -37,6 +37,7 @@ import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
+import '../../agreements/screens/agreements_screen.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import 'about_contact_screen.dart';
 import 'chat_attachment_viewer_screen.dart';
@@ -3164,6 +3165,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             IconButton(
               icon: const Icon(Icons.call, color: kGold),
               onPressed: _startingCall ? null : () => _startCall(otherUidResolved, CallType.audio),
+            ),
+            // "İş yazdır" — jumps straight into AgreementsScreen's own
+            // create-event sheet with this chat partner pre-selected as
+            // participant (see AgreementsScreen.initialParticipantUid).
+            // Only makes sense for a 1:1 chat (an agreement is between this
+            // user and exactly one other party) — groups get no equivalent.
+            PopupMenuButton<void>(
+              icon: const Icon(Icons.more_vert, color: kGold),
+              itemBuilder: (context) => [
+                PopupMenuItem<void>(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => AgreementsScreen(
+                        initialParticipantUid: otherUidResolved,
+                      ),
+                    ),
+                  ),
+                  child: const Text('İş yazdır'),
+                ),
+              ],
             ),
           ],
           if (_selectionMode)
