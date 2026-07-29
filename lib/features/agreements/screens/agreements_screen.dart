@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide User;
@@ -281,11 +282,13 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           ],
         ),
       ),
+      // Rounded-square gold-gradient glow button (approved preview design,
+      // see agreements_screen.dart's own "Təqvim" restyle) rather than the
+      // default circular FloatingActionButton — same onPressed/behavior,
+      // just a custom shape/decoration wrapped around a GestureDetector.
       floatingActionButton: _mainView == 'calendar'
-          ? FloatingActionButton(
-              backgroundColor: kGold,
-              foregroundColor: const Color(0xFF1A0E00),
-              onPressed: () => _openAddModal(
+          ? GestureDetector(
+              onTap: () => _openAddModal(
                 context,
                 initialDate: _isSameMonth(_currentCalendarMonth, DateTime.now())
                     ? DateTime.now()
@@ -295,7 +298,32 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                 allUsers: allUsers,
                 mode: 'time-only',
               ),
-              child: const Icon(Icons.add),
+              child: Container(
+                width: 58,
+                height: 58,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [kGold2, kGold],
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: Colors.white.withAlpha(38)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withAlpha(100),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                    BoxShadow(
+                      color: kGold.withAlpha(140),
+                      blurRadius: 24,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+                child: const Icon(Icons.add, color: Color(0xFF1A0E00), size: 28),
+              ),
             )
           : null,
     );
@@ -683,9 +711,12 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         Text(
           '$monthName ${_currentCalendarMonth.year}',
           style: GoogleFonts.nunito(
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
-            color: kText,
+            fontSize: 24,
+            fontWeight: FontWeight.w800,
+            color: kGold2,
+            shadows: [
+              Shadow(color: kGold.withAlpha(140), blurRadius: 18),
+            ],
           ),
         ),
         _calNavBtn('›', () {
@@ -708,18 +739,28 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     );
   }
 
+  // Glass rounded-square (approved preview design) rather than flat kBg3 —
+  // same onTap/behavior as before, just BackdropFilter + translucent fill +
+  // thin gold border instead of a solid background.
   Widget _calNavBtn(String label, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        width: 52,
-        height: 52,
-        decoration: BoxDecoration(
-          color: kBg3,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Center(
-          child: Text(label, style: const TextStyle(fontSize: 28, color: kGold)),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(13),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white.withAlpha(10),
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(color: kGold.withAlpha(46)),
+            ),
+            child: Center(
+              child: Text(label, style: const TextStyle(fontSize: 22, color: kGold2)),
+            ),
+          ),
         ),
       ),
     );
@@ -734,9 +775,10 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                   child: Text(
                     d,
                     style: const TextStyle(
-                      fontSize: 15,
+                      fontSize: 13,
                       fontWeight: FontWeight.w700,
                       color: kMuted,
+                      letterSpacing: 1.2,
                     ),
                   ),
                 ),
@@ -830,6 +872,12 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     );
   }
 
+  // Glass/glow restyle (approved preview design) — same isSelected/isToday/
+  // hasEvents inputs and onTap/onLongPress behavior as before, just: a
+  // filled gold circle stays for isSelected (still needs to read as a
+  // clear, strong "this one's picked" state), hasEvents gets a soft
+  // outward gold glow instead of a flat tinted fill, and the count badge
+  // gets a gradient + small glow instead of a flat gold pill.
   Widget _buildDayCell({
     required int day,
     required bool isSelected,
@@ -842,16 +890,20 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     Color bgColor = Colors.transparent;
     Color textColor = kText;
     Border? border;
+    List<BoxShadow>? glow;
 
     if (isSelected) {
       bgColor = kGold;
       textColor = const Color(0xFF1A0E00);
     } else if (hasEvents) {
-      bgColor = kGold.withAlpha(38);
-      textColor = kGold;
+      bgColor = kGold.withAlpha(28);
+      textColor = kGold2;
+      glow = [
+        BoxShadow(color: kGold.withAlpha(90), blurRadius: 14, spreadRadius: 1),
+      ];
     }
     if (isToday && !isSelected) {
-      border = Border.all(color: kGold, width: 1);
+      border = Border.all(color: kGold, width: 1.2);
     }
 
     return GestureDetector(
@@ -868,6 +920,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                 color: bgColor,
                 shape: BoxShape.circle,
                 border: border,
+                boxShadow: glow,
               ),
               child: Center(
                 child: Text(
@@ -882,20 +935,30 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
             ),
             if (hasEvents && !isSelected)
               Positioned(
-                top: -2,
-                right: -4,
+                top: -4,
+                right: -6,
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
                   decoration: BoxDecoration(
-                    color: kGold,
-                    borderRadius: BorderRadius.circular(8),
+                    gradient: const LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [kGold2, kGold],
+                    ),
+                    borderRadius: BorderRadius.circular(999),
+                    boxShadow: [
+                      BoxShadow(color: kGold.withAlpha(140), blurRadius: 6),
+                    ],
                   ),
-                  child: Text(
-                    '$eventCount',
-                    style: const TextStyle(
-                      fontSize: 10,
-                      color: Color(0xFF1A0E00),
-                      fontWeight: FontWeight.bold,
+                  child: Center(
+                    child: Text(
+                      '$eventCount',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Color(0xFF1A0E00),
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
