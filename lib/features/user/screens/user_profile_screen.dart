@@ -329,14 +329,18 @@ class UserProfileScreen extends ConsumerWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content:
-                              Text('Söhbət funksiyası tezliklə əlavə olunacaq'),
-                          backgroundColor: kBg3,
-                        ),
-                      );
+                    // Same find-or-create semantics as chats_screen.dart's
+                    // own search-result tap: getOrCreateDirectChat resolves
+                    // back to an existing chat with this person if there is
+                    // one, otherwise creates it.
+                    onPressed: () async {
+                      final chatId = await ref
+                          .read(firestoreServiceProvider)
+                          .getOrCreateDirectChat(
+                            myUid: currentUid,
+                            otherUid: user.id,
+                          );
+                      if (context.mounted) context.push('/chat/$chatId');
                     },
                     style: OutlinedButton.styleFrom(
                       side: const BorderSide(color: kBorder),
