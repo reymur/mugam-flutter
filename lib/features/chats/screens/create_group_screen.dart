@@ -1,10 +1,12 @@
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
+import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../chat/screens/chat_screen.dart';
@@ -34,9 +36,20 @@ class CreateGroupScreen extends ConsumerStatefulWidget {
 class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  late final String _currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+  late final UserSearchController _searchCtrl = UserSearchController(
+    excludeUids: [_currentUid],
+  );
   String _emoji = '👥';
-  String _search = '';
   final Set<String> _selectedUids = {};
+  // Selected members need to render as chips (name+emoji) even after the
+  // search query/page that originally surfaced them has moved on — unlike
+  // the old allUsersProvider stream, an Algolia result page doesn't stay
+  // around as a queryable full list, so this caches just the Users the user
+  // has actually picked, populated/evicted alongside _selectedUids in
+  // _toggleUser below.
+  final Map<String, User> _selectedUsersByUid = {};
   bool _creating = false;
 
   static const List<String> _emojiChoices = [
@@ -44,7 +57,27 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _searchCtrl.loadInitial();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (!_searchCtrl.hasMore || _searchCtrl.isLoading || _searchCtrl.isLoadingMore) {
+      return;
+    }
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _searchCtrl.loadMore();
+    }
+  }
+
+  @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    _searchCtrl.dispose();
     _nameController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -104,21 +137,19 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
     }
   }
 
-  void _toggleUser(String uid) {
+  void _toggleUser(User user) {
     setState(() {
-      if (_selectedUids.contains(uid)) {
-        _selectedUids.remove(uid);
+      if (_selectedUids.contains(user.id)) {
+        _selectedUids.remove(user.id);
       } else {
-        _selectedUids.add(uid);
+        _selectedUids.add(user.id);
+        _selectedUsersByUid[user.id] = user;
       }
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final usersAsync = ref.watch(allUsersProvider);
-
     return Scaffold(
       backgroundColor: kBg,
       appBar: AppBar(
@@ -208,62 +239,56 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
               decoration: const BoxDecoration(
                 border: Border(bottom: BorderSide(color: kBorder)),
               ),
-              child: usersAsync.when(
-                data: (users) {
-                  final selected =
-                      users.where((u) => _selectedUids.contains(u.id));
-                  return ListView(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    children: [
-                      for (final u in selected)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          child: GestureDetector(
-                            onTap: () => _toggleUser(u.id),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: kBg3,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: kBorder),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(u.emoji, style: const TextStyle(fontSize: 14)),
-                                  const SizedBox(width: 4),
-                                  ConstrainedBox(
-                                    constraints: const BoxConstraints(maxWidth: 80),
-                                    child: Text(
-                                      u.name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: kText,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                children: [
+                  for (final u in _selectedUids
+                      .map((uid) => _selectedUsersByUid[uid])
+                      .whereType<User>())
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: GestureDetector(
+                        onTap: () => _toggleUser(u),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: kBg3,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: kBorder),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(u.emoji, style: const TextStyle(fontSize: 14)),
+                              const SizedBox(width: 4),
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 80),
+                                child: Text(
+                                  u.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: kText,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
                                   ),
-                                  const SizedBox(width: 2),
-                                  const Text(
-                                    '✕',
-                                    style: TextStyle(color: kMuted, fontSize: 10),
-                                  ),
-                                ],
+                                ),
                               ),
-                            ),
+                              const SizedBox(width: 2),
+                              const Text(
+                                '✕',
+                                style: TextStyle(color: kMuted, fontSize: 10),
+                              ),
+                            ],
                           ),
                         ),
-                    ],
-                  );
-                },
-                loading: () => const SizedBox.shrink(),
-                error: (_, _) => const SizedBox.shrink(),
+                      ),
+                    ),
+                ],
               ),
             ),
 
@@ -272,7 +297,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
             child: TextField(
               controller: _searchController,
               style: const TextStyle(color: kText),
-              onChanged: (v) => setState(() => _search = v),
+              onChanged: _searchCtrl.search,
               decoration: InputDecoration(
                 hintText: 'Axtar...',
                 hintStyle: const TextStyle(color: kMuted),
@@ -304,16 +329,21 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
           ),
 
           Expanded(
-            child: usersAsync.when(
-              data: (users) {
-                final filtered = users.where((u) => u.id != currentUid).where((u) {
-                  if (_search.trim().isEmpty) return true;
-                  final q = _search.toLowerCase();
-                  return u.name.toLowerCase().contains(q) ||
-                      u.instrument.toLowerCase().contains(q) ||
-                      u.city.toLowerCase().contains(q);
-                }).toList();
+            child: ListenableBuilder(
+              listenable: _searchCtrl,
+              builder: (context, _) {
+                if (_searchCtrl.isLoading) {
+                  return const Center(
+                    child: CircularProgressIndicator(color: kGold),
+                  );
+                }
+                if (_searchCtrl.error != null) {
+                  return Center(
+                    child: Text(_searchCtrl.error!, style: const TextStyle(color: kMuted)),
+                  );
+                }
 
+                final filtered = _searchCtrl.results;
                 if (filtered.isEmpty) {
                   return const Center(
                     child: Text(
@@ -324,13 +354,20 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                 }
 
                 return ListView.builder(
-                  itemCount: filtered.length,
+                  controller: _scrollController,
+                  itemCount: filtered.length + (_searchCtrl.isLoadingMore ? 1 : 0),
                   itemBuilder: (context, index) {
+                    if (index >= filtered.length) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Center(child: CircularProgressIndicator(color: kGold)),
+                      );
+                    }
                     final u = filtered[index];
                     final selected = _selectedUids.contains(u.id);
                     final hasActiveStatus = u.hasActiveStatus;
                     final viewerUser = hasActiveStatus
-                        ? ref.watch(currentUserProvider(currentUid)).value
+                        ? ref.watch(currentUserProvider(_currentUid)).value
                         : null;
                     final hasUnviewed = hasActiveStatus &&
                         (viewerUser?.hasUnviewedStatusFrom(u) ?? false);
@@ -341,13 +378,13 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                           MaterialPageRoute(
                             builder: (_) => UserStatusViewerScreen(
                               ownerUid: u.id,
-                              currentUid: currentUid,
+                              currentUid: _currentUid,
                               initialUser: u,
                             ),
                           ),
                         );
                     return ListTile(
-                      onTap: () => _toggleUser(u.id),
+                      onTap: () => _toggleUser(u),
                       leading: SizedBox(
                         width: avatarBoxSize,
                         height: avatarBoxSize,
@@ -442,15 +479,6 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                   },
                 );
               },
-              loading: () => const Center(
-                child: CircularProgressIndicator(color: kGold),
-              ),
-              error: (_, _) => const Center(
-                child: Text(
-                  'Xəta baş verdi',
-                  style: TextStyle(color: kMuted),
-                ),
-              ),
             ),
           ),
         ],

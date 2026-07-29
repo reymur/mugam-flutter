@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -2295,7 +2296,6 @@ class _EventFormModalState extends State<_EventFormModal> {
     await showDialog(
       context: context,
       builder: (_) => _ParticipantPickerDialog(
-        allUsers: widget.allUsers.excludingUid(widget.currentUid),
         selectedUids: _selectedParticipantUids,
         onChanged: (uids) => setState(() => _selectedParticipantUids = uids),
         currentUid: widget.currentUid,
@@ -2888,7 +2888,6 @@ class _ConflictDialog extends StatelessWidget {
 // _ParticipantPickerDialog
 // ---------------------------------------------------------------------------
 class _ParticipantPickerDialog extends ConsumerStatefulWidget {
-  final List<User> allUsers;
   final List<String> selectedUids;
   final ValueChanged<List<String>> onChanged;
   // Needed for hasUnviewedStatusFrom below — the picker rows now show a
@@ -2898,11 +2897,12 @@ class _ParticipantPickerDialog extends ConsumerStatefulWidget {
   // caller's own widget.currentUid (_openParticipantPicker below) rather
   // than re-reading FirebaseAuth here, matching this dialog's own existing
   // convention of taking currentUid as a constructor param instead of
-  // looking it up itself.
+  // looking it up itself. Also doubles as the Algolia search's own
+  // self-exclusion uid now that this dialog does its own search instead of
+  // filtering the caller's widget.allUsers list (see UserSearchController).
   final String currentUid;
 
   const _ParticipantPickerDialog({
-    required this.allUsers,
     required this.selectedUids,
     required this.onChanged,
     required this.currentUid,
@@ -2916,30 +2916,39 @@ class _ParticipantPickerDialog extends ConsumerStatefulWidget {
 class _ParticipantPickerDialogState
     extends ConsumerState<_ParticipantPickerDialog> {
   late List<String> _selected;
-  String _search = '';
   final _searchController = TextEditingController();
+  final _scrollController = ScrollController();
+  late final _searchCtrl = UserSearchController(excludeUids: [widget.currentUid]);
 
   @override
   void initState() {
     super.initState();
     _selected = List<String>.from(widget.selectedUids);
+    _searchCtrl.loadInitial();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (!_searchCtrl.hasMore || _searchCtrl.isLoading || _searchCtrl.isLoadingMore) {
+      return;
+    }
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _searchCtrl.loadMore();
+    }
   }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    _searchCtrl.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final filtered = widget.allUsers
-        .where((m) =>
-            _search.isEmpty ||
-            m.name.toLowerCase().contains(_search.toLowerCase()) ||
-            m.instrument.toLowerCase().contains(_search.toLowerCase()))
-        .toList();
-
     return Dialog(
       backgroundColor: kBg2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -2951,7 +2960,7 @@ class _ParticipantPickerDialogState
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: TextField(
                 controller: _searchController,
-                onChanged: (v) => setState(() => _search = v),
+                onChanged: _searchCtrl.search,
                 style: const TextStyle(color: kText, fontSize: 14),
                 decoration: InputDecoration(
                   hintText: 'Axtar...',
@@ -2977,11 +2986,33 @@ class _ParticipantPickerDialogState
               ),
             ),
             Expanded(
-              child: ListView.builder(
-                itemCount: filtered.length,
-                itemBuilder: (_, i) {
-                  final m = filtered[i];
-                  final sel = _selected.contains(m.id);
+              child: ListenableBuilder(
+                listenable: _searchCtrl,
+                builder: (context, _) {
+                  if (_searchCtrl.isLoading) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: kGold),
+                    );
+                  }
+                  if (_searchCtrl.error != null) {
+                    return Center(
+                      child: Text(_searchCtrl.error!, style: const TextStyle(color: kMuted)),
+                    );
+                  }
+
+                  final filtered = _searchCtrl.results;
+                  return ListView.builder(
+                    controller: _scrollController,
+                    itemCount: filtered.length + (_searchCtrl.isLoadingMore ? 1 : 0),
+                    itemBuilder: (_, i) {
+                      if (i >= filtered.length) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Center(child: CircularProgressIndicator(color: kGold)),
+                        );
+                      }
+                      final m = filtered[i];
+                      final sel = _selected.contains(m.id);
                   final hasActiveStatus = m.hasActiveStatus;
                   final viewerUser = hasActiveStatus
                       ? ref.watch(currentUserProvider(widget.currentUid)).value
@@ -3088,6 +3119,8 @@ class _ParticipantPickerDialogState
                         _selected.add(m.id);
                       }
                     }),
+                  );
+                    },
                   );
                 },
               ),

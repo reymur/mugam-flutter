@@ -41,6 +41,7 @@ dependencies:
   share_plus: any
   gal: any
   device_info_plus: any
+  http: any
   connectivity_plus: ^7.2.0
   workmanager: ^0.9.0+3
   flutter_image_compress: ^2.4.0

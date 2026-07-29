@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../shared/widgets/avatar_ring.dart';
@@ -971,12 +972,35 @@ class _AddParticipantsSheet extends ConsumerStatefulWidget {
 
 class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
   final TextEditingController _searchController = TextEditingController();
-  String _search = '';
+  final ScrollController _scrollController = ScrollController();
+  late final UserSearchController _searchCtrl = UserSearchController(
+    excludeUids: widget.existingMembers,
+  );
   final Set<String> _selectedUids = {};
   bool _adding = false;
 
   @override
+  void initState() {
+    super.initState();
+    _searchCtrl.loadInitial();
+    _scrollController.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    if (!_searchCtrl.hasMore || _searchCtrl.isLoading || _searchCtrl.isLoadingMore) {
+      return;
+    }
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _searchCtrl.loadMore();
+    }
+  }
+
+  @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    _searchCtrl.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -1019,8 +1043,6 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final usersAsync = ref.watch(allUsersProvider);
-
     return SafeArea(
       child: SizedBox(
         height: MediaQuery.of(context).size.height * 0.75,
@@ -1070,7 +1092,7 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
               child: TextField(
                 controller: _searchController,
                 style: const TextStyle(color: kText),
-                onChanged: (v) => setState(() => _search = v),
+                onChanged: _searchCtrl.search,
                 decoration: InputDecoration(
                   hintText: 'Axtar...',
                   hintStyle: const TextStyle(color: kMuted),
@@ -1086,19 +1108,21 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: usersAsync.when(
-                data: (users) {
-                  final filtered = users
-                      .where((u) => !widget.existingMembers.contains(u.id))
-                      .where((u) {
-                        if (_search.trim().isEmpty) return true;
-                        final q = _search.toLowerCase();
-                        return u.name.toLowerCase().contains(q) ||
-                            u.instrument.toLowerCase().contains(q) ||
-                            u.city.toLowerCase().contains(q);
-                      })
-                      .toList();
+              child: ListenableBuilder(
+                listenable: _searchCtrl,
+                builder: (context, _) {
+                  if (_searchCtrl.isLoading) {
+                    return const Center(
+                      child: CircularProgressIndicator(color: kGold),
+                    );
+                  }
+                  if (_searchCtrl.error != null) {
+                    return Center(
+                      child: Text(_searchCtrl.error!, style: const TextStyle(color: kMuted)),
+                    );
+                  }
 
+                  final filtered = _searchCtrl.results;
                   if (filtered.isEmpty) {
                     return const Center(
                       child: Text(
@@ -1109,8 +1133,15 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
                   }
 
                   return ListView.builder(
-                    itemCount: filtered.length,
+                    controller: _scrollController,
+                    itemCount: filtered.length + (_searchCtrl.isLoadingMore ? 1 : 0),
                     itemBuilder: (context, index) {
+                      if (index >= filtered.length) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Center(child: CircularProgressIndicator(color: kGold)),
+                        );
+                      }
                       final u = filtered[index];
                       final selected = _selectedUids.contains(u.id);
                       final hasActiveStatus = u.hasActiveStatus;
@@ -1234,11 +1265,6 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
                     },
                   );
                 },
-                loading: () =>
-                    const Center(child: CircularProgressIndicator(color: kGold)),
-                error: (_, _) => const Center(
-                  child: Text('Xəta baş verdi', style: TextStyle(color: kMuted)),
-                ),
               ),
             ),
           ],

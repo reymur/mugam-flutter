@@ -2,13 +2,20 @@ import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getMessaging } from "firebase-admin/messaging";
 import { getStorage } from "firebase-admin/storage";
-import { onDocumentCreated, onDocumentDeleted, onDocumentUpdated } from "firebase-functions/v2/firestore";
+import {
+  onDocumentCreated,
+  onDocumentDeleted,
+  onDocumentUpdated,
+  onDocumentWritten,
+} from "firebase-functions/v2/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onObjectFinalized } from "firebase-functions/v2/storage";
 import { logger } from "firebase-functions";
 import { defineSecret } from "firebase-functions/params";
 import { RtcRole, RtcTokenBuilder } from "agora-token";
+import { algoliasearch } from "algoliasearch";
 import { randomUUID } from "crypto";
+import { ALGOLIA_APP_ID, ALGOLIA_USERS_INDEX, toAlgoliaUserRecord } from "./algoliaShared";
 
 initializeApp();
 const db = getFirestore();
@@ -21,6 +28,12 @@ const FUNCTIONS_REGION = "europe-west3";
 // this function mint a valid token.
 const AGORA_APP_ID = "f475311300aa4392a2e5ee7eff0e54ef";
 const agoraAppCertificate = defineSecret("AGORA_APP_CERTIFICATE");
+
+// ALGOLIA_APP_ID/ALGOLIA_USERS_INDEX live in ./algoliaShared (shared with
+// scripts/algoliaBackfill.ts) — only the Admin API Key is sensitive (it can
+// write/delete index data), so only that one goes through Secret Manager,
+// same pattern as agoraAppCertificate above.
+const algoliaAdminKey = defineSecret("ALGOLIA_ADMIN_KEY");
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
@@ -1056,6 +1069,46 @@ export const onStatusDeleted = onDocumentDeleted(
           logger.warn("onStatusDeleted: storage cleanup failed", e);
         }
       }
+    }
+  },
+);
+
+// ---------------------------------------------------------------------
+// users/{uid} → Algolia "users" index sync
+// ---------------------------------------------------------------------
+// Firestore can't do substring name search, and can't combine an
+// array-contains (activityInstruments) with other filters in one query —
+// see search_screen.dart's old client-side-filtering comment (now removed)
+// for the full history. Algolia is now the source of truth for search;
+// this keeps its "users" index in sync with every users/{uid} write.
+//
+// Single onWrite-style trigger rather than split onCreate/onUpdate/onDelete
+// (unlike the friendRequests triggers above) — create and update both mean
+// exactly the same thing here ("upsert this record"), only delete differs,
+// so a single event.data.after.exists check is simpler than three exported
+// functions duplicating the same record-mapping logic.
+export const onUserWritten = onDocumentWritten(
+  { document: "users/{uid}", region: FUNCTIONS_REGION, secrets: [algoliaAdminKey] },
+  async (event) => {
+    const { uid } = event.params;
+    const client = algoliasearch(ALGOLIA_APP_ID, algoliaAdminKey.value());
+    const after = event.data?.after;
+
+    try {
+      if (!after?.exists) {
+        await client.deleteObject({ indexName: ALGOLIA_USERS_INDEX, objectID: uid });
+        return;
+      }
+      await client.saveObject({
+        indexName: ALGOLIA_USERS_INDEX,
+        body: toAlgoliaUserRecord(uid, after.data()!),
+      });
+    } catch (e) {
+      // Search-index sync failing must never fail the underlying Firestore
+      // write it's reacting to (this trigger runs after that write already
+      // committed) — same "log and move on" treatment as every other
+      // best-effort side effect in this file (messageCount, pushes, etc.).
+      logger.warn("onUserWritten: Algolia sync failed", { uid }, e);
     }
   },
 );

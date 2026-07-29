@@ -148,6 +148,58 @@ class User {
     );
   }
 
+  // Builds a User from an Algolia search hit (AlgoliaSearchService,
+  // lib/core/search/) rather than a Firestore doc — only the fields
+  // actually synced into the index (see toAlgoliaUserRecord,
+  // functions/src/algoliaShared.ts) are populated; everything else
+  // (bio, gigs, verified, activityType, reviews, ...) gets the same
+  // "predates this field" default fromFirestore already uses elsewhere in
+  // this class. This is deliberately a partial/placeholder User: every
+  // screen that navigates to a search result (UserProfileScreen) already
+  // overlays currentUserProvider(user.id)'s live Firestore data over
+  // whatever User it was constructed with, so these placeholders get
+  // filled in with the real profile immediately — same mechanism already
+  // in place for any other stale/partial User passed into that screen.
+  //
+  // lastSeen/mostRecentStatusExpiresAt/mostRecentStatusCreatedAt are
+  // denormalized in the index as epoch millis (Algolia numeric filters/
+  // facets need plain numbers, not Timestamps) — rebuilt back into
+  // Timestamps here so isActuallyOnline/hasActiveStatus/
+  // hasUnviewedStatusFrom work identically off an Algolia-sourced User as
+  // off a Firestore-sourced one (needed by the group/event participant
+  // pickers that render a status ring + online dot straight from search
+  // results, unlike search_screen.dart's own tile which doesn't).
+  factory User.fromAlgoliaHit(Map<String, dynamic> hit) {
+    Timestamp? millisToTimestamp(dynamic millis) => millis == null
+        ? null
+        : Timestamp.fromMillisecondsSinceEpoch((millis as num).toInt());
+
+    return User(
+      id: (hit['objectID'] ?? hit['id'] ?? '') as String,
+      name: (hit['name'] ?? 'İstifadəçi') as String,
+      emoji: (hit['emoji'] ?? '🎵') as String,
+      instrument: (hit['instrument'] ?? '') as String,
+      city: (hit['city'] ?? '') as String,
+      rating: ((hit['rating'] ?? 0) as num).toDouble(),
+      reviews: 0,
+      available: (hit['available'] ?? false) as bool,
+      goldRing: false,
+      online: (hit['online'] ?? false) as bool,
+      lastSeen: millisToTimestamp(hit['lastSeen']),
+      bio: '',
+      photoURL: hit['photoURL'] as String?,
+      mostRecentStatusExpiresAt: millisToTimestamp(hit['mostRecentStatusExpiresAt']),
+      mostRecentStatusCreatedAt: millisToTimestamp(hit['mostRecentStatusCreatedAt']),
+    );
+  }
+
+  // Shared with SearchFilters.toAlgoliaFilters (filter_sheet.dart), which
+  // reimplements this same check as an Algolia numeric filter (Algolia
+  // records are static snapshots — there's no getter to call server-side,
+  // so the "is this recent enough" window has to be a query-time constant
+  // both places agree on).
+  static const Duration onlineGracePeriod = Duration(minutes: 2);
+
   // `online` alone isn't trustworthy — PresenceService's heartbeat pauses
   // (not clears) on backgrounding, so a long-backgrounded user can stay
   // `online: true` indefinitely with no further write until they return or
@@ -158,7 +210,7 @@ class User {
     if (!online) return false;
     final seen = lastSeen;
     if (seen == null) return false;
-    return DateTime.now().difference(seen.toDate()) < const Duration(minutes: 2);
+    return DateTime.now().difference(seen.toDate()) < onlineGracePeriod;
   }
 
   // Same shape as isActuallyOnline above: a denormalized field alone isn't
