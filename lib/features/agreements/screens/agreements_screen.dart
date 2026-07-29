@@ -2474,62 +2474,78 @@ class _EventFormModalState extends State<_EventFormModal> {
         color: kBg2,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      child: SingleChildScrollView(
-        controller: _scrollController,
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Text(
-                widget.existingEvent != null ? 'Tədbiri Redaktə et' : 'Yeni Tədbir',
-                style: GoogleFonts.nunito(
-                  fontSize: 18,
-                  color: kText,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            // Event type pills
-            Wrap(
-              spacing: 8,
-              children: _eventTypes.map((t) {
-                final sel = _type == t;
-                return GestureDetector(
-                  onTap: () => setState(() => _type = t),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: sel ? kGold : kBg3,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: sel ? kGold : kBorder),
-                    ),
-                    child: Text(
-                      t,
-                      style: TextStyle(
-                        color: sel ? const Color(0xFF1A0E00) : kMuted,
-                        fontWeight: FontWeight.w600,
-                      ),
+      // Header (title/type/date) and footer (Ləğv et/Saxla) are pinned —
+      // only the middle (wheel picker through notes) scrolls, in its own
+      // Expanded+SingleChildScrollView, instead of the previous single
+      // SingleChildScrollView wrapping the entire form (which scrolled the
+      // title and the save/cancel buttons out of view along with
+      // everything else).
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Text(
+                    widget.existingEvent != null ? 'Tədbiri Redaktə et' : 'Yeni Tədbir',
+                    style: GoogleFonts.nunito(
+                      fontSize: 18,
+                      color: kText,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 12),
-            Center(
-              child: Text(
-                '${_selectedDate.day} ${_azMonth(_selectedDate.month)} ${_selectedDate.year}',
-                style: const TextStyle(
-                  color: kGold,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
                 ),
-              ),
+                const SizedBox(height: 20),
+                // Event type pills
+                Wrap(
+                  spacing: 8,
+                  children: _eventTypes.map((t) {
+                    final sel = _type == t;
+                    return GestureDetector(
+                      onTap: () => setState(() => _type = t),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: sel ? kGold : kBg3,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: sel ? kGold : kBorder),
+                        ),
+                        child: Text(
+                          t,
+                          style: TextStyle(
+                            color: sel ? const Color(0xFF1A0E00) : kMuted,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 12),
+                Center(
+                  child: Text(
+                    '${_selectedDate.day} ${_azMonth(_selectedDate.month)} ${_selectedDate.year}',
+                    style: const TextStyle(
+                      color: kGold,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            // Inline wheel date/time picker
-            _WheelDateTimePicker(
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Inline wheel date/time picker
+                  _WheelDateTimePicker(
               value: _selectedDate,
               onChanged: (d) {
                 setState(() {
@@ -2863,8 +2879,16 @@ class _EventFormModalState extends State<_EventFormModal> {
                 ),
               ),
             ],
-            const SizedBox(height: 24),
-            Row(
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ),
+          // Footer — pinned as its own sibling of the Expanded scrollable
+          // above, not part of the scrolling content.
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
@@ -2912,9 +2936,8 @@ class _EventFormModalState extends State<_EventFormModal> {
                 ),
               ],
             ),
-            const SizedBox(height: 20),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
