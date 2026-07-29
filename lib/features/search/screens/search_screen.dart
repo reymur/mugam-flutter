@@ -12,6 +12,7 @@ import '../../user/screens/user_profile_screen.dart';
 import 'filter_sheet.dart';
 
 const Color _kOnGold = Color(0xFF1A0E00);
+const double _kSearchRowHeight = 46;
 
 // Server-side search via Algolia (AlgoliaSearchService) — name text search
 // plus city/instrument/rating/available/online filters are all combined
@@ -203,34 +204,47 @@ class _SearchScreenState extends State<SearchScreen> with WidgetsBindingObserver
               child: Row(
                 children: [
                   Expanded(
-                    child: TextField(
-                      controller: _nameController,
-                      style: const TextStyle(color: kText),
-                      decoration: InputDecoration(
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                        hintText: 'İstifadəçi axtar...',
-                        hintStyle: const TextStyle(color: kMuted),
-                        prefixIcon: const Icon(Icons.search, color: kMuted),
-                        suffixIcon: _nameController.text.isEmpty
-                            ? null
-                            : IconButton(
-                                icon: const Icon(Icons.close_rounded, color: kMuted),
-                                onPressed: _nameController.clear,
-                              ),
-                        filled: true,
-                        fillColor: kCard,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(color: kBorder),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(color: kBorder),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: const BorderSide(color: kGold, width: 1.5),
+                    // Fixed height + expands:true forces the field's actual
+                    // render box to exactly _kSearchRowHeight — deterministic,
+                    // unlike tuning contentPadding to approximate a target
+                    // height from font-dependent line-height math (the
+                    // filter button next to it is a literal fixed-size
+                    // Container, not derived from text metrics at all).
+                    child: SizedBox(
+                      height: _kSearchRowHeight,
+                      child: TextField(
+                        controller: _nameController,
+                        style: const TextStyle(color: kText),
+                        expands: true,
+                        maxLines: null,
+                        minLines: null,
+                        textAlignVertical: TextAlignVertical.center,
+                        decoration: InputDecoration(
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                          hintText: 'İstifadəçi axtar...',
+                          hintStyle: const TextStyle(color: kMuted),
+                          prefixIcon: const Icon(Icons.search, color: kMuted),
+                          suffixIcon: _nameController.text.isEmpty
+                              ? null
+                              : IconButton(
+                                  icon: const Icon(Icons.close_rounded, color: kMuted),
+                                  onPressed: _nameController.clear,
+                                ),
+                          filled: true,
+                          fillColor: kCard,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(color: kBorder),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(color: kBorder),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(color: kGold, width: 1.5),
+                          ),
                         ),
                       ),
                     ),
@@ -240,8 +254,8 @@ class _SearchScreenState extends State<SearchScreen> with WidgetsBindingObserver
                     onTap: _openFilters,
                     borderRadius: BorderRadius.circular(14),
                     child: Container(
-                      width: 46,
-                      height: 46,
+                      width: _kSearchRowHeight,
+                      height: _kSearchRowHeight,
                       decoration: BoxDecoration(
                         color: activeFilterCount > 0 ? kGold : kCard,
                         borderRadius: BorderRadius.circular(14),

@@ -18,6 +18,7 @@ import '../widgets/status_feed_bar.dart';
 import 'create_group_screen.dart';
 
 const Color _kOnGold = Color(0xFF1A0E00);
+const double _kSearchRowHeight = 46;
 
 class ChatsScreen extends ConsumerStatefulWidget {
   const ChatsScreen({super.key});
@@ -176,27 +177,41 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    style: const TextStyle(color: kText),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                      filled: true,
-                      fillColor: kBg3,
-                      hintText: '🔍 Axtar...',
-                      hintStyle: const TextStyle(color: kMuted),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: kBorder),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: kBorder),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: kGold),
+                  // Fixed height + expands:true forces the field's actual
+                  // render box to exactly _kSearchRowHeight — deterministic,
+                  // unlike tuning contentPadding to approximate a target
+                  // height from font-dependent line-height math (only ever
+                  // an estimate, and the filter button next to it is a
+                  // literal fixed-size Container, not derived from text
+                  // metrics at all).
+                  child: SizedBox(
+                    height: _kSearchRowHeight,
+                    child: TextField(
+                      controller: _searchController,
+                      style: const TextStyle(color: kText),
+                      expands: true,
+                      maxLines: null,
+                      minLines: null,
+                      textAlignVertical: TextAlignVertical.center,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14),
+                        filled: true,
+                        fillColor: kBg3,
+                        hintText: '🔍 Axtar...',
+                        hintStyle: const TextStyle(color: kMuted),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: kBorder),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: kBorder),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: kGold),
+                        ),
                       ),
                     ),
                   ),
@@ -206,8 +221,8 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
                   onTap: _openFilters,
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
-                    width: 46,
-                    height: 46,
+                    width: _kSearchRowHeight,
+                    height: _kSearchRowHeight,
                     decoration: BoxDecoration(
                       color: _filters.activeCount > 0 ? kGold : kBg3,
                       borderRadius: BorderRadius.circular(12),
@@ -303,6 +318,17 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
                       }
 
                       return ListView.builder(
+                        // Explicit (even though zero) — BoxScrollView auto-
+                        // applies MediaQuery.padding.top when padding is
+                        // null (scroll_view.dart's buildSlivers), and
+                        // Scaffold does NOT zero that padding out for body
+                        // just because there's an AppBar (only extendBody/
+                        // extendBodyBehindAppBar do that — scaffold.dart's
+                        // _BodyBuilder). Left implicit, this list silently
+                        // added the status-bar inset as extra top padding
+                        // on top of what the AppBar above it already
+                        // cleared, showing up as a large empty gap.
+                        padding: EdgeInsets.zero,
                         itemCount: chats.length,
                         itemBuilder: (context, index) {
                           final chat = chats[index];
@@ -350,6 +376,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen> {
 
         return ListView.builder(
           controller: _searchScrollController,
+          padding: EdgeInsets.zero, // see the chats list's own comment above
           itemCount: results.length + (_searchCtrl.isLoadingMore ? 1 : 0),
           itemBuilder: (context, index) {
             if (index >= results.length) {
