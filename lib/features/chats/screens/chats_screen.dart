@@ -280,7 +280,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                             // cloud.
                             if (t < 0.95)
                               Opacity(
-                                opacity: ((1 - t) * 0.7).clamp(0.0, 1.0),
+                                opacity: ((1 - t) * 0.55).clamp(0.0, 1.0),
                                 child: Stack(
                                   alignment: Alignment.center,
                                   children: [
