@@ -880,6 +880,70 @@ export const onFriendRequestUpdated = onDocumentUpdated(
   },
 );
 
+// "Razıyam" — the recipient of an "İş təklif et" job offer accepting it.
+// The client (FirestoreService.acceptJobOffer) only ever flags
+// recipientAgreed on the chat doc; everything else happens here, server-
+// side with the Admin SDK, specifically because personalEvents' own create
+// rule requires the creator to become ownerUid, and ownerUid must stay the
+// INITIATOR (jobOfferBy) here, not the accepting recipient — a client-side
+// create() from the recipient's own device could never satisfy that rule.
+//
+// Deliberately does NOT react to cancelledBy (mugam-flutter has no
+// separate "agreements" collection to log a cancellation into, unlike
+// mugam-v2 — FirestoreService.cancelChat's own chat-doc write, completed:
+// true + cancelledBy, is the entire cancel path; no PersonalEvent is ever
+// created for a cancelled offer).
+export const onChatUpdated = onDocumentUpdated(
+  "chats/{chatId}",
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after) return;
+    if (before.recipientAgreed === true || after.recipientAgreed !== true) return;
+
+    const initiatorUid: string | undefined = after.jobOfferBy;
+    const members: string[] = after.members ?? [];
+    const recipientUid = members.find((uid) => uid !== initiatorUid);
+    if (!initiatorUid || !recipientUid) return;
+
+    const recipientSnap = await db.collection("users").doc(recipientUid).get();
+    const recipientName: string =
+      recipientSnap.data()?.name ?? recipientSnap.data()?.displayName ?? "İstifadəçi";
+
+    await db.collection("personalEvents").add({
+      ownerUid: initiatorUid,
+      date: after.eventDate ?? null,
+      type: after.eventType ?? null,
+      location: after.eventLocation ?? null,
+      notes: after.eventNotes ?? null,
+      // Field key is "musicians", not "participantUids" — that's what
+      // PersonalEvent.fromFirestore actually parses (models.dart) and what
+      // firestore.rules' personalEvents read-rule checks; writing
+      // "participantUids" here would leave both parties unable to see
+      // this event at all.
+      musicians: [initiatorUid, recipientUid],
+      isAgree: true,
+      agreementChatId: event.params.chatId,
+      partnerUid: recipientUid,
+      partnerName: recipientName,
+      status: "agreed",
+      cancelledBy: null,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    await db.collection("chats").doc(event.params.chatId).update({
+      completed: true,
+    });
+
+    await sendPushToUid(
+      initiatorUid,
+      "İş təklifi qəbul edildi",
+      `${recipientName} təklifinizlə razılaşdı`,
+      { type: "job_offer_agreed", chatId: event.params.chatId },
+    );
+  },
+);
+
 export const onFriendRequestDeleted = onDocumentDeleted(
   "friendRequests/{requestId}",
   async (event) => {

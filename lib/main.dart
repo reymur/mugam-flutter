@@ -8,6 +8,7 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 import 'core/cache/message_cache_service.dart';
@@ -72,6 +73,11 @@ Future<void> main() async {
 
 Future<void> _mainImpl() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Required before any DateFormat(..., 'az') call (chat_screen.dart's
+  // job-offer banner, agreements_screen.dart's event dates) — intl throws
+  // LocaleDataException otherwise, since 'az' locale data isn't bundled by
+  // default the way 'en' is.
+  await initializeDateFormatting('az');
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   // Flutter-framework errors (failed builds, layout, etc.) go through

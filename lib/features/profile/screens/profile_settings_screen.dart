@@ -199,11 +199,26 @@ class ProfileSettingsScreen extends ConsumerWidget {
 
     final uid = FirebaseAuth.instance.currentUser?.uid;
     final service = ref.read(firestoreServiceProvider);
+    // Best-effort presence/active-user cleanup — must never block the
+    // actual sign-out below. Confirmed on-device: a slow/stuck network
+    // left one of these awaits hanging indefinitely with no error ever
+    // surfacing, making "Çıxış" look completely unresponsive since neither
+    // of these calls had its own timeout. Each already logs its own
+    // failure to Crashlytics internally, so swallowing here doesn't lose
+    // that signal.
+    if (uid != null && uid.isNotEmpty) {
+      try {
+        await service
+            .setUserPresence(uid, online: false)
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {}
+      try {
+        await service
+            .clearActiveUserFromAllChats(uid)
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {}
+    }
     try {
-      if (uid != null && uid.isNotEmpty) {
-        await service.setUserPresence(uid, online: false);
-        await service.clearActiveUserFromAllChats(uid);
-      }
       await ref.read(messageCacheServiceProvider).clearAll();
       await AuthService().logout();
       if (context.mounted) context.go('/login');

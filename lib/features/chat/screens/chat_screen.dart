@@ -6,7 +6,7 @@ import 'package:audio_session/audio_session.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -37,7 +37,7 @@ import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
-import '../../agreements/screens/agreements_screen.dart';
+import '../../agreements/screens/agreements_screen.dart' show agreementsTabRequestProvider;
 import '../../status/screens/status_viewer_screen.dart';
 import 'about_contact_screen.dart';
 import 'chat_attachment_viewer_screen.dart';
@@ -45,6 +45,7 @@ import 'custom_camera_backup/camera_capture_screen.dart';
 import 'file_message_widgets.dart';
 import 'forward_sheet.dart';
 import 'group_info_screen.dart';
+import 'job_offer_date_sheet.dart';
 import 'location_message_widgets.dart';
 import 'location_picker_screen.dart';
 import 'media_thumbnail_cache.dart';
@@ -206,6 +207,35 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   late final FirestoreService _firestoreService;
   late final MessageCacheService _messageCacheService;
+  // Mirrored from chatMetaAsync at the top of build() (see there) — read by
+  // the composer's typing-throttle listener below, which fires outside
+  // build()'s own scope. Typing writes are scoped ONLY to driving the
+  // "İş təklif et" negotiation banners' status line (see Chat.typing's own
+  // doc comment in models.dart) — no active offer, no writes at all.
+  bool _jobOfferActive = false;
+  Timer? _typingThrottleTimer;
+  // Explicit baseline for the recipientAgreed-just-flipped-true detection
+  // below (see build()'s ref.listen) — null until this screen's own
+  // chatMetaAsync has actually loaded once. chatMetaProvider isn't
+  // autoDispose, so relying on ref.listen's own (previous, next) pair
+  // wasn't reliable: a chat with pre-existing recipientAgreed:true history
+  // could deliver `previous == null` on this screen's very first callback
+  // invocation regardless of whether the provider had been kept warm from
+  // earlier use elsewhere in the app, wrongly reading as "just now agreed"
+  // — confirmed on-device (opening any already-agreed chat immediately
+  // auto-redirected to Müqavilələr). Tracking our own explicit baseline,
+  // captured once real data first arrives, sidesteps that entirely.
+  bool? _recipientAgreedBaseline;
+  // Same baseline pattern, for the "recipient tapped Razıyam before a date
+  // existed" nudge to the initiator (see build()'s ref.listen and
+  // mugam-v2's own DirectChat.tsx prevWaitingForDateRef for the reference
+  // behavior this mirrors).
+  bool? _waitingForDateBaseline;
+  // Mirrored from build() (same plain-field-mutation pattern as
+  // _jobOfferActive above) so _recipientTappedAcceptTooEarly and the
+  // ref.listen callbacks below — both outside build()'s own scope — can
+  // read the other party's name for the centered alert dialogs.
+  User? _otherUserCached;
 
   @override
   void initState() {
@@ -216,6 +246,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final hasText = _messageController.text.trim().isNotEmpty;
       if (hasText != _hasText) {
         setState(() => _hasText = hasText);
+      }
+      if (_jobOfferActive && hasText && _typingThrottleTimer == null) {
+        final typingUid = FirebaseAuth.instance.currentUser?.uid;
+        if (typingUid != null) {
+          _firestoreService.setTyping(chatId: widget.chatId, uid: typingUid);
+        }
+        _typingThrottleTimer = Timer(const Duration(seconds: 3), () {
+          _typingThrottleTimer = null;
+        });
       }
     });
     // Keep the last message visible once the keyboard opens, matching
@@ -289,6 +328,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _audioRecorder.dispose();
     _recordingTimer?.cancel();
     _presenceRefreshTimer?.cancel();
+    _typingThrottleTimer?.cancel();
     _amplitudeSub?.cancel();
     _pulseController.dispose();
     _highlightTimer?.cancel();
@@ -536,7 +576,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // zero-height rect, not its full top-to-bottom bounds) plus a small extra
   // downward offset opens the menu clearly underneath the whole icon row
   // instead of overlapping it.
-  Future<void> _showChatMenu(BuildContext context, String otherUid) async {
+  Future<void> _showChatMenu(
+    BuildContext context, {
+    required bool hasActiveJobOffer,
+  }) async {
     final button = _moreMenuButtonKey.currentContext?.findRenderObject() as RenderBox?;
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
     if (button == null) return;
@@ -564,6 +607,49 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // of how close their colors are, with the tint/border/shadow as a
     // second, color-based cue on top.
     const menuRadius = 14.0;
+    // The glow/shadow lives on THIS outer, unclipped Container — BoxShadow
+    // paints beyond its own box's bounds, but putting it on the container
+    // INSIDE ClipRRect instead clips away anything painted past the
+    // rounded-rect edge, glow included. ClipRRect only wraps the
+    // blur+tint layer, which does need to be clipped to rounded corners.
+    Widget glassItem(Widget child) => Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(menuRadius),
+        // Soft gold glow, not a hard outline — a wide-blurred, slightly-
+        // spread shadow radiating evenly on all sides (no offset) reads as
+        // light around the card rather than a drawn border. Layered under
+        // the black shadow below, which still gives it depth against the
+        // chat behind it.
+        boxShadow: [
+          BoxShadow(
+            // kGold2 — the brighter gold variant (colors.dart) — rather
+            // than upping kGold's alpha alone: same size/spread as before,
+            // just a more vivid gold.
+            color: kGold2.withAlpha(110),
+            blurRadius: 20,
+            spreadRadius: 2,
+          ),
+          BoxShadow(
+            color: Colors.black.withAlpha(140),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(menuRadius),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            decoration: BoxDecoration(color: kCard.withAlpha(190)),
+            child: child,
+          ),
+        ),
+      ),
+    );
     await showMenu<void>(
       context: context,
       position: position,
@@ -572,63 +658,328 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       shadowColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(menuRadius)),
       items: [
-        PopupMenuItem<void>(
-          padding: EdgeInsets.zero,
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => AgreementsScreen(initialParticipantUid: otherUid),
-            ),
-          ),
-          // The glow/shadow lives on THIS outer, unclipped Container —
-          // BoxShadow paints beyond its own box's bounds, but the previous
-          // version put it on the container INSIDE ClipRRect, which clips
-          // away anything painted past the rounded-rect edge, glow
-          // included (that's why no glow showed at all). ClipRRect now
-          // only wraps the blur+tint layer, which does need to be clipped
-          // to rounded corners.
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(menuRadius),
-              // Soft gold glow, not a hard outline — a wide-blurred,
-              // slightly-spread shadow radiating evenly on all sides (no
-              // offset) reads as light around the card rather than a drawn
-              // border. Layered under the black shadow below, which still
-              // gives it depth against the chat behind it.
-              boxShadow: [
-                BoxShadow(
-                  // kGold2 — the brighter gold variant (colors.dart) —
-                  // rather than upping kGold's alpha alone: same size/
-                  // spread as before, just a more vivid gold.
-                  color: kGold2.withAlpha(110),
-                  blurRadius: 20,
-                  spreadRadius: 2,
-                ),
-                BoxShadow(
-                  color: Colors.black.withAlpha(140),
-                  blurRadius: 18,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(menuRadius),
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                  decoration: BoxDecoration(color: kCard.withAlpha(190)),
-                  child: const Text(
-                    'İş yazdır',
+        // Hidden once a job offer is already pending — mirrors mugam-v2's
+        // own {!jobOfferBy && (...)} gating; the negotiation banners (see
+        // build()) take over from here instead.
+        if (!hasActiveJobOffer)
+          PopupMenuItem<void>(
+            padding: EdgeInsets.zero,
+            onTap: _proposeJobOffer,
+            child: glassItem(
+              const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.event_available, color: kGold, size: 18),
+                  SizedBox(width: 10),
+                  Text(
+                    'İş təklif et',
                     style: TextStyle(color: kText, fontWeight: FontWeight.w600),
                   ),
-                ),
+                ],
               ),
+            ),
+          ),
+        PopupMenuItem<void>(
+          padding: EdgeInsets.zero,
+          onTap: _confirmClearChat,
+          child: glassItem(
+            const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.delete_outline, color: kRed, size: 18),
+                SizedBox(width: 10),
+                Text(
+                  'Çatı təmizlə',
+                  style: TextStyle(color: kRed, fontWeight: FontWeight.w600),
+                ),
+              ],
             ),
           ),
         ),
       ],
+    );
+  }
+
+  void _proposeJobOffer() {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null) return;
+    _firestoreService.setJobOffer(chatId: widget.chatId, uid: currentUid);
+    _showCopySnackBar('📅 İş təklifi göndərildi');
+  }
+
+  // "Çatı təmizlə" — per-user only (FirestoreService.clearChatForUser):
+  // hides every message up to now for THIS uid alone, never touching the
+  // other party's view and never deleting anything server-side.
+  Future<void> _confirmClearChat() async {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        title: const Text('Çatı təmizlə', style: TextStyle(color: kText)),
+        content: const Text(
+          'Bütün mesajlar sizin üçün silinəcək. Davam etmək istəyirsiniz?',
+          style: TextStyle(color: kMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Ləğv et', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Təmizlə', style: TextStyle(color: kRed)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _firestoreService.clearChatForUser(
+      chatId: widget.chatId,
+      uid: currentUid,
+    );
+    if (mounted) _showCopySnackBar('🗑 Çat təmizləndi');
+  }
+
+  void _openJobOfferDateSheet({
+    DateTime? initialDate,
+    String? initialType,
+    String? initialLocation,
+    String? initialNotes,
+  }) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kBg2,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => JobOfferDateSheet(
+        initialDate: initialDate,
+        initialType: initialType,
+        initialLocation: initialLocation,
+        initialNotes: initialNotes,
+        onSave: (date, type, location, notes) {
+          _firestoreService.saveChatEventDate(
+            chatId: widget.chatId,
+            eventDate: date,
+            eventType: type,
+            eventLocation: location,
+            eventNotes: notes,
+          );
+        },
+      ),
+    );
+  }
+
+  // Cancelling only resets the negotiation fields (see
+  // FirestoreService.cancelChat) — nothing was agreed, so the chat itself
+  // stays open and visible; unlike _acceptJobOffer below, this deliberately
+  // does NOT pop the screen.
+  Future<void> _cancelJobOffer() async {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null) return;
+    await _firestoreService.cancelChat(chatId: widget.chatId, uid: currentUid);
+    if (!mounted) return;
+    _showCopySnackBar('İmtina edildi');
+  }
+
+  // The toast + redirect to Müqavilələr is handled uniformly for BOTH
+  // parties by the recipientAgreed listener in build() below (fires here on
+  // this very write, and on the initiator's own screen the moment their
+  // live chatMetaProvider stream picks it up) — this just makes the write.
+  Future<void> _acceptJobOffer() async {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null) return;
+    await _firestoreService.acceptJobOffer(
+      chatId: widget.chatId,
+      uid: currentUid,
+    );
+  }
+
+  void _recipientTappedAcceptTooEarly() {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null) return;
+    _firestoreService.setWaitingForDate(chatId: widget.chatId, waiting: true);
+    // otherUser here is the INITIATOR (viewed from the recipient's own
+    // side) — mirrors mugam-v2's own synchronous Alert.alert on this exact
+    // tap (DirectChat.tsx's Razıyam onPress, ~line 998).
+    _showCenteredAlert(
+      prefix: '',
+      highlightedName: _otherUserCached?.name ?? '',
+      suffix: ' hələ tədbir tarixini seçməyib ⏳',
+    );
+  }
+
+  // Centered alert dialog shared by both "İş təklif et" notification
+  // moments below — same visual language (kBg2/kGold) as this file's other
+  // dialogs (e.g. "Çatı təmizlə"'s confirm), just with an optional
+  // gold-highlighted name segment and an optional post-dismiss action.
+  Future<void> _showCenteredAlert({
+    required String prefix,
+    String? highlightedName,
+    String suffix = '',
+    VoidCallback? onOk,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        content: Text.rich(
+          TextSpan(
+            style: const TextStyle(color: kText, fontSize: 15),
+            children: [
+              TextSpan(text: prefix),
+              if (highlightedName != null)
+                TextSpan(
+                  text: highlightedName,
+                  style: const TextStyle(
+                    color: kGold,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              TextSpan(text: suffix),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              onOk?.call();
+            },
+            child: const Text('Tamam', style: TextStyle(color: kGold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // "İş təklif et" negotiation banner — shown only in a 1:1 chat while
+  // jobOfferBy is set (see the AppBar-gated call site in build()). Mirrors
+  // mugam-v2's initiator/recipient split: the initiator gets "Tarix seç/
+  // dəyiş" (opens JobOfferDateSheet), the recipient gets "Razıyam" (disabled
+  // until a date exists — tapping early just flags waitingForDate, same as
+  // mugam-v2's own early-tap alert), both get "İmtina".
+  //
+  // Read-status uses the existing lastReadAt.{uid} (no new plumbing);
+  // typing uses the new typing.{uid} field, considered "live" only within
+  // the last 5s of its own timestamp (there's no explicit stop-typing
+  // event, only fresher timestamps, so staleness is what marks it over).
+  Widget _buildJobOfferBanner({
+    required String jobOfferBy,
+    required DateTime? jobOfferAt,
+    required DateTime? eventDate,
+    required String? eventType,
+    required String? eventLocation,
+    required String? eventNotes,
+    required bool waitingForDate,
+    required Map<String, dynamic> lastReadAt,
+    required Map<String, dynamic> typingMap,
+    required String currentUid,
+    required String otherUidResolved,
+  }) {
+    final isInitiator = jobOfferBy == currentUid;
+
+    final otherTypingAt = DateTime.tryParse(
+      typingMap[otherUidResolved]?.toString() ?? '',
+    );
+    final isOtherTyping =
+        otherTypingAt != null &&
+        DateTime.now().difference(otherTypingAt) < const Duration(seconds: 5);
+    final otherReadAt = DateTime.tryParse(
+      lastReadAt[otherUidResolved]?.toString() ?? '',
+    );
+    final hasOtherRead =
+        jobOfferAt != null &&
+        otherReadAt != null &&
+        otherReadAt.isAfter(jobOfferAt);
+    // Recipient tapped "Razıyam" before a date existed — only meaningful
+    // to show the initiator (mugam-v2's own setWaitingForDate nudge).
+    final statusText = (isInitiator && waitingForDate)
+        ? '🤝 cavab gözləyir'
+        : (isOtherTyping
+              ? '✍️ yazır...'
+              : (hasOtherRead ? '👁 baxdı' : '⏳ hələ baxmayıb'));
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: kGold.withAlpha(20),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kGold.withAlpha(80)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (eventDate != null) ...[
+            Text(
+              '📅 ${eventType ?? ''} — ${DateFormat('d MMMM yyyy, HH:mm', 'az').format(eventDate)}',
+              style: const TextStyle(color: kGold, fontWeight: FontWeight.w600),
+            ),
+            if (eventLocation != null && eventLocation.isNotEmpty)
+              Text(
+                '📍 $eventLocation',
+                style: const TextStyle(color: kGold, fontWeight: FontWeight.w600),
+              ),
+            const SizedBox(height: 8),
+          ],
+          Text(statusText, style: const TextStyle(color: kMuted, fontSize: 13)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: isInitiator
+                    ? OutlinedButton(
+                        onPressed: () => _openJobOfferDateSheet(
+                          initialDate: eventDate,
+                          initialType: eventType,
+                          initialLocation: eventLocation,
+                          initialNotes: eventNotes,
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: kGold),
+                        ),
+                        child: Text(
+                          eventDate == null ? '📅 Tarix seç' : '📅 Tarix dəyiş',
+                          style: const TextStyle(color: kGold),
+                        ),
+                      )
+                    : ElevatedButton(
+                        onPressed: eventDate == null
+                            ? _recipientTappedAcceptTooEarly
+                            : _acceptJobOffer,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: eventDate == null ? kBg3 : kGold,
+                        ),
+                        child: Text(
+                          '✅ Razıyam',
+                          style: TextStyle(
+                            color: eventDate == null ? kMuted : Colors.black,
+                          ),
+                        ),
+                      ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _cancelJobOffer,
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: kRed),
+                  ),
+                  child: const Text(
+                    '✖ İmtina',
+                    style: TextStyle(color: kRed),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -3080,6 +3431,81 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     });
 
     final chatMetaAsync = ref.watch(chatMetaProvider(widget.chatId));
+    // Establishes both one-shot baselines the first time real data has
+    // actually arrived — a plain field mutation during build(), same
+    // pattern as _jobOfferActive above, not a setState (this alone must
+    // never trigger a rebuild).
+    if (_recipientAgreedBaseline == null && chatMetaAsync.hasValue) {
+      _recipientAgreedBaseline =
+          chatMetaAsync.value?['recipientAgreed'] as bool? ?? false;
+    }
+    if (_waitingForDateBaseline == null && chatMetaAsync.hasValue) {
+      _waitingForDateBaseline =
+          chatMetaAsync.value?['waitingForDate'] as bool? ?? false;
+    }
+    // Fires for whichever side (initiator or recipient) has this chat open
+    // the moment recipientAgreed flips true — the recipient's own
+    // acceptJobOffer write lands here too (this same screen watches its own
+    // write back), so this is the ONE place both parties' "✅ ... qəbul
+    // etdi" dialog + redirect into Müqavilələr's matching sub-tab happens,
+    // rather than duplicating it in _acceptJobOffer itself. Also fires the
+    // initiator-only "{recipient} sizdən tarix gözləyir" nudge when the
+    // recipient taps Razıyam before a date exists — mirrors mugam-v2's
+    // DirectChat.tsx prevWaitingForDateRef effect, including resetting
+    // waitingForDate back to false right after so the next early tap
+    // notifies again.
+    ref.listen(chatMetaProvider(widget.chatId), (previous, next) {
+      final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+      final offerBy = next.value?['jobOfferBy'] as String?;
+      final isInitiator = offerBy == myUid;
+
+      final waitingBaseline = _waitingForDateBaseline;
+      if (waitingBaseline != null) {
+        final nextWaiting = next.value?['waitingForDate'] as bool? ?? false;
+        if (!waitingBaseline && nextWaiting && isInitiator) {
+          _waitingForDateBaseline = false; // stays "armed" for the next tap
+          _showCenteredAlert(
+            prefix: '',
+            highlightedName: _otherUserCached?.name ?? '',
+            suffix: ' sizdən tarix gözləyir 📅',
+          );
+          _firestoreService.setWaitingForDate(
+            chatId: widget.chatId,
+            waiting: false,
+          );
+        } else {
+          _waitingForDateBaseline = nextWaiting;
+        }
+      }
+
+      final agreedBaseline = _recipientAgreedBaseline;
+      if (agreedBaseline == null) return;
+      final nextAgreed = next.value?['recipientAgreed'] as bool? ?? false;
+      if (agreedBaseline || !nextAgreed) {
+        // Re-arm for a second "İş təklif et" round on this same screen
+        // instance: setJobOffer resets recipientAgreed back to false
+        // server-side when a new round starts, so the baseline must follow
+        // it back down — otherwise, once true, this listener would never
+        // fire again for this mounted ChatScreen (agreedBaseline stayed
+        // true forever, short-circuiting every later transition too).
+        _recipientAgreedBaseline = nextAgreed;
+        return;
+      }
+      _recipientAgreedBaseline = true; // mark handled — never fire twice
+      final otherName = _otherUserCached?.name ?? '';
+      _showCenteredAlert(
+        prefix: isInitiator ? '✅ ' : '✅ Siz razılaşdınız — ',
+        highlightedName: otherName,
+        suffix: isInitiator ? ' təklifinizi qəbul etdi!' : '',
+        onOk: () {
+          if (!mounted) return;
+          ref
+              .read(agreementsTabRequestProvider.notifier)
+              .set(isInitiator ? 'outgoing' : 'incoming');
+          context.go('/agreements');
+        },
+      );
+    });
     final deliveredTo =
         chatMetaAsync.value?['deliveredTo'] as Map<String, dynamic>? ?? {};
     final lastReadMsgId =
@@ -3092,6 +3518,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final otherUidResolved = (otherUid != null && otherUid.isNotEmpty)
         ? otherUid
         : null;
+    // "İş təklif et" negotiation state — see watchChatMeta's own comment on
+    // why clearedBy is deliberately absent from this projection but these
+    // fields are present.
+    final jobOfferBy = chatMetaAsync.value?['jobOfferBy'] as String?;
+    final jobOfferAtRaw = chatMetaAsync.value?['jobOfferAt'] as String?;
+    final jobOfferAt = jobOfferAtRaw != null
+        ? DateTime.tryParse(jobOfferAtRaw)
+        : null;
+    final eventDateRaw = chatMetaAsync.value?['eventDate'] as String?;
+    final eventDate = eventDateRaw != null
+        ? DateTime.tryParse(eventDateRaw)
+        : null;
+    final eventType = chatMetaAsync.value?['eventType'] as String?;
+    final eventLocation = chatMetaAsync.value?['eventLocation'] as String?;
+    final eventNotes = chatMetaAsync.value?['eventNotes'] as String?;
+    final waitingForDate =
+        chatMetaAsync.value?['waitingForDate'] as bool? ?? false;
+    final lastReadAt =
+        chatMetaAsync.value?['lastReadAt'] as Map<String, dynamic>? ?? {};
+    final typingMap =
+        chatMetaAsync.value?['typing'] as Map<String, dynamic>? ?? {};
+    // Read by the composer's typing-throttle listener (initState) outside
+    // build()'s own scope — a plain field write, not setState, same pattern
+    // as _messagesPendingCacheFlush above.
+    _jobOfferActive = jobOfferBy != null;
     // mugam-v2 writes a 1:1 chat's `name` field from the initiator's
     // perspective at creation time (the other participant's name) and never
     // updates it — the recipient reading it back sees their OWN name
@@ -3100,6 +3551,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final otherUser = otherUidResolved != null
         ? ref.watch(currentUserProvider(otherUidResolved)).value
         : null;
+    _otherUserCached = otherUser;
     return Scaffold(
       appBar: AppBar(
         backgroundColor: kBg2,
@@ -3114,9 +3566,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             }
           },
         ),
-        title: chatDataAsync.when(
-          data: (data) {
-            final isGroup = data?['isGroup'] == true;
+        title: Builder(
+          builder: (context) {
+            // Prefer chatMetaAsync (a live stream, already watched above
+            // for otherUidResolved/deliveredTo/etc.) over chatDataAsync (a
+            // separate one-time fetch) — the title used to sit on a "..."
+            // placeholder until BOTH independently resolved, even once
+            // chatMetaAsync's own snapshot (and therefore the AppBar's
+            // action icons, gated on the same otherUidResolved) had
+            // already arrived. Falls back to chatDataAsync only for the
+            // brief window before chatMetaAsync's very first snapshot.
+            final data = chatMetaAsync.value ?? chatDataAsync.value;
+            if (data == null) {
+              return const Text('...', style: TextStyle(color: kText));
+            }
+            final isGroup = data['isGroup'] == true;
             // Groups: prefer the live chatMetaProvider stream (already
             // watched above for deliveredTo/lastReadMsgId/members) so a
             // rename by an admin shows up here immediately instead of only
@@ -3128,9 +3592,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 ? otherUser.name
                 : (isGroup
                       ? (chatMetaAsync.value?['name'] as String? ??
-                            data?['name'] ??
+                            data['name'] ??
                             'Chat')
-                      : (data?['name'] ?? 'Chat'));
+                      : (data['name'] ?? 'Chat'));
             final titleColumn = Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
@@ -3229,12 +3693,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           color: kBg3,
                           shape: BoxShape.circle,
                           border: Border.all(color: kBorder, width: 1.5),
+                          // This small AppBar avatar never actually wired
+                          // up the photo — only ever showed the emoji
+                          // fallback below, even when otherUser.photoURL
+                          // was set. Same DecorationImage pattern
+                          // chats_screen.dart's own list-row avatar already
+                          // uses correctly.
+                          image: otherUser?.photoURL != null
+                              ? DecorationImage(
+                                  image: NetworkImage(otherUser!.photoURL!),
+                                  fit: BoxFit.cover,
+                                )
+                              : null,
                         ),
                         alignment: Alignment.center,
-                        child: Text(
-                          otherUser?.emoji ?? '🎵',
-                          style: const TextStyle(fontSize: 16),
-                        ),
+                        child: otherUser?.photoURL == null
+                            ? Text(
+                                otherUser?.emoji ?? '🎵',
+                                style: const TextStyle(fontSize: 16),
+                              )
+                            : null,
                       ),
                     ),
             );
@@ -3258,12 +3736,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               ),
             );
           },
-          loading: () => const Text('...', style: TextStyle(color: kText)),
-          error: (_, _) => const Text('Chat', style: TextStyle(color: kText)),
         ),
         actions: [
           if (!_selectionMode &&
-              chatDataAsync.value?['isGroup'] != true &&
+              (chatMetaAsync.value?['isGroup'] ?? chatDataAsync.value?['isGroup']) != true &&
               otherUidResolved != null) ...[
             IconButton(
               icon: const Icon(Icons.videocam, color: kGold),
@@ -3273,11 +3749,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               icon: const Icon(Icons.call, color: kGold),
               onPressed: _startingCall ? null : () => _startCall(otherUidResolved, CallType.audio),
             ),
-            // "İş yazdır" — jumps straight into AgreementsScreen's own
-            // create-event sheet with this chat partner pre-selected as
-            // participant (see AgreementsScreen.initialParticipantUid).
-            // Only makes sense for a 1:1 chat (an agreement is between this
-            // user and exactly one other party) — groups get no equivalent.
+            // "..." → İş təklif et / Çatı təmizlə. Only makes sense for a
+            // 1:1 chat — groups get no equivalent.
             //
             // A plain IconButton + manual showMenu (anchored via
             // _moreMenuButtonKey) rather than PopupMenuButton's own built-in
@@ -3288,7 +3761,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             IconButton(
               key: _moreMenuButtonKey,
               icon: const Icon(Icons.more_vert, color: kGold),
-              onPressed: () => _showChatMenu(context, otherUidResolved),
+              onPressed: () => _showChatMenu(
+                context,
+                hasActiveJobOffer: jobOfferBy != null,
+              ),
             ),
           ],
           if (_selectionMode)
@@ -3301,6 +3777,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       backgroundColor: kBg,
       body: Column(
         children: [
+          if ((chatMetaAsync.value?['isGroup'] ?? chatDataAsync.value?['isGroup']) != true &&
+              otherUidResolved != null &&
+              jobOfferBy != null &&
+              currentUid.isNotEmpty)
+            _buildJobOfferBanner(
+              jobOfferBy: jobOfferBy,
+              jobOfferAt: jobOfferAt,
+              eventDate: eventDate,
+              eventType: eventType,
+              eventLocation: eventLocation,
+              eventNotes: eventNotes,
+              waitingForDate: waitingForDate,
+              lastReadAt: lastReadAt,
+              typingMap: typingMap,
+              currentUid: currentUid,
+              otherUidResolved: otherUidResolved,
+            ),
           Expanded(
             child: Listener(
               behavior: HitTestBehavior.opaque,

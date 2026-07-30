@@ -7,6 +7,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/models/activity_type.dart';
 import 'models.dart';
@@ -23,6 +24,18 @@ class FirestoreService {
     region: 'europe-west3',
   );
 
+  // Applied to the simple, single-purpose chat/presence write helpers below
+  // (markChatAsDelivered through setTyping) — none of them previously had
+  // any timeout at all, unlike the pending-message queue's own 20s bound.
+  // Confirmed on-device as a real, severe gap: a single stuck local
+  // Firestore write (setUserPresence, in this case — see its own comment)
+  // hung forever with no error, silently freezing that one piece of state
+  // (lastSeen) indefinitely instead of failing visibly and letting the
+  // caller/Crashlytics know. 10s is generous for a single-document update
+  // under normal conditions, short enough that a genuinely stuck write
+  // doesn't block anything user-facing for long.
+  static const Duration _writeTimeout = Duration(seconds: 10);
+
   Future<User?> fetchUserById(String uid) async {
     final doc = await _db.collection('users').doc(uid).get();
     if (!doc.exists) return null;
@@ -30,9 +43,19 @@ class FirestoreService {
   }
 
   Stream<User?> watchUserById(String uid) {
-    return _db.collection('users').doc(uid).snapshots().map(
-      (doc) => doc.exists ? User.fromFirestore(doc.id, doc.data()!) : null,
-    );
+    return _db
+        .collection('users')
+        .doc(uid)
+        .snapshots()
+        .map((doc) => doc.exists ? User.fromFirestore(doc.id, doc.data()!) : null)
+        .handleError((Object e, StackTrace st) {
+          // Same expected sign-out race as _watchUsers above — only log
+          // while genuinely still signed in.
+          if (FirebaseAuth.instance.currentUser != null) {
+            debugPrint('❌ watchUserById($uid) stream error: $e\n$st');
+          }
+          throw e;
+        });
   }
 
   Future<String> uploadAvatar({
@@ -77,10 +100,24 @@ class FirestoreService {
   }
 
   Stream<List<User>> _watchUsers(Query<Map<String, dynamic>> query) {
-    return query.snapshots().map(
-      (snap) =>
-          snap.docs.map((doc) => User.fromFirestore(doc.id, doc.data())).toList(),
-    );
+    return query
+        .snapshots()
+        .map(
+          (snap) => snap.docs
+              .map((doc) => User.fromFirestore(doc.id, doc.data()))
+              .toList(),
+        )
+        .handleError((Object e, StackTrace st) {
+          // A permission-denied here the instant sign-out invalidates the
+          // ID token is an expected race (this stream's listener was still
+          // alive from whatever screen was mounted underneath Settings),
+          // not a real failure — only worth logging while genuinely still
+          // signed in.
+          if (FirebaseAuth.instance.currentUser != null) {
+            debugPrint('❌ _watchUsers stream error: $e\n$st');
+          }
+          throw e;
+        });
   }
 
   // Every registered user, regardless of role — the home feed used to
@@ -99,24 +136,56 @@ class FirestoreService {
         .where('members', arrayContains: uid)
         .snapshots()
         .map((snap) {
-          return snap.docs
+          final chats = snap.docs
               .map((doc) => Chat.fromFirestore(doc.id, doc.data(), uid))
-              // mugam-v2 marks a direct chat completed once the pair
-              // finalizes a Razılaşma (agreement) and starts a fresh
-              // chat doc the next time they talk — its own chat list
-              // hides completed chats the same way, so without this
-              // filter every past agreement's chat resurfaces as a
-              // separate duplicate entry for the same person.
-              .where((chat) => !chat.completed)
-              .toList()
-            ..sort((a, b) {
-              if (a.lastMessageTime == null && b.lastMessageTime == null) {
-                return 0;
-              }
-              if (a.lastMessageTime == null) return 1;
-              if (b.lastMessageTime == null) return -1;
-              return b.lastMessageTime!.compareTo(a.lastMessageTime!);
-            });
+              .toList();
+          // A single 1:1 pair can have more than one chat doc — real
+          // pre-existing mugam-v2 legacy chats predating this app, plus
+          // (now-defunct) duplicates from the old completed-chat-forking
+          // design getOrCreateDirectChat used to have. Every one of them
+          // is still a genuinely valid document (nothing here deletes or
+          // merges their history), but showing every dormant duplicate as
+          // its own row is confusing clutter — confirmed on-device as
+          // literally the same contact appearing 2+ times in this list.
+          // Collapsing to the single most-recently-active chat per
+          // counterpart (by otherUid, group chats untouched) is what
+          // getOrCreateDirectChat's own legacy-fallback lookup already
+          // does when picking which chat to reuse — this just makes the
+          // list agree with that choice instead of surfacing every dormant
+          // thread it correctly ignores.
+          final bestPerCounterpart = <String, Chat>{};
+          final result = <Chat>[];
+          for (final chat in chats) {
+            if (chat.isGroup) {
+              result.add(chat);
+              continue;
+            }
+            final otherUid = chat.members.firstWhere(
+              (m) => m != uid,
+              orElse: () => chat.id,
+            );
+            final existing = bestPerCounterpart[otherUid];
+            if (existing == null) {
+              bestPerCounterpart[otherUid] = chat;
+            } else {
+              final existingTime = existing.lastMessageTime;
+              final chatTime = chat.lastMessageTime;
+              final chatIsNewer = existingTime == null
+                  ? chatTime != null
+                  : (chatTime != null && chatTime.isAfter(existingTime));
+              if (chatIsNewer) bestPerCounterpart[otherUid] = chat;
+            }
+          }
+          result.addAll(bestPerCounterpart.values);
+          result.sort((a, b) {
+            if (a.lastMessageTime == null && b.lastMessageTime == null) {
+              return 0;
+            }
+            if (a.lastMessageTime == null) return 1;
+            if (b.lastMessageTime == null) return -1;
+            return b.lastMessageTime!.compareTo(a.lastMessageTime!);
+          });
+          return result;
         });
   }
 
@@ -536,41 +605,46 @@ class FirestoreService {
   }
 
   // Finds or creates the 1:1 chat between two users, for flows (like a
-  // status reply/reaction) that may be the first-ever message between two
-  // friends. mugam-v2 is a live, still-running app on this same backend
-  // (see functions/src/index.ts's own Expo-push-dedup comment) that has
-  // always created 1:1 chats itself via a random addDoc() id — so a pair
-  // who already messaged through mugam-v2 in the past already has a chat
-  // doc, just not at this function's deterministic id. Checking the
-  // deterministic id ALONE first would miss that and create a second,
-  // parallel chat for the same pair — splitting their message history
-  // across two threads. Order matters:
-  //   1. Deterministic-id doc — covers every chat this function itself
-  //      has ever created.
-  //   2. Legacy fallback query (mirrors mugam-v2's own createOrGetDirectChat
-  //      lookup in mugam-v2/src/firebase/firestore.ts) — covers a
-  //      pre-existing mugam-v2-created chat for this pair. If more than
-  //      one such legacy chat somehow exists (a real prior inconsistency,
-  //      not something this function could cause going forward), picks
-  //      the most recently active one rather than an arbitrary/query-order
-  //      one, and never throws over it.
-  //   3. Only if neither exists — create at the deterministic id.
-  // Deliberately drops mugam-v2's initiatorUid/INVITES-collection fields —
-  // that's specific to its musician-matching flow and has no equivalent
-  // here (this app's friend system is symmetric — see [[mugam-friends]]).
+  // status reply/reaction, or the "Mesaj" button on a user's profile card)
+  // that may be the first-ever message between two friends. mugam-v2 is a
+  // live, still-running app on this same backend (see functions/src/
+  // index.ts's own Expo-push-dedup comment) that has always created 1:1
+  // chats itself via a random addDoc() id — so a pair who already messaged
+  // through mugam-v2 in the past already has a chat doc, just not at this
+  // function's deterministic id.
+  //
+  // Resolution MUST use the same "most recently active wins" precedence as
+  // watchChats' own bestPerCounterpart dedup (above) — not "deterministic
+  // id first if it exists, full stop". An earlier version of this function
+  // did exactly that (`if (detDoc.exists) return detId`, before ever
+  // looking at any legacy doc), which is a real, confirmed-on-device bug:
+  // whenever a legacy (mugam-v2) chat for this pair was the more recently
+  // active one, the Çat tab list (watchChats) would show THAT thread, while
+  // "Mesaj" on the same contact's profile card always landed back on the
+  // stale deterministic-id doc instead — the same real-world contact
+  // showing two different, disagreeing message histories depending on
+  // which entry point was used. Always picking the single most-recently-
+  // active candidate here — deterministic or legacy alike — is what keeps
+  // every entry point (chat list tap, "Mesaj" button, status-reply) landing
+  // on the exact same thread watchChats would also pick.
+  //
+  // Only creates a new doc (at the deterministic id) when NO chat — neither
+  // deterministic nor legacy — exists yet for this pair at all. Deliberately
+  // drops mugam-v2's initiatorUid/INVITES-collection fields — that's
+  // specific to its musician-matching flow and has no equivalent here (this
+  // app's friend system is symmetric — see [[mugam-friends]]).
   Future<String> getOrCreateDirectChat({
     required String myUid,
     required String otherUid,
   }) async {
     final detId = directChatDocId(myUid, otherUid);
-    final detDoc = await _db.collection('chats').doc(detId).get();
-    if (detDoc.exists) return detId;
 
-    final legacyMatches = await _db
+    final matches = await _db
         .collection('chats')
         .where('members', arrayContains: myUid)
-        .get();
-    final legacyChats = legacyMatches.docs.where((d) {
+        .get()
+        .timeout(_writeTimeout);
+    final candidates = matches.docs.where((d) {
       final data = d.data();
       if (data['isGroup'] == true) return false;
       final members = List<String>.from(
@@ -578,16 +652,22 @@ class FirestoreService {
       );
       return members.contains(otherUid);
     }).toList();
-    if (legacyChats.isNotEmpty) {
-      legacyChats.sort((a, b) {
+    if (candidates.isNotEmpty) {
+      candidates.sort((a, b) {
         final aTime = a.data()['lastMessageTime'] as Timestamp?;
         final bTime = b.data()['lastMessageTime'] as Timestamp?;
-        if (aTime == null && bTime == null) return 0;
+        // Stable tiebreaker (doc id) when both sides are null — Firestore
+        // makes no ordering guarantee for a query with no orderBy, so
+        // returning 0 here let the SAME two-null-lastMessageTime pair
+        // resolve to a DIFFERENT "first" candidate on different runs of
+        // this exact query — confirmed on-device as the same contact
+        // opening a different historical chat on every fresh app launch.
+        if (aTime == null && bTime == null) return a.id.compareTo(b.id);
         if (aTime == null) return 1;
         if (bTime == null) return -1;
         return bTime.compareTo(aTime);
       });
-      return legacyChats.first.id;
+      return candidates.first.id;
     }
 
     final now = FieldValue.serverTimestamp();
@@ -600,7 +680,7 @@ class FirestoreService {
       'lastMessageTime': now,
       'createdAt': now,
       'unreadCount': <String, int>{},
-    }, SetOptions(merge: true));
+    }, SetOptions(merge: true)).timeout(_writeTimeout);
     return detId;
   }
 
@@ -1182,16 +1262,21 @@ class FirestoreService {
         chatId: chatId,
         messageId: messageId,
         data: data,
-      );
+      ).timeout(_writeTimeout);
     } else {
-      await _db.collection('chats').doc(chatId).collection('messages').add(data);
+      await _db
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .add(data)
+          .timeout(_writeTimeout);
     }
     if (!wrote) return;
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': text,
       'lastMessageTime': now,
       'lastMessageDeletedFor': [],
-    });
+    }).timeout(_writeTimeout);
   }
 
   // customMetadata is enforced by storage.rules (uploaderUid/chatId must
@@ -1314,13 +1399,14 @@ class FirestoreService {
         chatId: chatId,
         messageId: messageId,
         data: data,
-      );
+      ).timeout(_writeTimeout);
     } else {
       await _db
           .collection('chats')
           .doc(chatId)
           .collection('messages')
-          .add(data);
+          .add(data)
+          .timeout(_writeTimeout);
     }
     if (!wrote) return;
     await _db.collection('chats').doc(chatId).update({
@@ -1331,7 +1417,7 @@ class FirestoreService {
       // migration, run before this line ever shipped) — safe to always use
       // a plain atomic increment, no "field missing" fallback needed.
       'mediaImageCount': FieldValue.increment(1),
-    });
+    }).timeout(_writeTimeout);
   }
 
   Future<String> uploadChatVideo({
@@ -1428,20 +1514,21 @@ class FirestoreService {
         chatId: chatId,
         messageId: messageId,
         data: data,
-      );
+      ).timeout(_writeTimeout);
     } else {
       await _db
           .collection('chats')
           .doc(chatId)
           .collection('messages')
-          .add(data);
+          .add(data)
+          .timeout(_writeTimeout);
     }
     if (!wrote) return;
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🎥 Video',
       'lastMessageTime': now,
       'lastMessageDeletedFor': [],
-    });
+    }).timeout(_writeTimeout);
   }
 
   // Generic file/document upload — no compression step (unlike image/video),
@@ -1542,20 +1629,21 @@ class FirestoreService {
         chatId: chatId,
         messageId: messageId,
         data: data,
-      );
+      ).timeout(_writeTimeout);
     } else {
       await _db
           .collection('chats')
           .doc(chatId)
           .collection('messages')
-          .add(data);
+          .add(data)
+          .timeout(_writeTimeout);
     }
     if (!wrote) return;
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '📄 $fileName',
       'lastMessageTime': now,
       'lastMessageDeletedFor': [],
-    });
+    }).timeout(_writeTimeout);
   }
 
   // Downloads an already-sent file message's bytes to a local path so it
@@ -1653,20 +1741,21 @@ class FirestoreService {
         chatId: chatId,
         messageId: messageId,
         data: data,
-      );
+      ).timeout(_writeTimeout);
     } else {
       await _db
           .collection('chats')
           .doc(chatId)
           .collection('messages')
-          .add(data);
+          .add(data)
+          .timeout(_writeTimeout);
     }
     if (!wrote) return;
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '📍 Məkan',
       'lastMessageTime': now,
       'lastMessageDeletedFor': [],
-    });
+    }).timeout(_writeTimeout);
   }
 
   Future<String> uploadChatAudio({
@@ -1747,20 +1836,21 @@ class FirestoreService {
         chatId: chatId,
         messageId: messageId,
         data: data,
-      );
+      ).timeout(_writeTimeout);
     } else {
       await _db
           .collection('chats')
           .doc(chatId)
           .collection('messages')
-          .add(data);
+          .add(data)
+          .timeout(_writeTimeout);
     }
     if (!wrote) return;
     await _db.collection('chats').doc(chatId).update({
       'lastMessage': '🎤 Səs mesajı',
       'lastMessageTime': now,
       'lastMessageDeletedFor': [],
-    });
+    }).timeout(_writeTimeout);
   }
 
   // Single source of truth for forwarding one message into one target
@@ -2220,6 +2310,13 @@ class FirestoreService {
     return _db.collection('chats').doc(chatId).snapshots().map((snap) {
       final data = snap.data() ?? {};
       return {
+        // Lets chat_screen.dart's AppBar title resolve off this live
+        // stream alone instead of also waiting on chatDataProvider's
+        // separate one-time fetch just to learn isGroup — the two used to
+        // resolve independently, so the title sat on a "..." placeholder
+        // until BOTH landed even when this stream's own snapshot (already
+        // needed for otherUidResolved/deliveredTo/etc.) had arrived first.
+        'isGroup': data['isGroup'] ?? false,
         'members': List<String>.from(data['members'] ?? const []),
         'deliveredTo': Map<String, dynamic>.from(data['deliveredTo'] ?? {}),
         'lastReadMsgId': Map<String, dynamic>.from(data['lastReadMsgId'] ?? {}),
@@ -2239,6 +2336,23 @@ class FirestoreService {
         'name': data['name'] ?? '',
         'emoji': data['emoji'] ?? '💬',
         'photoURL': data['photoURL'],
+        // "İş təklif et" negotiation state — deliberately NOT including
+        // clearedBy here, which only ChatMessagesController's own narrow
+        // watchChatClearedAt stream needs (see that method): folding it
+        // into this general-purpose projection would re-run every one of
+        // this stream's listeners (including chat_screen.dart's UI) on
+        // every clearedBy write, for no benefit to any of them.
+        'jobOfferBy': data['jobOfferBy'],
+        'jobOfferAt': data['jobOfferAt'],
+        'eventDate': data['eventDate'],
+        'eventType': data['eventType'],
+        'eventLocation': data['eventLocation'],
+        'eventNotes': data['eventNotes'],
+        'waitingForDate': (data['waitingForDate'] ?? false) as bool,
+        'cancelledBy': data['cancelledBy'],
+        'recipientAgreed': (data['recipientAgreed'] ?? false) as bool,
+        'completed': (data['completed'] ?? false) as bool,
+        'typing': Map<String, dynamic>.from(data['typing'] ?? {}),
       };
     });
   }
@@ -2250,7 +2364,7 @@ class FirestoreService {
     try {
       await _db.collection('chats').doc(chatId).update({
         'deliveredTo.$uid': DateTime.now().toIso8601String(),
-      });
+      }).timeout(_writeTimeout);
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
         e,
@@ -2271,7 +2385,7 @@ class FirestoreService {
     try {
       await _db.collection('chats').doc(chatId).update({
         'activeUsers': FieldValue.arrayUnion([uid]),
-      });
+      }).timeout(_writeTimeout);
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
         e,
@@ -2288,7 +2402,7 @@ class FirestoreService {
     try {
       await _db.collection('chats').doc(chatId).update({
         'activeUsers': FieldValue.arrayRemove([uid]),
-      });
+      }).timeout(_writeTimeout);
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
         e,
@@ -2308,7 +2422,7 @@ class FirestoreService {
       await _db.collection('users').doc(uid).update({
         'online': online,
         'lastSeen': FieldValue.serverTimestamp(),
-      });
+      }).timeout(_writeTimeout);
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
         e,
@@ -2343,11 +2457,14 @@ class FirestoreService {
       final snap = await _db
           .collection('chats')
           .where('activeUsers', arrayContains: uid)
-          .get();
+          .get()
+          .timeout(_writeTimeout);
       for (final doc in snap.docs) {
-        await doc.reference.update({
-          'activeUsers': FieldValue.arrayRemove([uid]),
-        });
+        await doc.reference
+            .update({
+              'activeUsers': FieldValue.arrayRemove([uid]),
+            })
+            .timeout(_writeTimeout);
       }
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
@@ -2369,7 +2486,7 @@ class FirestoreService {
         'lastReadAt.$uid': DateTime.now().toIso8601String(),
         'lastReadMsgId.$uid': lastMsgId,
         'unreadCount.$uid': 0,
-      });
+      }).timeout(_writeTimeout);
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
         e,
@@ -2377,6 +2494,213 @@ class FirestoreService {
         reason: 'FirestoreService: markChatAsReadBy failed',
       );
     }
+  }
+
+  // "Çatı təmizlə" — per-user chat clear (mugam-v2's clearChatForUser).
+  // Only ever hides messages for this uid (ChatMessagesController filters
+  // on the cutoff via watchChatClearedAt below); never touches any other
+  // member's view and never deletes anything server-side.
+  Future<void> clearChatForUser({
+    required String chatId,
+    required String uid,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'clearedBy.$uid': DateTime.now().toIso8601String(),
+      }).timeout(_writeTimeout);
+    } catch (e, st) {
+      debugPrint('\u274c clearChatForUser failed: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: clearChatForUser failed',
+      );
+    }
+  }
+
+  // "İş təklif et" — proposes a job to the other party in a 1:1 chat.
+  // chat_screen.dart's menu hides this item once jobOfferBy is already
+  // set, matching mugam-v2's own {!jobOfferBy && (...)} gating.
+  Future<void> setJobOffer({
+    required String chatId,
+    required String uid,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'jobOfferBy': uid,
+        'jobOfferAt': DateTime.now().toIso8601String(),
+        // A prior round on this same (persistent, never-forked) chat may
+        // have left recipientAgreed stuck at true forever \u2014 acceptJobOffer
+        // only ever sets it true, nothing ever resets it back on accept.
+        // Without clearing it here, a second "\u0130\u015f t\u0259klif et" round's
+        // Raz\u0131yam tap writes recipientAgreed:true again, but the
+        // onChatUpdated Cloud Function's guard (before.recipientAgreed ===
+        // true -> return) would see it as ALREADY true and never re-fire \u2014
+        // silently skipping PersonalEvent creation for every round after
+        // the first.
+        'recipientAgreed': false,
+        'waitingForDate': false,
+        // A prior round may have left a stale cancelledBy from an earlier
+        // "\u0130mtina" sitting on the doc \u2014 clear it so a fresh offer never
+        // carries a leftover "X cancelled" value forward.
+        'cancelledBy': null,
+      }).timeout(_writeTimeout);
+    } catch (e, st) {
+      debugPrint('\u274c setJobOffer failed: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: setJobOffer failed',
+      );
+    }
+  }
+
+  // Initiator picks/changes the proposed event's date+type+location+notes
+  // while a job offer is pending — lives on the chat doc, not yet a real
+  // PersonalEvent (mirrors mugam-v2's saveChatEventDate).
+  Future<void> saveChatEventDate({
+    required String chatId,
+    required DateTime eventDate,
+    required String eventType,
+    required String eventLocation,
+    required String eventNotes,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'eventDate': eventDate.toIso8601String(),
+        'eventType': eventType,
+        'eventLocation': eventLocation,
+        'eventNotes': eventNotes,
+      }).timeout(_writeTimeout);
+    } catch (e, st) {
+      debugPrint('\u274c saveChatEventDate failed: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: saveChatEventDate failed',
+      );
+    }
+  }
+
+  // Recipient taps "Razıyam" before the initiator has picked a date yet —
+  // lets the initiator's banner show "waiting for a date" (mugam-v2's
+  // setWaitingForDate).
+  Future<void> setWaitingForDate({
+    required String chatId,
+    required bool waiting,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'waitingForDate': waiting,
+      }).timeout(_writeTimeout);
+    } catch (e, st) {
+      debugPrint('\u274c setWaitingForDate failed: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: setWaitingForDate failed',
+      );
+    }
+  }
+
+  // Either party taps "İmtina" on a pending job offer, before or after a
+  // date was picked — ends the negotiation without ever creating a
+  // PersonalEvent (unlike acceptJobOffer below). Unlike an agreed offer,
+  // nothing was actually finalized here, so the ongoing 1:1 chat itself
+  // must NOT be marked completed/hidden — only the negotiation fields
+  // reset, so "İş təklif et" becomes offerable again and the chat stays
+  // exactly where it was. (mugam-v2's own cancelChat sets completed:true
+  // here too, which silently vanishes the whole conversation from both
+  // parties' chat list the moment anyone declines a proposal — confirmed
+  // on-device as a real, confusing regression, not intentional parity
+  // worth keeping.)
+  Future<void> cancelChat({
+    required String chatId,
+    required String uid,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'cancelledBy': uid,
+        'jobOfferBy': null,
+        'jobOfferAt': null,
+        'eventDate': null,
+        'eventType': null,
+        'eventLocation': null,
+        'eventNotes': null,
+        'waitingForDate': false,
+        'recipientAgreed': false,
+      }).timeout(_writeTimeout);
+    } catch (e, st) {
+      debugPrint('\u274c cancelChat failed: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: cancelChat failed',
+      );
+    }
+  }
+
+  // Recipient taps "Razıyam" once a date is set — this is the ONLY
+  // client-side write on accept. It just flags the chat doc; the
+  // onChatUpdated Cloud Function (functions/src/index.ts) is what actually
+  // creates the PersonalEvent (with ownerUid = the INITIATOR, not this
+  // uid) and marks the chat completed, since personalEvents' own create
+  // rule requires the creator to become ownerUid — which must stay the
+  // initiator, not whoever accepts. Doing this server-side with the Admin
+  // SDK is what makes that possible without loosening that rule.
+  Future<void> acceptJobOffer({
+    required String chatId,
+    required String uid,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'recipientAgreed': true,
+      }).timeout(_writeTimeout);
+    } catch (e, st) {
+      debugPrint('\u274c acceptJobOffer failed: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: acceptJobOffer failed',
+      );
+    }
+  }
+
+  // Per-uid "still typing" timestamp, scoped only to the job-offer
+  // banners' status line — chat_screen.dart throttles calls to this (once
+  // per ~3s) from the composer's onChanged, not this method itself, to
+  // keep write volume down while a job offer is pending.
+  Future<void> setTyping({
+    required String chatId,
+    required String uid,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'typing.$uid': DateTime.now().toIso8601String(),
+      }).timeout(_writeTimeout);
+    } catch (e, st) {
+      debugPrint('\u274c setTyping failed: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: setTyping failed',
+      );
+    }
+  }
+
+  // Narrow, dedicated stream of just this uid's clearedBy cutoff — used
+  // ONLY by ChatMessagesController (never folded into watchChatMeta's
+  // general-purpose projection below) so that unrelated chat-doc churn
+  // (typing writes, jobOfferBy, etc.) never re-triggers the message
+  // pagination listeners that consume this.
+  Stream<DateTime?> watchChatClearedAt(String chatId, String uid) {
+    return _db.collection('chats').doc(chatId).snapshots().map((snap) {
+      final raw = snap.data()?['clearedBy'];
+      if (raw is! Map) return null;
+      final value = raw[uid];
+      if (value == null) return null;
+      return DateTime.tryParse(value.toString());
+    });
   }
 
   Future<List<Event>> fetchEvents() async {
@@ -2439,12 +2763,12 @@ class FirestoreService {
       'status': 'agreed',
       'cancelledBy': null,
       'createdAt': FieldValue.serverTimestamp(),
-    });
+    }).timeout(_writeTimeout);
     return ref.id;
   }
 
   Future<void> updatePersonalEvent(String eventId, Map<String, dynamic> data) {
-    return _db.collection('personalEvents').doc(eventId).update(data);
+    return _db.collection('personalEvents').doc(eventId).update(data).timeout(_writeTimeout);
   }
 
   Future<List<String>> loadReadAgreementIds(String uid) async {

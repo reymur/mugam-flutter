@@ -28,7 +28,19 @@ class PresenceService with WidgetsBindingObserver {
   bool _observing = false;
 
   void start(String uid) {
-    if (_uid == uid && _timer != null) return;
+    // No longer short-circuits when _uid/_timer already look "started" —
+    // confirmed on-device as a real bug: `lastSeen` stuck over 5 hours
+    // stale (online:true the whole time) while the app was genuinely in
+    // active use. _timer being non-null only proves a Timer object exists,
+    // not that it's still actually firing — if something (an iOS
+    // background-suspend edge case, a missed/undelivered `resumed`
+    // lifecycle callback while attached to Xcode's debugger, etc.) left it
+    // silently dead, this guard permanently blocked ever restarting it,
+    // since every later start(uid) call with the same uid hit this same
+    // early return. _writePresence/_startTimer below are both idempotent
+    // (Timer.periodic itself cancels any prior timer first), so always
+    // running them here is safe.
+    debugPrint('🟢 PresenceService.start($uid) called');
     _uid = uid;
     if (!_observing) {
       WidgetsBinding.instance.addObserver(this);

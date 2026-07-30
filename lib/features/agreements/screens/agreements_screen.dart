@@ -13,6 +13,7 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
+import '../../../shared/widgets/wheel_date_time_picker.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../search/screens/filter_sheet.dart';
 import '../../status/screens/status_viewer_screen.dart';
@@ -24,11 +25,6 @@ import '../../user/screens/user_profile_screen.dart';
 const _azMonths = [
   'Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'İyun',
   'İyul', 'Avqust', 'Sentyabr', 'Oktyabr', 'Noyabr', 'Dekabr',
-];
-
-const _azMonthsShort = [
-  'Yan', 'Fev', 'Mar', 'Apr', 'May', 'İyn',
-  'İyl', 'Avq', 'Sen', 'Okt', 'Noy', 'Dek',
 ];
 
 String _azMonth(int month) => _azMonths[month - 1];
@@ -75,6 +71,25 @@ String _fmtCreatedAt(dynamic ts) {
 
 bool _sameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
+
+// Cross-tab navigation signal: chat_screen.dart sets this to 'outgoing' or
+// 'incoming' right before context.go('/agreements') when a job offer gets
+// accepted, then AgreementsScreen (kept alive in the bottom-nav's
+// IndexedStack, never rebuilt from scratch by a plain route switch) reacts
+// via ref.listen and jumps itself to the Müqavilələr tab's matching side —
+// a normal navigation wouldn't otherwise touch this already-mounted
+// widget's own _mainView/_activeTab state at all.
+class AgreementsTabRequestNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void set(String? value) => state = value;
+}
+
+final agreementsTabRequestProvider =
+    NotifierProvider<AgreementsTabRequestNotifier, String?>(
+      AgreementsTabRequestNotifier.new,
+    );
 
 // ---------------------------------------------------------------------------
 // AgreementsScreen
@@ -124,6 +139,22 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     );
     _pageController = PageController(initialPage: _kCalendarInitialPage);
     _loadReadIds();
+    // Covers the case where this screen is being built for the very FIRST
+    // time (StatefulShellRoute.indexedStack builds each branch lazily, on
+    // first visit) at the exact moment chat_screen.dart's accept-listener
+    // sets agreementsTabRequestProvider right before context.go('/agreements')
+    // — build()'s own ref.listen below only reacts to CHANGES from here on,
+    // so a value already sitting in the provider before this widget's first
+    // build would otherwise be silently missed (confirmed on-device: landed
+    // on the default Calendar tab instead of Müqavilələr→Gələnlər).
+    final pending = ref.read(agreementsTabRequestProvider);
+    if (pending != null) {
+      _mainView = 'agreements';
+      _activeTab = pending;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ref.read(agreementsTabRequestProvider.notifier).set(null);
+      });
+    }
   }
 
   @override
@@ -176,18 +207,25 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   bool _isUnread(PersonalEvent e) => !_readAgreementIds.contains(e.id);
 
   List<PersonalEvent> _sortedAgreements(List<PersonalEvent> list) {
-    final unread = list.where(_isUnread).toList()
-      ..sort((a, b) => _compareCreatedAt(b.createdAt, a.createdAt));
-    final read = list.where((e) => !_isUnread(e)).toList()
-      ..sort((a, b) => _compareCreatedAt(b.createdAt, a.createdAt));
+    final unread = list.where(_isUnread).toList()..sort(_compareEvents);
+    final read = list.where((e) => !_isUnread(e)).toList()..sort(_compareEvents);
     return [...unread, ...read];
   }
 
-  int _compareCreatedAt(dynamic a, dynamic b) {
-    if (a is Timestamp && b is Timestamp) {
-      return a.compareTo(b);
+  // Stable tiebreaker (doc id) when createdAt isn't comparable on one or
+  // both sides yet (e.g. a just-created event whose serverTimestamp()
+  // hasn't round-tripped back from the server) — returning 0 there let the
+  // same pair of not-yet-comparable events swap places on every rebuild for
+  // no actual change, same class of bug as getOrCreateDirectChat's own
+  // legacy-chat sort (see firestore_service.dart).
+  int _compareEvents(PersonalEvent a, PersonalEvent b) {
+    final aTs = a.createdAt;
+    final bTs = b.createdAt;
+    if (aTs is Timestamp && bTs is Timestamp) {
+      final cmp = bTs.compareTo(aTs);
+      if (cmp != 0) return cmp;
     }
-    return 0;
+    return a.id.compareTo(b.id);
   }
 
   // -------------------------------------------------------------------------
@@ -195,6 +233,18 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   // -------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
+    ref.listen(agreementsTabRequestProvider, (previous, next) {
+      if (next == null) return;
+      setState(() {
+        _mainView = 'agreements';
+        _activeTab = next;
+      });
+      // One-shot signal — clear it so re-entering this tab normally
+      // afterwards doesn't keep forcing the same sub-tab.
+      Future.microtask(
+        () => ref.read(agreementsTabRequestProvider.notifier).set(null),
+      );
+    });
     final uid = _uid;
     final personalEventsAsync = ref.watch(personalEventsProvider(uid));
     final eventsAsParticipantAsync = ref.watch(eventsAsParticipantProvider(uid));
@@ -204,7 +254,18 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     final allUsersAsync = ref.watch(allUsersProvider);
     final allUsers = allUsersAsync.asData?.value ?? [];
 
-    final agreeEvents = _agreeEvents(personalEvents);
+    // Müqavilələr's Göndərilən/Gələnlər split (_outgoing/_incoming below)
+    // needs BOTH: personalEvents alone only ever has ownerUid == uid, so
+    // "Gələnlər" (events someone else owns, this uid just participates in —
+    // e.g. an accepted "İş təklif et") could never show anything from that
+    // list alone. Deduped by id since an owner also appears in their own
+    // musicians array, so their own events come back from
+    // eventsAsParticipantProvider too.
+    final agreementEventsById = <String, PersonalEvent>{
+      for (final e in personalEvents) e.id: e,
+      for (final e in eventsAsParticipant) e.id: e,
+    };
+    final agreeEvents = _agreeEvents(agreementEventsById.values.toList());
     final hasUnread = agreeEvents.any(_isUnread);
 
     // "İş yazdır" entry point (chat_screen.dart) — open the same
@@ -2049,182 +2110,6 @@ class _ConflictEventScreenState extends State<_ConflictEventScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// _WheelDateTimePicker
-// ---------------------------------------------------------------------------
-class _WheelDateTimePicker extends StatefulWidget {
-  final DateTime value;
-  final ValueChanged<DateTime> onChanged;
-
-  const _WheelDateTimePicker({required this.value, required this.onChanged});
-
-  @override
-  State<_WheelDateTimePicker> createState() => _WheelDateTimePickerState();
-}
-
-class _WheelDateTimePickerState extends State<_WheelDateTimePicker> {
-  static const _yearStart = 2024;
-  static const _yearEnd = 2030;
-  static const _itemExtent = 44.0;
-
-  late final FixedExtentScrollController _dayController;
-  late final FixedExtentScrollController _monthController;
-  late final FixedExtentScrollController _yearController;
-  late final FixedExtentScrollController _hourController;
-  late final FixedExtentScrollController _minuteController;
-
-  @override
-  void initState() {
-    super.initState();
-    _dayController = FixedExtentScrollController(initialItem: widget.value.day - 1);
-    _monthController = FixedExtentScrollController(initialItem: widget.value.month - 1);
-    _yearController = FixedExtentScrollController(initialItem: widget.value.year - _yearStart);
-    _hourController = FixedExtentScrollController(initialItem: widget.value.hour);
-    _minuteController = FixedExtentScrollController(initialItem: widget.value.minute);
-  }
-
-  @override
-  void dispose() {
-    _dayController.dispose();
-    _monthController.dispose();
-    _yearController.dispose();
-    _hourController.dispose();
-    _minuteController.dispose();
-    super.dispose();
-  }
-
-  int _daysInMonth(int year, int month) => DateTime(year, month + 1, 0).day;
-
-  void _update({int? day, int? month, int? year, int? hour, int? minute}) {
-    final newYear = year ?? widget.value.year;
-    final newMonth = month ?? widget.value.month;
-    final maxDay = _daysInMonth(newYear, newMonth);
-    var newDay = day ?? widget.value.day;
-    if (newDay > maxDay) {
-      newDay = maxDay;
-      _dayController.jumpToItem(newDay - 1);
-    }
-    final newHour = hour ?? widget.value.hour;
-    final newMinute = minute ?? widget.value.minute;
-    widget.onChanged(DateTime(newYear, newMonth, newDay, newHour, newMinute));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: _itemExtent * 3,
-      decoration: BoxDecoration(
-        color: const Color(0xFF161210),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withAlpha(15)),
-      ),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          IgnorePointer(
-            child: Container(
-              height: _itemExtent,
-              margin: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: BoxDecoration(
-                color: Colors.white.withAlpha(18),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: kGold.withAlpha(128)),
-              ),
-            ),
-          ),
-          Row(
-            children: [
-              Expanded(
-                flex: 1,
-                child: _wheel(
-                  controller: _dayController,
-                  itemCount: 31,
-                  labelBuilder: (i) => (i + 1).toString().padLeft(2, '0'),
-                  onChanged: (i) => _update(day: i + 1),
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: _wheel(
-                  controller: _monthController,
-                  itemCount: 12,
-                  labelBuilder: (i) => _azMonthsShort[i],
-                  onChanged: (i) => _update(month: i + 1),
-                ),
-              ),
-              Expanded(
-                flex: 2,
-                child: _wheel(
-                  controller: _yearController,
-                  itemCount: _yearEnd - _yearStart + 1,
-                  labelBuilder: (i) => (_yearStart + i).toString(),
-                  onChanged: (i) => _update(year: _yearStart + i),
-                ),
-              ),
-              const Text(
-                ':',
-                style: TextStyle(color: kGold, fontSize: 28, fontWeight: FontWeight.bold),
-              ),
-              Expanded(
-                flex: 1,
-                child: _wheel(
-                  controller: _hourController,
-                  itemCount: 24,
-                  labelBuilder: (i) => i.toString().padLeft(2, '0'),
-                  onChanged: (i) => _update(hour: i),
-                ),
-              ),
-              Expanded(
-                flex: 1,
-                child: _wheel(
-                  controller: _minuteController,
-                  itemCount: 60,
-                  labelBuilder: (i) => i.toString().padLeft(2, '0'),
-                  onChanged: (i) => _update(minute: i),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _wheel({
-    required FixedExtentScrollController controller,
-    required int itemCount,
-    required String Function(int) labelBuilder,
-    required ValueChanged<int> onChanged,
-  }) {
-    return ListWheelScrollView.useDelegate(
-      controller: controller,
-      itemExtent: _itemExtent,
-      diameterRatio: 1.5,
-      physics: const FixedExtentScrollPhysics(),
-      squeeze: 1.0,
-      overAndUnderCenterOpacity: 0.4,
-      perspective: 0.003,
-      onSelectedItemChanged: onChanged,
-      childDelegate: ListWheelChildBuilderDelegate(
-        childCount: itemCount,
-        builder: (context, index) {
-          final selected = controller.selectedItem == index;
-          return Center(
-            child: Text(
-              labelBuilder(index),
-              style: TextStyle(
-                color: selected ? Colors.white : kMuted,
-                fontSize: selected ? 20 : 15,
-                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
 // _EventFormModal
 // ---------------------------------------------------------------------------
 class _EventFormModal extends StatefulWidget {
@@ -2563,7 +2448,7 @@ class _EventFormModalState extends State<_EventFormModal> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Inline wheel date/time picker
-                  _WheelDateTimePicker(
+                  WheelDateTimePicker(
               value: _selectedDate,
               onChanged: (d) {
                 setState(() {

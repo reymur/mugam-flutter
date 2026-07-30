@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -91,6 +92,7 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
   late final FirestoreService _firestoreService;
   StreamSubscription<MessagesSnapshot>? _tailSub;
   StreamSubscription<List<Message>>? _olderSub;
+  StreamSubscription<DateTime?>? _clearedSub;
 
   // Null until loadOlderMessages() has been called at least once — that's
   // also exactly the condition for whether the older-range listener exists
@@ -99,6 +101,14 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
   Timestamp? _tailOldest;
   List<Message> _tailMessages = const [];
   List<Message> _olderMessages = const [];
+  // "Çatı təmizlə" cutoff for the CURRENT uid only — messages at or before
+  // this are dropped from _mergedState's output. Fed by its own narrow
+  // watchChatClearedAt stream (see firestore_service.dart), never folded
+  // into a ref.watch on the general chat-meta stream: that stream also
+  // carries the job-offer typing indicator, which writes every few seconds
+  // while an offer is pending — routing that through build() would tear
+  // down and recreate _tailSub/_olderSub on every one of those writes.
+  DateTime? _clearedAt;
 
   @override
   ChatMessagesState build() {
@@ -106,7 +116,20 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
     ref.onDispose(() {
       _tailSub?.cancel();
       _olderSub?.cancel();
+      _clearedSub?.cancel();
     });
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      _clearedSub = _firestoreService.watchChatClearedAt(chatId, uid).listen((
+        clearedAt,
+      ) {
+        _clearedAt = clearedAt;
+        state = _mergedState(
+          isInitialLoad: state.isInitialLoad,
+          addedMessageIds: const [],
+        );
+      });
+    }
     _tailSub = _firestoreService.watchMessages(chatId).listen((snapshot) {
       _tailMessages = snapshot.messages;
       final newTailOldest = snapshot.messages.isEmpty
@@ -204,8 +227,19 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
     for (final m in [..._olderMessages, ..._tailMessages]) {
       if (seen.add(m.id)) combined.add(m);
     }
+    // "Çatı təmizlə" filter — applied here, after dedup, so it only ever
+    // affects what's DISPLAYED. _oldestEverLoaded/_tailOldest above keep
+    // tracking raw fetched timestamps regardless of this filter, so
+    // loadOlderMessages' hasMoreOlder/pagination boundary logic stays
+    // correct even when some of what it fetches gets filtered out here.
+    final clearedAt = _clearedAt;
+    final visible = clearedAt == null
+        ? combined
+        : combined
+              .where((m) => m.timestamp?.toDate().isAfter(clearedAt) ?? true)
+              .toList();
     return state.copyWith(
-      messages: combined,
+      messages: visible,
       isInitialLoad: isInitialLoad,
       addedMessageIds: addedMessageIds,
       hasLoadedOnce: hasLoadedOnce,

@@ -328,35 +328,7 @@ class UserProfileScreen extends ConsumerWidget {
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: OutlinedButton(
-                    // Same find-or-create semantics as chats_screen.dart's
-                    // own search-result tap: getOrCreateDirectChat resolves
-                    // back to an existing chat with this person if there is
-                    // one, otherwise creates it.
-                    onPressed: () async {
-                      final chatId = await ref
-                          .read(firestoreServiceProvider)
-                          .getOrCreateDirectChat(
-                            myUid: currentUid,
-                            otherUid: user.id,
-                          );
-                      if (context.mounted) context.push('/chat/$chatId');
-                    },
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: kBorder),
-                      foregroundColor: kText,
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(28),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: const Text(
-                      '✉️ Mesaj',
-                      style: TextStyle(color: kText, fontWeight: FontWeight.bold),
-                    ),
-                  ),
+                  child: _MessageButton(currentUid: currentUid, otherUid: user.id),
                 ),
               ],
             ),
@@ -809,6 +781,71 @@ class UserProfileScreen extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// "Mesaj" button — needs its own local loading state (a plain
+// ConsumerWidget's build() has nowhere to keep one)
+// ---------------------------------------------------------------------------
+// Same find-or-create semantics as chats_screen.dart's own search-result
+// tap: getOrCreateDirectChat resolves back to an existing chat with this
+// person if there is one, otherwise creates it — which can take a few
+// seconds (several sequential Firestore round-trips when this pair has old
+// completed chats to walk past, see getOrCreateDirectChat). Without this
+// loading gate, the button gave zero feedback while that awaited, and an
+// impatient repeat-tap fired the whole find-or-create + push flow again
+// each time — confirmed on-device as literally stacked ChatScreen
+// instances on the nav stack, all for the same chat.
+class _MessageButton extends ConsumerStatefulWidget {
+  final String currentUid;
+  final String otherUid;
+
+  const _MessageButton({required this.currentUid, required this.otherUid});
+
+  @override
+  ConsumerState<_MessageButton> createState() => _MessageButtonState();
+}
+
+class _MessageButtonState extends ConsumerState<_MessageButton> {
+  bool _opening = false;
+
+  Future<void> _open() async {
+    setState(() => _opening = true);
+    try {
+      final chatId = await ref.read(firestoreServiceProvider).getOrCreateDirectChat(
+            myUid: widget.currentUid,
+            otherUid: widget.otherUid,
+          );
+      if (mounted && context.mounted) context.push('/chat/$chatId');
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: _opening ? null : _open,
+      style: OutlinedButton.styleFrom(
+        side: const BorderSide(color: kBorder),
+        foregroundColor: kText,
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        padding: const EdgeInsets.symmetric(vertical: 14),
+      ),
+      child: _opening
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2, color: kGold),
+            )
+          : const Text(
+              '✉️ Mesaj',
+              style: TextStyle(color: kText, fontWeight: FontWeight.bold),
+            ),
     );
   }
 }

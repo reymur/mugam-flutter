@@ -142,9 +142,22 @@ class User {
       activeStatusIds:
           List<String>.from(data['activeStatusIds'] as List? ?? const []),
       mostRecentStatusCreatedAt: data['mostRecentStatusCreatedAt'] as Timestamp?,
-      lastViewedStatusOwnerAt:
-          (data['lastViewedStatusOwnerAt'] as Map<String, dynamic>? ?? const {})
-              .map((key, value) => MapEntry(key, value as Timestamp)),
+      // A FieldValue.serverTimestamp() entry reads back as null in the
+      // writing client's own optimistic local snapshot until the server
+      // ack lands (standard Firestore behavior, not a data error) —
+      // unconditionally casting every entry crashed this whole User's
+      // parse (and therefore every list containing them, e.g. the home
+      // feed) the instant anyone viewed a status. Confirmed on-device:
+      // `type 'Null' is not a subtype of type 'Timestamp'`. Skipping
+      // not-yet-resolved entries here is harmless — hasUnviewedStatusFrom
+      // just sees them as "not yet viewed" for the brief window until the
+      // next snapshot arrives with the real timestamp.
+      lastViewedStatusOwnerAt: Map<String, Timestamp>.fromEntries(
+        (data['lastViewedStatusOwnerAt'] as Map<String, dynamic>? ?? const {})
+            .entries
+            .where((e) => e.value is Timestamp)
+            .map((e) => MapEntry(e.key, e.value as Timestamp)),
+      ),
     );
   }
 
@@ -257,6 +270,14 @@ class Chat {
   final List<String> members;
   final bool isGroup;
   final String? photoURL;
+  // Historical marker only — an "İş təklif et" negotiation that finished
+  // (agreed or cancelled) on this chat. Does NOT hide the chat or fork a
+  // new thread for this pair (watchChats/getOrCreateDirectChat both
+  // ignore it): a pair always has exactly one persistent 1:1 chat,
+  // regardless of how many negotiations came and went on it. Confirmed on
+  // real testing that hiding+forking on this field was actively confusing
+  // (chat "disappearing" mid-conversation, "Mesaj" opening a different
+  // thread than the Çat tab) — reverted from that mugam-v2-parity design.
   final bool completed;
   // Empty for every 1:1 chat (mugam-v2 never wrote either field for those —
   // only createGroupChat does) and for group docs from before these fields
@@ -270,6 +291,51 @@ class Chat {
   // Defaults to 0 for any chat doc that predates this field, same as
   // admins/createdBy above.
   final int messageCount;
+  // Per-uid "clear chat for me" cutoff (ISO string on the doc, parsed to
+  // DateTime here) — messages sent at or before this timestamp are hidden
+  // ONLY for that uid (ChatMessagesController filters on it), never
+  // deleted server-side and never affecting any other member's view. See
+  // firestore_service.dart's clearChatForUser.
+  final Map<String, DateTime> clearedBy;
+  // uid of whoever proposed a job via "İş təklif et" — null when no offer
+  // is pending. Only meaningful for 1:1 chats (mirrors mugam-v2's
+  // jobOfferBy); the chat_screen.dart menu hides the offer item while this
+  // is set, and shows the initiator/recipient negotiation banners instead.
+  final String? jobOfferBy;
+  // When jobOfferBy was set — lets the negotiation banners tell "has the
+  // other party read/typed anything since this specific offer" apart from
+  // "have they ever read this chat" (lastReadAt/typing alone can't
+  // distinguish those once a chat has any history).
+  final DateTime? jobOfferAt;
+  // The negotiated event fields below live on the CHAT doc while a job
+  // offer is pending (proposed, possibly still being haggled over) — they
+  // are only ever promoted into a real, permanent PersonalEvent once the
+  // recipient accepts (see the onChatUpdated Cloud Function), exactly like
+  // mugam-v2's own separation of "chat negotiation state" from "finalized
+  // Agreement".
+  final DateTime? eventDate;
+  final String? eventType;
+  final String? eventLocation;
+  final String? eventNotes;
+  // Set by the recipient tapping "Razıyam" before the initiator has picked
+  // a date — lets the initiator's own banner show "the other side is
+  // waiting for a date" (mugam-v2's setWaitingForDate).
+  final bool waitingForDate;
+  // uid of whoever tapped "İmtina" (cancel) on a pending job offer — set by
+  // cancelChat, same moment either party's decision ends the negotiation
+  // without ever creating a PersonalEvent. Deliberately does NOT also set
+  // completed:true (see cancelChat's own comment, firestore_service.dart) —
+  // an unrelated PersonalEvent's own cancelledBy field (models.dart below)
+  // is what agreements_screen.dart actually reads for the cancelled-tədbir
+  // UI; this chat-doc field currently has no reader.
+  final String? cancelledBy;
+  // Per-uid "last typed at" timestamp (ISO string on the doc), scoped
+  // ONLY to driving the job-offer banners' status line — this app has no
+  // general-purpose typing indicator elsewhere (see PresenceService's own
+  // header comment deferring that to a future WebSocket gateway); this is
+  // the same cheap chat-doc-field approach mugam-v2 already used, not that
+  // gateway.
+  final Map<String, DateTime> typing;
 
   const Chat({
     required this.id,
@@ -286,6 +352,16 @@ class Chat {
     this.admins = const [],
     this.createdBy = '',
     this.messageCount = 0,
+    this.clearedBy = const {},
+    this.jobOfferBy,
+    this.jobOfferAt,
+    this.eventDate,
+    this.eventType,
+    this.eventLocation,
+    this.eventNotes,
+    this.waitingForDate = false,
+    this.cancelledBy,
+    this.typing = const {},
   });
 
   // uid is the viewing (signed-in) user — unreadCount is stored server-side
@@ -318,7 +394,35 @@ class Chat {
       admins: List<String>.from(data['admins'] as List? ?? const []),
       createdBy: data['createdBy'] ?? '',
       messageCount: (data['messageCount'] as num?)?.toInt() ?? 0,
+      clearedBy: _parseIsoDateMap(data['clearedBy']),
+      jobOfferBy: data['jobOfferBy'] as String?,
+      jobOfferAt: data['jobOfferAt'] != null
+          ? DateTime.tryParse(data['jobOfferAt'] as String)
+          : null,
+      eventDate: data['eventDate'] != null
+          ? DateTime.tryParse(data['eventDate'] as String)
+          : null,
+      eventType: data['eventType'] as String?,
+      eventLocation: data['eventLocation'] as String?,
+      eventNotes: data['eventNotes'] as String?,
+      waitingForDate: (data['waitingForDate'] ?? false) as bool,
+      cancelledBy: data['cancelledBy'] as String?,
+      typing: _parseIsoDateMap(data['typing']),
     );
+  }
+
+  // Shared parse for the two per-uid { uid: isoString } maps above
+  // (clearedBy/typing) — silently drops any entry whose value isn't a
+  // parseable ISO string rather than throwing, since a malformed single
+  // entry shouldn't break the whole chat doc's parse.
+  static Map<String, DateTime> _parseIsoDateMap(dynamic raw) {
+    if (raw is! Map) return const {};
+    final result = <String, DateTime>{};
+    for (final entry in raw.entries) {
+      final parsed = DateTime.tryParse(entry.value?.toString() ?? '');
+      if (parsed != null) result[entry.key as String] = parsed;
+    }
+    return result;
   }
 }
 
