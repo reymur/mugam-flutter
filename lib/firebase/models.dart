@@ -428,6 +428,14 @@ class Chat {
 
 class Message {
   final String id;
+  // Which chat this row belongs to — null for a Message built straight from
+  // a chat-scoped Firestore query (chats/{chatId}/messages/...), where the
+  // caller already knows chatId from context and this would be redundant
+  // plumbing through every fromFirestore call site. Always set for a row
+  // that lives in LocalMessageStore, which — unlike a Firestore
+  // subcollection query — has no other way to route a flat, cross-chat
+  // pending-sends index back to the chat each entry belongs to.
+  final String? chatId;
   final String senderId;
   final String text;
   final String? imageURL;
@@ -489,6 +497,13 @@ class Message {
   // FirestoreService.markVoiceMessageListened.
   final List<String> listenedBy;
   final Timestamp? timestamp;
+  // Per-chat monotonic sequence number, assigned atomically server-side by
+  // FirestoreService._commitMessage — the ordering/pagination key
+  // everything sorts by now, NOT timestamp (see that function's own doc
+  // comment for why: unlike a timestamp it's never null pre-ack and never
+  // depends on device clock accuracy). Nullable only because it doesn't
+  // exist on pre-migration data — see the 2026-07-31 chats/messages wipe.
+  final int? seq;
   final String type; // 'text', 'image', 'audio', 'video', 'file', 'location'
   final String? replyToId;
   final String? replyToText;
@@ -532,16 +547,20 @@ class Message {
   // (via a precacheImage call made before this message ever became
   // visible) instead of a decode gap flashing the placeholder background.
   final Uint8List? localPreviewBytes;
-  // Client-only, set only on a synthetic pending message (see
-  // PendingMediaMessage.toSyntheticMessage) to the real Firestore doc id
-  // this item will use once it sends. Needed because a pending message's
-  // own `id` is deliberately 'local_$localId' (never collides with a real
-  // Firestore id — see PendingMediaMessage), so `id` alone changes across
-  // the pending->sent transition even though it's the same logical
-  // message. Null for a real, server-confirmed message (its `id` is
-  // already that final value). Use stableMediaKey below rather than this
-  // field directly.
-  final String? mediaMessageId;
+  // Client-only retry bookkeeping for a still-pending row (localSendStatus
+  // != null) — moved here from the old, now-deleted PendingMediaMessage
+  // class when LocalMessageStore unified "pending" and "confirmed" into one
+  // row type instead of two separate objects reconciled at render time (see
+  // LocalMessageStore's own doc comment). attemptCount drives the retry
+  // backoff/max-attempts cutoff. uploadedUrl is set once a prior attempt's
+  // Storage upload step succeeded but the Firestore write after it didn't
+  // (timeout, reconnect) — the next attempt reuses it instead of
+  // re-uploading the whole file again. videoHd is the HD-quality setting
+  // captured once at enqueue time (read live at compression time inside the
+  // background isolate has no Riverpod ref to read a live setting from).
+  final int attemptCount;
+  final String? uploadedUrl;
+  final bool videoHd;
   // True for auto-generated announcements ("X created the group", "X left
   // the group") — rendered as centered gray text, no bubble/avatar, same
   // as mugam-v2's own system messages (see createGroupChat/leaveGroup
@@ -561,14 +580,18 @@ class Message {
   // written/read.
   final int forwardCount;
 
-  // The one identifier that stays constant across a message's entire
-  // lifecycle (queued -> uploading -> sent), used to key anything that
-  // must survive that transition without visibly resetting (see
-  // MediaThumbnailCacheManager).
-  String get stableMediaKey => mediaMessageId ?? id;
+  // `id` is the same messageId end to end now — generated client-side
+  // before the first send attempt (see FirestoreService.generateMessageId)
+  // and never changed by LocalMessageStore's pending->confirmed transition
+  // (see its own doc comment) — so this is just `id`. Kept as its own
+  // accessor since callers (MediaThumbnailCacheManager etc.) already use
+  // this name to mean "the one identifier that stays constant across a
+  // message's entire lifecycle."
+  String get stableMediaKey => id;
 
   const Message({
     required this.id,
+    this.chatId,
     required this.senderId,
     required this.text,
     this.imageURL,
@@ -590,6 +613,7 @@ class Message {
     this.waveform,
     this.listenedBy = const [],
     this.timestamp,
+    this.seq,
     required this.type,
     this.replyToId,
     this.replyToText,
@@ -608,18 +632,275 @@ class Message {
     this.localFilePath,
     this.localSendStatus,
     this.localUploadProgress,
-    this.mediaMessageId,
     this.localPreviewBytes,
+    this.attemptCount = 0,
+    this.uploadedUrl,
+    this.videoHd = false,
     this.isSystem = false,
     this.forwardCount = 0,
   });
 
-  factory Message.fromFirestore(String id, Map<String, dynamic> data) {
+  // Every field below splits into exactly one of two ownership groups —
+  // getting this split wrong is what LocalMessageStore's whole design
+  // exists to prevent (see its own doc comment): "synced" fields only ever
+  // come from Firestore (text, media, replies, reactions, deletion state,
+  // seq, timestamp, isSystem, forwardCount); "local" fields only the
+  // send/retry path on THIS device ever owns (localSendStatus,
+  // localFilePath, localUploadProgress, localPreviewBytes, attemptCount,
+  // uploadedUrl, videoHd). The three methods below are the only sanctioned
+  // ways to move a Message from one state to another — each one is
+  // explicit about which group it touches, so it's structurally impossible
+  // to accidentally let one clobber the other's fields.
+
+  // This device's own pending send just got confirmed by
+  // FirestoreService._commitMessage — keep every synced field exactly as
+  // this row already had it (it was this device's own optimistic copy,
+  // already correct) and clear every local field back to "not pending."
+  Message withConfirmedSeq(int newSeq) => Message(
+    id: id,
+    chatId: chatId,
+    senderId: senderId,
+    text: text,
+    imageURL: imageURL,
+    audioURL: audioURL,
+    videoURL: videoURL,
+    videoDurationMs: videoDurationMs,
+    videoWidth: videoWidth,
+    videoHeight: videoHeight,
+    imageWidth: imageWidth,
+    imageHeight: imageHeight,
+    mediaOriginChatId: mediaOriginChatId,
+    mediaFileName: mediaFileName,
+    fileURL: fileURL,
+    fileName: fileName,
+    fileSizeBytes: fileSizeBytes,
+    locationImageURL: locationImageURL,
+    latitude: latitude,
+    longitude: longitude,
+    waveform: waveform,
+    listenedBy: listenedBy,
+    timestamp: timestamp,
+    seq: newSeq,
+    type: type,
+    replyToId: replyToId,
+    replyToText: replyToText,
+    replyToSenderName: replyToSenderName,
+    replyToImageURL: replyToImageURL,
+    replyToVideoURL: replyToVideoURL,
+    replyToStatusId: replyToStatusId,
+    replyToStatusOwnerUid: replyToStatusOwnerUid,
+    replyToStatusType: replyToStatusType,
+    replyToStatusText: replyToStatusText,
+    replyToStatusThumbnailURL: replyToStatusThumbnailURL,
+    deletedForAll: deletedForAll,
+    deletedFor: deletedFor,
+    deletedAt: deletedAt,
+    reactions: reactions,
+    isSystem: isSystem,
+    forwardCount: forwardCount,
+    // local group cleared — no longer pending.
+  );
+
+  // Local-group-only update, mid-retry — a queued->uploading->failed
+  // transition. Every synced field stays exactly as-is (this row hasn't
+  // been confirmed by the server yet, so there IS no other synced-field
+  // source to reconcile against).
+  Message withLocalStatus({
+    required String? status,
+    int? attemptCount,
+    String? uploadedUrl,
+    String? localFilePath,
+  }) => Message(
+    id: id,
+    chatId: chatId,
+    senderId: senderId,
+    text: text,
+    imageURL: imageURL,
+    audioURL: audioURL,
+    videoURL: videoURL,
+    videoDurationMs: videoDurationMs,
+    videoWidth: videoWidth,
+    videoHeight: videoHeight,
+    imageWidth: imageWidth,
+    imageHeight: imageHeight,
+    mediaOriginChatId: mediaOriginChatId,
+    mediaFileName: mediaFileName,
+    fileURL: fileURL,
+    fileName: fileName,
+    fileSizeBytes: fileSizeBytes,
+    locationImageURL: locationImageURL,
+    latitude: latitude,
+    longitude: longitude,
+    waveform: waveform,
+    listenedBy: listenedBy,
+    timestamp: timestamp,
+    seq: seq,
+    type: type,
+    replyToId: replyToId,
+    replyToText: replyToText,
+    replyToSenderName: replyToSenderName,
+    replyToImageURL: replyToImageURL,
+    replyToVideoURL: replyToVideoURL,
+    replyToStatusId: replyToStatusId,
+    replyToStatusOwnerUid: replyToStatusOwnerUid,
+    replyToStatusType: replyToStatusType,
+    replyToStatusText: replyToStatusText,
+    replyToStatusThumbnailURL: replyToStatusThumbnailURL,
+    deletedForAll: deletedForAll,
+    deletedFor: deletedFor,
+    deletedAt: deletedAt,
+    reactions: reactions,
+    isSystem: isSystem,
+    forwardCount: forwardCount,
+    localFilePath: localFilePath ?? this.localFilePath,
+    localSendStatus: status,
+    // Always reset, not carried over — a fresh 'uploading'/'queued'/'failed'
+    // transition means whatever prior progress existed no longer reflects
+    // an in-flight upload. withUploadProgress below is the only way this
+    // ever becomes non-null again.
+    localUploadProgress: null,
+    localPreviewBytes: localPreviewBytes,
+    attemptCount: attemptCount ?? this.attemptCount,
+    uploadedUrl: uploadedUrl ?? this.uploadedUrl,
+    videoHd: videoHd,
+  );
+
+  // Pure in-memory progress-ring update while an image/video upload is in
+  // flight — deliberately its own minimal method rather than folded into
+  // withLocalStatus above: LocalMessageStore.updateProgress (the only
+  // caller) skips scheduling a disk write for this one, since Storage's
+  // snapshotEvents can fire many times a second and persisting on every
+  // tick would be needless I/O for a value that's meaningless across an
+  // app restart anyway (a resumed 'queued' item re-uploads from scratch,
+  // correctly starting back at 0.0 via withLocalStatus's reset above).
+  Message withUploadProgress(double progress) => Message(
+    id: id,
+    chatId: chatId,
+    senderId: senderId,
+    text: text,
+    imageURL: imageURL,
+    audioURL: audioURL,
+    videoURL: videoURL,
+    videoDurationMs: videoDurationMs,
+    videoWidth: videoWidth,
+    videoHeight: videoHeight,
+    imageWidth: imageWidth,
+    imageHeight: imageHeight,
+    mediaOriginChatId: mediaOriginChatId,
+    mediaFileName: mediaFileName,
+    fileURL: fileURL,
+    fileName: fileName,
+    fileSizeBytes: fileSizeBytes,
+    locationImageURL: locationImageURL,
+    latitude: latitude,
+    longitude: longitude,
+    waveform: waveform,
+    listenedBy: listenedBy,
+    timestamp: timestamp,
+    seq: seq,
+    type: type,
+    replyToId: replyToId,
+    replyToText: replyToText,
+    replyToSenderName: replyToSenderName,
+    replyToImageURL: replyToImageURL,
+    replyToVideoURL: replyToVideoURL,
+    replyToStatusId: replyToStatusId,
+    replyToStatusOwnerUid: replyToStatusOwnerUid,
+    replyToStatusType: replyToStatusType,
+    replyToStatusText: replyToStatusText,
+    replyToStatusThumbnailURL: replyToStatusThumbnailURL,
+    deletedForAll: deletedForAll,
+    deletedFor: deletedFor,
+    deletedAt: deletedAt,
+    reactions: reactions,
+    isSystem: isSystem,
+    forwardCount: forwardCount,
+    localFilePath: localFilePath,
+    localSendStatus: localSendStatus,
+    localUploadProgress: progress,
+    localPreviewBytes: localPreviewBytes,
+    attemptCount: attemptCount,
+    uploadedUrl: uploadedUrl,
+    videoHd: videoHd,
+  );
+
+  // The live Firestore listener's sync-writer found a doc for a message
+  // this device already has a local row for (either this device's own
+  // pending send the confirm-path hasn't caught up to yet, or a plain
+  // re-sync of an already-confirmed row whose reactions/deletion-state
+  // changed) — take every synced field from `real` (the freshly-read
+  // Firestore doc), keep every local field from `this` (the existing local
+  // row) untouched. Never called for a message with no existing local row
+  // — LocalMessageStore.upsertFromFirestore uses `real` directly for that
+  // case, there's nothing local to preserve.
+  Message reconciledWithFirestore(Message real) => Message(
+    id: real.id,
+    chatId: chatId,
+    senderId: real.senderId,
+    text: real.text,
+    imageURL: real.imageURL,
+    audioURL: real.audioURL,
+    videoURL: real.videoURL,
+    videoDurationMs: real.videoDurationMs,
+    videoWidth: real.videoWidth,
+    videoHeight: real.videoHeight,
+    imageWidth: real.imageWidth,
+    imageHeight: real.imageHeight,
+    mediaOriginChatId: real.mediaOriginChatId,
+    mediaFileName: real.mediaFileName,
+    fileURL: real.fileURL,
+    fileName: real.fileName,
+    fileSizeBytes: real.fileSizeBytes,
+    locationImageURL: real.locationImageURL,
+    latitude: real.latitude,
+    longitude: real.longitude,
+    waveform: real.waveform,
+    listenedBy: real.listenedBy,
+    timestamp: real.timestamp,
+    seq: real.seq,
+    type: real.type,
+    replyToId: real.replyToId,
+    replyToText: real.replyToText,
+    replyToSenderName: real.replyToSenderName,
+    replyToImageURL: real.replyToImageURL,
+    replyToVideoURL: real.replyToVideoURL,
+    replyToStatusId: real.replyToStatusId,
+    replyToStatusOwnerUid: real.replyToStatusOwnerUid,
+    replyToStatusType: real.replyToStatusType,
+    replyToStatusText: real.replyToStatusText,
+    replyToStatusThumbnailURL: real.replyToStatusThumbnailURL,
+    deletedForAll: real.deletedForAll,
+    deletedFor: real.deletedFor,
+    deletedAt: real.deletedAt,
+    reactions: real.reactions,
+    isSystem: real.isSystem,
+    forwardCount: real.forwardCount,
+    // local group preserved from `this`, not `real` (a Firestore doc never
+    // has any of these — Message.fromFirestore never sets them).
+    localFilePath: localFilePath,
+    localSendStatus: localSendStatus,
+    localUploadProgress: localUploadProgress,
+    localPreviewBytes: localPreviewBytes,
+    attemptCount: attemptCount,
+    uploadedUrl: uploadedUrl,
+    videoHd: videoHd,
+  );
+
+  // chatId: optional — only LocalMessageStore's Firestore-listener sync
+  // path needs it (a flat, cross-chat store has no other way to know which
+  // chat a given snapshot doc belongs to); every other caller already has
+  // chatId from its own already-chat-scoped query and leaves this null.
+  factory Message.fromFirestore(
+    String id,
+    Map<String, dynamic> data, {
+    String? chatId,
+  }) {
     final replyTo = data['replyTo'] as Map<String, dynamic>?;
     final replyToStatus = data['replyToStatus'] as Map<String, dynamic>?;
     final rawReactions = data['reactions'] as Map<String, dynamic>? ?? {};
     return Message(
       id: id,
+      chatId: chatId,
       senderId: data['senderId'] ?? '',
       text: data['text'] ?? '',
       imageURL: data['imageURL'],
@@ -641,6 +922,7 @@ class Message {
       waveform: (data['waveform'] as List?)?.cast<int>(),
       listenedBy: List<String>.from(data['listenedBy'] as List? ?? const []),
       timestamp: data['timestamp'] as Timestamp?,
+      seq: (data['seq'] as num?)?.toInt(),
       type: data['type'] ?? 'text',
       replyToId: replyTo?['id'] as String?,
       replyToText: replyTo?['text'] as String?,
@@ -663,25 +945,6 @@ class Message {
       forwardCount: (data['forwardCount'] as num?)?.toInt() ?? 0,
     );
   }
-}
-
-// Carries Firestore's own added/modified/removed distinction through to the
-// chat screen so it can tell "history just loaded" and "a reaction/read-
-// receipt changed on an existing message" apart from "a new message was
-// actually appended" — the three cases that matter for deciding whether to
-// auto-scroll. isInitialLoad/addedMessageIds are about this particular
-// stream *subscription's* lifecycle, independent of whatever's already on
-// screen from the message cache.
-class MessagesSnapshot {
-  final List<Message> messages;
-  final bool isInitialLoad;
-  final List<String> addedMessageIds;
-
-  const MessagesSnapshot({
-    required this.messages,
-    required this.isInitialLoad,
-    required this.addedMessageIds,
-  });
 }
 
 class StarredMessage {

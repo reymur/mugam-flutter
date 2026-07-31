@@ -11,14 +11,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
-import 'core/cache/message_cache_service.dart';
 import 'core/calls/call_listener_service.dart';
 import 'core/calls/callkit_service.dart';
 import 'core/presence/presence_service.dart';
 import 'core/queue/background_queue_processor.dart';
-import 'core/queue/pending_message_queue_controller.dart';
-import 'core/queue/pending_message_queue_service.dart';
+import 'core/queue/message_send_controller.dart';
 import 'core/settings/image_quality_settings.dart';
+import 'core/store/local_message_store.dart';
 import 'core/theme/colors.dart';
 import 'core/theme/typography.dart';
 import 'firebase/firestore_service.dart';
@@ -113,6 +112,12 @@ Future<void> _mainImpl() async {
     ),
   );
   final prefs = await SharedPreferences.getInstance();
+  // Hydrates every pending send across every chat (see LocalMessageStore's
+  // own doc comment) — must complete before MessageSendController is ever
+  // read, so the retry loop it eagerly kicks off in _MugamAppState.initState
+  // below actually has something to iterate.
+  final localMessageStore = LocalMessageStore(prefs);
+  await localMessageStore.init();
   // Best-effort retry for the offline media-send queue while the app is
   // backgrounded (but not fully killed — see background_queue_processor.dart
   // for what's deliberately out of scope). registerPeriodicTask's frequency
@@ -129,10 +134,7 @@ Future<void> _mainImpl() async {
   runApp(
     ProviderScope(
       overrides: [
-        messageCacheServiceProvider.overrideWithValue(MessageCacheService(prefs)),
-        pendingMessageQueueServiceProvider.overrideWithValue(
-          PendingMessageQueueService(prefs),
-        ),
+        localMessageStoreProvider.overrideWithValue(localMessageStore),
         sharedPreferencesProvider.overrideWithValue(prefs),
       ],
       child: const MugamApp(),
@@ -187,10 +189,11 @@ class _MugamAppState extends ConsumerState<MugamApp> {
         appRouter.push('/chat/$chatId');
       }
     });
-    // Eagerly instantiate the offline media-send queue at startup (not
-    // lazily on first chat screen open) so a queue hydrated from a previous
-    // session resumes retrying immediately, app-wide.
-    ref.read(pendingMessageQueueProvider);
+    // Eagerly instantiate the offline send retry loop at startup (not
+    // lazily on first chat screen open) so pending sends hydrated from a
+    // previous session (LocalMessageStore.init(), already awaited above)
+    // resume retrying immediately, app-wide.
+    ref.read(messageSendControllerProvider);
   }
 
   @override

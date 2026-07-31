@@ -35,38 +35,6 @@ const agoraAppCertificate = defineSecret("AGORA_APP_CERTIFICATE");
 // same pattern as agoraAppCertificate above.
 const algoliaAdminKey = defineSecret("ALGOLIA_ADMIN_KEY");
 
-const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
-
-// mugam-v2 (Expo/React Native) registers Expo push tokens and sends them
-// itself client-side whenever *it* is the sender. This function only needs
-// to cover the gap that leaves: (a) mugam-flutter recipients (always, since
-// nothing else can reach an FCM token), and (b) Expo-token recipients when
-// the sender used mugam-flutter (since in that case mugam-v2's own
-// client-side send never runs). Sending to an Expo-token recipient when a
-// mugam-v2 client sent the message would duplicate what that client already
-// did — mugam-v2 is a read-only reference and can't be changed to avoid this
-// itself, so the dedup logic lives entirely here.
-function isExpoToken(token: string): boolean {
-  return token.startsWith("ExponentPushToken[") || token.startsWith("ExpoPushToken[");
-}
-
-async function sendExpoPush(
-  token: string,
-  title: string,
-  body: string,
-  data: Record<string, string>,
-): Promise<void> {
-  try {
-    await fetch(EXPO_PUSH_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to: token, title, body, data, sound: "default" }),
-    });
-  } catch (e) {
-    logger.warn("Expo push failed", e);
-  }
-}
-
 async function sendFcmPush(
   token: string,
   title: string,
@@ -125,24 +93,16 @@ async function sendCallPushToUid(uid: string, data: Record<string, string>): Pro
     tokensSnap.docs.map(async (tokenDoc) => {
       const token = tokenDoc.data().token as string | undefined;
       if (!token) return;
-      if (isExpoToken(token)) {
-        // No CallKit/background-wake integration on the Expo (mugam-v2)
-        // side yet — fall back to a normal visible push there, same as
-        // before, rather than silently dropping the notification entirely.
-        await sendExpoPush(token, "Zəng", data.callType === "video" ? "Video zəng" : "Səsli zəng", data);
-      } else {
-        await sendCallDataPush(token, data);
-      }
+      await sendCallDataPush(token, data);
     }),
   );
 }
 
-// Fans a push out to every device a single user has registered, reusing
-// the same expo/fcm split onNewMessage does inline below — extracted here
-// (rather than inlined a third time) only because the two friendRequests
-// triggers below both need the exact same "fetch pushTokens, dispatch by
-// token type" step onNewMessage already performs; onNewMessage itself is
-// left untouched to avoid risking its own working behavior.
+// Fans a push out to every device a single user has registered — extracted
+// here (rather than inlined a third time) only because the two
+// friendRequests triggers below both need the exact same "fetch
+// pushTokens, send FCM" step onNewMessage already performs; onNewMessage
+// itself is left untouched to avoid risking its own working behavior.
 async function sendPushToUid(
   uid: string,
   title: string,
@@ -154,11 +114,7 @@ async function sendPushToUid(
     tokensSnap.docs.map(async (tokenDoc) => {
       const token = tokenDoc.data().token as string | undefined;
       if (!token) return;
-      if (isExpoToken(token)) {
-        await sendExpoPush(token, title, body, data);
-      } else {
-        await sendFcmPush(token, title, body, data);
-      }
+      await sendFcmPush(token, title, body, data);
     }),
   );
 }
@@ -244,7 +200,6 @@ export const onNewMessage = onDocumentCreated(
     );
     if (recipients.length === 0) return;
 
-    const senderIsFlutter = message.clientPlatform === "flutter";
     const isGroup = !!chat.isGroup;
     const chatName: string = chat.name ?? "";
 
@@ -267,11 +222,7 @@ export const onNewMessage = onDocumentCreated(
           tokensSnap.docs.map(async (tokenDoc) => {
             const token = tokenDoc.data().token as string | undefined;
             if (!token) return;
-            if (isExpoToken(token)) {
-              if (senderIsFlutter) await sendExpoPush(token, title, body, data);
-            } else {
-              await sendFcmPush(token, title, body, data);
-            }
+            await sendFcmPush(token, title, body, data);
           }),
         );
       }),

@@ -76,8 +76,8 @@ class _FileMessageBubbleState extends State<FileMessageBubble> {
   // Rolling window of (timestamp, bytesTransferred) samples for the
   // upload-remaining-time estimate ("Qalıb: mm:ss", WhatsApp-style) —
   // deliberately local to this widget, not threaded through the shared
-  // upload pipeline (firestore_service.dart / PendingMediaMessage /
-  // PendingMessageQueueController), which only ever hands us a plain
+  // upload pipeline (firestore_service.dart / LocalMessageStore /
+  // MessageSendController), which only ever hands us a plain
   // 0.0-1.0 fraction (see Message.localUploadProgress) and is shared by
   // image/video/audio too. Averaging the rate over this window (oldest vs.
   // newest sample) rather than the last two consecutive samples smooths

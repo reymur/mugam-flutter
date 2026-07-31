@@ -127,10 +127,27 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
     if (_openingChat) return;
     setState(() => _openingChat = true);
     try {
-      final chatId = await ref.read(firestoreServiceProvider).getOrCreateDirectChat(
-            myUid: _currentUid,
-            otherUid: user.id,
-          );
+      // This screen IS the Chat tab, so chatsProvider is already loaded
+      // right here — reuse its own most-recently-active pick for this pair
+      // (same dedup as the list itself, see firestore_service.dart's
+      // bestPerCounterpart) instead of firing getOrCreateDirectChat's own
+      // broader reconciliation query, which has to fetch every chat this
+      // uid has all over again just to re-derive data already in memory.
+      final cachedChats = ref.read(chatsProvider(_currentUid)).asData?.value;
+      Chat? cachedMatch;
+      if (cachedChats != null) {
+        for (final c in cachedChats) {
+          if (!c.isGroup && c.members.contains(user.id)) {
+            cachedMatch = c;
+            break;
+          }
+        }
+      }
+      final chatId = cachedMatch?.id ??
+          await ref.read(firestoreServiceProvider).getOrCreateDirectChat(
+                myUid: _currentUid,
+                otherUid: user.id,
+              );
       if (!mounted) return;
       context.push('/chat/$chatId');
     } finally {

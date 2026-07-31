@@ -9,19 +9,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../../firebase/firestore_service.dart';
+import '../../firebase/models.dart';
 import '../../firebase_options.dart';
 import '../media/video_compressor.dart';
-import 'pending_media_message.dart';
-import 'pending_message_queue_service.dart';
+import '../store/local_message_store.dart';
+import 'pending_file_storage.dart';
 
 const String pendingQueueRetryTaskName = 'pendingQueueRetryTask';
 const int pendingQueueMaxAttempts = 8;
 const Duration pendingQueueUploadTimeout = Duration(seconds: 20);
 
-// Shared by the live PendingMessageQueueController (foreground) and the
-// background isolate spawned by BGTaskScheduler/WorkManager — a single
-// attempt at uploading+sending one queued item, idempotent via its
-// pre-generated messageId.
+// Shared by the live MessageSendController (foreground) and the background
+// isolate spawned by BGTaskScheduler/WorkManager — a single attempt at
+// uploading+sending one pending Message, idempotent via its own `id` (the
+// same Firestore messageId end to end — see LocalMessageStore's own doc
+// comment).
 //
 // Reuses item.uploadedUrl instead of re-uploading when a previous attempt's
 // upload step succeeded but the Firestore write after it didn't (timeout on
@@ -35,10 +37,15 @@ const Duration pendingQueueUploadTimeout = Duration(seconds: 20);
 // the caller persist the URL the moment it's obtained, before the send step
 // that might still fail. The remaining half of the fix — sendXMessage only
 // writing if the document doesn't already exist — lives in
-// FirestoreService, so even if two attempts still race to call it, only one
-// write survives.
-Future<bool> attemptSendPendingMessage(
-  PendingMediaMessage item,
+// FirestoreService._commitMessage, so even if two attempts still race to
+// call it, only one write survives (and both learn the real seq either
+// way — see that function's own doc comment).
+//
+// Returns (success, seq): seq is only non-null when success is true — the
+// caller uses it to call LocalMessageStore.markConfirmed and update this
+// device's own pending row in place.
+Future<(bool success, int? seq)> attemptSendPendingMessage(
+  Message item,
   FirestoreService firestoreService, {
   Duration timeout = pendingQueueUploadTimeout,
   void Function(String url)? onUploaded,
@@ -48,17 +55,19 @@ Future<bool> attemptSendPendingMessage(
   void Function(UploadTask task)? onTaskStarted,
   void Function(double progress)? onProgress,
 }) async {
+  final chatId = item.chatId;
+  if (chatId == null) return (false, null);
   try {
     // Text has nothing to upload — no file, no Storage step, no
     // waitForValidatedUpload — so it's handled entirely separately from the
-    // file-based types below, before filePath is ever touched.
+    // file-based types below, before localFilePath is ever touched.
     if (item.type == 'text') {
-      await firestoreService
+      final seq = await firestoreService
           .sendMessage(
-            chatId: item.chatId,
+            chatId: chatId,
             senderId: item.senderId,
-            text: item.text ?? '',
-            messageId: item.messageId,
+            text: item.text,
+            messageId: item.id,
             replyToId: item.replyToId,
             replyToText: item.replyToText,
             replyToSenderName: item.replyToSenderName,
@@ -66,23 +75,24 @@ Future<bool> attemptSendPendingMessage(
             replyToVideoURL: item.replyToVideoURL,
           )
           .timeout(timeout);
-      return true;
+      return (true, seq);
     }
 
-    // Every remaining type is file-based, so filePath must be set — a
-    // non-text item with a null filePath is an invariant violation (a bug
-    // elsewhere, not a normal runtime state) and gets handled explicitly
-    // rather than risking a null-check crash further down. This early
-    // return is also what lets `filePath` below be used unwrapped for the
-    // rest of this function — Dart promotes it to non-null for every path
-    // reachable only past this check, including inside every switch case.
-    final filePath = item.filePath;
+    // Every remaining type is file-based, so localFilePath must be set — a
+    // non-text item with a null localFilePath is an invariant violation (a
+    // bug elsewhere, not a normal runtime state) and gets handled
+    // explicitly rather than risking a null-check crash further down. This
+    // early return is also what lets `filePath` below be used unwrapped
+    // for the rest of this function — Dart promotes it to non-null for
+    // every path reachable only past this check, including inside every
+    // switch case.
+    final filePath = item.localFilePath;
     if (filePath == null) {
       debugPrint(
-        'attemptSendPendingMessage: no filePath for non-text item '
-        '${item.localId} (type=${item.type}) — treating as failed',
+        'attemptSendPendingMessage: no localFilePath for non-text item '
+        '${item.id} (type=${item.type}) — treating as failed',
       );
-      return false;
+      return (false, null);
     }
 
     // A prior attempt's upload can have already succeeded (item.uploadedUrl
@@ -93,18 +103,18 @@ Future<bool> attemptSendPendingMessage(
     // upload, which is skipped whenever uploadedUrl is already set. Only
     // require the file to exist when the upload itself still needs to run.
     if (item.uploadedUrl == null && !await File(filePath).exists()) {
-      debugPrint('attemptSendPendingMessage: file missing for ${item.localId}');
-      return false;
+      debugPrint('attemptSendPendingMessage: file missing for ${item.id}');
+      return (false, null);
     }
     switch (item.type) {
       case 'image':
         {
-          final fileName = '${item.messageId}.jpg';
+          final fileName = '${item.id}.jpg';
           final url =
               item.uploadedUrl ??
               await firestoreService
                   .uploadChatImage(
-                    chatId: item.chatId,
+                    chatId: chatId,
                     filePath: filePath,
                     senderId: item.senderId,
                     fileName: fileName,
@@ -114,20 +124,20 @@ Future<bool> attemptSendPendingMessage(
                   .timeout(timeout);
           if (item.uploadedUrl == null) onUploaded?.call(url);
           final validated = await firestoreService.waitForValidatedUpload(
-            chatId: item.chatId,
+            chatId: chatId,
             fileName: fileName,
           );
-          if (!validated) return false;
-          await firestoreService
+          if (!validated) return (false, null);
+          final seq = await firestoreService
               .sendImageMessage(
-                chatId: item.chatId,
+                chatId: chatId,
                 senderId: item.senderId,
                 imageURL: url,
                 imageWidth: item.imageWidth,
                 imageHeight: item.imageHeight,
-                mediaOriginChatId: item.chatId,
+                mediaOriginChatId: chatId,
                 mediaFileName: fileName,
-                messageId: item.messageId,
+                messageId: item.id,
                 replyToId: item.replyToId,
                 replyToText: item.replyToText,
                 replyToSenderName: item.replyToSenderName,
@@ -135,16 +145,16 @@ Future<bool> attemptSendPendingMessage(
                 replyToVideoURL: item.replyToVideoURL,
               )
               .timeout(timeout);
-          return true;
+          return (true, seq);
         }
       case 'audio':
         {
-          final fileName = '${item.messageId}.m4a';
+          final fileName = '${item.id}.m4a';
           final url =
               item.uploadedUrl ??
               await firestoreService
                   .uploadChatAudio(
-                    chatId: item.chatId,
+                    chatId: chatId,
                     filePath: filePath,
                     senderId: item.senderId,
                     fileName: fileName,
@@ -152,19 +162,19 @@ Future<bool> attemptSendPendingMessage(
                   .timeout(timeout);
           if (item.uploadedUrl == null) onUploaded?.call(url);
           final validated = await firestoreService.waitForValidatedUpload(
-            chatId: item.chatId,
+            chatId: chatId,
             fileName: fileName,
           );
-          if (!validated) return false;
-          await firestoreService
+          if (!validated) return (false, null);
+          final seq = await firestoreService
               .sendAudioMessage(
-                chatId: item.chatId,
+                chatId: chatId,
                 senderId: item.senderId,
                 audioURL: url,
                 waveform: item.waveform,
-                mediaOriginChatId: item.chatId,
+                mediaOriginChatId: chatId,
                 mediaFileName: fileName,
-                messageId: item.messageId,
+                messageId: item.id,
                 replyToId: item.replyToId,
                 replyToText: item.replyToText,
                 replyToSenderName: item.replyToSenderName,
@@ -172,16 +182,16 @@ Future<bool> attemptSendPendingMessage(
                 replyToVideoURL: item.replyToVideoURL,
               )
               .timeout(timeout);
-          return true;
+          return (true, seq);
         }
       case 'location':
         {
-          final fileName = '${item.messageId}.jpg';
+          final fileName = '${item.id}.jpg';
           final url =
               item.uploadedUrl ??
               await firestoreService
                   .uploadChatImage(
-                    chatId: item.chatId,
+                    chatId: chatId,
                     filePath: filePath,
                     senderId: item.senderId,
                     fileName: fileName,
@@ -191,23 +201,23 @@ Future<bool> attemptSendPendingMessage(
                   .timeout(timeout);
           if (item.uploadedUrl == null) onUploaded?.call(url);
           final validated = await firestoreService.waitForValidatedUpload(
-            chatId: item.chatId,
+            chatId: chatId,
             fileName: fileName,
           );
-          if (!validated) return false;
+          if (!validated) return (false, null);
           final lat = item.latitude;
           final lng = item.longitude;
-          if (lat == null || lng == null) return false;
-          await firestoreService
+          if (lat == null || lng == null) return (false, null);
+          final seq = await firestoreService
               .sendLocationMessage(
-                chatId: item.chatId,
+                chatId: chatId,
                 senderId: item.senderId,
                 locationImageURL: url,
                 latitude: lat,
                 longitude: lng,
-                mediaOriginChatId: item.chatId,
+                mediaOriginChatId: chatId,
                 mediaFileName: fileName,
-                messageId: item.messageId,
+                messageId: item.id,
                 replyToId: item.replyToId,
                 replyToText: item.replyToText,
                 replyToSenderName: item.replyToSenderName,
@@ -215,7 +225,7 @@ Future<bool> attemptSendPendingMessage(
                 replyToVideoURL: item.replyToVideoURL,
               )
               .timeout(timeout);
-          return true;
+          return (true, seq);
         }
       case 'file':
         {
@@ -225,16 +235,16 @@ Future<bool> attemptSendPendingMessage(
           // association both need a real extension on the locally cached
           // copy at open time, and that copy's name is derived from this
           // same mediaFileName (see FileMessageBubble).
-          final originalName = item.fileName ?? '${item.messageId}.bin';
+          final originalName = item.fileName ?? '${item.id}.bin';
           final ext = originalName.contains('.')
               ? originalName.split('.').last
               : 'bin';
-          final fileName = '${item.messageId}.$ext';
+          final fileName = '${item.id}.$ext';
           final url =
               item.uploadedUrl ??
               await firestoreService
                   .uploadChatFile(
-                    chatId: item.chatId,
+                    chatId: chatId,
                     filePath: filePath,
                     senderId: item.senderId,
                     fileName: fileName,
@@ -244,20 +254,20 @@ Future<bool> attemptSendPendingMessage(
                   .timeout(timeout);
           if (item.uploadedUrl == null) onUploaded?.call(url);
           final validated = await firestoreService.waitForValidatedUpload(
-            chatId: item.chatId,
+            chatId: chatId,
             fileName: fileName,
           );
-          if (!validated) return false;
-          await firestoreService
+          if (!validated) return (false, null);
+          final seq = await firestoreService
               .sendFileMessage(
-                chatId: item.chatId,
+                chatId: chatId,
                 senderId: item.senderId,
                 fileURL: url,
                 fileName: originalName,
                 fileSizeBytes: item.fileSizeBytes,
-                mediaOriginChatId: item.chatId,
+                mediaOriginChatId: chatId,
                 mediaFileName: fileName,
-                messageId: item.messageId,
+                messageId: item.id,
                 replyToId: item.replyToId,
                 replyToText: item.replyToText,
                 replyToSenderName: item.replyToSenderName,
@@ -265,7 +275,7 @@ Future<bool> attemptSendPendingMessage(
                 replyToVideoURL: item.replyToVideoURL,
               )
               .timeout(timeout);
-          return true;
+          return (true, seq);
         }
       case 'video':
         {
@@ -290,12 +300,12 @@ Future<bool> attemptSendPendingMessage(
             final ext = uploadPath.contains('.')
                 ? uploadPath.split('.').last
                 : 'mp4';
-            final fileName = '${item.messageId}.$ext';
+            final fileName = '${item.id}.$ext';
             final url =
                 item.uploadedUrl ??
                 await firestoreService
                     .uploadChatVideo(
-                      chatId: item.chatId,
+                      chatId: chatId,
                       filePath: uploadPath,
                       senderId: item.senderId,
                       fileName: fileName,
@@ -307,21 +317,21 @@ Future<bool> attemptSendPendingMessage(
                     .timeout(timeout);
             if (item.uploadedUrl == null) onUploaded?.call(url);
             final validated = await firestoreService.waitForValidatedUpload(
-              chatId: item.chatId,
+              chatId: chatId,
               fileName: fileName,
             );
-            if (!validated) return false;
-            await firestoreService
+            if (!validated) return (false, null);
+            final seq = await firestoreService
                 .sendVideoMessage(
-                  chatId: item.chatId,
+                  chatId: chatId,
                   senderId: item.senderId,
                   videoURL: url,
                   videoDurationMs: item.videoDurationMs,
                   videoWidth: item.videoWidth,
                   videoHeight: item.videoHeight,
-                  mediaOriginChatId: item.chatId,
+                  mediaOriginChatId: chatId,
                   mediaFileName: fileName,
-                  messageId: item.messageId,
+                  messageId: item.id,
                   replyToId: item.replyToId,
                   replyToText: item.replyToText,
                   replyToSenderName: item.replyToSenderName,
@@ -329,7 +339,7 @@ Future<bool> attemptSendPendingMessage(
                   replyToVideoURL: item.replyToVideoURL,
                 )
                 .timeout(timeout);
-            return true;
+            return (true, seq);
           } finally {
             if (uploadPath != filePath) {
               unawaited(
@@ -341,93 +351,98 @@ Future<bool> attemptSendPendingMessage(
           }
         }
       default:
-        return false;
+        return (false, null);
     }
   } catch (e, st) {
-    debugPrint('attemptSendPendingMessage: failed for ${item.localId} ($e)');
+    debugPrint('attemptSendPendingMessage: failed for ${item.id} ($e)');
     FirebaseCrashlytics.instance.recordError(
       e,
       st,
-      reason: 'attemptSendPendingMessage: failed for ${item.localId} (type=${item.type})',
+      reason: 'attemptSendPendingMessage: failed for ${item.id} (type=${item.type})',
     );
-    return false;
+    return (false, null);
   }
 }
 
-// Runs in a fresh, headless background isolate spawned by the OS (BGTaskScheduler
-// on iOS, WorkManager on Android) — no ProviderScope/widget tree exists here, so
-// this talks to the same persisted queue directly instead of going through
-// PendingMessageQueueController. One best-effort pass: for each chat, attempt
-// its oldest queued item, and keep going through that chat's queue only while
-// attempts keep succeeding — a failure stops that chat for this run (no
-// backoff *wait* here; background execution windows are too short to spend on
-// waiting, the next periodic run or the next app foreground is the retry).
+// Runs in a fresh, headless background isolate spawned by the OS
+// (BGTaskScheduler on iOS, WorkManager on Android) — no ProviderScope/widget
+// tree exists here, so this talks to a standalone LocalMessageStore
+// directly instead of going through MessageSendController. One best-effort
+// pass: for each chat, attempt its oldest queued item, and keep going
+// through that chat's queue only while attempts keep succeeding — a
+// failure stops that chat for this run (no backoff *wait* here; background
+// execution windows are too short to spend on waiting, the next periodic
+// run or the next app foreground is the retry).
 Future<void> processPendingQueueOnce() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   final prefs = await SharedPreferences.getInstance();
-  final service = PendingMessageQueueService(prefs);
+  final store = LocalMessageStore(prefs);
+  await store.init();
   final firestoreService = FirestoreService();
 
-  final items = service
-      .readAll()
-      .map((e) => e.status == 'uploading' ? e.copyWith(status: 'queued') : e)
-      .toList();
-  final byChat = <String, List<PendingMediaMessage>>{};
-  for (final item in items) {
-    byChat.putIfAbsent(item.chatId, () => []).add(item);
+  final byChat = <String, List<Message>>{};
+  for (final item in store.allPending()) {
+    final chatId = item.chatId;
+    if (chatId == null) continue;
+    // An item stuck 'uploading' means the app died mid-attempt last run —
+    // we can't know if that upload actually landed, so treat it as
+    // 'queued' again; the idempotent messageId makes re-attempting safe
+    // either way.
+    final normalized = item.localSendStatus == 'uploading'
+        ? item.withLocalStatus(status: 'queued')
+        : item;
+    byChat.putIfAbsent(chatId, () => []).add(normalized);
   }
 
-  final result = List<PendingMediaMessage>.from(items);
-
-  for (final chatItems in byChat.values) {
-    chatItems.sort((a, b) => a.createdAtMillis.compareTo(b.createdAtMillis));
+  for (final entry in byChat.entries) {
+    final chatId = entry.key;
+    final chatItems = entry.value
+      ..sort((a, b) {
+        final aTime = a.timestamp?.millisecondsSinceEpoch ?? 0;
+        final bTime = b.timestamp?.millisecondsSinceEpoch ?? 0;
+        return aTime.compareTo(bTime);
+      });
     for (final item in chatItems) {
-      final current = result.where((e) => e.localId == item.localId).toList();
-      if (current.isEmpty || current.first.status != 'queued') continue;
+      if (item.localSendStatus != 'queued') continue;
 
       String? uploadedUrl;
-      final success = await attemptSendPendingMessage(
+      final (success, seq) = await attemptSendPendingMessage(
         item,
         firestoreService,
         onUploaded: (url) => uploadedUrl = url,
       );
-      if (success) {
-        // Persisted queue state is updated before the file cleanup (see the
-        // matching reorder in PendingMessageQueueController._removeInternal)
-        // — if the app is foregrounded while this background task is mid-
-        // flight, its own queue provider reads the same SharedPreferences
-        // state, so a stale "still pending" entry lingering behind a slow
-        // disk delete could show a synthetic bubble for an already-sent
-        // message there too.
-        result.removeWhere((e) => e.localId == item.localId);
-        await service.saveAll(result);
-        await service.deleteFile(item.filePath);
+      if (success && seq != null) {
+        await store.markConfirmed(chatId: chatId, messageId: item.id, seq: seq);
+        await deletePendingFile(item.localFilePath);
         continue;
       }
 
       final newAttemptCount = item.attemptCount + 1;
-      final index = result.indexWhere((e) => e.localId == item.localId);
       if (newAttemptCount >= pendingQueueMaxAttempts) {
-        result[index] = item.copyWith(
+        await store.updatePendingStatus(
+          chatId: chatId,
+          messageId: item.id,
           status: 'failed',
           attemptCount: newAttemptCount,
           uploadedUrl: uploadedUrl,
         );
       } else {
-        result[index] = item.copyWith(
+        await store.updatePendingStatus(
+          chatId: chatId,
+          messageId: item.id,
           status: 'queued',
           attemptCount: newAttemptCount,
           uploadedUrl: uploadedUrl,
         );
       }
-      await service.saveAll(result);
       // Stop processing the rest of this chat's queue for this run — the
       // next item must not jump ahead of one that just failed and is
       // awaiting its next attempt (same FIFO rule as the live controller).
       break;
     }
   }
+  await store.flushPending();
 }
 
 @pragma('vm:entry-point')

@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../../../core/cache/message_cache_service.dart';
+import '../../../core/store/local_message_store.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/auth_service.dart';
 import '../../../firebase/firestore_service.dart';
@@ -219,7 +219,7 @@ class ProfileSettingsScreen extends ConsumerWidget {
       } catch (_) {}
     }
     try {
-      await ref.read(messageCacheServiceProvider).clearAll();
+      await ref.read(localMessageStoreProvider).clearHistoryCache();
       await AuthService().logout();
       if (context.mounted) context.go('/login');
     } catch (e, st) {

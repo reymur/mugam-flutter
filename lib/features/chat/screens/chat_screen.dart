@@ -25,11 +25,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:share_plus/share_plus.dart';
-import '../../../core/cache/message_cache_service.dart';
 import '../../../core/media/image_compressor.dart';
 import '../../../core/native_sound_effect.dart';
 import '../../../core/chat/chat_messages_controller.dart';
-import '../../../core/queue/pending_message_queue_controller.dart';
+import '../../../core/queue/message_send_controller.dart';
 import '../../../core/settings/image_quality_settings.dart';
 import '../../../core/settings/upload_limit_settings.dart';
 import '../../../core/theme/colors.dart';
@@ -189,13 +188,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   String? _highlightedMessageId;
   Timer? _highlightTimer;
   List<Message> _lastMessages = [];
-  List<Message>? _messagesPendingCacheFlush;
   final Map<String, Timer> _purgeTimers = {};
   bool _selectionMode = false;
   bool _startingCall = false;
   _SelectionPurpose _selectionPurpose = _SelectionPurpose.forward;
   final Set<String> _selectedMessageIds = {};
   bool _hasJumpedToBottomInitially = false;
+  // How many messages from the OTHER side have arrived while the user
+  // wasn't near the bottom (see build()'s ref.listen — the addedFromOther
+  // branch that doesn't auto-scroll increments this instead of silently
+  // doing nothing). Drives the "↓ N" jump-to-new badge floating over the
+  // message list. Reset to 0 both by tapping that badge and by the user
+  // scrolling to the bottom themselves (see _itemPositionsListener's own
+  // listener setup in initState).
+  int _unseenFromOtherCount = 0;
   static const List<String> _quickReactions = [
     '👍',
     '❤️',
@@ -206,7 +212,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   ];
 
   late final FirestoreService _firestoreService;
-  late final MessageCacheService _messageCacheService;
   // Mirrored from chatMetaAsync at the top of build() (see there) — read by
   // the composer's typing-throttle listener below, which fires outside
   // build()'s own scope. Typing writes are scoped ONLY to driving the
@@ -214,23 +219,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // doc comment in models.dart) — no active offer, no writes at all.
   bool _jobOfferActive = false;
   Timer? _typingThrottleTimer;
-  // Explicit baseline for the recipientAgreed-just-flipped-true detection
-  // below (see build()'s ref.listen) — null until this screen's own
-  // chatMetaAsync has actually loaded once. chatMetaProvider isn't
-  // autoDispose, so relying on ref.listen's own (previous, next) pair
-  // wasn't reliable: a chat with pre-existing recipientAgreed:true history
-  // could deliver `previous == null` on this screen's very first callback
-  // invocation regardless of whether the provider had been kept warm from
-  // earlier use elsewhere in the app, wrongly reading as "just now agreed"
-  // — confirmed on-device (opening any already-agreed chat immediately
-  // auto-redirected to Müqavilələr). Tracking our own explicit baseline,
-  // captured once real data first arrives, sidesteps that entirely.
-  bool? _recipientAgreedBaseline;
-  // Same baseline pattern, for the "recipient tapped Razıyam before a date
-  // existed" nudge to the initiator (see build()'s ref.listen and
-  // mugam-v2's own DirectChat.tsx prevWaitingForDateRef for the reference
-  // behavior this mirrors).
-  bool? _waitingForDateBaseline;
+  // Which round's "qəbul etdi" celebration has already been shown on THIS
+  // screen instance — keyed by jobOfferAt (a fresh ISO timestamp every time
+  // setJobOffer starts a new round), not a plain true/false transition flag.
+  // A transition-only flag (the previous design here) only fires while this
+  // exact screen is mounted at the precise moment recipientAgreed flips —
+  // miss that window (screen wasn't open yet, or a live ref.listen callback
+  // simply didn't run before the next rebuild) and the notification is
+  // gone forever, confirmed on-device as a real, reproducible gap: the
+  // initiator's own "{recipient} sizdən tarix gözləyir" nudge (same pattern,
+  // see _waitingForDateNudgeShownAt below) silently never appeared at all
+  // in a live two-device test even though the underlying Firestore field
+  // (waitingForDate) had genuinely flipped true. Checking against the
+  // CURRENT snapshot on every build (not only on a live ref.listen
+  // transition) fixes that: whatever the round's identifier already was
+  // when this screen (re)mounts, it still fires exactly once for it.
+  String? _agreedCelebrationShownForOfferAt;
+  // Same round-keyed pattern, for the "recipient tapped Razıyam before a
+  // date existed" nudge to the initiator (mirrors mugam-v2's own
+  // DirectChat.tsx prevWaitingForDateRef reference behavior, made durable
+  // against remounts the way that ref-based original wasn't either).
+  String? _waitingForDateNudgeShownForOfferAt;
+  // One-time guard for the seeding step above (build()'s own
+  // "don't replay stale state as a fresh notification" block) — separate
+  // from the two shown-markers themselves since a round where nothing has
+  // ever happened legitimately leaves both markers null forever, which
+  // must not be confused with "seeding hasn't run yet".
+  bool _negotiationBaselineSeeded = false;
   // Mirrored from build() (same plain-field-mutation pattern as
   // _jobOfferActive above) so _recipientTappedAcceptTooEarly and the
   // ref.listen callbacks below — both outside build()'s own scope — can
@@ -241,7 +256,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   void initState() {
     super.initState();
     _firestoreService = ref.read(firestoreServiceProvider);
-    _messageCacheService = ref.read(messageCacheServiceProvider);
     _messageController.addListener(() {
       final hasText = _messageController.text.trim().isNotEmpty;
       if (hasText != _hasText) {
@@ -264,7 +278,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
       }
     });
-    _itemPositionsListener.itemPositions.addListener(_maybeLoadOlderMessages);
+    _itemPositionsListener.itemPositions.addListener(_onItemPositionsChanged);
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
@@ -316,14 +330,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         uid: currentUid,
       );
     }
-    final pendingMessages = _messagesPendingCacheFlush;
-    if (pendingMessages != null) {
-      _messageCacheService.flush(widget.chatId, pendingMessages);
-    }
     _messageController.dispose();
     _messageFocusNode.dispose();
     _itemPositionsListener.itemPositions.removeListener(
-      _maybeLoadOlderMessages,
+      _onItemPositionsChanged,
     );
     _audioRecorder.dispose();
     _recordingTimer?.cancel();
@@ -465,16 +475,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
-  // A pending-queue message (queued/uploading/failed) has no Firestore
-  // document yet — reactions, reply, forward, copy, star and delivery info
+  // A pending-send message (queued/uploading/failed) has no server-confirmed
+  // state yet — reactions, reply, forward, copy, star and delivery info
   // don't apply to it, so it gets its own minimal sheet instead of hiding
   // items one by one in the main sheet above. "Sil" here must remove the
-  // item from the local queue (pendingMessageQueueProvider), not call the
-  // Firestore delete used by the main sheet — that path looks up msg.id,
-  // which for a synthetic queue message is 'local_<localId>' and matches no
-  // document, so it would silently do nothing. "Yenidən göndər" only makes
-  // sense once the item has actually failed — for queued/uploading the
-  // automatic per-chat loop is already retrying it.
+  // row from LocalMessageStore (messageSendControllerProvider), not call
+  // the Firestore delete used by the main sheet — that path is for an
+  // already-confirmed document, which this isn't yet. "Yenidən göndər"
+  // only makes sense once the item has actually failed — for
+  // queued/uploading the automatic per-chat loop is already retrying it.
   // A message ceasing to exist (deleted, or a queued upload cancelled
   // before it ever finished) must not leave its bytes behind in either
   // media byte cache — evict() is a no-op if this message's type/key was
@@ -492,15 +501,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // there's exactly one way a queued item ever gets torn down.
   VoidCallback? _cancelUploadCallback(Message msg) {
     if (msg.localSendStatus == null) return null;
-    final localId = msg.id.replaceFirst('local_', '');
     return () {
-      ref.read(pendingMessageQueueProvider.notifier).remove(localId);
+      ref
+          .read(messageSendControllerProvider.notifier)
+          .remove(chatId: widget.chatId, messageId: msg.id);
       _evictMediaCaches(msg);
     };
   }
 
   void _showPendingMessageOptionsSheet(Message msg) {
-    final localId = msg.id.replaceFirst('local_', '');
     final isFailed = msg.localSendStatus == 'failed';
     showModalBottomSheet(
       context: context,
@@ -522,8 +531,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 onTap: () {
                   Navigator.of(context).pop();
                   ref
-                      .read(pendingMessageQueueProvider.notifier)
-                      .retry(localId);
+                      .read(messageSendControllerProvider.notifier)
+                      .retry(chatId: widget.chatId, messageId: msg.id);
                 },
               ),
             ListTile(
@@ -531,7 +540,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               title: const Text('Sil', style: TextStyle(color: Colors.red)),
               onTap: () {
                 Navigator.of(context).pop();
-                ref.read(pendingMessageQueueProvider.notifier).remove(localId);
+                ref
+                    .read(messageSendControllerProvider.notifier)
+                    .remove(chatId: widget.chatId, messageId: msg.id);
                 _evictMediaCaches(msg);
               },
             ),
@@ -1187,14 +1198,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
-  // Not laid out yet (no positions published) counts as "at the bottom" —
-  // this only gates whether an incoming message should pull the view down,
-  // and nothing published yet means nothing's been scrolled away from the
-  // bottom yet.
+  // Cold start (never rendered a single frame yet, _lastKnownNearBottom
+  // still null) treats "no positions published" as "at the bottom" —
+  // nothing's been scrolled away from the bottom yet if nothing's been
+  // shown at all. But scrollable_positioned_list's own position list can
+  // also empty out TRANSIENTLY mid-session, during a rebuild (see the
+  // itemBuilder's own defensive out-of-bounds-index comment above) — that
+  // is NOT a real scroll event, and treating it as "back at the bottom"
+  // would incorrectly permit an auto-scroll that yanks a user who was
+  // genuinely reading scrollback away from their place, for the split
+  // second the position list happens to be empty. Caching the last
+  // ACTUALLY OBSERVED value and only falling back to the cold-start
+  // default when nothing has ever been observed avoids that.
+  bool? _lastKnownNearBottom;
   bool _isNearBottom() {
     final positions = _itemPositionsListener.itemPositions.value;
-    if (positions.isEmpty) return true;
-    return positions.any((p) => p.index == 0);
+    if (positions.isEmpty) return _lastKnownNearBottom ?? true;
+    final result = positions.any((p) => p.index == 0);
+    _lastKnownNearBottom = result;
+    return result;
+  }
+
+  // Single callback for _itemPositionsListener — handles both pagination
+  // (unchanged) and clearing the jump-to-new badge once the user scrolls
+  // to the bottom themselves (not via tapping the badge, see
+  // _jumpToNewMessages below for that path — this is the OTHER way the
+  // count reaches 0: just scrolling there manually).
+  void _onItemPositionsChanged() {
+    _maybeLoadOlderMessages();
+    if (_unseenFromOtherCount > 0 && _isNearBottom()) {
+      setState(() => _unseenFromOtherCount = 0);
+    }
   }
 
   // Index-based threshold rather than a pixel one — deliberately, since a
@@ -1214,6 +1248,59 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           .read(chatMessagesControllerProvider(widget.chatId).notifier)
           .loadOlderMessages();
     }
+  }
+
+  // Tapping the "↓ N" badge — same scroll every other case uses, plus
+  // clearing the count immediately rather than waiting for the position
+  // listener above to notice index 0 became visible a moment later.
+  void _jumpToNewMessages() {
+    _scrollToBottom();
+    setState(() => _unseenFromOtherCount = 0);
+  }
+
+  // WhatsApp/Telegram-style floating pill — appears over the message list
+  // (see the Stack wrapping it in build()) whenever the user is reading
+  // scrollback and something arrives from the other side that couldn't
+  // safely auto-scroll them away from where they are.
+  Widget _buildJumpToNewBadge() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _jumpToNewMessages,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: kGold,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.arrow_downward, size: 16, color: kBg),
+              const SizedBox(width: 6),
+              Text(
+                _unseenFromOtherCount > 99
+                    ? '99+'
+                    : '$_unseenFromOtherCount',
+                style: const TextStyle(
+                  color: kBg,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   // Chats should open already at the bottom, no visible scrolling — unlike
@@ -1609,7 +1696,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     setState(() => _sending = true);
     try {
       final error = await ref
-          .read(pendingMessageQueueProvider.notifier)
+          .read(messageSendControllerProvider.notifier)
           .enqueueText(
             chatId: widget.chatId,
             senderId: currentUid,
@@ -1648,7 +1735,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
       _messageController.clear();
       _cancelReply();
-      _scrollToBottom();
+      // No explicit _scrollToBottom() here anymore — the ref.listen diff
+      // handler on chatMessagesControllerProvider (build()) now scrolls
+      // unconditionally the instant this pending row appears in the store,
+      // the same centralized path every send type shares.
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -1731,7 +1821,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
     final videoHd = ref.read(hdImageUploadProvider);
     final error = await ref
-        .read(pendingMessageQueueProvider.notifier)
+        .read(messageSendControllerProvider.notifier)
         .enqueue(
           chatId: widget.chatId,
           senderId: currentUid,
@@ -1763,9 +1853,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           SnackBar(content: Text(error), backgroundColor: kRed),
         );
       }
-    } else {
-      _scrollToBottom();
     }
+    // No explicit _scrollToBottom() on the success path anymore — see
+    // _sendMessage's own comment for why (centralized in build()'s
+    // ref.listen instead).
   }
 
   // Gallery attach-sheet entry point. Uses pickMedia() (photo AND video),
@@ -1850,7 +1941,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       if (!mounted) return;
     }
     final error = await ref
-        .read(pendingMessageQueueProvider.notifier)
+        .read(messageSendControllerProvider.notifier)
         .enqueue(
           chatId: widget.chatId,
           senderId: currentUid,
@@ -1880,9 +1971,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           SnackBar(content: Text(error), backgroundColor: kRed),
         );
       }
-    } else {
-      _scrollToBottom();
     }
+    // No explicit _scrollToBottom() on the success path anymore — see
+    // _sendMessage's own comment for why (centralized in build()'s
+    // ref.listen instead).
   }
 
   // Any file type (matches WhatsApp — no extension allowlist). The
@@ -1910,7 +2002,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final replyingTo = _replyingTo;
     _cancelReply();
     final error = await ref
-        .read(pendingMessageQueueProvider.notifier)
+        .read(messageSendControllerProvider.notifier)
         .enqueue(
           chatId: widget.chatId,
           senderId: currentUid,
@@ -1938,9 +2030,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           SnackBar(content: Text(error), backgroundColor: kRed),
         );
       }
-    } else {
-      _scrollToBottom();
     }
+    // No explicit _scrollToBottom() on the success path anymore — see
+    // _sendMessage's own comment for why (centralized in build()'s
+    // ref.listen instead).
   }
 
   // The picker screen already did the actual location work (permission,
@@ -1958,7 +2051,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final replyingTo = _replyingTo;
     _cancelReply();
     final error = await ref
-        .read(pendingMessageQueueProvider.notifier)
+        .read(messageSendControllerProvider.notifier)
         .enqueue(
           chatId: widget.chatId,
           senderId: currentUid,
@@ -1986,9 +2079,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           SnackBar(content: Text(error), backgroundColor: kRed),
         );
       }
-    } else {
-      _scrollToBottom();
     }
+    // No explicit _scrollToBottom() on the success path anymore — see
+    // _sendMessage's own comment for why (centralized in build()'s
+    // ref.listen instead).
   }
 
   Future<void> _startCall(String calleeUid, CallType type) async {
@@ -2395,7 +2489,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // Hands the file to the offline-aware pending-send queue — see
       // _uploadAndSendVideoFile for why this doesn't upload inline anymore.
       final error = await ref
-          .read(pendingMessageQueueProvider.notifier)
+          .read(messageSendControllerProvider.notifier)
           .enqueue(
             chatId: widget.chatId,
             senderId: currentUid,
@@ -2423,9 +2517,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             SnackBar(content: Text(error), backgroundColor: kRed),
           );
         }
-      } else {
-        _scrollToBottom();
       }
+      // No explicit _scrollToBottom() on the success path anymore — see
+      // _sendMessage's own comment for why (centralized in build()'s
+      // ref.listen instead).
     } finally {
       _recorderSessionBusy = false;
     }
@@ -3367,19 +3462,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final chatMessagesState = ref.watch(
       chatMessagesControllerProvider(widget.chatId),
     );
-    // Before the live tail listener has delivered its first snapshot (cold
-    // start, or currently offline), fall back to the last cached messages
-    // so the screen doesn't just show a spinner. The live stream always
-    // wins once it has data — this never overrides it.
-    AsyncValue<List<Message>> messagesAsync = AsyncValue.data(
+    // LocalMessageStore reads from local disk first (near-instant, cold
+    // start or not — see its own doc comment), so chatMessagesState.messages
+    // already has real content essentially immediately; no separate passive
+    // fallback-cache layer needed here anymore.
+    final AsyncValue<List<Message>> messagesAsync = AsyncValue.data(
       chatMessagesState.messages,
     );
-    if (!chatMessagesState.hasLoadedOnce) {
-      final cachedMessages = ref.watch(cachedMessagesProvider(widget.chatId));
-      if (cachedMessages != null) {
-        messagesAsync = AsyncValue.data(cachedMessages);
-      }
-    }
     final chatDataAsync = ref.watch(chatDataProvider(widget.chatId));
     // Keeps the starred-ids stream subscribed so _isMessageStarred's
     // ref.read reflects live data in the message options sheet.
@@ -3389,22 +3478,63 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       previous,
       next,
     ) {
-      // isInitialLoad: this controller's first-ever tail snapshot is the
+      // isInitialLoad: this controller's first-ever store snapshot is the
       // chat's whole (recent-window) history loading in, not new messages
       // — the one-time instant jump-to-bottom below
       // (_hasJumpedToBottomInitially) already handles getting the view to
       // the right place for that. addedMessageIds empty: this snapshot
-      // only contains modified/removed changes (a reaction, a read
-      // receipt, a listened-status flip on an existing message) —
-      // Firestore's own docChanges says nothing was actually appended, so
-      // nothing should scroll.
+      // only contains modified/removed rows (a reaction, a read receipt, a
+      // listened-status flip on an existing message) — nothing was
+      // actually appended to the rendered list, so nothing should scroll.
+      // Both are computed by ChatMessagesController diffing
+      // LocalMessageStore's own before/after output (see that state
+      // class's own doc comment) — a real "did a new row appear in what's
+      // rendered" signal, not Firestore's raw docChanges.
       if (!next.isInitialLoad && next.addedMessageIds.isNotEmpty) {
-        // Don't yank someone back to the bottom while they're reading
-        // scrollback — only auto-scroll if they were already close to it.
-        if (_isNearBottom()) {
+        final addedIds = next.addedMessageIds.toSet();
+        final addedMessages = next.messages.where(
+          (m) => addedIds.contains(m.id),
+        );
+        final hasOwnAdded = addedMessages.any(
+          (m) => m.senderId == currentUid,
+        );
+        final addedFromOtherCount = addedMessages
+            .where((m) => m.senderId != currentUid)
+            .length;
+        if (hasOwnAdded) {
+          // Your own message was just inserted — either the pending row
+          // this device enqueued (queued/uploading, not yet confirmed —
+          // see LocalMessageStore's doc comment for why this fires
+          // exactly once per send, not again on confirmation), or a
+          // message you sent from another device syncing in. Always
+          // scroll to show it, unconditionally, regardless of where
+          // you're currently scrolled — this is the ONE place that
+          // happens now; every send*Message call site used to carry its
+          // own copy of this same _scrollToBottom() call, one per message
+          // type (text + 5 media types), a real duplication risk (easy to
+          // forget on a 7th type added later). Centralizing it here,
+          // driven by the same diff signal that already exists for the
+          // "someone else sent something" case below, removes that risk
+          // entirely instead of just moving it around.
           WidgetsBinding.instance.addPostFrameCallback((_) {
             _scrollToBottom();
           });
+        } else if (addedFromOtherCount > 0) {
+          if (_isNearBottom()) {
+            // Don't yank someone back to the bottom while they're reading
+            // scrollback — only auto-scroll if they were already close to
+            // it.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _scrollToBottom();
+            });
+          } else {
+            // Not near the bottom and didn't auto-scroll — surface a
+            // "↓ N" jump-to-new badge instead of silently doing nothing,
+            // so arriving messages while reading scrollback are never
+            // invisible (see _unseenFromOtherCount's own doc comment and
+            // the badge widget built from it below).
+            setState(() => _unseenFromOtherCount += addedFromOtherCount);
+          }
         }
       }
       final messages = next.messages;
@@ -3426,86 +3556,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               );
         }
       }
-      _messagesPendingCacheFlush = next.messages;
-      _messageCacheService.writeDebounced(widget.chatId, next.messages);
     });
 
     final chatMetaAsync = ref.watch(chatMetaProvider(widget.chatId));
-    // Establishes both one-shot baselines the first time real data has
-    // actually arrived — a plain field mutation during build(), same
-    // pattern as _jobOfferActive above, not a setState (this alone must
-    // never trigger a rebuild).
-    if (_recipientAgreedBaseline == null && chatMetaAsync.hasValue) {
-      _recipientAgreedBaseline =
-          chatMetaAsync.value?['recipientAgreed'] as bool? ?? false;
-    }
-    if (_waitingForDateBaseline == null && chatMetaAsync.hasValue) {
-      _waitingForDateBaseline =
-          chatMetaAsync.value?['waitingForDate'] as bool? ?? false;
-    }
-    // Fires for whichever side (initiator or recipient) has this chat open
-    // the moment recipientAgreed flips true — the recipient's own
-    // acceptJobOffer write lands here too (this same screen watches its own
-    // write back), so this is the ONE place both parties' "✅ ... qəbul
-    // etdi" dialog + redirect into Müqavilələr's matching sub-tab happens,
-    // rather than duplicating it in _acceptJobOffer itself. Also fires the
-    // initiator-only "{recipient} sizdən tarix gözləyir" nudge when the
-    // recipient taps Razıyam before a date exists — mirrors mugam-v2's
-    // DirectChat.tsx prevWaitingForDateRef effect, including resetting
-    // waitingForDate back to false right after so the next early tap
-    // notifies again.
-    ref.listen(chatMetaProvider(widget.chatId), (previous, next) {
-      final myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-      final offerBy = next.value?['jobOfferBy'] as String?;
-      final isInitiator = offerBy == myUid;
-
-      final waitingBaseline = _waitingForDateBaseline;
-      if (waitingBaseline != null) {
-        final nextWaiting = next.value?['waitingForDate'] as bool? ?? false;
-        if (!waitingBaseline && nextWaiting && isInitiator) {
-          _waitingForDateBaseline = false; // stays "armed" for the next tap
-          _showCenteredAlert(
-            prefix: '',
-            highlightedName: _otherUserCached?.name ?? '',
-            suffix: ' sizdən tarix gözləyir 📅',
-          );
-          _firestoreService.setWaitingForDate(
-            chatId: widget.chatId,
-            waiting: false,
-          );
-        } else {
-          _waitingForDateBaseline = nextWaiting;
-        }
-      }
-
-      final agreedBaseline = _recipientAgreedBaseline;
-      if (agreedBaseline == null) return;
-      final nextAgreed = next.value?['recipientAgreed'] as bool? ?? false;
-      if (agreedBaseline || !nextAgreed) {
-        // Re-arm for a second "İş təklif et" round on this same screen
-        // instance: setJobOffer resets recipientAgreed back to false
-        // server-side when a new round starts, so the baseline must follow
-        // it back down — otherwise, once true, this listener would never
-        // fire again for this mounted ChatScreen (agreedBaseline stayed
-        // true forever, short-circuiting every later transition too).
-        _recipientAgreedBaseline = nextAgreed;
-        return;
-      }
-      _recipientAgreedBaseline = true; // mark handled — never fire twice
-      final otherName = _otherUserCached?.name ?? '';
-      _showCenteredAlert(
-        prefix: isInitiator ? '✅ ' : '✅ Siz razılaşdınız — ',
-        highlightedName: otherName,
-        suffix: isInitiator ? ' təklifinizi qəbul etdi!' : '',
-        onOk: () {
-          if (!mounted) return;
-          ref
-              .read(agreementsTabRequestProvider.notifier)
-              .set(isInitiator ? 'outgoing' : 'incoming');
-          context.go('/agreements');
-        },
-      );
-    });
     final deliveredTo =
         chatMetaAsync.value?['deliveredTo'] as Map<String, dynamic>? ?? {};
     final lastReadMsgId =
@@ -3535,13 +3588,85 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final eventNotes = chatMetaAsync.value?['eventNotes'] as String?;
     final waitingForDate =
         chatMetaAsync.value?['waitingForDate'] as bool? ?? false;
+    final recipientAgreedNow =
+        chatMetaAsync.value?['recipientAgreed'] as bool? ?? false;
+    final myUidForNotify = FirebaseAuth.instance.currentUser?.uid ?? '';
+    final isInitiatorForNotify = jobOfferBy == myUidForNotify;
+    // First real snapshot for THIS screen instance: seed both "already
+    // shown" markers from whatever the round's current state already is,
+    // WITHOUT popping a dialog for it — otherwise simply opening an
+    // already-agreed (or already-waiting) chat would immediately replay a
+    // stale notification as if it just happened (confirmed on-device: this
+    // exact regression is why the original design tracked a baseline at
+    // all). Every check below this only reacts to what happens AFTER this
+    // point.
+    if (!_negotiationBaselineSeeded && chatMetaAsync.hasValue) {
+      _negotiationBaselineSeeded = true;
+      if (recipientAgreedNow) {
+        _agreedCelebrationShownForOfferAt = jobOfferAtRaw;
+      }
+      if (waitingForDate) {
+        _waitingForDateNudgeShownForOfferAt = jobOfferAtRaw;
+      }
+    }
+    // Checked on every build (not only on a live ref.listen transition) and
+    // keyed by jobOfferAt — a fresh timestamp every time setJobOffer starts
+    // a new round — rather than a plain true/false flag: a transition-only
+    // design only notifies while this exact screen happens to be mounted
+    // at the precise moment the underlying field flips, and permanently
+    // misses it otherwise (confirmed on-device as a real, reproducible gap
+    // — the initiator's own "sizdən tarix gözləyir" nudge silently never
+    // appeared in a live two-device test even though waitingForDate had
+    // genuinely flipped true). Reacting to the CURRENT snapshot instead
+    // fires correctly regardless of when this screen (re)mounts relative to
+    // that flip, and jobOfferAt naturally re-arms both checks for every new
+    // round without needing any separate reset logic.
+    if (jobOfferAtRaw != null) {
+      if (waitingForDate &&
+          isInitiatorForNotify &&
+          _waitingForDateNudgeShownForOfferAt != jobOfferAtRaw) {
+        _waitingForDateNudgeShownForOfferAt = jobOfferAtRaw;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _showCenteredAlert(
+            prefix: '',
+            highlightedName: _otherUserCached?.name ?? '',
+            suffix: ' sizdən tarix gözləyir 📅',
+          );
+          _firestoreService.setWaitingForDate(
+            chatId: widget.chatId,
+            waiting: false,
+          );
+        });
+      }
+      if (recipientAgreedNow &&
+          _agreedCelebrationShownForOfferAt != jobOfferAtRaw) {
+        _agreedCelebrationShownForOfferAt = jobOfferAtRaw;
+        final isInitiatorForCelebration = isInitiatorForNotify;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final otherName = _otherUserCached?.name ?? '';
+          _showCenteredAlert(
+            prefix: isInitiatorForCelebration ? '✅ ' : '✅ Siz razılaşdınız — ',
+            highlightedName: otherName,
+            suffix: isInitiatorForCelebration ? ' təklifinizi qəbul etdi!' : '',
+            onOk: () {
+              if (!mounted) return;
+              ref
+                  .read(agreementsTabRequestProvider.notifier)
+                  .set(isInitiatorForCelebration ? 'outgoing' : 'incoming');
+              context.go('/agreements');
+            },
+          );
+        });
+      }
+    }
     final lastReadAt =
         chatMetaAsync.value?['lastReadAt'] as Map<String, dynamic>? ?? {};
     final typingMap =
         chatMetaAsync.value?['typing'] as Map<String, dynamic>? ?? {};
     // Read by the composer's typing-throttle listener (initState) outside
-    // build()'s own scope — a plain field write, not setState, same pattern
-    // as _messagesPendingCacheFlush above.
+    // build()'s own scope — a plain field write, not setState.
     _jobOfferActive = jobOfferBy != null;
     // mugam-v2 writes a 1:1 chat's `name` field from the initiator's
     // perspective at creation time (the other participant's name) and never
@@ -3795,7 +3920,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               otherUidResolved: otherUidResolved,
             ),
           Expanded(
-            child: Listener(
+            child: Stack(
+              children: [
+                Listener(
               behavior: HitTestBehavior.opaque,
               onPointerDown: (_) => _dismissComposerFocusOnOutsideTap(),
               child: messagesAsync.when(
@@ -3809,44 +3936,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       final visibleMessages = messages
                           .where((m) => !m.deletedFor.contains(currentUid))
                           .toList();
-                      // Not-yet-sent photo/voice/video messages, rendered as
-                      // synthetic Messages through the same bubble/checkmark
-                      // pipeline — always right before every confirmed
-                      // message, matching how an outgoing send-in-progress
-                      // sits at the bottom until it's confirmed.
-                      //
-                      // The list is newest-first (index 0 = newest) to match
-                      // the ListView's `reverse: true` below — "the bottom
-                      // of the chat" is therefore always index 0 / pixels 0,
-                      // a fixed target independent of how tall the content
-                      // is or whether it's finished laying out. pendingForChat
-                      // is itself oldest-queued-first, so it's reversed too
-                      // before going in front of the (also reversed) real
-                      // messages.
-                      final pendingForChat = ref.watch(
-                        pendingMessagesForChatProvider(widget.chatId),
-                      );
-                      // Defensive dedup: a pending item's real Firestore
-                      // document can become visible in visibleMessages
-                      // slightly before the queue controller removes the
-                      // item from pendingMessageQueueProvider's state (the
-                      // two are separate, independently-updated providers) —
-                      // without this filter, that brief window renders both
-                      // the synthetic and the real bubble for the same
-                      // logical message at once.
-                      final dedupedPendingForChat = pendingForChat
-                          .where(
-                            (p) => !visibleMessages.any(
-                              (m) => m.id == p.messageId,
-                            ),
-                          )
-                          .toList();
-                      final combinedMessages = [
-                        ...dedupedPendingForChat.reversed.map(
-                          (p) => p.toSyntheticMessage(),
-                        ),
-                        ...visibleMessages.reversed,
-                      ];
+                      // LocalMessageStore.watchChat already hands back one
+                      // ordered list — pending sends and confirmed history
+                      // as the same rows, no separate synthetic-object merge
+                      // or id-based dedup needed here anymore (see that
+                      // store's own doc comment). Only reversed to
+                      // newest-first (index 0 = newest) to match the
+                      // ListView's `reverse: true` below — "the bottom of
+                      // the chat" is therefore always index 0 / pixels 0, a
+                      // fixed target independent of how tall the content is
+                      // or whether it's finished laying out.
+                      final combinedMessages = visibleMessages.reversed.toList();
                       _lastMessages = combinedMessages;
                       _schedulePurgeTimers(visibleMessages);
                       if (!_hasJumpedToBottomInitially &&
@@ -3909,6 +4009,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       );
                     },
                   ),
+                ),
+                // "↓ N" jump-to-new badge — see _unseenFromOtherCount's own
+                // doc comment for exactly when this appears/clears.
+                if (_unseenFromOtherCount > 0)
+                  Positioned(
+                    bottom: 12,
+                    left: 0,
+                    right: 0,
+                    child: Center(child: _buildJumpToNewBadge()),
+                  ),
+              ],
             ),
           ),
           if (_replyingTo != null)

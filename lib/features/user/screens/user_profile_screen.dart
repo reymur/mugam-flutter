@@ -814,10 +814,32 @@ class _MessageButtonState extends ConsumerState<_MessageButton> {
   Future<void> _open() async {
     setState(() => _opening = true);
     try {
-      final chatId = await ref.read(firestoreServiceProvider).getOrCreateDirectChat(
-            myUid: widget.currentUid,
-            otherUid: widget.otherUid,
-          );
+      // Prefer whatever the "Çat" tab's own already-loaded list already
+      // resolved for this pair — chatsProvider's watchChats stream applies
+      // the exact same most-recently-active dedup the Chat list itself
+      // uses (see firestore_service.dart's bestPerCounterpart), so reusing
+      // it here guarantees this button always lands on the identical
+      // thread the list would show, with no extra Firestore round-trip at
+      // all once that list has loaded (the common case, since the
+      // bottom-nav Chat tab keeps this provider warm) — getOrCreateDirectChat's
+      // own broader reconciliation query only runs as a fallback, for a
+      // genuinely first-ever message to this person or before the list has
+      // loaded yet.
+      final cachedChats = ref.read(chatsProvider(widget.currentUid)).asData?.value;
+      Chat? cachedMatch;
+      if (cachedChats != null) {
+        for (final c in cachedChats) {
+          if (!c.isGroup && c.members.contains(widget.otherUid)) {
+            cachedMatch = c;
+            break;
+          }
+        }
+      }
+      final chatId = cachedMatch?.id ??
+          await ref.read(firestoreServiceProvider).getOrCreateDirectChat(
+                myUid: widget.currentUid,
+                otherUid: widget.otherUid,
+              );
       if (mounted && context.mounted) context.push('/chat/$chatId');
     } finally {
       if (mounted) setState(() => _opening = false);

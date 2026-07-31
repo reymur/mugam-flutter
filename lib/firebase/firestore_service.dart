@@ -606,45 +606,50 @@ class FirestoreService {
 
   // Finds or creates the 1:1 chat between two users, for flows (like a
   // status reply/reaction, or the "Mesaj" button on a user's profile card)
-  // that may be the first-ever message between two friends. mugam-v2 is a
-  // live, still-running app on this same backend (see functions/src/
-  // index.ts's own Expo-push-dedup comment) that has always created 1:1
-  // chats itself via a random addDoc() id — so a pair who already messaged
-  // through mugam-v2 in the past already has a chat doc, just not at this
-  // function's deterministic id.
+  // that may be the first-ever message between two friends. mugam-v2 (the
+  // old React Native app this project migrated away from) used to create
+  // 1:1 chats itself via a random addDoc() id — now retired, no longer
+  // sending or creating new messages/chats — so any such doc still in the
+  // collection is fixed, historical data, not something new ones keep
+  // appearing alongside going forward.
   //
-  // Resolution MUST use the same "most recently active wins" precedence as
-  // watchChats' own bestPerCounterpart dedup (above) — not "deterministic
-  // id first if it exists, full stop". An earlier version of this function
-  // did exactly that (`if (detDoc.exists) return detId`, before ever
-  // looking at any legacy doc), which is a real, confirmed-on-device bug:
-  // whenever a legacy (mugam-v2) chat for this pair was the more recently
-  // active one, the Çat tab list (watchChats) would show THAT thread, while
-  // "Mesaj" on the same contact's profile card always landed back on the
-  // stale deterministic-id doc instead — the same real-world contact
-  // showing two different, disagreeing message histories depending on
-  // which entry point was used. Always picking the single most-recently-
-  // active candidate here — deterministic or legacy alike — is what keeps
-  // every entry point (chat list tap, "Mesaj" button, status-reply) landing
-  // on the exact same thread watchChats would also pick.
+  // Fast path: the deterministic id alone, ONE cheap document read — this
+  // is deliberately not "always scan every chat this uid has and pick the
+  // most recently active one" (a version of this function briefly did
+  // exactly that, to guard against a legacy mugam-v2 doc being more
+  // recently active than the deterministic one): with mugam-v2 retired,
+  // that reconciliation is only ever relevant for the fixed set of pairs
+  // that already have such a legacy doc, not an ongoing risk, and paying a
+  // full collection query on every single tap of "Mesaj" — confirmed
+  // on-device as a real, noticeable slowdown — is the wrong tradeoff for a
+  // concern that no longer grows. Callers that already have this uid's
+  // Chat list loaded (chats_screen.dart, the "Mesaj" button) check that
+  // list's own most-recently-active pick FIRST and only call this function
+  // at all as a fallback — see those call sites' own comments.
   //
-  // Only creates a new doc (at the deterministic id) when NO chat — neither
-  // deterministic nor legacy — exists yet for this pair at all. Deliberately
-  // drops mugam-v2's initiatorUid/INVITES-collection fields — that's
-  // specific to its musician-matching flow and has no equivalent here (this
-  // app's friend system is symmetric — see [[mugam-friends]]).
+  // Legacy fallback query only runs when the deterministic doc doesn't
+  // exist yet at all — covers a pre-existing mugam-v2-era chat for this
+  // pair from before this app ever wrote to it. If more than one such
+  // legacy chat somehow exists, picks the most recently active one rather
+  // than an arbitrary/query-order one, and never throws over it. Only
+  // creates a new doc (at the deterministic id) when neither exists.
+  // Deliberately drops mugam-v2's initiatorUid/INVITES-collection fields —
+  // that's specific to its musician-matching flow and has no equivalent
+  // here (this app's friend system is symmetric — see [[mugam-friends]]).
   Future<String> getOrCreateDirectChat({
     required String myUid,
     required String otherUid,
   }) async {
     final detId = directChatDocId(myUid, otherUid);
+    final detDoc = await _db.collection('chats').doc(detId).get().timeout(_writeTimeout);
+    if (detDoc.exists) return detId;
 
-    final matches = await _db
+    final legacyMatches = await _db
         .collection('chats')
         .where('members', arrayContains: myUid)
         .get()
         .timeout(_writeTimeout);
-    final candidates = matches.docs.where((d) {
+    final legacyChats = legacyMatches.docs.where((d) {
       final data = d.data();
       if (data['isGroup'] == true) return false;
       final members = List<String>.from(
@@ -652,14 +657,14 @@ class FirestoreService {
       );
       return members.contains(otherUid);
     }).toList();
-    if (candidates.isNotEmpty) {
-      candidates.sort((a, b) {
+    if (legacyChats.isNotEmpty) {
+      legacyChats.sort((a, b) {
         final aTime = a.data()['lastMessageTime'] as Timestamp?;
         final bTime = b.data()['lastMessageTime'] as Timestamp?;
         // Stable tiebreaker (doc id) when both sides are null — Firestore
         // makes no ordering guarantee for a query with no orderBy, so
         // returning 0 here let the SAME two-null-lastMessageTime pair
-        // resolve to a DIFFERENT "first" candidate on different runs of
+        // resolve to a DIFFERENT "first" legacy chat on different runs of
         // this exact query — confirmed on-device as the same contact
         // opening a different historical chat on every fresh app launch.
         if (aTime == null && bTime == null) return a.id.compareTo(b.id);
@@ -667,7 +672,7 @@ class FirestoreService {
         if (bTime == null) return -1;
         return bTime.compareTo(aTime);
       });
-      return candidates.first.id;
+      return legacyChats.first.id;
     }
 
     final now = FieldValue.serverTimestamp();
@@ -724,6 +729,9 @@ class FirestoreService {
       'createdAt': now,
       'completed': false,
       'unreadCount': <String, int>{},
+      // First message written below gets seq 1 directly (no transaction —
+      // the chat doc doesn't exist for anyone else to race yet).
+      'messageSeq': 1,
     });
 
     await chatRef.collection('messages').add({
@@ -731,7 +739,9 @@ class FirestoreService {
       'text': '$creatorName qrupu yaratdı',
       'type': 'text',
       'isSystem': true,
-      'timestamp': now,
+      'seq': 1,
+      // Display-only wall-clock time — ordering is `seq`.
+      'timestamp': Timestamp.now(),
     });
 
     return chatRef.id;
@@ -772,13 +782,17 @@ class FirestoreService {
   }) async {
     final chatRef = _db.collection('chats').doc(chatId);
 
-    await chatRef.collection('messages').add({
-      'senderId': uid,
-      'text': '$userName qrupdan çıxdı',
-      'type': 'text',
-      'isSystem': true,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
+    await _commitMessage(
+      chatId: chatId,
+      data: {
+        'senderId': uid,
+        'text': '$userName qrupdan çıxdı',
+        'type': 'text',
+        'isSystem': true,
+        // Display-only wall-clock time — ordering is `seq`.
+        'timestamp': Timestamp.now(),
+      },
+    );
 
     await _db.runTransaction((tx) async {
       final snap = await tx.get(chatRef);
@@ -817,13 +831,17 @@ class FirestoreService {
       'members': FieldValue.arrayUnion([uid]),
     });
 
-    await chatRef.collection('messages').add({
-      'senderId': adminUid,
-      'text': '$addedByName $userName qrupa əlavə etdi',
-      'type': 'text',
-      'isSystem': true,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
+    await _commitMessage(
+      chatId: chatId,
+      data: {
+        'senderId': adminUid,
+        'text': '$addedByName $userName qrupa əlavə etdi',
+        'type': 'text',
+        'isSystem': true,
+        // Display-only wall-clock time — ordering is `seq`.
+        'timestamp': Timestamp.now(),
+      },
+    );
   }
 
   // Client-side creator protection: mugam-v2 has no check anywhere (neither
@@ -851,13 +869,17 @@ class FirestoreService {
       'admins': FieldValue.arrayRemove([uid]),
     });
 
-    await chatRef.collection('messages').add({
-      'senderId': adminUid,
-      'text': '$removedByName $userName qrupdan çıxardı',
-      'type': 'text',
-      'isSystem': true,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
+    await _commitMessage(
+      chatId: chatId,
+      data: {
+        'senderId': adminUid,
+        'text': '$removedByName $userName qrupdan çıxardı',
+        'type': 'text',
+        'isSystem': true,
+        // Display-only wall-clock time — ordering is `seq`.
+        'timestamp': Timestamp.now(),
+      },
+    );
   }
 
   Future<void> makeGroupAdmin({
@@ -872,13 +894,17 @@ class FirestoreService {
       'admins': FieldValue.arrayUnion([uid]),
     });
 
-    await chatRef.collection('messages').add({
-      'senderId': adminUid,
-      'text': '$adminName $userName-ni admin etdi',
-      'type': 'text',
-      'isSystem': true,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
+    await _commitMessage(
+      chatId: chatId,
+      data: {
+        'senderId': adminUid,
+        'text': '$adminName $userName-ni admin etdi',
+        'type': 'text',
+        'isSystem': true,
+        // Display-only wall-clock time — ordering is `seq`.
+        'timestamp': Timestamp.now(),
+      },
+    );
   }
 
   // Two client-side checks, both before any write:
@@ -912,13 +938,17 @@ class FirestoreService {
       'admins': FieldValue.arrayRemove([uid]),
     });
 
-    await chatRef.collection('messages').add({
-      'senderId': adminUid,
-      'text': '$adminName $userName-ni admin statusundan çıxardı',
-      'type': 'text',
-      'isSystem': true,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
+    await _commitMessage(
+      chatId: chatId,
+      data: {
+        'senderId': adminUid,
+        'text': '$adminName $userName-ni admin statusundan çıxardı',
+        'type': 'text',
+        'isSystem': true,
+        // Display-only wall-clock time — ordering is `seq`.
+        'timestamp': Timestamp.now(),
+      },
+    );
   }
 
   // No system message: renaming/re-emoji-ing a group is cosmetic, not an
@@ -995,44 +1025,36 @@ class FirestoreService {
   // rather than trading real-time reactions/read-receipts away for the
   // memory/read-cost savings this limit exists for.
   //
-  // isFirst lives in this closure, so it's scoped to one subscription's
-  // lifetime — a fresh chat-screen mount (new subscription via autoDispose)
-  // correctly gets its own "first snapshot" again, rather than this being
-  // some global per-chatId flag.
-  Stream<MessagesSnapshot> watchMessages(String chatId) {
-    bool isFirst = true;
+  // A plain Stream<List<Message>> — ChatMessagesController is purely a sync
+  // writer for whatever this delivers (upserting into LocalMessageStore,
+  // see that class's own doc comment); "is this genuinely a new message,
+  // and should the UI auto-scroll for it" is no longer this stream's
+  // concern at all. That used to be tracked here (an isFirst-scoped
+  // isInitialLoad/addedMessageIds pair derived from Firestore's own
+  // docChanges), but that signal didn't actually mean "a new message
+  // appeared in what the UI renders" — a message THIS device just sent
+  // reports as freshly `added` here the same as one from someone else,
+  // even though it was already visible as a pending row before this
+  // listener ever confirmed it. ChatMessagesController now derives that
+  // signal correctly instead, by diffing LocalMessageStore's own
+  // before/after snapshots — the one place that actually knows what was or
+  // wasn't already rendered.
+  Stream<List<Message>> watchMessages(String chatId) {
     return _db
         .collection('chats')
         .doc(chatId)
         .collection('messages')
-        .orderBy('timestamp', descending: false)
+        .orderBy('seq', descending: false)
         .limitToLast(messageTailWindowSize)
         .snapshots()
-        .map((snap) {
-          final messages = snap.docs
+        .map(
+          (snap) => snap.docs
               .map((doc) => Message.fromFirestore(doc.id, doc.data()))
-              .toList();
-          // The very first snapshot's docChanges all report as `added`
-          // (every doc is new to this listener) — that's history loading,
-          // not new messages arriving, so addedMessageIds is deliberately
-          // left empty for it rather than reporting the whole history.
-          final addedIds = isFirst
-              ? const <String>[]
-              : snap.docChanges
-                    .where((c) => c.type == DocumentChangeType.added)
-                    .map((c) => c.doc.id)
-                    .toList();
-          final result = MessagesSnapshot(
-            messages: messages,
-            isInitialLoad: isFirst,
-            addedMessageIds: addedIds,
-          );
-          isFirst = false;
-          return result;
-        });
+              .toList(),
+        );
   }
 
-  // One-time fetch of the page immediately older than beforeTimestamp —
+  // One-time fetch of the page immediately older than beforeSeq —
   // triggered by scrolling near the top of the loaded history. Not a live
   // listener itself; ChatMessagesController separately widens
   // watchOlderMessagesInRange's upper bound to cover whatever this returns,
@@ -1040,15 +1062,15 @@ class FirestoreService {
   // going forward.
   Future<List<Message>> fetchOlderMessages({
     required String chatId,
-    required Timestamp beforeTimestamp,
+    required int beforeSeq,
     int limit = messageTailWindowSize,
   }) async {
     final snap = await _db
         .collection('chats')
         .doc(chatId)
         .collection('messages')
-        .orderBy('timestamp', descending: false)
-        .endBefore([beforeTimestamp])
+        .orderBy('seq', descending: false)
+        .endBefore([beforeSeq])
         .limitToLast(limit)
         .get();
     return snap.docs
@@ -1056,26 +1078,26 @@ class FirestoreService {
         .toList();
   }
 
-  // Live listener scoped to [fromTimestamp, toTimestamp) — everything
-  // paginated in via fetchOlderMessages so far, up to (but deliberately not
-  // overlapping) the live tail window's own oldest message. Kept as its own
-  // listener rather than folding into watchMessages' unbounded query so the
-  // tail stays fixed at messageTailWindowSize regardless of how much
-  // history has been paginated in during this session — ChatMessagesController
-  // is what recreates this with a wider toTimestamp as the tail's own oldest
-  // message shifts forward over time.
+  // Live listener scoped to [fromSeq, toSeq) — everything paginated in via
+  // fetchOlderMessages so far, up to (but deliberately not overlapping) the
+  // live tail window's own oldest message. Kept as its own listener rather
+  // than folding into watchMessages' unbounded query so the tail stays
+  // fixed at messageTailWindowSize regardless of how much history has been
+  // paginated in during this session — ChatMessagesController is what
+  // recreates this with a wider toSeq as the tail's own oldest message
+  // shifts forward over time.
   Stream<List<Message>> watchOlderMessagesInRange({
     required String chatId,
-    required Timestamp fromTimestamp,
-    required Timestamp toTimestamp,
+    required int fromSeq,
+    required int toSeq,
   }) {
     return _db
         .collection('chats')
         .doc(chatId)
         .collection('messages')
-        .orderBy('timestamp', descending: false)
-        .startAt([fromTimestamp])
-        .endBefore([toTimestamp])
+        .orderBy('seq', descending: false)
+        .startAt([fromSeq])
+        .endBefore([toSeq])
         .snapshots()
         .map(
           (snap) => snap.docs
@@ -1110,7 +1132,7 @@ class FirestoreService {
         .doc(chatId)
         .collection('messages')
         .where('type', whereIn: ['image', 'video'])
-        .orderBy('timestamp', descending: false)
+        .orderBy('seq', descending: false)
         .snapshots()
         .map(
           (snap) => snap.docs
@@ -1179,34 +1201,71 @@ class FirestoreService {
     return _db.collection('chats').doc(chatId).collection('messages').doc().id;
   }
 
-  // Used by sendImageMessage/sendAudioMessage/sendVideoMessage when a
-  // messageId is provided (i.e. a queued offline media send). The offline
-  // queue's retry() and its automatic per-chat loop — or the foreground
-  // queue and the WorkManager background task — can end up both attempting
-  // the same queued item at once, each with its own freshly uploaded file
-  // URL. A plain .set() would let whichever write lands last silently
-  // overwrite the other's videoURL/imageURL/audioURL. Wrapping it in a
-  // transaction that only writes if the document doesn't exist yet makes
-  // the second, racing write a no-op instead of a corruption.
-  Future<bool> _writeMessageIfAbsent({
+  // Every send function funnels through here. Assigns `seq` — a per-chat
+  // monotonic integer read from the chat doc's own `messageSeq` counter and
+  // bumped in the same transaction — as the ONE source of truth for message
+  // order (watchMessages/fetchOlderMessages/watchOlderMessagesInRange/
+  // _findLastMessage/watchChatMedia all orderBy('seq') now, not 'timestamp').
+  // Unlike a timestamp, this is assigned synchronously server-side inside
+  // the transaction, so it's never null in the local cache and never
+  // dependent on device clock accuracy — the class of bug that motivated
+  // this (see the git history around 2026-07-31: FieldValue.serverTimestamp()
+  // resolving to null pre-ack made freshly-sent messages sort as the oldest
+  // message and briefly vanish from watchMessages' limitToLast(50) window)
+  // is structurally impossible with seq.
+  //
+  // messageId (when provided, by the offline pending-send queue) keeps the
+  // exact same idempotent-retry guarantee _writeMessageIfAbsent used to
+  // provide on its own: every retry path (manual retry, per-chat auto-retry
+  // on reconnect, the WorkManager background task, and the app-restart
+  // re-queue) reuses the same messageId generated once at enqueue time
+  // (generateMessageId above), so "already exists" here means a previous
+  // attempt already committed — a no-op, not a second seq/write.
+  //
+  // Also folds in what used to be a separate, non-atomic second `.update()`
+  // call on the chat doc for lastMessage/lastMessageTime — chatUpdate now
+  // lands in the same transaction as the message write itself.
+  //
+  // Returns (wrote, seq): `seq` is always populated on a non-throwing
+  // return — even the idempotent-retry "already exists" case reads the
+  // existing doc's own seq back rather than just reporting `false` with no
+  // seq, because LocalMessageStore.markConfirmed (see that class's doc
+  // comment) needs the real seq value either way to update this device's
+  // own pending row in place, whether THIS call is what originally wrote
+  // it or an earlier attempt already did. `wrote` stays meaningful for
+  // callers that only care about the chat-doc-update-skip case (a retried
+  // write must not bump lastMessage/lastMessageTime a second time).
+  Future<(bool wrote, int seq)> _commitMessage({
     required String chatId,
-    required String messageId,
     required Map<String, dynamic> data,
+    String? messageId,
+    Map<String, dynamic> chatUpdate = const {},
   }) {
-    final ref = _db
-        .collection('chats')
-        .doc(chatId)
-        .collection('messages')
-        .doc(messageId);
-    return _db.runTransaction((tx) async {
-      final snap = await tx.get(ref);
-      if (snap.exists) return false;
-      tx.set(ref, data);
-      return true;
+    final chatRef = _db.collection('chats').doc(chatId);
+    final messageRef = messageId != null
+        ? chatRef.collection('messages').doc(messageId)
+        : chatRef.collection('messages').doc();
+    return _db.runTransaction<(bool, int)>((tx) async {
+      if (messageId != null) {
+        final existing = await tx.get(messageRef);
+        if (existing.exists) {
+          final existingSeq = (existing.data()?['seq'] as num?)?.toInt() ?? 0;
+          return (false, existingSeq);
+        }
+      }
+      final chatSnap = await tx.get(chatRef);
+      final nextSeq =
+          ((chatSnap.data()?['messageSeq'] as num?)?.toInt() ?? 0) + 1;
+      tx.set(messageRef, {...data, 'seq': nextSeq});
+      tx.update(chatRef, {...chatUpdate, 'messageSeq': nextSeq});
+      return (true, nextSeq);
     });
   }
 
-  Future<void> sendMessage({
+  // Returns the message's assigned seq (see _commitMessage) — the pending-
+  // send queue/retry loop uses it to update LocalMessageStore's local row
+  // in place once the send is confirmed.
+  Future<int> sendMessage({
     required String chatId,
     required String senderId,
     required String text,
@@ -1229,7 +1288,6 @@ class FirestoreService {
     // message overwrites rather than duplicates.
     String? messageId,
   }) async {
-    final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
       replyToId: replyToId,
       replyToText: replyToText,
@@ -1250,33 +1308,26 @@ class FirestoreService {
       'type': 'text',
       'clientPlatform': 'flutter',
       'forwardCount': forwardCount,
-      'timestamp': now,
+      // Display-only wall-clock time (the HH:mm bubble time) — ordering is
+      // `seq`, assigned by _commitMessage, not this field. See its own doc
+      // comment.
+      'timestamp': Timestamp.now(),
       'imageURL': null,
       'audioURL': null,
       if (replyTo != null) 'replyTo': replyTo,
       if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
-    bool wrote = true;
-    if (messageId != null) {
-      wrote = await _writeMessageIfAbsent(
-        chatId: chatId,
-        messageId: messageId,
-        data: data,
-      ).timeout(_writeTimeout);
-    } else {
-      await _db
-          .collection('chats')
-          .doc(chatId)
-          .collection('messages')
-          .add(data)
-          .timeout(_writeTimeout);
-    }
-    if (!wrote) return;
-    await _db.collection('chats').doc(chatId).update({
-      'lastMessage': text,
-      'lastMessageTime': now,
-      'lastMessageDeletedFor': [],
-    }).timeout(_writeTimeout);
+    final (_, seq) = await _commitMessage(
+      chatId: chatId,
+      data: data,
+      messageId: messageId,
+      chatUpdate: {
+        'lastMessage': text,
+        'lastMessageTime': FieldValue.serverTimestamp(),
+        'lastMessageDeletedFor': [],
+      },
+    ).timeout(_writeTimeout);
+    return seq;
   }
 
   // customMetadata is enforced by storage.rules (uploaderUid/chatId must
@@ -1325,7 +1376,8 @@ class FirestoreService {
     return await ref.getDownloadURL();
   }
 
-  Future<void> sendImageMessage({
+  // Returns the message's assigned seq — see sendMessage's own doc comment.
+  Future<int> sendImageMessage({
     required String chatId,
     required String senderId,
     required String imageURL,
@@ -1362,7 +1414,6 @@ class FirestoreService {
     // document, no duplicate) instead of creating a new document each retry.
     String? messageId,
   }) async {
-    final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
       replyToId: replyToId,
       replyToText: replyToText,
@@ -1389,35 +1440,27 @@ class FirestoreService {
       if (mediaOriginChatId != null) 'mediaOriginChatId': mediaOriginChatId,
       if (mediaFileName != null) 'mediaFileName': mediaFileName,
       'audioURL': null,
-      'timestamp': now,
+      // Display-only wall-clock time — ordering is `seq`, see
+      // _commitMessage's own doc comment.
+      'timestamp': Timestamp.now(),
       if (replyTo != null) 'replyTo': replyTo,
       if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
-    bool wrote = true;
-    if (messageId != null) {
-      wrote = await _writeMessageIfAbsent(
-        chatId: chatId,
-        messageId: messageId,
-        data: data,
-      ).timeout(_writeTimeout);
-    } else {
-      await _db
-          .collection('chats')
-          .doc(chatId)
-          .collection('messages')
-          .add(data)
-          .timeout(_writeTimeout);
-    }
-    if (!wrote) return;
-    await _db.collection('chats').doc(chatId).update({
-      'lastMessage': '🖼 Şəkil',
-      'lastMessageTime': now,
-      'lastMessageDeletedFor': [],
-      // Every chat was backfilled with an accurate starting value (one-off
-      // migration, run before this line ever shipped) — safe to always use
-      // a plain atomic increment, no "field missing" fallback needed.
-      'mediaImageCount': FieldValue.increment(1),
-    }).timeout(_writeTimeout);
+    final (_, seq) = await _commitMessage(
+      chatId: chatId,
+      data: data,
+      messageId: messageId,
+      chatUpdate: {
+        'lastMessage': '🖼 Şəkil',
+        'lastMessageTime': FieldValue.serverTimestamp(),
+        'lastMessageDeletedFor': [],
+        // Every chat was backfilled with an accurate starting value (one-off
+        // migration, run before this line ever shipped) — safe to always use
+        // a plain atomic increment, no "field missing" fallback needed.
+        'mediaImageCount': FieldValue.increment(1),
+      },
+    ).timeout(_writeTimeout);
+    return seq;
   }
 
   Future<String> uploadChatVideo({
@@ -1451,7 +1494,8 @@ class FirestoreService {
     return await ref.getDownloadURL();
   }
 
-  Future<void> sendVideoMessage({
+  // Returns the message's assigned seq — see sendMessage's own doc comment.
+  Future<int> sendVideoMessage({
     required String chatId,
     required String senderId,
     required String videoURL,
@@ -1475,7 +1519,6 @@ class FirestoreService {
     String? replyToStatusThumbnailURL,
     String? messageId,
   }) async {
-    final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
       replyToId: replyToId,
       replyToText: replyToText,
@@ -1504,31 +1547,23 @@ class FirestoreService {
       if (mediaFileName != null) 'mediaFileName': mediaFileName,
       'imageURL': null,
       'audioURL': null,
-      'timestamp': now,
+      // Display-only wall-clock time — ordering is `seq`, see
+      // _commitMessage's own doc comment.
+      'timestamp': Timestamp.now(),
       if (replyTo != null) 'replyTo': replyTo,
       if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
-    bool wrote = true;
-    if (messageId != null) {
-      wrote = await _writeMessageIfAbsent(
-        chatId: chatId,
-        messageId: messageId,
-        data: data,
-      ).timeout(_writeTimeout);
-    } else {
-      await _db
-          .collection('chats')
-          .doc(chatId)
-          .collection('messages')
-          .add(data)
-          .timeout(_writeTimeout);
-    }
-    if (!wrote) return;
-    await _db.collection('chats').doc(chatId).update({
-      'lastMessage': '🎥 Video',
-      'lastMessageTime': now,
-      'lastMessageDeletedFor': [],
-    }).timeout(_writeTimeout);
+    final (_, seq) = await _commitMessage(
+      chatId: chatId,
+      data: data,
+      messageId: messageId,
+      chatUpdate: {
+        'lastMessage': '🎥 Video',
+        'lastMessageTime': FieldValue.serverTimestamp(),
+        'lastMessageDeletedFor': [],
+      },
+    ).timeout(_writeTimeout);
+    return seq;
   }
 
   // Generic file/document upload — no compression step (unlike image/video),
@@ -1568,7 +1603,8 @@ class FirestoreService {
     return await ref.getDownloadURL();
   }
 
-  Future<void> sendFileMessage({
+  // Returns the message's assigned seq — see sendMessage's own doc comment.
+  Future<int> sendFileMessage({
     required String chatId,
     required String senderId,
     required String fileURL,
@@ -1591,7 +1627,6 @@ class FirestoreService {
     String? replyToStatusThumbnailURL,
     String? messageId,
   }) async {
-    final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
       replyToId: replyToId,
       replyToText: replyToText,
@@ -1619,31 +1654,23 @@ class FirestoreService {
       if (mediaFileName != null) 'mediaFileName': mediaFileName,
       'imageURL': null,
       'audioURL': null,
-      'timestamp': now,
+      // Display-only wall-clock time — ordering is `seq`, see
+      // _commitMessage's own doc comment.
+      'timestamp': Timestamp.now(),
       if (replyTo != null) 'replyTo': replyTo,
       if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
-    bool wrote = true;
-    if (messageId != null) {
-      wrote = await _writeMessageIfAbsent(
-        chatId: chatId,
-        messageId: messageId,
-        data: data,
-      ).timeout(_writeTimeout);
-    } else {
-      await _db
-          .collection('chats')
-          .doc(chatId)
-          .collection('messages')
-          .add(data)
-          .timeout(_writeTimeout);
-    }
-    if (!wrote) return;
-    await _db.collection('chats').doc(chatId).update({
-      'lastMessage': '📄 $fileName',
-      'lastMessageTime': now,
-      'lastMessageDeletedFor': [],
-    }).timeout(_writeTimeout);
+    final (_, seq) = await _commitMessage(
+      chatId: chatId,
+      data: data,
+      messageId: messageId,
+      chatUpdate: {
+        'lastMessage': '📄 $fileName',
+        'lastMessageTime': FieldValue.serverTimestamp(),
+        'lastMessageDeletedFor': [],
+      },
+    ).timeout(_writeTimeout);
+    return seq;
   }
 
   // Downloads an already-sent file message's bytes to a local path so it
@@ -1680,7 +1707,8 @@ class FirestoreService {
   // uploaded through the exact same flat chats/{chatId}/{fileName} path
   // and customMetadata shape as any other photo, so uploadChatImage above
   // is reused directly rather than duplicating an identical method body.
-  Future<void> sendLocationMessage({
+  // Returns the message's assigned seq — see sendMessage's own doc comment.
+  Future<int> sendLocationMessage({
     required String chatId,
     required String senderId,
     required String locationImageURL,
@@ -1703,7 +1731,6 @@ class FirestoreService {
     String? replyToStatusThumbnailURL,
     String? messageId,
   }) async {
-    final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
       replyToId: replyToId,
       replyToText: replyToText,
@@ -1731,31 +1758,23 @@ class FirestoreService {
       if (mediaFileName != null) 'mediaFileName': mediaFileName,
       'imageURL': null,
       'audioURL': null,
-      'timestamp': now,
+      // Display-only wall-clock time — ordering is `seq`, see
+      // _commitMessage's own doc comment.
+      'timestamp': Timestamp.now(),
       if (replyTo != null) 'replyTo': replyTo,
       if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
-    bool wrote = true;
-    if (messageId != null) {
-      wrote = await _writeMessageIfAbsent(
-        chatId: chatId,
-        messageId: messageId,
-        data: data,
-      ).timeout(_writeTimeout);
-    } else {
-      await _db
-          .collection('chats')
-          .doc(chatId)
-          .collection('messages')
-          .add(data)
-          .timeout(_writeTimeout);
-    }
-    if (!wrote) return;
-    await _db.collection('chats').doc(chatId).update({
-      'lastMessage': '📍 Məkan',
-      'lastMessageTime': now,
-      'lastMessageDeletedFor': [],
-    }).timeout(_writeTimeout);
+    final (_, seq) = await _commitMessage(
+      chatId: chatId,
+      data: data,
+      messageId: messageId,
+      chatUpdate: {
+        'lastMessage': '📍 Məkan',
+        'lastMessageTime': FieldValue.serverTimestamp(),
+        'lastMessageDeletedFor': [],
+      },
+    ).timeout(_writeTimeout);
+    return seq;
   }
 
   Future<String> uploadChatAudio({
@@ -1778,7 +1797,8 @@ class FirestoreService {
     return await ref.getDownloadURL();
   }
 
-  Future<void> sendAudioMessage({
+  // Returns the message's assigned seq — see sendMessage's own doc comment.
+  Future<int> sendAudioMessage({
     required String chatId,
     required String senderId,
     required String audioURL,
@@ -1800,7 +1820,6 @@ class FirestoreService {
     String? replyToStatusThumbnailURL,
     String? messageId,
   }) async {
-    final now = FieldValue.serverTimestamp();
     final replyTo = _buildReplyTo(
       replyToId: replyToId,
       replyToText: replyToText,
@@ -1826,31 +1845,23 @@ class FirestoreService {
       if (mediaOriginChatId != null) 'mediaOriginChatId': mediaOriginChatId,
       if (mediaFileName != null) 'mediaFileName': mediaFileName,
       'imageURL': null,
-      'timestamp': now,
+      // Display-only wall-clock time — ordering is `seq`, see
+      // _commitMessage's own doc comment.
+      'timestamp': Timestamp.now(),
       if (replyTo != null) 'replyTo': replyTo,
       if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
-    bool wrote = true;
-    if (messageId != null) {
-      wrote = await _writeMessageIfAbsent(
-        chatId: chatId,
-        messageId: messageId,
-        data: data,
-      ).timeout(_writeTimeout);
-    } else {
-      await _db
-          .collection('chats')
-          .doc(chatId)
-          .collection('messages')
-          .add(data)
-          .timeout(_writeTimeout);
-    }
-    if (!wrote) return;
-    await _db.collection('chats').doc(chatId).update({
-      'lastMessage': '🎤 Səs mesajı',
-      'lastMessageTime': now,
-      'lastMessageDeletedFor': [],
-    }).timeout(_writeTimeout);
+    final (_, seq) = await _commitMessage(
+      chatId: chatId,
+      data: data,
+      messageId: messageId,
+      chatUpdate: {
+        'lastMessage': '🎤 Səs mesajı',
+        'lastMessageTime': FieldValue.serverTimestamp(),
+        'lastMessageDeletedFor': [],
+      },
+    ).timeout(_writeTimeout);
+    return seq;
   }
 
   // Single source of truth for forwarding one message into one target
@@ -2199,7 +2210,7 @@ class FirestoreService {
         .collection('chats')
         .doc(chatId)
         .collection('messages')
-        .orderBy('timestamp', descending: true)
+        .orderBy('seq', descending: true)
         .limit(50)
         .get();
     for (final doc in snap.docs) {

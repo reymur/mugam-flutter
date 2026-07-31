@@ -1,35 +1,45 @@
 import 'dart:async';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../firebase/firestore_service.dart';
 import '../../firebase/models.dart';
+import '../store/local_message_store.dart';
 
-// Combined state this controller exposes — messages is the full merged,
-// deduped, timestamp-sorted list (older-paginated-in history + the live
-// tail), so consumers read it exactly like the old messagesProvider's
-// MessagesSnapshot.messages. isInitialLoad/addedMessageIds are forwarded
-// from the tail listener only, same meaning as before (new messages
-// arriving at the bottom, not history loading in).
+// Combined state this controller exposes — messages is the single, already
+// merged and ordered list LocalMessageStore.watchChat(chatId) provides
+// (pending sends and confirmed history alike, one row per message — see
+// that store's own doc comment for why there's nothing left to merge/dedup
+// here the way there used to be).
 class ChatMessagesState {
   final List<Message> messages;
   final bool isInitialLoad;
+  // Message ids that are genuinely NEW to `messages` since the previous
+  // emission — computed by diffing LocalMessageStore's own before/after
+  // snapshots (see build()'s _storeSub), not derived from Firestore's raw
+  // docChanges the way this used to work. That distinction matters: a
+  // message THIS device just sent reports as freshly `added` on Firestore's
+  // side too, the same as one from someone else, even though it was
+  // already visible here as a pending row before the server ever confirmed
+  // it — diffing the store's actual rendered output instead of Firestore's
+  // own bookkeeping is what correctly excludes that case without needing a
+  // senderId special-case anywhere (chat_screen.dart's auto-scroll ref.listen
+  // still filters to `senderId != currentUid`, but only to avoid scrolling
+  // for other-device reads/edits of your own already-visible message, a
+  // narrower and now purely optional refinement — not compensating for a
+  // wrong "added" signal the way it originally had to).
   final List<String> addedMessageIds;
   final bool isLoadingOlder;
   // False once a fetchOlderMessages page comes back shorter than requested
   // — there's nothing older left in this chat. Starts true (unknown) until
   // the first page load actually confirms it one way or the other.
   final bool hasMoreOlder;
-  // True once the live tail listener has delivered at least one snapshot —
-  // including an empty one (a genuinely empty chat). Distinct from
-  // isInitialLoad, which stays true for that first snapshot too (it means
-  // something different — "history loading in, not a new message"); this
-  // is what chat_screen.dart uses to decide whether it's still safe to show
-  // stale cached messages instead (mirrors the old messagesProvider
-  // AsyncValue's .hasValue check).
+  // True once the local store has delivered at least one snapshot —
+  // including an empty one (a genuinely empty chat). This is what
+  // chat_screen.dart uses to decide whether it's still safe to show a
+  // loading spinner instead of the (possibly empty) real list.
   final bool hasLoadedOnce;
 
   const ChatMessagesState({
@@ -60,24 +70,30 @@ class ChatMessagesState {
   }
 }
 
-// Finding #4: watchMessages() itself only covers the live tail
-// (messageTailWindowSize most recent messages, see firestore_service.dart)
-// instead of a chat's entire history. This controller is what stitches
-// that back together for the UI — merging the always-on tail listener with
-// a second, separately-scoped listener covering whatever older history has
-// been paginated in via loadOlderMessages(), so reactions/read-receipts on
-// already-loaded older messages keep updating live rather than going stale
-// until the chat is reopened (the tradeoff explicitly rejected in favor of
-// the extra complexity here).
+// Per-chat screen-scoped controller (autoDispose — start/stops with the
+// chat screen's own lifetime, no refcounting needed since only one chat
+// screen is ever open at a time in this app). Two responsibilities:
 //
-// The two listeners' ranges are kept adjacent and non-overlapping purely
-// via timestamp boundaries — no per-message bookkeeping: the older
-// listener's query is [oldestEverLoaded, tailOldest), recreated with a
-// wider upper bound whenever the tail's own oldest message shifts forward
-// (a new message arriving ages the previous oldest out of
-// limitToLast(messageTailWindowSize), which Firestore reports as a
-// `removed` docChange on the tail listener even though the document still
-// exists — that's the signal this widens on).
+// 1. Own `state`, sourced ENTIRELY from LocalMessageStore.watchChat(chatId)
+//    — the store is the single source of truth (see its own doc comment).
+//    This is also where addedMessageIds/isInitialLoad get computed, by
+//    diffing each new store snapshot against the previous one (see
+//    ChatMessagesState's own doc comment for why that's the correct place
+//    for that signal now, not Firestore's raw docChanges).
+// 2. Act as this chat's sync writer while the screen is mounted: subscribe
+//    to the live Firestore tail (FirestoreService.watchMessages) and
+//    whatever older range has been paginated in (watchOlderMessagesInRange),
+//    and upsert every doc either delivers into the store. Firestore is
+//    never read directly by the UI — everything flows through the store.
+//    This half never touches `state` directly at all anymore.
+//
+// Finding #4 (unchanged from before this store existed): watchMessages()
+// itself only covers the live tail (messageTailWindowSize most recent
+// messages, see firestore_service.dart) instead of a chat's entire
+// history — loadOlderMessages() below is what pages further back on
+// demand, keeping whatever's been paginated in live too (reactions/read-
+// receipts on older messages keep updating) via the second, separately-
+// scoped older-range listener, exactly as before.
 //
 // chatId is threaded through the constructor (Riverpod's classic
 // NotifierProvider.family passes the family argument to the create
@@ -90,30 +106,37 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
   final String chatId;
 
   late final FirestoreService _firestoreService;
-  StreamSubscription<MessagesSnapshot>? _tailSub;
+  late final LocalMessageStore _store;
+  StreamSubscription<List<Message>>? _storeSub;
+  StreamSubscription<List<Message>>? _tailSub;
   StreamSubscription<List<Message>>? _olderSub;
   StreamSubscription<DateTime?>? _clearedSub;
 
   // Null until loadOlderMessages() has been called at least once — that's
   // also exactly the condition for whether the older-range listener exists
   // at all yet.
-  Timestamp? _oldestEverLoaded;
-  Timestamp? _tailOldest;
-  List<Message> _tailMessages = const [];
-  List<Message> _olderMessages = const [];
+  int? _oldestEverLoaded;
+  int? _tailOldest;
+  // Un-cleared-filtered store output, so the diff below and the
+  // clear-chat filter both work off the exact same raw list.
+  List<Message> _rawMessages = const [];
+  Set<String> _previousIds = const {};
+  bool _storeHasEmittedOnce = false;
   // "Çatı təmizlə" cutoff for the CURRENT uid only — messages at or before
-  // this are dropped from _mergedState's output. Fed by its own narrow
-  // watchChatClearedAt stream (see firestore_service.dart), never folded
-  // into a ref.watch on the general chat-meta stream: that stream also
-  // carries the job-offer typing indicator, which writes every few seconds
-  // while an offer is pending — routing that through build() would tear
-  // down and recreate _tailSub/_olderSub on every one of those writes.
+  // this are dropped from the output. Fed by its own narrow
+  // watchChatClearedAt stream, never folded into a ref.watch on the
+  // general chat-meta stream: that stream also carries the job-offer
+  // typing indicator, which writes every few seconds while an offer is
+  // pending — routing that through build() would tear down and recreate
+  // _tailSub/_olderSub/_storeSub on every one of those writes.
   DateTime? _clearedAt;
 
   @override
   ChatMessagesState build() {
     _firestoreService = ref.watch(firestoreServiceProvider);
+    _store = ref.watch(localMessageStoreProvider);
     ref.onDispose(() {
+      _storeSub?.cancel();
       _tailSub?.cancel();
       _olderSub?.cancel();
       _clearedSub?.cancel();
@@ -124,17 +147,47 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
         clearedAt,
       ) {
         _clearedAt = clearedAt;
-        state = _mergedState(
+        // Nothing new arrived — only the filter changed — so this never
+        // reports any added ids, regardless of what the diff below would
+        // otherwise say.
+        state = _filtered(
           isInitialLoad: state.isInitialLoad,
           addedMessageIds: const [],
+          hasLoadedOnce: state.hasLoadedOnce,
         );
       });
     }
-    _tailSub = _firestoreService.watchMessages(chatId).listen((snapshot) {
-      _tailMessages = snapshot.messages;
-      final newTailOldest = snapshot.messages.isEmpty
-          ? null
-          : snapshot.messages.first.timestamp;
+    // The fast path: local disk, no network round trip — this is what lets
+    // the chat screen paint real content (including this device's own
+    // still-pending sends) essentially instantly, cold start or not,
+    // without a separate passive fallback-cache layer the old design
+    // needed (MessageCacheService, now folded into the store itself).
+    //
+    // Also the ONLY place addedMessageIds/isInitialLoad get computed now —
+    // by diffing this snapshot's ids against the previous one. The very
+    // first emission (_storeHasEmittedOnce still false) is history
+    // loading in, not new messages arriving, so it's reported as
+    // isInitialLoad with no added ids, same meaning as before.
+    _storeSub = _store.watchChat(chatId).listen((messages) {
+      final newIds = messages.map((m) => m.id).toSet();
+      final isInitial = !_storeHasEmittedOnce;
+      final addedIds = isInitial
+          ? const <String>[]
+          : newIds.difference(_previousIds).toList();
+      _storeHasEmittedOnce = true;
+      _previousIds = newIds;
+      _rawMessages = messages;
+      state = _filtered(
+        isInitialLoad: isInitial,
+        addedMessageIds: addedIds,
+        hasLoadedOnce: true,
+      );
+    });
+    _tailSub = _firestoreService.watchMessages(chatId).listen((messages) {
+      unawaited(
+        _store.upsertManyFromFirestore(chatId: chatId, reals: messages),
+      );
+      final newTailOldest = messages.isEmpty ? null : messages.first.seq;
       // Only re-point the older listener once we actually have a tail
       // boundary to bound it by, and only if pagination has ever happened
       // (_oldestEverLoaded set) — otherwise there's no older listener yet
@@ -147,11 +200,6 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
       } else {
         _tailOldest = newTailOldest;
       }
-      state = _mergedState(
-        isInitialLoad: snapshot.isInitialLoad,
-        addedMessageIds: snapshot.addedMessageIds,
-        hasLoadedOnce: true,
-      );
     }, onError: (Object e, StackTrace st) {
       // This stream naturally dies with a permission-denied error the
       // instant the chat disappears out from under a still-mounted
@@ -189,21 +237,14 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
     if (from == null || to == null) return;
     _olderSub?.cancel();
     _olderSub = _firestoreService
-        .watchOlderMessagesInRange(
-          chatId: chatId,
-          fromTimestamp: from,
-          toTimestamp: to,
-        )
+        .watchOlderMessagesInRange(chatId: chatId, fromSeq: from, toSeq: to)
         .listen((messages) {
-          _olderMessages = messages;
-          state = _mergedState(
-            isInitialLoad: state.isInitialLoad,
-            addedMessageIds: const [],
+          unawaited(
+            _store.upsertManyFromFirestore(chatId: chatId, reals: messages),
           );
         }, onError: (Object e, StackTrace st) {
-          // Same rationale as _tailSub's onError above — this listener
-          // dies the same way, for the same reasons, whenever the tail
-          // one does.
+          // Same rationale as the tail listener's onError above — this
+          // listener dies the same way, for the same reasons.
           FirebaseCrashlytics.instance.recordError(
             e,
             st,
@@ -213,29 +254,15 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
         });
   }
 
-  ChatMessagesState _mergedState({
+  ChatMessagesState _filtered({
     required bool isInitialLoad,
     required List<String> addedMessageIds,
-    bool? hasLoadedOnce,
+    required bool hasLoadedOnce,
   }) {
-    // Both lists are already ascending-ordered and, by construction (the
-    // older listener's upper bound always tracks the tail's own oldest
-    // message), non-overlapping except for a possible brief instant right
-    // around a boundary update — the id-based dedup below covers that.
-    final seen = <String>{};
-    final combined = <Message>[];
-    for (final m in [..._olderMessages, ..._tailMessages]) {
-      if (seen.add(m.id)) combined.add(m);
-    }
-    // "Çatı təmizlə" filter — applied here, after dedup, so it only ever
-    // affects what's DISPLAYED. _oldestEverLoaded/_tailOldest above keep
-    // tracking raw fetched timestamps regardless of this filter, so
-    // loadOlderMessages' hasMoreOlder/pagination boundary logic stays
-    // correct even when some of what it fetches gets filtered out here.
     final clearedAt = _clearedAt;
     final visible = clearedAt == null
-        ? combined
-        : combined
+        ? _rawMessages
+        : _rawMessages
               .where((m) => m.timestamp?.toDate().isAfter(clearedAt) ?? true)
               .toList();
     return state.copyWith(
@@ -257,23 +284,20 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
     try {
       final page = await _firestoreService.fetchOlderMessages(
         chatId: chatId,
-        beforeTimestamp: boundary,
+        beforeSeq: boundary,
       );
       if (page.isEmpty) {
         state = state.copyWith(isLoadingOlder: false, hasMoreOlder: false);
         return;
       }
-      _oldestEverLoaded = page.first.timestamp;
-      _olderMessages = [...page, ..._olderMessages];
+      await _store.upsertManyFromFirestore(chatId: chatId, reals: page);
+      _oldestEverLoaded = page.first.seq;
       // First page load: nothing was subscribed yet (no _oldestEverLoaded
       // existed before this call), so start the older listener now. Later
       // page loads just prepend more history to the range the existing
       // listener's lower bound needs to grow to cover too.
       _resubscribeOlderListener();
-      state = _mergedState(
-        isInitialLoad: state.isInitialLoad,
-        addedMessageIds: const [],
-      ).copyWith(
+      state = state.copyWith(
         isLoadingOlder: false,
         hasMoreOlder: page.length >= messageTailWindowSize,
       );
