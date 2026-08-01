@@ -167,7 +167,7 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
   StreamSubscription<List<Message>>? _storeSub;
   StreamSubscription<List<Message>>? _tailSub;
   StreamSubscription<List<Message>>? _olderSub;
-  StreamSubscription<DateTime?>? _clearedSub;
+  StreamSubscription<ChatClearedAt>? _clearedSub;
 
   // Null until loadOlderMessages() has been called at least once — that's
   // also exactly the condition for whether the older-range listener exists
@@ -353,15 +353,31 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
       });
     }
     _clearedSub = _firestoreService.watchChatClearedAt(chatId, uid).listen(
-      (clearedAt) {
+      (answer) {
+        // Silence, not an answer: the chat document isn't in the local
+        // cache and the server hasn't spoken. Keep waiting — and in
+        // particular do NOT persist it, which is exactly what turned this
+        // case into a false "never cleared" that survived reconnecting
+        // (N13). Also never downgrades an already-known cutoff back to
+        // unknown: once we've had a real answer it stays the truth until a
+        // newer real answer replaces it.
+        if (!answer.isKnown) return;
         _clearedUnknownWait?.cancel();
         _clearedUnknownWait = null;
+        final wasKnown = _clearedAtKnown;
+        final previous = _clearedAt;
         _clearedAtKnown = true;
         _clearedAtUnavailable = false;
-        _clearedAt = clearedAt;
-        // Persist for the next cold open — including a null, which is a
-        // real answer ("never cleared"), not an absence of one.
-        unawaited(_store.setClearedAt(chatId, clearedAt));
+        _clearedAt = answer.at;
+        // Persist for the next cold open — including a null, which here IS
+        // a real answer ("this chat has never been cleared"), because the
+        // stream only reports known when it actually saw the document.
+        unawaited(_store.setClearedAt(chatId, answer.at));
+        // Nothing to repaint when the answer merely repeats itself —
+        // includeMetadataChanges means this stream also fires on
+        // cache/server and pending-write transitions that carry no change
+        // to the cutoff at all.
+        if (wasKnown && previous == answer.at) return;
         // Nothing new arrived — only the filter changed — so this never
         // reports any added ids, regardless of what the diff below would
         // otherwise say.

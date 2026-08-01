@@ -18,6 +18,21 @@ import 'models.dart';
 // than this growing per chat's total history size.
 const int messageTailWindowSize = 50;
 
+// The answer to "where is this user's Çatı təmizlə cutoff in this chat" —
+// a tri-state, because "we haven't been told" and "there is no cutoff" are
+// different answers that a nullable DateTime cannot tell apart. See
+// FirestoreService.watchChatClearedAt for how they're distinguished and why
+// collapsing them was a real, durable bug (N13).
+class ChatClearedAt {
+  const ChatClearedAt.known(this.at) : isKnown = true;
+  const ChatClearedAt.unknown() : isKnown = false, at = null;
+
+  // False means literally nothing is known — not "known to be absent".
+  // Callers must not persist or act on `at` while this is false.
+  final bool isKnown;
+  final DateTime? at;
+}
+
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
@@ -2913,14 +2928,46 @@ class FirestoreService {
   // general-purpose projection below) so that unrelated chat-doc churn
   // (typing writes, jobOfferBy, etc.) never re-triggers the message
   // pagination listeners that consume this.
-  Stream<DateTime?> watchChatClearedAt(String chatId, String uid) {
-    return _db.collection('chats').doc(chatId).snapshots().map((snap) {
-      final raw = snap.data()?['clearedBy'];
-      if (raw is! Map) return null;
-      final value = raw[uid];
-      if (value == null) return null;
-      return DateTime.tryParse(value.toString());
-    });
+  //
+  // Emits ChatClearedAt, not a bare DateTime?, because a missing value here
+  // has two entirely different meanings and only one of them is an answer:
+  //
+  //   document exists, no clearedBy for this uid -> known(null): this chat
+  //     has genuinely never been cleared. A fact, safe to act on and to
+  //     persist.
+  //   document not in the local cache and the server hasn't answered ->
+  //     unknown: we know nothing. NOT a fact, must never be persisted.
+  //
+  // Folding both into null is what N13 was: the second case was written to
+  // disk as "never cleared", and unlike the earlier members of this family
+  // that mistake does NOT heal when connectivity returns — the false record
+  // outlives the outage and is trusted on every later cold open.
+  //
+  // `snap.exists || !snap.metadata.isFromCache` is the exact test, not a
+  // heuristic: a snapshot either carries the document (whatever its age —
+  // a stale cutoff is still a real one, and cutoffs only move forward), or
+  // it comes from the server, which is authoritative about the document not
+  // existing. Only "absent AND merely from cache" is silence.
+  //
+  // includeMetadataChanges is required for the same reason: without it, the
+  // cache-miss -> server-confirms-absent transition carries no data change
+  // and would never be raised, stranding a genuinely deleted chat in the
+  // unknown state forever.
+  Stream<ChatClearedAt> watchChatClearedAt(String chatId, String uid) {
+    return _db
+        .collection('chats')
+        .doc(chatId)
+        .snapshots(includeMetadataChanges: true)
+        .map((snap) {
+          if (!snap.exists && snap.metadata.isFromCache) {
+            return const ChatClearedAt.unknown();
+          }
+          final raw = snap.data()?['clearedBy'];
+          if (raw is! Map) return const ChatClearedAt.known(null);
+          final value = raw[uid];
+          if (value == null) return const ChatClearedAt.known(null);
+          return ChatClearedAt.known(DateTime.tryParse(value.toString()));
+        });
   }
 
   // Narrow, dedicated stream of just the typing map — same rationale as

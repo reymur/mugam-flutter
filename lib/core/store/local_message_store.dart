@@ -65,7 +65,15 @@ class LocalMessageStore {
   // still correct for a chat whose messages have been evicted, whereas
   // losing it is exactly the "history without a cutoff" state this whole
   // mechanism exists to prevent.
-  static const String _clearedKey = 'mugam_msg_cleared_v1';
+  static const String _clearedKey = 'mugam_msg_cleared_v2';
+  // v1 recorded "no cutoff" for a chat whose document simply wasn't in the
+  // Firestore cache yet (N13) — and a false record there is indistinguishable
+  // on disk from a true one, since both are the same stored null. There is
+  // nothing to migrate and no way to audit them, so v1 is dropped wholesale
+  // and every chat re-learns its cutoff. The cost is one "unknown" window per
+  // chat on first open after the update, which resolves from the Firestore
+  // cache in the same turn on any chat reached through the chat list.
+  static const String _legacyClearedKeyV1 = 'mugam_msg_cleared_v1';
   static const _debounceDuration = Duration(milliseconds: 400);
 
   // chatId -> (messageId -> Message). Confirmed history merged with
@@ -128,6 +136,7 @@ class LocalMessageStore {
     await _prefs.remove(_historyIndexKey);
     await _prefs.remove(_pendingKey);
     await _prefs.remove(_clearedKey);
+    await _prefs.remove(_legacyClearedKeyV1);
     _clearedCache = null;
     _byChat.clear();
     _historyLoaded.clear();
@@ -232,6 +241,8 @@ class LocalMessageStore {
   Map<String, dynamic> _readCleared() {
     final cached = _clearedCache;
     if (cached != null) return cached;
+    // Fire-and-forget invalidation of the v1 blob — see _legacyClearedKeyV1.
+    _prefs.remove(_legacyClearedKeyV1);
     Map<String, dynamic> parsed;
     try {
       final raw = _prefs.getString(_clearedKey);
