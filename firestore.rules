@@ -23,6 +23,17 @@ rules_version = '2';
 // standard behavior) rather than falling through to an open catch-all —
 // if a real feature breaks because its collection isn't listed here, that
 // will surface immediately as a permission-denied error, not a silent gap.
+//
+// OPEN ITEMS (deliberate, not oversights):
+//  - chats/{chatId}/messages validSeq() enforces type/range only. The
+//    strict `seq == meta/counters.messageSeq + 1` form is written up at
+//    that function but not deployed until it can be exercised against
+//    concurrent sends in the Firestore emulator — see its comment.
+//  - chats/{chatId} `allow read` still permits reading a NON-EXISTENT chat
+//    doc (resource == null), which getOrCreateDirectChat's get-before-
+//    create depends on. It leaks only "does a chat exist for this uid
+//    pair", never content; closing it needs that client call to handle
+//    permission-denied as "absent" first.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -315,20 +326,47 @@ service cloud.firestore {
       // writing.
       allow create: if willBeMember();
 
+      // "Çatı təmizlə" is a PER-USER view cutoff: clearedBy.{uid} hides
+      // every message up to that moment for that one uid alone. Letting a
+      // member write another member's key here would let them silently
+      // wipe the other party's entire visible history — the one entry in
+      // the otherwise-permissive field list below whose cross-uid write has
+      // no legitimate caller in either app (both apps' clearChatForUser
+      // only ever write their own uid; see FirestoreService.clearChatForUser).
+      function writesOnlyOwnClearedBy() {
+        return !('clearedBy' in changedKeys()) ||
+          request.resource.data.clearedBy
+            .diff(resource.data.get('clearedBy', {}))
+            .affectedKeys()
+            .hasOnly([request.auth.uid]);
+      }
+      // Legacy field: the seq allocator lives in meta/counters now (see
+      // that match block and FirestoreService._commitMessage). Nothing
+      // writes this on update anymore in either app — createGroupChat sets
+      // it once at create time and it's been frozen since. Pinning it here
+      // keeps it usable as the migration seed floor (_resolveSeedFloor
+      // takes max(newest message's seq, this) when a chat's counter doc is
+      // missing) without a member being able to inflate it.
+      function messageSeqUnchanged() {
+        return request.resource.data.get('messageSeq', null) ==
+          resource.data.get('messageSeq', null);
+      }
+
       // Every ordinary field on a chat doc (lastMessage, lastMessageTime,
       // deliveredTo.{uid}, readBy, lastReadAt.{uid}, lastReadMsgId.{uid},
-      // unreadCount.{uid}, activeUsers, typing.{uid}, clearedBy.{uid},
-      // name, photoURL, completed, cancelledBy, closedBy, jobOfferBy,
-      // eventDate/Type/Location/Notes, waitingForDate, preview, ...) is
-      // writable by ANY current member, including writes keyed by a
-      // DIFFERENT member's uid — this is real, confirmed behavior in both
-      // apps (e.g. the sender writes the recipient's deliveredTo/
-      // unreadCount entry), not a hole to close. members/admins are the
-      // one pair of fields that need the extra isSafeMembershipChange()
-      // gate above everything else.
-      allow update: if isMember() && (
-        !changedKeys().hasAny(['members', 'admins']) || isSafeMembershipChange()
-      );
+      // unreadCount.{uid}, activeUsers, typing.{uid}, name, photoURL,
+      // completed, cancelledBy, closedBy, jobOfferBy, eventDate/Type/
+      // Location/Notes, waitingForDateAt, preview, ...) stays writable by
+      // ANY current member, including writes keyed by a DIFFERENT member's
+      // uid — this is real, confirmed behavior in both apps (e.g. the
+      // sender writes the recipient's deliveredTo/unreadCount entry), not a
+      // hole to close. Three carve-outs: members/admins (membership), and
+      // now clearedBy (destructive cross-uid) + messageSeq (allocator
+      // integrity).
+      allow update: if isMember()
+        && (!changedKeys().hasAny(['members', 'admins']) || isSafeMembershipChange())
+        && writesOnlyOwnClearedBy()
+        && messageSeqUnchanged();
 
       allow delete: if false;
 
@@ -373,16 +411,77 @@ service cloud.firestore {
             request.resource.data.type in ['image', 'video', 'audio', 'file', 'location'];
         }
 
+        // `seq` is the sole ordering key for every message query in
+        // mugam-flutter (watchMessages/fetchOlderMessages/
+        // watchOlderMessagesInRange/watchChatMedia/_findLastMessage all
+        // orderBy('seq')), and startAt/endBefore pagination bounds are seq
+        // values — so an arbitrary client-chosen seq isn't just a wrong
+        // position for one bubble, it corrupts ordering and pagination for
+        // every member of the chat.
+        //
+        // Type/range check only, deliberately. The strict form of this rule
+        // is `seq == get(.../meta/counters).data.messageSeq + 1`, pinning
+        // every message to the allocator FirestoreService._commitMessage
+        // actually bumps. That version is NOT deployed, on purpose: it
+        // depends on which snapshot a rules-side get() observes while the
+        // send transaction that writes BOTH the message and the counter is
+        // committing, under concurrent sends to the same chat. The
+        // documented behaviour says it sees pre-commit state (which would
+        // make it correct), but a wrong assumption there fails closed —
+        // every send in the app starts being rejected — and it's exactly
+        // the kind of concurrency-dependent failure that a quiet two-device
+        // test would pass while real traffic later would not. The residual
+        // exposure without it is a deliberately-modified client writing a
+        // bogus seq, which is a targeted attack by an existing chat member,
+        // not an everyday failure — a worse trade than risking send
+        // breakage for everyone.
+        //
+        // TODO(rules): restore the strict `seq == counter + 1` form once it
+        // can be exercised against concurrent sends in the Firestore
+        // emulator rather than validated in production.
+        //
+        // Only enforced when `seq` is present at all — and omitting it is
+        // self-defeating as an attack, since Firestore excludes documents
+        // missing the orderBy field from an orderBy query entirely, so a
+        // seq-less message never appears in any of this app's message
+        // queries in the first place.
+        function validSeq() {
+          return !('seq' in request.resource.data) || (
+            request.resource.data.seq is int &&
+            request.resource.data.seq > 0
+          );
+        }
+        // Display-only (the HH:mm on the bubble) — ordering is seq, so a
+        // skewed value here is cosmetic rather than structural. Bounded
+        // only against absurd far-future values used to make a message look
+        // permanently "newest"; the 1-day slack keeps ordinary device-clock
+        // skew (this is written as a client Timestamp.now()) from ever
+        // tripping it.
+        function validTimestamp() {
+          return !('timestamp' in request.resource.data) || (
+            request.resource.data.timestamp is timestamp &&
+            request.resource.data.timestamp.toMillis() <
+              request.time.toMillis() + 86400000
+          );
+        }
+
         allow read: if isChatMember();
 
-        // A message's senderId must be the writer's own uid — except
-        // mugam-v2's system messages (group created/left/member added/
-        // removed), which are always written with the literal string
-        // 'system' regardless of which member triggered the action.
-        allow create: if isChatMember() && (
-          request.resource.data.senderId == request.auth.uid ||
-          request.resource.data.senderId == 'system'
-        ) && (!needsValidatedMedia() || isValidatedMedia());
+        // A message's senderId must be the writer's own uid. The previous
+        // `|| senderId == 'system'` escape hatch existed only for mugam-v2
+        // (retired — no longer in use against this backend), and it let ANY
+        // member forge a message that renders as an authoritative system
+        // notice. mugam-flutter never needed it: its own system messages
+        // are written with the real actor's uid plus isSystem: true (see
+        // FirestoreService.createGroupChat/leaveGroup/addGroupMember),
+        // specifically so the onNewMessage push trigger resolves a real
+        // name. Cloud Functions are unaffected either way — the Admin SDK
+        // bypasses rules entirely.
+        allow create: if isChatMember()
+          && request.resource.data.senderId == request.auth.uid
+          && (!needsValidatedMedia() || isValidatedMedia())
+          && validSeq()
+          && validTimestamp();
 
         // Two legitimate non-sender update shapes, plus one sender-only
         // shape. Reactions are NOT listed here on purpose: they're written
@@ -399,23 +498,82 @@ service cloud.firestore {
         //    audioURL: only the original sender may touch these (message
         //    edit, delete-for-everyone, or mugam-v2's post-send CDN-URL
         //    swap-in).
+        //
+        // Both non-sender shapes are additionally pinned to the caller's
+        // OWN uid: the field list alone said "listenedBy changed" /
+        // "deletedFor changed", not "and only by adding yourself", so any
+        // member could previously rewrite either array wholesale — hiding
+        // a message for somebody else (deletedFor), or forging/erasing
+        // another user's "played this voice note" state (listenedBy).
+        // Both apps only ever add their own uid via arrayUnion (see
+        // FirestoreService.deleteMessageForMe / markVoiceMessageListened),
+        // so nothing legitimate needs the wider latitude.
+        function onlyAddsSelfTo(field) {
+          let oldList = resource.data.get(field, []);
+          let newList = request.resource.data.get(field, []);
+          return newList.hasAll(oldList) &&
+            newList.hasOnly(oldList.concat([request.auth.uid]));
+        }
         allow update: if isChatMember() && (
-          changedKeys().hasOnly(['listenedBy']) ||
-          changedKeys().hasOnly(['deletedFor']) ||
+          (changedKeys().hasOnly(['listenedBy']) && onlyAddsSelfTo('listenedBy')) ||
+          (changedKeys().hasOnly(['deletedFor']) && onlyAddsSelfTo('deletedFor')) ||
           (isSender() && changedKeys().hasOnly(
             ['text', 'deletedForAll', 'deletedAt', 'imageURL', 'videoURL', 'audioURL']
           ))
         );
 
-        // Deliberately NOT sender-restricted: mugam-v2's GroupChat lets
-        // any member permanently delete any message via swipe with no
-        // ownership check at all (confirmed by reading its source — this
-        // is that frozen app's existing behavior, not something
-        // introduced here). Restricting this to sender-only would break
-        // that already-working GroupChat feature. mugam-flutter only ever
-        // calls this after deletedForAll is already true, so it never
-        // relies on the extra latitude this grants.
-        allow delete: if isChatMember();
+        // Hard delete, now bounded to the two legitimate shapes instead of
+        // "any member may destroy any message":
+        //  - isSender(): your own message, unconditionally.
+        //  - already deletedForAll: mugam-flutter's opportunistic purge
+        //    (chat_screen.dart's _schedulePurgeTimers) hard-deletes a
+        //    tombstoned message ~5 minutes after deletedAt, and it runs on
+        //    whichever member's client happens to have the chat open then
+        //    — routinely NOT the sender. That path only ever targets a
+        //    message the sender themself already tombstoned via
+        //    deleteMessageForAll, so allowing it grants nothing new.
+        //
+        // The wide-open version this replaces existed to keep mugam-v2's
+        // GroupChat swipe-delete (any member could permanently delete any
+        // other member's message, no ownership check) working. That app is
+        // retired, so the compatibility reason is gone. mugam-flutter was
+        // never relying on it — all three of its "Hamıdan sil" call sites
+        // are already gated on isMe/allMine (chat_screen.dart,
+        // chat_attachment_viewer_screen.dart, video_message_widgets.dart),
+        // so it never deletes a message it didn't send except through the
+        // tombstone purge above.
+        allow delete: if isChatMember() && (
+          isSender() || resource.data.get('deletedForAll', false) == true
+        );
+      }
+
+      // ---------------------------------------------------------------
+      // chats/{chatId}/meta/{metaId} — currently just "counters"
+      // ---------------------------------------------------------------
+      // Holds the messageSeq allocator FirestoreService._commitMessage
+      // reads/increments transactionally — moved off the main chat doc
+      // specifically so that transaction no longer contends with every
+      // other write to that doc (typing, lastReadAt, deliveredTo,
+      // negotiationSeenAt, ...). Same membership check as messages/ above
+      // (isChatMember(), redefined here since Firestore rules functions
+      // aren't visible across sibling `match` blocks) — any current member
+      // needs both read (to compute the next seq) and write (to bump it),
+      // same as the old messageSeq field on the main doc allowed for any
+      // member via this match block's own `allow update` above.
+      match /meta/{metaId} {
+        function isChatMember() {
+          return isSignedIn() &&
+            request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.members;
+        }
+        // create/update only — deliberately NOT `write`, which would also
+        // grant delete. Deleting the counters doc makes the next send
+        // re-seed the allocator, and while _resolveSeedFloor now recovers
+        // the real high-water mark from the newest message (so a re-seed no
+        // longer hands out a duplicate seq), there is no legitimate reason
+        // for a client to remove it at all — the allocator is append-only
+        // per chat for the life of the chat.
+        allow read, create, update: if isChatMember();
+        allow delete: if false;
       }
     }
 

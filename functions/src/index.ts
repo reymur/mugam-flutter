@@ -136,6 +136,81 @@ function previewText(type: string, text: string, fileName?: string): string {
   }
 }
 
+// How far back to look for the replacement preview when the message the
+// chat card currently shows is removed. Matches the client's own former
+// _findLastMessage cap: if every one of the 50 newest messages is deleted
+// for everyone, the card falls back to empty rather than paying for an
+// unbounded scan on every delete.
+const PREVIEW_LOOKBACK_LIMIT = 50;
+
+// The chat card's preview is written EXCLUSIVELY by this file — the client
+// no longer formats or writes it in any scenario (see the removal of
+// _previewTextFor/_refreshLastMessagePreview in firestore_service.dart).
+// That's the point: the same six-way type switch previously existed both
+// here (for push bodies) and there (for the card), and two copies of a
+// display format in two languages drift the moment either is touched.
+//
+// `lastMessageSeq` is what makes every writer of this field safely ordered
+// against every other one. Firestore gives no ordering guarantee between
+// trigger invocations, so a slow onNewMessage for seq 100 can land after a
+// fast one for seq 101; and a delete legitimately moves the preview
+// BACKWARD. Hence two different guards, not one:
+//   - a new message writes only if its seq is >= the stored one;
+//   - a removal acts only if the removed seq IS the stored one, i.e. the
+//     preview was actually pointing at it. Removing anything older is a
+//     no-op that costs a single document read and no write at all.
+// Missing lastMessageSeq (every chat predating this field) reads as 0, so
+// the first new message in such a chat adopts it.
+async function recomputeChatPreviewAfterRemoval(
+  chatId: string,
+  removedSeq: number | null,
+): Promise<void> {
+  if (removedSeq == null) return;
+  const chatRef = db.collection("chats").doc(chatId);
+  const newestQuery = chatRef
+    .collection("messages")
+    .orderBy("seq", "desc")
+    .limit(PREVIEW_LOOKBACK_LIMIT);
+  try {
+    await db.runTransaction(async (tx) => {
+      const chatSnap = await tx.get(chatRef);
+      if (!chatSnap.exists) return;
+      const storedSeq: number = chatSnap.data()?.lastMessageSeq ?? 0;
+      // Not the message the card is showing — nothing to do.
+      if (storedSeq !== removedSeq) return;
+
+      const newest = await tx.get(newestQuery);
+      // deletedForAll is filtered here rather than in the query on purpose:
+      // messages written before that field existed simply don't have it,
+      // and a Firestore equality filter never matches a missing field, so
+      // a `where("deletedForAll","==",false)` would skip almost everything.
+      const replacement = newest.docs.find(
+        (d) => d.data().deletedForAll !== true,
+      );
+      if (!replacement) {
+        tx.update(chatRef, {
+          lastMessage: "",
+          lastMessageTime: null,
+          lastMessageSeq: 0,
+          lastMessageDeletedFor: [],
+        });
+        return;
+      }
+      const data = replacement.data();
+      tx.update(chatRef, {
+        lastMessage: previewText(data.type, data.text, data.fileName),
+        lastMessageTime: data.timestamp ?? null,
+        lastMessageSeq: data.seq ?? 0,
+        // Carries over whoever had already hidden the newly-promoted
+        // message for themselves, rather than resurrecting it for them.
+        lastMessageDeletedFor: data.deletedFor ?? [],
+      });
+    });
+  } catch (e) {
+    logger.warn("recomputeChatPreviewAfterRemoval failed", { chatId, e });
+  }
+}
+
 export const onNewMessage = onDocumentCreated(
   "chats/{chatId}/messages/{messageId}",
   async (event) => {
@@ -151,47 +226,71 @@ export const onNewMessage = onDocumentCreated(
     if (!chatSnap.exists) return;
     const chat = chatSnap.data()!;
 
-    // messageCount tracks how many messages currently exist in this chat
-    // (not lifetime-ever-sent) — incremented here and decremented by the
-    // symmetric onMessageDeleted trigger below. This is the source of
-    // truth for a future "frequently contacted" ranking in the forward-
-    // message picker, deliberately server-owned (unlike mediaImageCount,
-    // which every client send/delete call site increments/decrements
-    // itself) so it stays correct regardless of which code path creates
-    // or deletes a message, including future ones (e.g. forwarding)
-    // without needing every call site updated individually. Independent
-    // of the push-notification logic below — must not block/fail pushes,
-    // so it's caught and logged rather than thrown.
-    try {
-      await db.collection("chats").doc(chatId).update({
-        messageCount: FieldValue.increment(1),
-      });
-    } catch (e) {
-      logger.warn("onNewMessage: messageCount increment failed", e);
-    }
-
     const members: string[] = chat.members ?? [];
 
-    // unreadCount is a per-user map ({uid: count}, same shape mugam-v2's own
-    // sendMessage already writes — see mugam-v2/src/firebase/firestore.ts)
-    // reset to 0 for a uid by markChatAsReadBy (firestore_service.dart) when
-    // that user opens the chat. Incremented for every member except the
-    // sender, deliberately including anyone in activeUsers (unlike the push
-    // recipients filter below) — activeUsers only means "has this chat
-    // screen open right now", not "has already read this exact message";
-    // mirrors mugam-v2's own unconditional increment.
-    if (members.length > 1) {
-      try {
-        const unreadUpdate: Record<string, FirebaseFirestore.FieldValue> = {};
-        for (const uid of members) {
-          if (uid !== senderId) {
-            unreadUpdate[`unreadCount.${uid}`] = FieldValue.increment(1);
+    // Everything this trigger denormalises onto the chat doc, in ONE
+    // transaction instead of the two separate update() calls this used to
+    // make (plus a third write the client itself used to make for the
+    // preview). That document is the hottest in the schema — typing,
+    // lastReadAt, deliveredTo, activeUsers and the seq allocator all used
+    // to contend on it — so collapsing three writes per message into one is
+    // a direct reduction in that contention, not just tidiness.
+    //
+    //  - messageCount: how many messages currently exist (not
+    //    lifetime-ever-sent), decremented by onMessageDeleted below. Source
+    //    of truth for the forward picker's "frequently contacted" ranking.
+    //  - unreadCount.{uid}: per-user map, reset to 0 by markChatAsReadBy
+    //    when that user opens the chat. Incremented for every member except
+    //    the sender, deliberately including anyone currently in activeUsers
+    //    — that only means "has the chat screen open", not "has read this".
+    //  - the preview trio + lastMessageSeq: see
+    //    recomputeChatPreviewAfterRemoval's comment for the ordering rules.
+    //
+    // Must not block or fail the push notification below, so it's caught
+    // and logged rather than thrown.
+    try {
+      await db.runTransaction(async (tx) => {
+        const chatRef = db.collection("chats").doc(chatId);
+        const fresh = await tx.get(chatRef);
+        if (!fresh.exists) return;
+        const update: Record<string, unknown> = {
+          messageCount: FieldValue.increment(1),
+        };
+        if (members.length > 1) {
+          for (const uid of members) {
+            if (uid !== senderId) {
+              update[`unreadCount.${uid}`] = FieldValue.increment(1);
+            }
           }
         }
-        await db.collection("chats").doc(chatId).update(unreadUpdate);
-      } catch (e) {
-        logger.warn("onNewMessage: unreadCount increment failed", e);
-      }
+        // mediaImageCount is deliberately NOT touched here. The client
+        // increments it in sendImageMessage's own chat write and decrements
+        // it in deleteMessageForAll, and it has to stay that way until both
+        // halves can be moved in one step: every build already installed
+        // keeps writing it, so a server-side counterpart would double-count
+        // every image for as long as any old client is in use — and moving
+        // the client half first would instead under-count for that same
+        // window. Either direction needs a one-off recount to land on, which
+        // is its own task, not a rider on the preview change.
+        // Out-of-order trigger invocations are possible and expected; only
+        // a message at least as new as the one currently displayed may
+        // replace the preview.
+        const storedSeq: number = fresh.data()?.lastMessageSeq ?? 0;
+        const thisSeq: number = message.seq ?? 0;
+        if (thisSeq >= storedSeq) {
+          update.lastMessage = previewText(
+            message.type,
+            message.text,
+            message.fileName,
+          );
+          update.lastMessageTime = message.timestamp ?? null;
+          update.lastMessageSeq = thisSeq;
+          update.lastMessageDeletedFor = [];
+        }
+        tx.update(chatRef, update);
+      });
+    } catch (e) {
+      logger.warn("onNewMessage: chat denormalisation failed", e);
     }
 
     const activeUsers: string[] = chat.activeUsers ?? [];
@@ -274,6 +373,116 @@ export const onMessageDeleted = onDocumentDeleted(
     } catch (e) {
       logger.warn("onMessageDeleted: messageCount decrement failed", e);
     }
+    // A hard delete of the message the card is currently showing has to
+    // promote whatever is now newest. In mugam-flutter's own flow this
+    // normally follows a tombstone (onMessageTombstoned below already moved
+    // the preview on when deletedForAll flipped, so storedSeq no longer
+    // matches and this is a cheap no-op) — but deleteGroupChat's batch
+    // cleanup and any direct console delete reach here without one, and
+    // those must not leave a card pointing at a document that's gone.
+    await recomputeChatPreviewAfterRemoval(
+      chatId,
+      event.data?.data()?.seq ?? null,
+    );
+  },
+);
+
+// "Hamıdan sil" is a soft delete — deleteMessageForAll UPDATES the message
+// (deletedForAll/deletedAt/text) rather than removing it, so the delete
+// trigger above never sees it, and it is by far the more common way a
+// preview stops being valid. Hence this third trigger.
+//
+// The false→true transition guard is the first statement on purpose: this
+// path fires for every message UPDATE in every chat — a voice note being
+// played (listenedBy), someone hiding a message for themselves
+// (deletedFor), a reaction the callable wrote — and all of those must cost
+// nothing but an immediate return.
+export const onMessageTombstoned = onDocumentUpdated(
+  "chats/{chatId}/messages/{messageId}",
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after) return;
+    if (before.deletedForAll === true || after.deletedForAll !== true) return;
+
+    // Preview only — mediaImageCount's decrement stays in the client's
+    // deleteMessageForAll for now, for the reason spelled out at
+    // onNewMessage's own increment: both halves of that counter have to
+    // move together, and not during a window where older builds are still
+    // writing it.
+    const { chatId } = event.params;
+    await recomputeChatPreviewAfterRemoval(chatId, after.seq ?? null);
+  },
+);
+
+// Repairs a chat card whose preview has drifted from reality — the client
+// calls this when it opens a chat and finds the document's lastMessageSeq
+// behind the newest message it can actually see (including the "field
+// missing entirely" case, i.e. every chat predating lastMessageSeq).
+//
+// It exists because the client deliberately cannot fix this itself: preview
+// text is formatted in exactly one place (previewText above), server-side,
+// and giving the client a second copy to self-heal with would recreate the
+// duplication this whole change removes.
+export const refreshChatPreview = onCall(
+  { region: FUNCTIONS_REGION },
+  async (request) => {
+    const uid = request.auth?.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Sign-in required");
+    }
+    const chatId = request.data?.chatId;
+    if (typeof chatId !== "string" || !chatId) {
+      throw new HttpsError("invalid-argument", "chatId is required");
+    }
+    const chatRef = db.collection("chats").doc(chatId);
+    const chatSnap = await chatRef.get();
+    if (!chatSnap.exists) {
+      throw new HttpsError("not-found", "Chat not found");
+    }
+    // Membership is checked here, not left to rules: a callable runs with
+    // Admin credentials and bypasses firestore.rules entirely, so without
+    // this any signed-in user could drive a scan+write on an arbitrary
+    // chatId of their choosing.
+    const members: string[] = chatSnap.data()?.members ?? [];
+    if (!members.includes(uid)) {
+      throw new HttpsError("permission-denied", "Not a member of this chat");
+    }
+
+    // Server-side half of the anti-stampede protection (the client
+    // throttles per chat as well). Recomputing costs a query plus a
+    // transaction, so a client that is wrong about the drift — or a
+    // deliberately-modified one calling this in a loop — gets a single
+    // cheap read and nothing else.
+    const storedSeq: number = chatSnap.data()?.lastMessageSeq ?? 0;
+    const newest = await chatRef
+      .collection("messages")
+      .orderBy("seq", "desc")
+      .limit(PREVIEW_LOOKBACK_LIMIT)
+      .get();
+    const replacement = newest.docs.find(
+      (d) => d.data().deletedForAll !== true,
+    );
+    const trueSeq: number = replacement?.data().seq ?? 0;
+    if (trueSeq === storedSeq) return { updated: false };
+
+    if (!replacement) {
+      await chatRef.update({
+        lastMessage: "",
+        lastMessageTime: null,
+        lastMessageSeq: 0,
+        lastMessageDeletedFor: [],
+      });
+      return { updated: true };
+    }
+    const data = replacement.data();
+    await chatRef.update({
+      lastMessage: previewText(data.type, data.text, data.fileName),
+      lastMessageTime: data.timestamp ?? null,
+      lastMessageSeq: trueSeq,
+      lastMessageDeletedFor: data.deletedFor ?? [],
+    });
+    return { updated: true };
   },
 );
 
@@ -891,6 +1100,52 @@ export const onChatUpdated = onDocumentUpdated(
       "İş təklifi qəbul edildi",
       `${recipientName} təklifinizlə razılaşdı`,
       { type: "job_offer_agreed", chatId: event.params.chatId },
+    );
+  },
+);
+
+// Recipient tapped "Razıyam" before the initiator had picked a date yet
+// (FirestoreService.setWaitingForDate) — pushes the initiator so this
+// nudge doesn't depend on their chat screen being live-mounted at the
+// exact instant waitingForDateAt flips (mugam-flutter/chat_screen.dart's
+// own negotiationSeenAt-based catch-up handles the in-app dialog
+// reliably regardless; this is purely the push-notification backup for
+// when the app isn't foregrounded, same as onNewMessage's own push).
+// Deliberately a separate function from onChatUpdated above rather than
+// folded into it — keeps the already-working accept/PersonalEvent path
+// untouched while adding this.
+export const onJobOfferWaitingForDate = onDocumentUpdated(
+  "chats/{chatId}",
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after) return;
+    if (!after.waitingForDateAt || before.waitingForDateAt === after.waitingForDateAt) {
+      return;
+    }
+
+    const initiatorUid: string | undefined = after.jobOfferBy;
+    if (!initiatorUid) return;
+
+    // Mirrors onNewMessage's own activeUsers suppression (above) — skip
+    // the push only, the durable waitingForDateAt/negotiationSeenAt state
+    // still gets written regardless, so nothing is lost if this fires.
+    const activeUsers: string[] = after.activeUsers ?? [];
+    if (activeUsers.includes(initiatorUid)) return;
+
+    const members: string[] = after.members ?? [];
+    const recipientUid = members.find((uid) => uid !== initiatorUid);
+    if (!recipientUid) return;
+
+    const recipientSnap = await db.collection("users").doc(recipientUid).get();
+    const recipientName: string =
+      recipientSnap.data()?.name ?? recipientSnap.data()?.displayName ?? "İstifadəçi";
+
+    await sendPushToUid(
+      initiatorUid,
+      "Tarix gözlənilir",
+      `${recipientName} sizdən tədbir tarixini gözləyir`,
+      { type: "job_offer_waiting_for_date", chatId: event.params.chatId },
     );
   },
 );
