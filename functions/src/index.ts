@@ -211,6 +211,16 @@ async function recomputeChatPreviewAfterRemoval(
   }
 }
 
+// Cold-start cost of this trigger, measured on-device 2026-08-01 (the chat
+// card's preview is written here now, so this latency is how long a sender
+// can see a stale preview after backing out of a chat):
+//   first invocation after idle — 2.28s
+//   warm invocations            — 0.13s
+// minInstances is deliberately NOT set. At the current traffic a warm
+// instance would be paid for around the clock to remove a delay that lands
+// once per idle period, on the one screen transition where the user is
+// already moving. Revisit when enough people are active concurrently that
+// cold starts stop being rare and start being what a typical user hits.
 export const onNewMessage = onDocumentCreated(
   "chats/{chatId}/messages/{messageId}",
   async (event) => {
