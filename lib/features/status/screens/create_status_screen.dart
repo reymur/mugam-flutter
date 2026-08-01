@@ -618,6 +618,15 @@ class _PrivacyPickerScreenState extends ConsumerState<PrivacyPickerScreen> {
   _PrivacyMode _mode = _PrivacyMode.contacts;
   final Set<String> _selectedUids = {};
   bool _posting = false;
+  final TextEditingController _friendSearchController =
+      TextEditingController();
+  String _friendSearch = '';
+
+  @override
+  void dispose() {
+    _friendSearchController.dispose();
+    super.dispose();
+  }
 
   void _toggleUser(String uid) {
     setState(() {
@@ -896,6 +905,25 @@ class _PrivacyPickerScreenState extends ConsumerState<PrivacyPickerScreen> {
           ),
           if (showMultiselect) ...[
             const Divider(color: kBorder, height: 1),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: TextField(
+                controller: _friendSearchController,
+                style: const TextStyle(color: kText),
+                onChanged: (v) => setState(() => _friendSearch = v),
+                decoration: InputDecoration(
+                  hintText: 'Axtar...',
+                  hintStyle: const TextStyle(color: kMuted),
+                  filled: true,
+                  fillColor: kBg3,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+              ),
+            ),
             // Removable-chip row for already-selected contacts — same
             // visual language as CreateGroupScreen's own selected-member
             // chip row, reused directly rather than reinvented.
@@ -943,10 +971,27 @@ class _PrivacyPickerScreenState extends ConsumerState<PrivacyPickerScreen> {
                       ),
                     );
                   }
+                  final query = _friendSearch.trim().toLowerCase();
+                  final visibleUids = query.isEmpty
+                      ? friendUids
+                      : friendUids.where((uid) {
+                          final name =
+                              ref.watch(currentUserProvider(uid)).value?.name ??
+                              '';
+                          return name.toLowerCase().contains(query);
+                        }).toList();
+                  if (visibleUids.isEmpty) {
+                    return const Center(
+                      child: Text(
+                        'Nəticə tapılmadı',
+                        style: TextStyle(color: kMuted),
+                      ),
+                    );
+                  }
                   return ListView.builder(
-                    itemCount: friendUids.length,
+                    itemCount: visibleUids.length,
                     itemBuilder: (context, index) {
-                      final uid = friendUids[index];
+                      final uid = visibleUids[index];
                       final selected = _selectedUids.contains(uid);
                       return _FriendPickerTile(
                         friendUid: uid,

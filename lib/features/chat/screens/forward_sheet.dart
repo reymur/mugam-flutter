@@ -11,6 +11,7 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../chats/screens/create_group_screen.dart';
+import '../../search/screens/filter_sheet.dart';
 import '../../status/screens/create_status_screen.dart';
 import 'chat_screen.dart';
 
@@ -72,6 +73,7 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _captionController = TextEditingController();
   String _search = '';
+  SearchFilters _filters = const SearchFilters();
   final Set<String> _selectedChatIds = {};
   bool _statusSelected = false;
   bool _sending = false;
@@ -81,6 +83,49 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
     _searchController.dispose();
     _captionController.dispose();
     super.dispose();
+  }
+
+  Future<void> _openFilters() async {
+    final result = await FilterSheet.show(
+      context,
+      initial: _filters,
+      nameController: _searchController,
+    );
+    if (result != null) {
+      setState(() => _filters = result);
+    }
+  }
+
+  // Group chats have no single counterpart to match a person-shaped filter
+  // (instrument/city/rating/...) against, so they always pass — same
+  // reasoning FilterSheet's own Algolia expression never applies to groups
+  // (that index is users-only). 1:1 chats resolve the other member's User
+  // doc (already cached by currentUserProvider elsewhere in the app, e.g.
+  // chats_screen.dart's own list rows) and reuse the exact SearchFilters
+  // fields FilterSheet edits, mirroring SearchFilters.toAlgoliaFiltersExcluding's
+  // semantics client-side instead of via an Algolia query — this list is
+  // already fully loaded from chatsProvider, so there's nothing to query.
+  bool _chatMatchesFilters(Chat chat) {
+    if (_filters.isEmpty || chat.isGroup) return true;
+    final otherUid = chat.members.firstWhere(
+      (m) => m != widget.currentUid,
+      orElse: () => '',
+    );
+    if (otherUid.isEmpty) return true;
+    final user = ref.watch(currentUserProvider(otherUid)).value;
+    if (user == null) return false;
+    if (_filters.city != null && user.city != _filters.city) return false;
+    if (_filters.minRating > 0 && user.rating < _filters.minRating) {
+      return false;
+    }
+    if (_filters.onlyAvailable && !user.available) return false;
+    if (_filters.onlyOnline && !user.isActuallyOnline) return false;
+    final wanted = _filters.activityType?.toSearchableInstruments() ?? const [];
+    if (wanted.isNotEmpty) {
+      final have = user.activityType?.toSearchableInstruments() ?? const [];
+      if (!wanted.any(have.contains)) return false;
+    }
+    return true;
   }
 
   void _toggleChat(String chatId) {
@@ -547,21 +592,83 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: TextField(
-                  controller: _searchController,
-                  style: const TextStyle(color: kText),
-                  onChanged: (v) => setState(() => _search = v),
-                  decoration: InputDecoration(
-                    hintText: 'Axtar...',
-                    hintStyle: const TextStyle(color: kMuted),
-                    filled: true,
-                    fillColor: kBg3,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      borderSide: BorderSide.none,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        style: const TextStyle(color: kText),
+                        onChanged: (v) => setState(() => _search = v),
+                        decoration: InputDecoration(
+                          hintText: 'Axtar...',
+                          hintStyle: const TextStyle(color: kMuted),
+                          filled: true,
+                          fillColor: kBg3,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                          ),
+                        ),
+                      ),
                     ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-                  ),
+                    const SizedBox(width: 10),
+                    InkWell(
+                      onTap: _openFilters,
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: _filters.activeCount > 0 ? kGold : kBg3,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: _filters.activeCount > 0 ? kGold : kBorder,
+                          ),
+                        ),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Center(
+                              child: Icon(
+                                Icons.tune_rounded,
+                                color: _filters.activeCount > 0
+                                    ? const Color(0xFF1A0E00)
+                                    : kMuted,
+                              ),
+                            ),
+                            if (_filters.activeCount > 0)
+                              Positioned(
+                                right: -4,
+                                top: -4,
+                                child: Container(
+                                  padding: const EdgeInsets.all(3),
+                                  constraints: const BoxConstraints(
+                                    minWidth: 16,
+                                    minHeight: 16,
+                                  ),
+                                  decoration: const BoxDecoration(
+                                    color: kRed,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Text(
+                                    '${_filters.activeCount}',
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               // Matches real WhatsApp's own forward sheet, which has a
@@ -638,9 +745,15 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
                       );
                     }
                     final query = _search.trim().toLowerCase();
-                    if (query.isNotEmpty) {
+                    final hasFilters = _filters.activeCount > 0;
+                    if (query.isNotEmpty || hasFilters) {
                       final filtered = targets
-                          .where((c) => c.name.toLowerCase().contains(query))
+                          .where(
+                            (c) =>
+                                (query.isEmpty ||
+                                    c.name.toLowerCase().contains(query)) &&
+                                _chatMatchesFilters(c),
+                          )
                           .toList();
                       if (filtered.isEmpty) {
                         return const Center(
