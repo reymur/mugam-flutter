@@ -648,6 +648,23 @@ class _ChatListItem extends ConsumerWidget {
         }
       }
     }
+    // "Çatı təmizlə" is per-user: clearedBy.{uid} hides everything up to
+    // that moment for one member alone, while lastMessage/lastMessageTime
+    // on the chat document are shared by everyone. So the clear can only be
+    // honoured where the two meet — here, at display time. Writing the
+    // preview away would blank the card for the other party too, who
+    // cleared nothing.
+    //
+    // Until this, clearing a chat emptied the conversation but left its
+    // card still showing the last message and its timestamp, which read as
+    // the clear having silently failed. A message arriving after the clear
+    // is newer than the cutoff and brings the card straight back, with no
+    // extra bookkeeping.
+    final clearedAt = chat.clearedBy[currentUid];
+    final isClearedForViewer =
+        clearedAt != null &&
+        (chat.lastMessageTime == null ||
+            !chat.lastMessageTime!.isAfter(clearedAt));
     final hasActiveStatus = !chat.isGroup && other?.hasActiveStatus == true;
     final viewerUser = hasActiveStatus
         ? ref.watch(currentUserProvider(currentUid)).value
@@ -763,7 +780,9 @@ class _ChatListItem extends ConsumerWidget {
                             ),
                           ),
                           Text(
-                            _formatTime(chat.lastMessageTime),
+                            isClearedForViewer
+                                ? ''
+                                : _formatTime(chat.lastMessageTime),
                             style: const TextStyle(fontSize: 13.2, color: kMuted),
                           ),
                         ],
@@ -773,18 +792,23 @@ class _ChatListItem extends ConsumerWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              chat.lastMessageDeletedFor.contains(currentUid)
-                                  ? '🚫 Bu mesajı sildiniz'
-                                  : chat.lastMessage,
+                              isClearedForViewer
+                                  ? ''
+                                  : chat.lastMessageDeletedFor.contains(
+                                          currentUid,
+                                        )
+                                      ? '🚫 Bu mesajı sildiniz'
+                                      : chat.lastMessage,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 15.6,
                                 color: kMuted,
                                 fontStyle:
-                                    chat.lastMessageDeletedFor.contains(
-                                      currentUid,
-                                    )
+                                    !isClearedForViewer &&
+                                        chat.lastMessageDeletedFor.contains(
+                                          currentUid,
+                                        )
                                     ? FontStyle.italic
                                     : FontStyle.normal,
                               ),
