@@ -3646,8 +3646,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           // driven by the same diff signal that already exists for the
           // "someone else sent something" case below, removes that risk
           // entirely instead of just moving it around.
+          //
+          // Jump rather than animate when the list was empty a moment ago
+          // — after "Çatı təmizlə" without leaving the screen, or in a
+          // brand-new chat. _scrollToBottom animates for 300ms from
+          // whatever offset the now-erased history left behind, and with
+          // nothing underneath to animate across that reads as the message
+          // sliding up out of nowhere before settling (reported on-device
+          // 2026-08-02, reproducible every time in the clear-then-send
+          // path). Leaving and re-entering the chat never showed it only
+          // because the fresh screen takes the _hasJumpedToBottomInitially
+          // path, which already jumps.
+          final wasEmpty = previous?.messages.isEmpty ?? true;
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            _scrollToBottom();
+            if (wasEmpty) {
+              _jumpToBottom();
+            } else {
+              _scrollToBottom();
+            }
           });
         } else if (addedFromOtherCount > 0) {
           if (_isNearBottom()) {
