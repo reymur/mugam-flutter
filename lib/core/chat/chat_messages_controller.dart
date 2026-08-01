@@ -56,6 +56,19 @@ class ChatMessagesState {
   // about to be painted can't contain messages the user already cleared.
   // chat_screen.dart shows its loading spinner until this flips.
   final bool hasLoadedOnce;
+  // The cutoff couldn't be established: no local record of it and Firestore
+  // neither answered in time nor at all (offline on a chat this device has
+  // never opened, or the listener errored). Distinct from hasLoadedOnce
+  // being false on its own, which just means "still waiting".
+  //
+  // There is deliberately no third option where the list renders anyway.
+  // An unknown cutoff means we cannot tell a cleared message from a kept
+  // one, and the entire point of Этапы 3-4 was that cleared content never
+  // reaches the screen in any frame — so the screen says so and offers a
+  // retry (see retryClearedAt) instead of guessing. Self-healing: it clears
+  // itself the moment the live listener delivers a value, with or without
+  // the user pressing anything.
+  final bool clearedAtUnavailable;
 
   const ChatMessagesState({
     required this.messages,
@@ -65,6 +78,7 @@ class ChatMessagesState {
     required this.isLoadingOlder,
     required this.hasMoreOlder,
     required this.hasLoadedOnce,
+    required this.clearedAtUnavailable,
   });
 
   ChatMessagesState copyWith({
@@ -75,6 +89,7 @@ class ChatMessagesState {
     bool? isLoadingOlder,
     bool? hasMoreOlder,
     bool? hasLoadedOnce,
+    bool? clearedAtUnavailable,
   }) {
     return ChatMessagesState(
       messages: messages ?? this.messages,
@@ -84,6 +99,8 @@ class ChatMessagesState {
       isLoadingOlder: isLoadingOlder ?? this.isLoadingOlder,
       hasMoreOlder: hasMoreOlder ?? this.hasMoreOlder,
       hasLoadedOnce: hasLoadedOnce ?? this.hasLoadedOnce,
+      clearedAtUnavailable:
+          clearedAtUnavailable ?? this.clearedAtUnavailable,
     );
   }
 }
@@ -184,16 +201,25 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
   // emitted at all (hasLoadedOnce stays false and the screen shows its
   // spinner) rather than emitting an unfiltered list.
   bool _clearedAtKnown = false;
-  Timer? _clearedUnknownFallback;
+  bool _clearedAtUnavailable = false;
+  Timer? _clearedUnknownWait;
   String _uid = '';
 
-  // How long to hold the chat in its loading state when the cutoff is
-  // genuinely unknown — no local record AND no answer from Firestore yet.
-  // Only reachable for a chat this account has never opened on this device
-  // (which therefore has no local history to show anyway) or, exactly once,
-  // for history that predates the local cutoff record. If it expires we
-  // render unfiltered: an indefinitely unreadable chat is a worse failure
-  // than a stale frame in a corner case that self-heals on the next open.
+  // How long to sit in the loading state before telling the user the chat
+  // couldn't be loaded, when the cutoff is genuinely unknown — no local
+  // record AND no answer from Firestore yet. Only reachable for a chat this
+  // account has never opened on this device (which therefore has no local
+  // history to show anyway) or, exactly once, for history that predates the
+  // local cutoff record.
+  //
+  // What expiry does NOT do is render the list unfiltered. There is no
+  // amount of waiting that turns "we don't know where the cutoff is" into
+  // "it's safe to show everything" — the honest answer is that the chat
+  // couldn't be loaded, which is also the one the user can act on. Short
+  // (4s) precisely because it costs nothing to be wrong: the live listener
+  // stays subscribed and clears this state by itself as soon as it
+  // delivers, so an over-eager message on a slow connection resolves into
+  // the real chat without any interaction.
   static const Duration _clearedUnknownTimeout = Duration(seconds: 4);
 
   // Bounds one loadOlderMessages call when pages keep coming back with
@@ -216,7 +242,7 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
       _tailSub?.cancel();
       _olderSub?.cancel();
       _clearedSub?.cancel();
-      _clearedUnknownFallback?.cancel();
+      _clearedUnknownWait?.cancel();
     });
     final uid = FirebaseAuth.instance.currentUser?.uid;
     _uid = uid ?? '';
@@ -230,44 +256,11 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
     if (_store.isClearedAtKnown(chatId)) {
       _clearedAtKnown = true;
       _clearedAt = _store.clearedAtFor(chatId);
-    } else {
-      // Never opened on this device by this account (nothing local to leak),
-      // or pre-existing history from before this record existed. Hold the
-      // loading state until Firestore answers, bounded by the timeout above.
-      _clearedUnknownFallback = Timer(_clearedUnknownTimeout, () {
-        if (_clearedAtKnown) return;
-        _clearedAtKnown = true;
-        state = _filtered(
-          isInitialLoad: state.isInitialLoad,
-          addedMessageIds: const [],
-          hasLoadedOnce: _storeHasEmittedOnce,
-        );
-      });
     }
     if (uid != null) {
-      _clearedSub = _firestoreService.watchChatClearedAt(chatId, uid).listen((
-        clearedAt,
-      ) {
-        _clearedUnknownFallback?.cancel();
-        _clearedUnknownFallback = null;
-        _clearedAtKnown = true;
-        _clearedAt = clearedAt;
-        // Persist for the next cold open — including a null, which is a
-        // real answer ("never cleared"), not an absence of one.
-        unawaited(_store.setClearedAt(chatId, clearedAt));
-        // Nothing new arrived — only the filter changed — so this never
-        // reports any added ids, regardless of what the diff below would
-        // otherwise say.
-        state = _filtered(
-          isInitialLoad: state.isInitialLoad,
-          addedMessageIds: const [],
-          hasLoadedOnce: _storeHasEmittedOnce,
-        );
-      });
+      _subscribeClearedAt(uid);
     } else {
       // Signed out mid-teardown: there is no per-user cutoff to wait for.
-      _clearedUnknownFallback?.cancel();
-      _clearedUnknownFallback = null;
       _clearedAtKnown = true;
     }
     // The fast path: local disk, no network round trip — this is what lets
@@ -290,14 +283,7 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
       _storeHasEmittedOnce = true;
       _previousIds = newIds;
       _rawMessages = messages;
-      state = _filtered(
-        isInitialLoad: isInitial,
-        addedMessageIds: addedIds,
-        // Not "the store spoke", but "this list can be trusted" — while the
-        // cutoff is unknown the screen keeps its spinner instead of painting
-        // messages that may be past a cutoff we haven't learned yet.
-        hasLoadedOnce: _clearedAtKnown,
-      );
+      state = _filtered(isInitialLoad: isInitial, addedMessageIds: addedIds);
     });
     _tailSub = _firestoreService.watchMessages(chatId).listen((messages) {
       unawaited(
@@ -345,7 +331,79 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
       isLoadingOlder: false,
       hasMoreOlder: true,
       hasLoadedOnce: false,
+      clearedAtUnavailable: false,
     );
+  }
+
+  // The live cutoff listener, plus the bounded wait that only exists while
+  // the cutoff has never been established. Kept as its own method so
+  // retryClearedAt can run exactly the same setup again.
+  void _subscribeClearedAt(String uid) {
+    _clearedSub?.cancel();
+    _clearedUnknownWait?.cancel();
+    _clearedUnknownWait = null;
+    if (!_clearedAtKnown) {
+      _clearedUnknownWait = Timer(_clearedUnknownTimeout, () {
+        if (_clearedAtKnown) return;
+        _clearedAtUnavailable = true;
+        state = _filtered(
+          isInitialLoad: state.isInitialLoad,
+          addedMessageIds: const [],
+        );
+      });
+    }
+    _clearedSub = _firestoreService.watchChatClearedAt(chatId, uid).listen(
+      (clearedAt) {
+        _clearedUnknownWait?.cancel();
+        _clearedUnknownWait = null;
+        _clearedAtKnown = true;
+        _clearedAtUnavailable = false;
+        _clearedAt = clearedAt;
+        // Persist for the next cold open — including a null, which is a
+        // real answer ("never cleared"), not an absence of one.
+        unawaited(_store.setClearedAt(chatId, clearedAt));
+        // Nothing new arrived — only the filter changed — so this never
+        // reports any added ids, regardless of what the diff below would
+        // otherwise say.
+        state = _filtered(
+          isInitialLoad: state.isInitialLoad,
+          addedMessageIds: const [],
+        );
+      },
+      onError: (Object e, StackTrace st) {
+        FirebaseCrashlytics.instance.recordError(
+          e,
+          st,
+          reason: 'ChatMessagesController: clearedAt listener error for $chatId',
+        );
+        // An error while the cutoff is already known changes nothing —
+        // the known value stays authoritative and the screen keeps
+        // rendering. Only a failure to ever establish it is user-visible.
+        if (_clearedAtKnown) return;
+        _clearedUnknownWait?.cancel();
+        _clearedUnknownWait = null;
+        _clearedAtUnavailable = true;
+        state = _filtered(
+          isInitialLoad: state.isInitialLoad,
+          addedMessageIds: const [],
+        );
+      },
+    );
+  }
+
+  // "Yenidən cəhd et" on the couldn't-load state. Resubscribing is what
+  // actually retries — the previous listener may be sitting on a dead
+  // connection — and it re-arms the wait so the user gets a spinner rather
+  // than a button that appears to do nothing. No-op once the cutoff is
+  // known, since there is then nothing left to retry.
+  void retryClearedAt() {
+    if (_clearedAtKnown || _uid.isEmpty) return;
+    _clearedAtUnavailable = false;
+    state = _filtered(
+      isInitialLoad: state.isInitialLoad,
+      addedMessageIds: const [],
+    );
+    _subscribeClearedAt(_uid);
   }
 
   void _resubscribeOlderListener() {
@@ -376,10 +434,14 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
   bool _isVisible(Message m) =>
       isMessageVisible(m, uid: _uid, clearedAt: _clearedAt);
 
+  // hasLoadedOnce/clearedAtUnavailable are derived here rather than passed
+  // in: they're a pure function of this controller's own two waits (the
+  // store's first emission and the cutoff), and every call site was
+  // computing the same expression anyway — one of them from a slightly
+  // different angle, which is how these flags drift apart.
   ChatMessagesState _filtered({
     required bool isInitialLoad,
     required List<String> addedMessageIds,
-    required bool hasLoadedOnce,
   }) {
     // While the cutoff is unknown this hands back an empty list, not the raw
     // one — the guarantee is that an unfiltered message never leaves this
@@ -396,7 +458,8 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
       rawMessages: _rawMessages,
       isInitialLoad: isInitialLoad,
       addedMessageIds: addedMessageIds,
-      hasLoadedOnce: hasLoadedOnce,
+      hasLoadedOnce: _storeHasEmittedOnce && _clearedAtKnown,
+      clearedAtUnavailable: _clearedAtUnavailable,
     );
   }
 

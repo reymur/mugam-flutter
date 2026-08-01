@@ -53,6 +53,16 @@ import 'video_message_widgets.dart';
 
 enum _SelectionPurpose { forward, delete }
 
+// The message list's only error state, and not an exception in the usual
+// sense — nothing threw. It means the "Çatı təmizlə" cutoff could not be
+// established (see ChatMessagesState.clearedAtUnavailable), so the messages
+// this device has cannot be filtered, and an unfiltered list is precisely
+// what must never be painted. Carried as an AsyncValue.error purely so the
+// list area keeps its single loading/error/data shape.
+class _ChatCouldNotLoad implements Exception {
+  const _ChatCouldNotLoad();
+}
+
 class ChatScreen extends ConsumerStatefulWidget {
   final String chatId;
   // Set when opened from the Starred Messages list: scrolls to and briefly
@@ -3581,11 +3591,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // controller deliberately reports no messages at all rather than an
     // unfiltered list (see ChatMessagesState.hasLoadedOnce). It's normally
     // already true on the first build — the cutoff is seeded synchronously
-    // from local disk — so the spinner below is reachable only on a chat
-    // this device has genuinely never opened.
+    // from local disk — so neither the spinner nor the couldn't-load state
+    // below is reachable on a chat this device has ever opened.
     final AsyncValue<List<Message>> messagesAsync =
         chatMessagesState.hasLoadedOnce
         ? AsyncValue.data(chatMessagesState.messages)
+        : chatMessagesState.clearedAtUnavailable
+        ? AsyncValue.error(const _ChatCouldNotLoad(), StackTrace.empty)
         : const AsyncValue.loading();
     final chatDataAsync = ref.watch(chatDataProvider(widget.chatId));
     // Keeps the starred-ids stream subscribed so _isMessageStarred's
@@ -4195,8 +4207,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     loading: () => const Center(
                       child: CircularProgressIndicator(color: kGold),
                     ),
-                    error: (err, stack) => const Center(
-                      child: Text('Xəta', style: TextStyle(color: kMuted)),
+                    // Reachable only as _ChatCouldNotLoad — the clear-chat
+                    // cutoff could not be established, so there is no
+                    // filtered list to show and showing an unfiltered one is
+                    // exactly what must never happen. Says so, and offers
+                    // the retry, rather than silently guessing. Recovers on
+                    // its own too: the controller's listener stays
+                    // subscribed and flips this back to real content the
+                    // moment it delivers.
+                    error: (err, stack) => Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'Söhbət yüklənmədi',
+                            style: TextStyle(color: kMuted, fontSize: 14),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Bağlantınızı yoxlayın',
+                            style: TextStyle(color: kMuted, fontSize: 12),
+                          ),
+                          const SizedBox(height: 8),
+                          TextButton(
+                            onPressed: () => ref
+                                .read(
+                                  chatMessagesControllerProvider(
+                                    widget.chatId,
+                                  ).notifier,
+                                )
+                                .retryClearedAt(),
+                            child: const Text('Yenidən cəhd et'),
+                          ),
+                        ],
+                      ),
                     ),
                     data: (messages) {
                       // Already filtered — per-user "delete for me" and the
