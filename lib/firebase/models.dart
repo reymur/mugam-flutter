@@ -319,8 +319,16 @@ class Chat {
   final String? eventNotes;
   // Set by the recipient tapping "Razıyam" before the initiator has picked
   // a date — lets the initiator's own banner show "the other side is
-  // waiting for a date" (mugam-v2's setWaitingForDate).
-  final bool waitingForDate;
+  // waiting for a date" (mugam-v2's setWaitingForDate). A timestamp, not a
+  // bare bool: durable so a late-mounted initiator screen can still tell
+  // "is this newer than the last negotiation dialog I showed" via
+  // negotiationSeenAt, instead of relying on catching a live true→false
+  // flip (which is exactly what silently dropped this nudge on-device —
+  // see firestore_service.dart's setWaitingForDate).
+  final DateTime? waitingForDateAt;
+  // When the recipient tapped "Razıyam" to accept — same durability
+  // rationale as waitingForDateAt, for the "agreed" celebration dialog.
+  final DateTime? recipientAgreedAt;
   // uid of whoever tapped "İmtina" (cancel) on a pending job offer — set by
   // cancelChat, same moment either party's decision ends the negotiation
   // without ever creating a PersonalEvent. Deliberately does NOT also set
@@ -359,7 +367,8 @@ class Chat {
     this.eventType,
     this.eventLocation,
     this.eventNotes,
-    this.waitingForDate = false,
+    this.waitingForDateAt,
+    this.recipientAgreedAt,
     this.cancelledBy,
     this.typing = const {},
   });
@@ -405,7 +414,12 @@ class Chat {
       eventType: data['eventType'] as String?,
       eventLocation: data['eventLocation'] as String?,
       eventNotes: data['eventNotes'] as String?,
-      waitingForDate: (data['waitingForDate'] ?? false) as bool,
+      waitingForDateAt: data['waitingForDateAt'] != null
+          ? DateTime.tryParse(data['waitingForDateAt'] as String)
+          : null,
+      recipientAgreedAt: data['recipientAgreedAt'] != null
+          ? DateTime.tryParse(data['recipientAgreedAt'] as String)
+          : null,
       cancelledBy: data['cancelledBy'] as String?,
       typing: _parseIsoDateMap(data['typing']),
     );
@@ -833,7 +847,29 @@ class Message {
   // row) untouched. Never called for a message with no existing local row
   // — LocalMessageStore.upsertFromFirestore uses `real` directly for that
   // case, there's nothing local to preserve.
-  Message reconciledWithFirestore(Message real) => Message(
+  //
+  // EXCEPT when `real` carries a seq: a seq is only ever assigned by
+  // FirestoreService._commitMessage actually committing this message, so
+  // its presence is proof the server has it — which makes every local send
+  // field (localSendStatus/attemptCount/uploadedUrl/localFilePath/progress)
+  // stale by definition, no matter what this device still believed. Keeping
+  // them was a confirmed bug: a send whose write really did land server-side
+  // but only *after* this client's own timeout gave up on it (the client
+  // then exhausts pendingQueueMaxAttempts and marks the row 'failed') stayed
+  // marked failed FOREVER — a red "not sent" bubble for a message the other
+  // party could see and reply to. It also leaked: allPending() filters on
+  // localSendStatus != null, so every such row stayed in the on-disk pending
+  // blob permanently, growing it without bound. Delegating to
+  // withConfirmedSeq keeps "what does a confirmed row look like" defined in
+  // exactly one place (see LocalMessageStore.markConfirmed, the other
+  // caller) rather than duplicating the field-clearing list here.
+  Message reconciledWithFirestore(Message real) {
+    final merged = _reconciledPreservingLocal(real);
+    final realSeq = real.seq;
+    return realSeq == null ? merged : merged.withConfirmedSeq(realSeq);
+  }
+
+  Message _reconciledPreservingLocal(Message real) => Message(
     id: real.id,
     chatId: chatId,
     senderId: real.senderId,

@@ -100,11 +100,42 @@ class MessageSendController extends Notifier<void> {
     // Notifier's state is void), but matches the same startup shape the old
     // controller used.
     final chatIds = _store.allPending().map((e) => e.chatId).whereType<String>().toSet();
-    Future.microtask(() {
+    Future.microtask(() async {
+      await _normalizeInterruptedUploads();
       for (final chatId in chatIds) {
         unawaited(_processChatQueue(chatId));
       }
     });
+  }
+
+  // An item left in 'uploading' means the app died mid-attempt — the
+  // previous run never got to record success or failure for it. Nothing in
+  // the foreground path picks such an item back up: _processChatQueue only
+  // ever selects 'queued', and retry() explicitly refuses an 'uploading'
+  // item (correctly — it's guarding against racing a live attempt that, in
+  // this case, no longer exists). So it sat there permanently: never
+  // retried, never marked failed, never removed, and still rendering as an
+  // in-progress bubble. Confirmed on-device 2026-08-01 — a row stuck this
+  // way for days.
+  //
+  // processPendingQueueOnce (the WorkManager/BGTaskScheduler isolate) has
+  // always done exactly this normalisation on its own startup; the
+  // foreground controller simply never did, and the asymmetry is the whole
+  // bug. Re-attempting is safe for the same reason it is there: the send is
+  // idempotent on its pre-generated messageId (see
+  // FirestoreService._commitMessage), so a re-attempt of something that
+  // actually did land resolves to that message's existing seq rather than a
+  // duplicate.
+  Future<void> _normalizeInterruptedUploads() async {
+    for (final item in _store.allPending()) {
+      final chatId = item.chatId;
+      if (chatId == null || item.localSendStatus != 'uploading') continue;
+      await _store.updatePendingStatus(
+        chatId: chatId,
+        messageId: item.id,
+        status: 'queued',
+      );
+    }
   }
 
   void _onConnectivityChanged(List<ConnectivityResult> results) {

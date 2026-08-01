@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../firebase/models.dart';
+import '../queue/pending_file_storage.dart';
 
 // The single local source of truth for chat messages — replaces the old
 // MessageCacheService (a passive, non-authoritative cold-start fallback)
@@ -83,29 +84,84 @@ class LocalMessageStore {
     }
   }
 
-  // Sign-out: wipes every chat's confirmed-history cache (same scope the
-  // old MessageCacheService.clearAll() had) so the next account signed in
-  // on this device never sees the previous user's messages. Deliberately
-  // leaves the pending-sends blob untouched, matching that same prior
-  // behavior — an in-flight send surviving a logout is a pre-existing edge
-  // case, not something introduced here.
-  Future<void> clearHistoryCache() async {
+  // Sign-out: wipes EVERY piece of account-scoped local state this class
+  // owns — confirmed-history caches, the pending-send blob, and the durable
+  // upload files that blob references — so the next account signed in on
+  // this device inherits nothing from the previous one.
+  //
+  // The pending blob used to be deliberately excluded here ("an in-flight
+  // send surviving a logout is a pre-existing edge case"). That turned out
+  // to be a real cross-account data leak, confirmed on-device 2026-08-01:
+  // a device signed in as user A left a stuck 'uploading' row in the blob,
+  // signed in as user B, and init() loaded A's row — carrying A's senderId
+  // — straight into B's session. It surfaced as a phantom incoming bubble
+  // in B's chat, and worse, B's client picked that row as "the newest
+  // message from the other party" and wrote its client-generated id into
+  // the shared chats/{chatId}.lastReadMsgId, which no other device could
+  // resolve (the id has no server document), permanently breaking read
+  // receipts in that direction. An in-flight send belongs to the account
+  // that created it; carrying it across a sign-out can only ever be wrong,
+  // and the rules would reject it anyway (senderId must equal auth.uid).
+  Future<void> clearAllForSignOut() async {
     for (final timer in _historyDebounce.values) {
       timer.cancel();
     }
     _historyDebounce.clear();
+    _pendingDebounce?.cancel();
+    _pendingDebounce = null;
     final index = _readHistoryIndex();
     for (final chatId in index.keys) {
       await _prefs.remove(_historyKeyPrefix + chatId);
     }
     await _prefs.remove(_historyIndexKey);
-    for (final chatId in _historyLoaded.toList()) {
-      final chatMessages = _byChat[chatId];
-      if (chatMessages == null) continue;
-      chatMessages.removeWhere((_, m) => m.seq != null);
+    await _prefs.remove(_pendingKey);
+    _byChat.clear();
+    _historyLoaded.clear();
+    _accessOrder.clear();
+    for (final controller in _controllers.values) {
+      if (!controller.isClosed) controller.add(const []);
+    }
+    await deleteAllPendingFiles();
+  }
+
+  // Drops any pending row that doesn't belong to `uid`, plus any row whose
+  // chat history it can't be reconciled against. Runs at startup once the
+  // signed-in uid is known (see main.dart) as the second half of the
+  // cross-account leak fix above: clearAllForSignOut covers every sign-out
+  // that goes through the app's own Çıxış flow, and this covers every path
+  // that doesn't — a session invalidated server-side, a token that expired
+  // while the app was killed, a reinstall restoring a backup, or any future
+  // sign-out call site that forgets to run the cleanup.
+  //
+  // A foreign-uid row is unsendable by definition: firestore.rules requires
+  // a message's senderId to equal the writer's own uid, so retrying it can
+  // only ever fail. Dropping it is strictly better than leaving it to
+  // consume retry attempts and pollute the chat view.
+  //
+  // Returns how many rows were dropped, for the caller to log — silently
+  // discarding user-visible content is exactly how this class of bug stays
+  // invisible for weeks.
+  Future<int> dropForeignPendingMessages(String uid) async {
+    final foreign = <Message>[];
+    for (final chatMessages in _byChat.values) {
+      for (final m in chatMessages.values) {
+        if (m.localSendStatus != null && m.senderId != uid) foreign.add(m);
+      }
+    }
+    if (foreign.isEmpty) return 0;
+    final touchedChats = <String>{};
+    for (final m in foreign) {
+      final chatId = m.chatId;
+      if (chatId == null) continue;
+      _byChat[chatId]?.remove(m.id);
+      touchedChats.add(chatId);
+      unawaited(deletePendingFile(m.localFilePath));
+    }
+    for (final chatId in touchedChats) {
       _emit(chatId);
     }
-    _historyLoaded.clear();
+    await flushPending();
+    return foreign.length;
   }
 
   // ---- Reading ----
@@ -190,6 +246,11 @@ class LocalMessageStore {
     final existing = _byChat[chatId]?[messageId];
     if (existing == null) return;
     await _put(existing.withConfirmedSeq(seq));
+    // Same rationale as _upsertOne's own cleanup — whichever of the two
+    // paths clears this row's pending state first is the one that owns
+    // deleting its file (deletePendingFile is a no-op for an already-gone
+    // path, so the other path running later is harmless).
+    unawaited(deletePendingFile(existing.localFilePath));
     _schedulePendingWrite();
     _scheduleHistoryWrite(chatId);
   }
@@ -278,6 +339,18 @@ class LocalMessageStore {
     final merged = existing == null
         ? Message.fromFirestore(real.id, _reencode(real), chatId: chatId)
         : existing.reconciledWithFirestore(real);
+    // This row just stopped being pending because the server confirmed it
+    // (see Message.reconciledWithFirestore) — the durable copy of the
+    // captured/recorded file the send path made (persistPendingFile) has
+    // nothing left to retry from, so drop it rather than leaking it in the
+    // app's documents directory forever. Only the foreground send path
+    // needed this: processPendingQueueOnce already deletes the file on its
+    // own success path, but MessageSendController._processChatQueue never
+    // did, so every media message sent while the app was open left its
+    // full-size copy behind permanently.
+    if (wasPending && merged.localSendStatus == null) {
+      unawaited(deletePendingFile(existing!.localFilePath));
+    }
     final chatMessages = _byChat.putIfAbsent(chatId, () => {});
     chatMessages[merged.id] = merged;
     return wasPending;

@@ -31,6 +31,15 @@ class _LruByteCache {
     }
   }
 
+  // Account switch on a shared device — see media_cache_cleanup.dart. These
+  // are in-memory only (nothing survives a process restart), so this only
+  // matters for a switch that happens without the app being killed in
+  // between, but the previous account's decoded photo/video bytes sitting
+  // in RAM are exactly as private as the on-disk copies.
+  void clear() {
+    _cache.clear();
+  }
+
   void evict(String key) {
     _cache.remove(key);
   }
@@ -50,6 +59,7 @@ class MediaThumbnailCacheManager {
   Uint8List? get(String key) => _cache.get(key);
   void put(String key, Uint8List bytes) => _cache.put(key, bytes);
   void evict(String key) => _cache.evict(key);
+  void clear() => _cache.clear();
 }
 
 // Full picked-photo bytes (already downsized to maxWidth 1200 / quality 70
@@ -72,4 +82,5 @@ class ImagePreviewCacheManager {
   Uint8List? get(String key) => _cache.get(key);
   void put(String key, Uint8List bytes) => _cache.put(key, bytes);
   void evict(String key) => _cache.evict(key);
+  void clear() => _cache.clear();
 }

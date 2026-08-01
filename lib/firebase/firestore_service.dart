@@ -36,6 +36,13 @@ class FirestoreService {
   // doesn't block anything user-facing for long.
   static const Duration _writeTimeout = Duration(seconds: 10);
 
+  // chatIds whose chats/{chatId}/meta/counters document is known to exist,
+  // so _commitMessage can skip _resolveSeedFloor's probe read (see there).
+  // Purely a per-session read-cost optimisation — never consulted for the
+  // seq value itself, which always comes from the transaction's own read of
+  // that document, so a stale entry here can't produce a wrong seq.
+  final Set<String> _seededCounterChats = {};
+
   Future<User?> fetchUserById(String uid) async {
     final doc = await _db.collection('users').doc(uid).get();
     if (!doc.exists) return null;
@@ -1202,9 +1209,9 @@ class FirestoreService {
   }
 
   // Every send function funnels through here. Assigns `seq` — a per-chat
-  // monotonic integer read from the chat doc's own `messageSeq` counter and
-  // bumped in the same transaction — as the ONE source of truth for message
-  // order (watchMessages/fetchOlderMessages/watchOlderMessagesInRange/
+  // monotonic integer bumped in the same transaction as the message write —
+  // as the ONE source of truth for message order
+  // (watchMessages/fetchOlderMessages/watchOlderMessagesInRange/
   // _findLastMessage/watchChatMedia all orderBy('seq') now, not 'timestamp').
   // Unlike a timestamp, this is assigned synchronously server-side inside
   // the transaction, so it's never null in the local cache and never
@@ -1214,6 +1221,38 @@ class FirestoreService {
   // message and briefly vanish from watchMessages' limitToLast(50) window)
   // is structurally impossible with seq.
   //
+  // The counter itself lives at chats/{chatId}/meta/counters — a document
+  // this transaction has ALL to itself — rather than on the main chat doc.
+  // It used to live there (a plain `messageSeq` field), which meant every
+  // single message send transactionally contended with every other write to
+  // that same document: typing.{uid} (every ~3s while a job offer is
+  // pending), lastReadAt/lastReadMsgId/unreadCount (markChatAsReadBy),
+  // deliveredTo, activeUsers, negotiationSeenAt, etc. Confirmed on-device
+  // (2026-08-01) as a real cause of stuck sends: under that contention a
+  // send's transaction could take longer than this method's own timeout,
+  // the client would give up and retry with an overlapping second
+  // transaction attempt (same idempotent messageId), and Firestore's own
+  // automatic retry-on-conflict for BOTH attempts made the whole thing even
+  // slower — a message could end up never landing before
+  // pendingQueueMaxAttempts ran out, despite the server eventually being
+  // willing to accept it. Isolating the counter removes the contention at
+  // its root instead of just widening the timeout around it (see
+  // MessageSendController's own backoff/timeout comments for the other half
+  // of this fix).
+  //
+  // Migration: existing chats already have a `messageSeq` field on their
+  // main doc from before this counter moved. The first send after this
+  // change seeds chats/{chatId}/meta/counters from that old field's current
+  // value, INSIDE this same transaction (not a separate read beforehand) —
+  // that's what makes the seed itself race-safe: if two sends race to be
+  // the first to seed, Firestore's transaction conflict detection forces
+  // the loser to retry, and its retry sees the winner's freshly-created
+  // counter doc instead of re-seeding from the same stale base (which would
+  // otherwise hand out the same seq to two different messages). The old
+  // `messageSeq` field on the main chat doc is left as-is (harmless,
+  // unread by anything after this change) rather than cleaned up — deleting
+  // it isn't worth a second write for a value nothing looks at anymore.
+  //
   // messageId (when provided, by the offline pending-send queue) keeps the
   // exact same idempotent-retry guarantee _writeMessageIfAbsent used to
   // provide on its own: every retry path (manual retry, per-chat auto-retry
@@ -1222,9 +1261,17 @@ class FirestoreService {
   // (generateMessageId above), so "already exists" here means a previous
   // attempt already committed — a no-op, not a second seq/write.
   //
-  // Also folds in what used to be a separate, non-atomic second `.update()`
-  // call on the chat doc for lastMessage/lastMessageTime — chatUpdate now
-  // lands in the same transaction as the message write itself.
+  // Writes NOTHING to the chat document itself — not the preview, not any
+  // counter. That used to happen here (a `chatUpdate` map each send method
+  // passed in) and went through two wrong shapes before this one: awaited,
+  // it put a network round trip on the critical send path and made slow
+  // acks look like failed sends; fire-and-forget, it silently lost the
+  // preview whenever the process died first. Both were attempts to solve
+  // "when should the client write this", when the answer is that the
+  // client shouldn't. onNewMessage (functions/src/index.ts) derives the
+  // preview from the message document this transaction creates, ordered
+  // against every other writer by lastMessageSeq — see that file for the
+  // full ordering rules.
   //
   // Returns (wrote, seq): `seq` is always populated on a non-throwing
   // return — even the idempotent-retry "already exists" case reads the
@@ -1232,20 +1279,26 @@ class FirestoreService {
   // seq, because LocalMessageStore.markConfirmed (see that class's doc
   // comment) needs the real seq value either way to update this device's
   // own pending row in place, whether THIS call is what originally wrote
-  // it or an earlier attempt already did. `wrote` stays meaningful for
-  // callers that only care about the chat-doc-update-skip case (a retried
-  // write must not bump lastMessage/lastMessageTime a second time).
+  // it or an earlier attempt already did.
   Future<(bool wrote, int seq)> _commitMessage({
     required String chatId,
     required Map<String, dynamic> data,
     String? messageId,
-    Map<String, dynamic> chatUpdate = const {},
-  }) {
+  }) async {
     final chatRef = _db.collection('chats').doc(chatId);
+    final counterRef = chatRef.collection('meta').doc('counters');
     final messageRef = messageId != null
         ? chatRef.collection('messages').doc(messageId)
         : chatRef.collection('messages').doc();
-    return _db.runTransaction<(bool, int)>((tx) async {
+    // Seed floor for a chat whose counter doc doesn't exist yet — computed
+    // OUTSIDE the transaction because the Flutter SDK's transactions can
+    // only tx.get() a DocumentReference, never run a query. Racing two
+    // first-ever sends is still safe: both read the same floor, but only
+    // one's tx.set(counterRef) wins; the loser's transaction conflicts on
+    // that same document and re-runs, and its re-run sees the winner's
+    // counter doc and takes the normal (already-seeded) branch instead.
+    final int seedFloor = await _resolveSeedFloor(chatId, chatRef, counterRef);
+    final (wrote, seq) = await _db.runTransaction<(bool, int)>((tx) async {
       if (messageId != null) {
         final existing = await tx.get(messageRef);
         if (existing.exists) {
@@ -1253,13 +1306,77 @@ class FirestoreService {
           return (false, existingSeq);
         }
       }
-      final chatSnap = await tx.get(chatRef);
-      final nextSeq =
-          ((chatSnap.data()?['messageSeq'] as num?)?.toInt() ?? 0) + 1;
+      final counterSnap = await tx.get(counterRef);
+      final baseSeq = counterSnap.exists
+          ? (counterSnap.data()?['messageSeq'] as num?)?.toInt() ?? 0
+          : seedFloor;
+      final nextSeq = baseSeq + 1;
       tx.set(messageRef, {...data, 'seq': nextSeq});
-      tx.update(chatRef, {...chatUpdate, 'messageSeq': nextSeq});
+      tx.set(counterRef, {'messageSeq': nextSeq});
       return (true, nextSeq);
     });
+    // The transaction above just wrote it if it didn't exist, so every
+    // later send in this session can skip _resolveSeedFloor's probe.
+    _seededCounterChats.add(chatId);
+    return (wrote, seq);
+  }
+
+  // What a not-yet-created chats/{chatId}/meta/counters doc should start
+  // from. Returns 0 (the normal case) for a brand-new chat with no
+  // messages, so the first message gets seq 1.
+  //
+  // Deliberately the MAX of the newest existing message's own seq and the
+  // legacy `messageSeq` field on the chat doc, not just the legacy field:
+  // that field stops being maintained the moment this chat's counter doc
+  // exists, so it's frozen at whatever it held on migration day. Seeding
+  // from it alone would be correct exactly once — but if the counter doc
+  // were ever removed (a stray console delete, a future cleanup script, a
+  // member exercising the rules' write permission), the next send would
+  // re-seed from that stale value and hand out a seq that a message
+  // already has. Duplicate seqs don't just misorder the list, they break
+  // startAt/endBefore pagination (both bounds are seq values) in a way
+  // that's very hard to trace back here. Reading the real newest message
+  // makes re-seeding idempotent and self-correcting instead.
+  //
+  // Short-circuited by _seededCounterChats so this costs one extra document
+  // read per chat per app session, not one per message sent.
+  Future<int> _resolveSeedFloor(
+    String chatId,
+    DocumentReference<Map<String, dynamic>> chatRef,
+    DocumentReference<Map<String, dynamic>> counterRef,
+  ) async {
+    if (_seededCounterChats.contains(chatId)) return 0;
+    try {
+      final counterProbe = await counterRef.get().timeout(_writeTimeout);
+      if (counterProbe.exists) {
+        _seededCounterChats.add(chatId);
+        return 0; // unused — tx takes the already-seeded path
+      }
+      final newest = await chatRef
+          .collection('messages')
+          .orderBy('seq', descending: true)
+          .limit(1)
+          .get()
+          .timeout(_writeTimeout);
+      final newestSeq = newest.docs.isEmpty
+          ? 0
+          : (newest.docs.first.data()['seq'] as num?)?.toInt() ?? 0;
+      final chatSnap = await chatRef.get().timeout(_writeTimeout);
+      final legacySeq =
+          (chatSnap.data()?['messageSeq'] as num?)?.toInt() ?? 0;
+      return newestSeq > legacySeq ? newestSeq : legacySeq;
+    } catch (e, st) {
+      // Never blocks a send on this probe — the transaction re-reads the
+      // counter doc itself and only consults this floor when that doc is
+      // genuinely absent. Returning 0 here for an existing chat would be
+      // wrong, so this is logged rather than silently swallowed.
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: _resolveSeedFloor probe failed',
+      );
+      return 0;
+    }
   }
 
   // Returns the message's assigned seq (see _commitMessage) — the pending-
@@ -1321,12 +1438,7 @@ class FirestoreService {
       chatId: chatId,
       data: data,
       messageId: messageId,
-      chatUpdate: {
-        'lastMessage': text,
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastMessageDeletedFor': [],
-      },
-    ).timeout(_writeTimeout);
+    );
     return seq;
   }
 
@@ -1450,16 +1562,48 @@ class FirestoreService {
       chatId: chatId,
       data: data,
       messageId: messageId,
-      chatUpdate: {
-        'lastMessage': '🖼 Şəkil',
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastMessageDeletedFor': [],
-        // Every chat was backfilled with an accurate starting value (one-off
-        // migration, run before this line ever shipped) — safe to always use
-        // a plain atomic increment, no "field missing" fallback needed.
-        'mediaImageCount': FieldValue.increment(1),
-      },
-    ).timeout(_writeTimeout);
+    );
+    // The one chat-doc field this app still denormalises client-side. It
+    // rode along in the preview write until that moved to onNewMessage, and
+    // it deliberately did NOT move with it: deleteMessageForAll still
+    // decrements it from the client, so a server-side increment would
+    // double-count every image for as long as any already-installed build
+    // keeps writing this one. Both halves have to move together, onto a
+    // one-off recount — see the Cloud Function's own comment.
+    //
+    // DO NOT await this, and do not "harden" it with a retry loop that
+    // does. That exact change was made once for the preview write and had
+    // to be reverted: a Firestore write only completes when the server acks
+    // it, so on a slow link it consumed the send path's whole timeout
+    // budget and perfectly good messages were reported as failed and left
+    // sitting in "sending" (see _commitMessage's own comment for the full
+    // account). The message is already committed by the time this runs;
+    // nothing about a counter for the media strip's header may delay or
+    // fail a send.
+    //
+    // Fire-and-forget is acceptable here specifically because the failure
+    // mode is bounded and already scheduled to be repaired: a dropped
+    // increment drifts this counter, and the pending move of both halves
+    // to the server comes with a one-off recount from the real number of
+    // image messages, which corrects whatever drift has accumulated by
+    // then. The preview could not be treated this way — nothing recomputes
+    // it on a schedule — which is exactly why it went to the server
+    // instead. The catchError below is what keeps a drop visible rather
+    // than silent.
+    unawaited(
+      _db
+          .collection('chats')
+          .doc(chatId)
+          .update({'mediaImageCount': FieldValue.increment(1)})
+          .timeout(_writeTimeout)
+          .catchError((Object e, StackTrace st) {
+            FirebaseCrashlytics.instance.recordError(
+              e,
+              st,
+              reason: 'FirestoreService: mediaImageCount increment failed',
+            );
+          }),
+    );
     return seq;
   }
 
@@ -1557,12 +1701,7 @@ class FirestoreService {
       chatId: chatId,
       data: data,
       messageId: messageId,
-      chatUpdate: {
-        'lastMessage': '🎥 Video',
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastMessageDeletedFor': [],
-      },
-    ).timeout(_writeTimeout);
+    );
     return seq;
   }
 
@@ -1664,12 +1803,7 @@ class FirestoreService {
       chatId: chatId,
       data: data,
       messageId: messageId,
-      chatUpdate: {
-        'lastMessage': '📄 $fileName',
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastMessageDeletedFor': [],
-      },
-    ).timeout(_writeTimeout);
+    );
     return seq;
   }
 
@@ -1768,12 +1902,7 @@ class FirestoreService {
       chatId: chatId,
       data: data,
       messageId: messageId,
-      chatUpdate: {
-        'lastMessage': '📍 Məkan',
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastMessageDeletedFor': [],
-      },
-    ).timeout(_writeTimeout);
+    );
     return seq;
   }
 
@@ -1855,12 +1984,7 @@ class FirestoreService {
       chatId: chatId,
       data: data,
       messageId: messageId,
-      chatUpdate: {
-        'lastMessage': '🎤 Səs mesajı',
-        'lastMessageTime': FieldValue.serverTimestamp(),
-        'lastMessageDeletedFor': [],
-      },
-    ).timeout(_writeTimeout);
+    );
     return seq;
   }
 
@@ -2083,7 +2207,53 @@ class FirestoreService {
         'mediaImageCount': FieldValue.increment(-1),
       });
     }
-    await _refreshLastMessagePreview(chatId);
+  }
+
+  // Per-chat throttle for refreshChatPreview below. The client-side half of
+  // the anti-stampede protection the callable also enforces server-side:
+  // this stops a screen that rebuilds often (or a chat reopened repeatedly)
+  // from turning one stale preview into a stream of calls.
+  static const Duration _previewRefreshCooldown = Duration(seconds: 30);
+  final Map<String, DateTime> _lastPreviewRefreshAt = {};
+
+  // Asks the server to recompute this chat's card preview, for the one case
+  // the client can detect but deliberately cannot fix itself: the chat
+  // document's lastMessageSeq lagging the newest message actually present.
+  // That happens for every chat predating lastMessageSeq (field absent,
+  // read as 0) and for any chat whose onNewMessage invocation failed
+  // outright — the trigger's own retries are the first line of defence,
+  // this is the backstop for when they're exhausted.
+  //
+  // The client can't recompute it because preview text is formatted in
+  // exactly one place, server-side (previewText in functions/src/index.ts);
+  // giving Dart a second copy to self-heal with would recreate the
+  // duplication that motivated moving it there. So it asks instead.
+  //
+  // Failures are swallowed: this is opportunistic repair of a cosmetic
+  // field, and a chat must open normally whether or not it succeeds.
+  Future<void> refreshChatPreviewIfStale({
+    required String chatId,
+    required int storedSeq,
+    required int newestKnownSeq,
+  }) async {
+    if (newestKnownSeq <= storedSeq) return;
+    final last = _lastPreviewRefreshAt[chatId];
+    if (last != null &&
+        DateTime.now().difference(last) < _previewRefreshCooldown) {
+      return;
+    }
+    _lastPreviewRefreshAt[chatId] = DateTime.now();
+    try {
+      await _functions
+          .httpsCallable('refreshChatPreview')
+          .call({'chatId': chatId}).timeout(_writeTimeout);
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: refreshChatPreview failed',
+      );
+    }
   }
 
   // "Delete for me" never touches the shared lastMessage/lastMessageTime —
@@ -2194,7 +2364,6 @@ class FirestoreService {
         .collection('messages')
         .doc(messageId)
         .delete();
-    await _refreshLastMessagePreview(chatId);
   }
 
   // The newest message in the chat that isn't deletedForAll — i.e. the
@@ -2220,44 +2389,6 @@ class FirestoreService {
       }
     }
     return null;
-  }
-
-  // Doesn't know whether the just-deleted message was the chat's current
-  // lastMessage, so this unconditionally recomputes it from the real
-  // subcollection state — a no-op write when an older message was deleted.
-  // Not called from deleteMessageForMe: that only hides a message for one
-  // viewer, so the shared chat-doc preview (seen by every member) must stay
-  // unchanged.
-  Future<void> _refreshLastMessagePreview(String chatId) async {
-    final last = await _findLastMessage(chatId);
-    final data = last?.value;
-    await _db.collection('chats').doc(chatId).update({
-      'lastMessage': data == null ? '' : _previewTextFor(data),
-      'lastMessageTime': data?['timestamp'],
-      // Carries over whichever deletedFor the newly-picked message already
-      // had (e.g. someone had earlier "deleted for me" this now-promoted
-      // message) rather than assuming nobody has.
-      'lastMessageDeletedFor': List<String>.from(
-        data?['deletedFor'] as List? ?? const [],
-      ),
-    });
-  }
-
-  String _previewTextFor(Map<String, dynamic> data) {
-    switch (data['type']) {
-      case 'image':
-        return '🖼 Şəkil';
-      case 'video':
-        return '🎥 Video';
-      case 'file':
-        return '📄 ${data['fileName'] ?? ''}';
-      case 'location':
-        return '📍 Məkan';
-      case 'audio':
-        return '🎤 Səs mesajı';
-      default:
-        return (data['text'] ?? '') as String;
-    }
   }
 
   Future<void> starMessage({
@@ -2332,6 +2463,11 @@ class FirestoreService {
         'deliveredTo': Map<String, dynamic>.from(data['deliveredTo'] ?? {}),
         'lastReadMsgId': Map<String, dynamic>.from(data['lastReadMsgId'] ?? {}),
         'lastReadAt': Map<String, dynamic>.from(data['lastReadAt'] ?? {}),
+        // Needed by chat_screen.dart's own "unread badge is stuck" repair
+        // path (see there) — the onNewMessage Cloud Function increments
+        // this asynchronously, so it can land AFTER the reader's own
+        // markChatAsReadBy zeroed it, leaving a permanent phantom count.
+        'unreadCount': Map<String, dynamic>.from(data['unreadCount'] ?? {}),
         // Maintained by sendImageMessage/deleteMessageForAll via atomic
         // FieldValue.increment — every chat was backfilled with an
         // accurate starting value before that logic went live (one-off
@@ -2348,22 +2484,35 @@ class FirestoreService {
         'emoji': data['emoji'] ?? '💬',
         'photoURL': data['photoURL'],
         // "İş təklif et" negotiation state — deliberately NOT including
-        // clearedBy here, which only ChatMessagesController's own narrow
-        // watchChatClearedAt stream needs (see that method): folding it
-        // into this general-purpose projection would re-run every one of
-        // this stream's listeners (including chat_screen.dart's UI) on
-        // every clearedBy write, for no benefit to any of them.
+        // clearedBy (only ChatMessagesController's own narrow
+        // watchChatClearedAt stream needs it) or typing (only the job-offer
+        // banner's status line needs it, via the equally narrow
+        // watchChatTyping below): folding either into this general-purpose
+        // projection would re-run every one of this stream's listeners,
+        // including chat_screen.dart's entire build() method, on every
+        // clearedBy/typing write, for no benefit to any of them — see
+        // watchChatTyping's own comment for the confirmed on-device cost of
+        // getting this wrong.
         'jobOfferBy': data['jobOfferBy'],
         'jobOfferAt': data['jobOfferAt'],
         'eventDate': data['eventDate'],
         'eventType': data['eventType'],
         'eventLocation': data['eventLocation'],
         'eventNotes': data['eventNotes'],
-        'waitingForDate': (data['waitingForDate'] ?? false) as bool,
+        'waitingForDateAt': data['waitingForDateAt'],
         'cancelledBy': data['cancelledBy'],
         'recipientAgreed': (data['recipientAgreed'] ?? false) as bool,
+        'recipientAgreedAt': data['recipientAgreedAt'],
+        'negotiationSeenAt': Map<String, dynamic>.from(
+          data['negotiationSeenAt'] ?? {},
+        ),
         'completed': (data['completed'] ?? false) as bool,
-        'typing': Map<String, dynamic>.from(data['typing'] ?? {}),
+        // Which message the shared card preview currently describes. Read
+        // by chat_screen.dart purely to notice when it has fallen behind
+        // the messages actually present and ask the server to recompute
+        // (refreshChatPreviewIfStale) — absent on every chat predating the
+        // field, which reads as 0 and therefore heals on first open.
+        'lastMessageSeq': (data['lastMessageSeq'] as num?)?.toInt() ?? 0,
       };
     });
   }
@@ -2486,11 +2635,22 @@ class FirestoreService {
     }
   }
 
+  // TEMP DIAGNOSTIC (2026-08-01) — real network-call counter, static so it
+  // survives across FirestoreService instance recreation (it's a plain
+  // Provider, so in practice there's only ever one instance, but static
+  // keeps this consistent with the other temp counters). Answers
+  // definitively whether writes chat_screen.dart's own
+  // guard/isInitialLoad gate lets through actually reach this method, vs.
+  // the write storm coming from somewhere else entirely. No extra network
+  // I/O of its own. Remove once confirmed/fixed.
+  static int debugMarkChatAsReadByCallCount = 0;
+
   Future<void> markChatAsReadBy({
     required String chatId,
     required String uid,
     required String lastMsgId,
   }) async {
+    debugMarkChatAsReadByCallCount++;
     try {
       await _db.collection('chats').doc(chatId).update({
         'readBy': FieldValue.arrayUnion([uid]),
@@ -2532,6 +2692,15 @@ class FirestoreService {
   // "İş təklif et" — proposes a job to the other party in a 1:1 chat.
   // chat_screen.dart's menu hides this item once jobOfferBy is already
   // set, matching mugam-v2's own {!jobOfferBy && (...)} gating.
+  // TEMP DIAGNOSTIC (2026-08-01) — surfaces the actual exception from this
+  // method's write, which the try/catch below otherwise swallows silently.
+  // debugPrint isn't observable on the physical test devices and
+  // Crashlytics isn't queryable in real time, so this is the only way to
+  // see WHY a confirmed-reproducible "jobOfferBy never lands in Firestore"
+  // failure is happening — chat_screen.dart's debug SnackBar timer surfaces
+  // this string. Remove once confirmed/fixed.
+  static String? debugLastSetJobOfferError;
+
   Future<void> setJobOffer({
     required String chatId,
     required String uid,
@@ -2550,13 +2719,17 @@ class FirestoreService {
         // silently skipping PersonalEvent creation for every round after
         // the first.
         'recipientAgreed': false,
-        'waitingForDate': false,
+        'recipientAgreedAt': null,
+        'waitingForDateAt': null,
+        'negotiationSeenAt': {},
         // A prior round may have left a stale cancelledBy from an earlier
         // "\u0130mtina" sitting on the doc \u2014 clear it so a fresh offer never
         // carries a leftover "X cancelled" value forward.
         'cancelledBy': null,
       }).timeout(_writeTimeout);
     } catch (e, st) {
+      // TEMP DIAGNOSTIC \u2014 see debugLastSetJobOfferError's own comment.
+      debugLastSetJobOfferError = e.toString();
       debugPrint('\u274c setJobOffer failed: $e');
       FirebaseCrashlytics.instance.recordError(
         e,
@@ -2595,14 +2768,22 @@ class FirestoreService {
 
   // Recipient taps "Razıyam" before the initiator has picked a date yet —
   // lets the initiator's banner show "waiting for a date" (mugam-v2's
-  // setWaitingForDate).
+  // setWaitingForDate). Writes a timestamp (not a bare bool) so the
+  // initiator's own client can durably tell "have I already seen the
+  // waiting-for-date signal for THIS particular flip" via
+  // negotiationSeenAt, instead of racing to self-reset a shared flag the
+  // moment whichever client happens to be live-mounted observes it —
+  // that self-resetting design is what silently dropped this nudge
+  // on-device (confirmed 2026-08-01: the initiator's screen simply wasn't
+  // mounted at the exact instant the flag flipped, and by the time it
+  // reopened the flag had already been reset/overwritten by someone else).
   Future<void> setWaitingForDate({
     required String chatId,
     required bool waiting,
   }) async {
     try {
       await _db.collection('chats').doc(chatId).update({
-        'waitingForDate': waiting,
+        'waitingForDateAt': waiting ? DateTime.now().toIso8601String() : null,
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c setWaitingForDate failed: $e');
@@ -2610,6 +2791,31 @@ class FirestoreService {
         e,
         st,
         reason: 'FirestoreService: setWaitingForDate failed',
+      );
+    }
+  }
+
+  // Durable per-uid "I have shown this uid's own client the latest
+  // negotiation dialog (waiting-for-date nudge or agreed celebration)"
+  // marker — mirrors the existing lastReadAt.{uid} idiom (see
+  // markChatAsReadBy below) instead of a shared self-resetting flag, so a
+  // dialog that fires while this uid's chat screen isn't mounted is never
+  // silently lost: reopening the chat re-compares the signal's own
+  // timestamp against this mark and still shows it if it's newer.
+  Future<void> markNegotiationSeen({
+    required String chatId,
+    required String uid,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'negotiationSeenAt.$uid': DateTime.now().toIso8601String(),
+      }).timeout(_writeTimeout);
+    } catch (e, st) {
+      debugPrint('\u274c markNegotiationSeen failed: $e');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: markNegotiationSeen failed',
       );
     }
   }
@@ -2638,8 +2844,10 @@ class FirestoreService {
         'eventType': null,
         'eventLocation': null,
         'eventNotes': null,
-        'waitingForDate': false,
+        'waitingForDateAt': null,
         'recipientAgreed': false,
+        'recipientAgreedAt': null,
+        'negotiationSeenAt': {},
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c cancelChat failed: $e');
@@ -2666,6 +2874,7 @@ class FirestoreService {
     try {
       await _db.collection('chats').doc(chatId).update({
         'recipientAgreed': true,
+        'recipientAgreedAt': DateTime.now().toIso8601String(),
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c acceptJobOffer failed: $e');
@@ -2711,6 +2920,25 @@ class FirestoreService {
       final value = raw[uid];
       if (value == null) return null;
       return DateTime.tryParse(value.toString());
+    });
+  }
+
+  // Narrow, dedicated stream of just the typing map — same rationale as
+  // watchChatClearedAt above, and for the same reason: typing.{uid} writes
+  // every ~3s while a job offer is pending, and it used to be folded into
+  // watchChatMeta's general projection, which chat_screen.dart's entire
+  // ~1000-line build() watches directly. That meant every typing write
+  // rebuilt the whole chat screen (message list included) instead of just
+  // the job-offer banner's one status line — confirmed as the dominant
+  // contributor to a runaway write/rebuild storm (~20 chats/{chatId}
+  // writes/sec, ~2000 onChatUpdated invocations in under 5 minutes) that
+  // heated the device and starved real message sends of contention on the
+  // same document via _commitMessage's transaction. Only the small
+  // Consumer built around this stream (see _buildJobOfferBanner) should
+  // ever watch it.
+  Stream<Map<String, dynamic>> watchChatTyping(String chatId) {
+    return _db.collection('chats').doc(chatId).snapshots().map((snap) {
+      return Map<String, dynamic>.from(snap.data()?['typing'] ?? {});
     });
   }
 
@@ -3044,6 +3272,19 @@ final chatMetaProvider =
       chatId,
     ) {
       return ref.watch(firestoreServiceProvider).watchChatMeta(chatId);
+    });
+
+// Narrow counterpart to chatMetaProvider above, watched ONLY by the
+// job-offer banner's small status-line Consumer in chat_screen.dart — see
+// watchChatTyping's own comment for why this must stay separate from
+// chatMetaProvider rather than being read off chatMetaAsync.value like
+// every other negotiation field.
+final chatTypingProvider =
+    StreamProvider.autoDispose.family<Map<String, dynamic>, String>((
+      ref,
+      chatId,
+    ) {
+      return ref.watch(firestoreServiceProvider).watchChatTyping(chatId);
     });
 
 final starredMessagesProvider =

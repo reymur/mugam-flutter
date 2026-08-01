@@ -27,6 +27,28 @@ Future<String> persistPendingFile(String sourcePath, String id) async {
   return destPath;
 }
 
+// Wipes the whole pending-uploads directory. Used on sign-out (see
+// LocalMessageStore.clearAllForSignOut): the pending queue's own JSON blob
+// is cleared at the same moment, so every file left here is by definition
+// unreferenced from that point on — leaving them would strand the previous
+// account's captured photos/videos/voice notes on the device indefinitely.
+Future<void> deleteAllPendingFiles() async {
+  try {
+    final docsDir = await getApplicationDocumentsDirectory();
+    final pendingDir = Directory('${docsDir.path}/$_pendingFilesDirName');
+    if (await pendingDir.exists()) {
+      await pendingDir.delete(recursive: true);
+    }
+  } catch (e, st) {
+    debugPrint('deleteAllPendingFiles: failed ($e)');
+    FirebaseCrashlytics.instance.recordError(
+      e,
+      st,
+      reason: 'deleteAllPendingFiles: failed',
+    );
+  }
+}
+
 // path is null for items with nothing to clean up (text messages have no
 // local file) — a plain no-op rather than making every caller guard this.
 Future<void> deletePendingFile(String? path) async {

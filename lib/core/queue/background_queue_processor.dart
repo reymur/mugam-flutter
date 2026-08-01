@@ -17,7 +17,27 @@ import 'pending_file_storage.dart';
 
 const String pendingQueueRetryTaskName = 'pendingQueueRetryTask';
 const int pendingQueueMaxAttempts = 8;
-const Duration pendingQueueUploadTimeout = Duration(seconds: 20);
+// Storage upload step only (image/video/audio/file) — kept generous since a
+// large video over a slow connection can legitimately take a while; this is
+// the ONE real "is the network actually working" gate.
+const Duration pendingQueueUploadTimeout = Duration(seconds: 60);
+// Final Firestore write step (FirestoreService._commitMessage, via
+// sendMessage/sendImageMessage/etc.) — deliberately a SEPARATE, shorter
+// budget from the upload timeout above, and the ONLY timeout left around
+// that write at all: _commitMessage itself used to additionally wrap its
+// own call in FirestoreService's generic 10s `_writeTimeout`, racing this
+// one. Two independent timeouts on the same operation is strictly worse
+// than one, not more defensive — Future.timeout() doesn't cancel the
+// underlying Firestore transaction either way, so the shorter of the two
+// always "wins" and reports a false failure while the real write keeps
+// running server-side, which is exactly what used to send this same
+// message-send path into an overlapping-retry spiral under contention (see
+// _commitMessage's own doc comment for the full mechanism, and how moving
+// the seq counter off the main chat doc addresses the contention itself —
+// this timeout bump is the other half: give a legitimately-slow-but-still-
+// succeeding write room to actually finish before the retry loop gives up
+// on it).
+const Duration pendingQueueSendTimeout = Duration(seconds: 30);
 
 // Shared by the live MessageSendController (foreground) and the background
 // isolate spawned by BGTaskScheduler/WorkManager — a single attempt at
@@ -48,6 +68,7 @@ Future<(bool success, int? seq)> attemptSendPendingMessage(
   Message item,
   FirestoreService firestoreService, {
   Duration timeout = pendingQueueUploadTimeout,
+  Duration sendTimeout = pendingQueueSendTimeout,
   void Function(String url)? onUploaded,
   // Image/video only — see FirestoreService.uploadChatImage's doc comment.
   // Left null (as the background isolate does) when there's no UI able to
@@ -74,7 +95,7 @@ Future<(bool success, int? seq)> attemptSendPendingMessage(
             replyToImageURL: item.replyToImageURL,
             replyToVideoURL: item.replyToVideoURL,
           )
-          .timeout(timeout);
+          .timeout(sendTimeout);
       return (true, seq);
     }
 
@@ -144,7 +165,7 @@ Future<(bool success, int? seq)> attemptSendPendingMessage(
                 replyToImageURL: item.replyToImageURL,
                 replyToVideoURL: item.replyToVideoURL,
               )
-              .timeout(timeout);
+              .timeout(sendTimeout);
           return (true, seq);
         }
       case 'audio':
@@ -181,7 +202,7 @@ Future<(bool success, int? seq)> attemptSendPendingMessage(
                 replyToImageURL: item.replyToImageURL,
                 replyToVideoURL: item.replyToVideoURL,
               )
-              .timeout(timeout);
+              .timeout(sendTimeout);
           return (true, seq);
         }
       case 'location':
@@ -224,7 +245,7 @@ Future<(bool success, int? seq)> attemptSendPendingMessage(
                 replyToImageURL: item.replyToImageURL,
                 replyToVideoURL: item.replyToVideoURL,
               )
-              .timeout(timeout);
+              .timeout(sendTimeout);
           return (true, seq);
         }
       case 'file':
@@ -274,7 +295,7 @@ Future<(bool success, int? seq)> attemptSendPendingMessage(
                 replyToImageURL: item.replyToImageURL,
                 replyToVideoURL: item.replyToVideoURL,
               )
-              .timeout(timeout);
+              .timeout(sendTimeout);
           return (true, seq);
         }
       case 'video':
@@ -338,7 +359,7 @@ Future<(bool success, int? seq)> attemptSendPendingMessage(
                   replyToImageURL: item.replyToImageURL,
                   replyToVideoURL: item.replyToVideoURL,
                 )
-                .timeout(timeout);
+                .timeout(sendTimeout);
             return (true, seq);
           } finally {
             if (uploadPath != filePath) {

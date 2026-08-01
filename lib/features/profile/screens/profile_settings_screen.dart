@@ -219,7 +219,7 @@ class ProfileSettingsScreen extends ConsumerWidget {
       } catch (_) {}
     }
     try {
-      await ref.read(localMessageStoreProvider).clearHistoryCache();
+      await ref.read(localMessageStoreProvider).clearAllForSignOut();
       await AuthService().logout();
       if (context.mounted) context.go('/login');
     } catch (e, st) {

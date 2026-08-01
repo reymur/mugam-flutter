@@ -66,6 +66,30 @@ class ChatScreen extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
+
+  // TEMP DIAGNOSTIC (2026-08-01) — static so counts survive across State
+  // instance recreation, same rationale as
+  // ChatMessagesController.debugBuildCount: measures whether _ChatScreenState
+  // itself (not just the Riverpod controller, which separate evidence
+  // already showed stays stable) is being torn down and rebuilt by
+  // Flutter/GoRouter faster than createState() would suggest — e.g. if
+  // dispose()+initState() are firing back-to-back within the same frame,
+  // fast enough that a remote Firestore listener's own activeUsers diff
+  // (add+remove netting out before the next snapshot reaches it) can't
+  // reveal it, even though a per-widget field like _lastMarkedReadMsgId
+  // would still reset every cycle. No network I/O. Remove once confirmed.
+  static int debugWidgetInitCount = 0;
+  static int debugWidgetDisposeCount = 0;
+  // TEMP DIAGNOSTIC (2026-08-01) — counts how many times the ref.listen
+  // callback's mark-as-read block ran the _lastMarkedReadMsgId comparison,
+  // split by outcome: Passed = guard let it through (id actually differed,
+  // markChatAsReadBy was called), Blocked = guard caught a repeat of the
+  // same id and skipped the write. Cross-referenced against
+  // FirestoreService.debugMarkChatAsReadByCallCount — Passed should equal
+  // that count exactly; if it doesn't, the extra calls are coming from
+  // somewhere other than this code path entirely.
+  static int debugMarkReadGuardPassed = 0;
+  static int debugMarkReadGuardBlocked = 0;
 }
 
 // Neither `record` nor `just_audio` ever sends AVAudioSession the explicit
@@ -167,6 +191,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // DateTime.now(). Same 20s interval and reasoning as
   // about_contact_screen.dart's _presenceRefreshTimer.
   Timer? _presenceRefreshTimer;
+  // TEMP DIAGNOSTIC — see ChatMessagesController.debugBuildCount's own
+  // comment. Surfaces build()/dispose() counts as an on-screen SnackBar
+  // every few seconds (debugPrint isn't observable on the physical test
+  // devices) so it's visible without needing the chat's own chatMetaAsync
+  // to change first, unlike the negotiation debugSignature SnackBar above.
+  Timer? _debugControllerCountTimer;
   StreamSubscription<Amplitude>? _amplitudeSub;
   final List<double> _rawAmplitudes = [];
   bool _isLocked = false;
@@ -219,42 +249,61 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // doc comment in models.dart) — no active offer, no writes at all.
   bool _jobOfferActive = false;
   Timer? _typingThrottleTimer;
-  // Which round's "qəbul etdi" celebration has already been shown on THIS
-  // screen instance — keyed by jobOfferAt (a fresh ISO timestamp every time
-  // setJobOffer starts a new round), not a plain true/false transition flag.
-  // A transition-only flag (the previous design here) only fires while this
-  // exact screen is mounted at the precise moment recipientAgreed flips —
-  // miss that window (screen wasn't open yet, or a live ref.listen callback
-  // simply didn't run before the next rebuild) and the notification is
-  // gone forever, confirmed on-device as a real, reproducible gap: the
-  // initiator's own "{recipient} sizdən tarix gözləyir" nudge (same pattern,
-  // see _waitingForDateNudgeShownAt below) silently never appeared at all
-  // in a live two-device test even though the underlying Firestore field
-  // (waitingForDate) had genuinely flipped true. Checking against the
-  // CURRENT snapshot on every build (not only on a live ref.listen
-  // transition) fixes that: whatever the round's identifier already was
-  // when this screen (re)mounts, it still fires exactly once for it.
-  String? _agreedCelebrationShownForOfferAt;
-  // Same round-keyed pattern, for the "recipient tapped Razıyam before a
-  // date existed" nudge to the initiator (mirrors mugam-v2's own
-  // DirectChat.tsx prevWaitingForDateRef reference behavior, made durable
-  // against remounts the way that ref-based original wasn't either).
-  String? _waitingForDateNudgeShownForOfferAt;
-  // One-time guard for the seeding step above (build()'s own
-  // "don't replay stale state as a fresh notification" block) — separate
-  // from the two shown-markers themselves since a round where nothing has
-  // ever happened legitimately leaves both markers null forever, which
-  // must not be confused with "seeding hasn't run yet".
-  bool _negotiationBaselineSeeded = false;
   // Mirrored from build() (same plain-field-mutation pattern as
   // _jobOfferActive above) so _recipientTappedAcceptTooEarly and the
   // ref.listen callbacks below — both outside build()'s own scope — can
   // read the other party's name for the centered alert dialogs.
   User? _otherUserCached;
+  // TEMP DIAGNOSTIC — see build()'s own comment on debugSignature.
+  String? _debugLastMetaSignature;
+  // Synchronous dedup guards for the negotiation dialog/markNegotiationSeen
+  // side effect below (see build()'s own comment there) — each holds the
+  // raw timestamp string of the signal it already scheduled a
+  // showDialog+markNegotiationSeen pair for, set BEFORE the
+  // addPostFrameCallback that actually performs them. Without this, every
+  // rebuild that lands before markNegotiationSeen's own write round-trips
+  // back through chatMetaAsync (and any unrelated rebuild — e.g. a typing
+  // write — landing in that same window) re-evaluated the same stale
+  // "unseen" condition and scheduled another showDialog+write pair,
+  // confirmed on-device as a self-reinforcing chats/{chatId} write/rebuild
+  // storm (~20 writes/sec, ~2000 onChatUpdated invocations in under 5
+  // minutes).
+  String? _recipientAgreedSeenScheduledRaw;
+  String? _waitingForDateSeenScheduledRaw;
+  // Prevents stacking multiple AlertDialogs from the same source (belt and
+  // suspenders alongside the two fields above, which should already stop
+  // this at the scheduling stage) — showDialog itself has no built-in
+  // "already showing" guard.
+  bool _negotiationDialogShowing = false;
+  // Value-based dedup for markChatAsReadBy below — confirmed on-device
+  // (2026-08-01, live Firestore listener diff) that isInitialLoad/
+  // addedMessageIds alone aren't a reliable enough gate: chatMessagesState
+  // can report a fresh isInitialLoad snapshot repeatedly (observed ~7
+  // writes/sec sustained from a single device, same lastMsgId every time,
+  // just a new DateTime.now() each call) without any real new message
+  // ever arriving. Tracking the last uid this device actually wrote makes
+  // the write itself idempotent regardless of how often the upstream
+  // signal re-fires.
+  String? _lastMarkedReadMsgId;
+  // Throttle for the "unread badge is stuck at a non-zero count while this
+  // reader is literally looking at the chat" repair below. The race it
+  // repairs: onNewMessage (Cloud Function) increments unreadCount.{uid}
+  // asynchronously, so for a message that arrives while its recipient
+  // already has the chat open, that increment can land AFTER the
+  // recipient's own markChatAsReadBy zeroed the count — leaving a phantom
+  // unread badge on a chat they've fully read. The old code happened to
+  // self-heal this because markChatAsReadBy fired on essentially every
+  // controller emission; now that it's correctly gated on the last-read
+  // message id actually changing, nothing re-zeroes a count that was
+  // clobbered after the fact, so this repair path replaces that accident
+  // with something deliberate and bounded.
+  DateTime? _lastUnreadRepairAt;
 
   @override
   void initState() {
     super.initState();
+    // TEMP DIAGNOSTIC — see ChatScreen.debugWidgetInitCount's own comment.
+    ChatScreen.debugWidgetInitCount++;
     _firestoreService = ref.read(firestoreServiceProvider);
     _messageController.addListener(() {
       final hasText = _messageController.text.trim().isNotEmpty;
@@ -298,6 +347,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _presenceRefreshTimer = Timer.periodic(const Duration(seconds: 20), (_) {
       if (mounted) setState(() {});
     });
+    // TEMP DIAGNOSTIC timer disabled — the periodic SnackBar it showed
+    // every 3s was covering the composer's text field, making it
+    // impossible to type/send during testing. The underlying counters
+    // (ChatMessagesController.debugBuildCount et al.) are left in place,
+    // just no longer surfaced via a recurring popup — no longer needed
+    // now that the controller/widget lifecycle question they were added
+    // to answer is resolved.
+    _debugControllerCountTimer = null;
   }
 
   void _initBeepPlayer() async {
@@ -323,6 +380,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   @override
   void dispose() {
+    // TEMP DIAGNOSTIC — see ChatScreen.debugWidgetInitCount's own comment.
+    ChatScreen.debugWidgetDisposeCount++;
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     if (currentUid != null && currentUid.isNotEmpty) {
       _firestoreService.removeActiveUser(
@@ -338,6 +397,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _audioRecorder.dispose();
     _recordingTimer?.cancel();
     _presenceRefreshTimer?.cancel();
+    _debugControllerCountTimer?.cancel();
     _typingThrottleTimer?.cancel();
     _amplitudeSub?.cancel();
     _pulseController.dispose();
@@ -887,18 +947,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     required String? eventNotes,
     required bool waitingForDate,
     required Map<String, dynamic> lastReadAt,
-    required Map<String, dynamic> typingMap,
     required String currentUid,
     required String otherUidResolved,
   }) {
     final isInitiator = jobOfferBy == currentUid;
 
-    final otherTypingAt = DateTime.tryParse(
-      typingMap[otherUidResolved]?.toString() ?? '',
-    );
-    final isOtherTyping =
-        otherTypingAt != null &&
-        DateTime.now().difference(otherTypingAt) < const Duration(seconds: 5);
     final otherReadAt = DateTime.tryParse(
       lastReadAt[otherUidResolved]?.toString() ?? '',
     );
@@ -906,13 +959,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         jobOfferAt != null &&
         otherReadAt != null &&
         otherReadAt.isAfter(jobOfferAt);
-    // Recipient tapped "Razıyam" before a date existed — only meaningful
-    // to show the initiator (mugam-v2's own setWaitingForDate nudge).
-    final statusText = (isInitiator && waitingForDate)
-        ? '🤝 cavab gözləyir'
-        : (isOtherTyping
-              ? '✍️ yazır...'
-              : (hasOtherRead ? '👁 baxdı' : '⏳ hələ baxmayıb'));
 
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -938,7 +984,35 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               ),
             const SizedBox(height: 8),
           ],
-          Text(statusText, style: const TextStyle(color: kMuted, fontSize: 13)),
+          // Scoped to its own Consumer so typing.{uid} writes (every ~3s
+          // while composing) rebuild only this one status line — see
+          // chatTypingProvider's own comment for why it must stay off
+          // chat_screen.dart's main build().
+          Consumer(
+            builder: (context, ref, _) {
+              final typingMap =
+                  ref.watch(chatTypingProvider(widget.chatId)).value ?? {};
+              final otherTypingAt = DateTime.tryParse(
+                typingMap[otherUidResolved]?.toString() ?? '',
+              );
+              final isOtherTyping =
+                  otherTypingAt != null &&
+                  DateTime.now().difference(otherTypingAt) <
+                      const Duration(seconds: 5);
+              // Recipient tapped "Razıyam" before a date existed — only
+              // meaningful to show the initiator (mugam-v2's own
+              // setWaitingForDate nudge).
+              final statusText = (isInitiator && waitingForDate)
+                  ? '🤝 cavab gözləyir'
+                  : (isOtherTyping
+                        ? '✍️ yazır...'
+                        : (hasOtherRead ? '👁 baxdı' : '⏳ hələ baxmayıb'));
+              return Text(
+                statusText,
+                style: const TextStyle(color: kMuted, fontSize: 13),
+              );
+            },
+          ),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -1344,7 +1418,42 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     return msg.type == 'video' ? msg.videoURL : null;
   }
 
+  // Newest message from the OTHER party that the server has actually
+  // confirmed — the only kind whose id is meaningful to anyone else.
+  //
+  // The `seq != null` half is the important one. seq is assigned by
+  // FirestoreService._commitMessage when a message really commits, so a
+  // row without one exists only on this device. Handing such an id to
+  // markChatAsReadBy writes it into the SHARED chats/{chatId}.lastReadMsgId,
+  // where the other party's client resolves read receipts by looking it up
+  // with allMsgIds.indexOf() (see deliveryStatusFor in
+  // video_message_widgets.dart) — an id with no server document is never
+  // found, indexOf returns -1, and every one of their own messages falls
+  // back to "delivered" forever. Confirmed on-device 2026-08-01: a stale
+  // pending row left behind by a different account (see
+  // LocalMessageStore.clearAllForSignOut) was picked here, and read
+  // receipts stayed permanently broken in that one direction.
+  //
+  // Reads newest-first: LocalMessageStore sorts oldest-first, and rows with
+  // no seq deliberately sort last, so an unconfirmed row is exactly what a
+  // naive reversed-scan hits first.
+  Message? _lastConfirmedMessageFromOther(
+    List<Message> messages,
+    String currentUid,
+  ) {
+    for (final m in messages.reversed) {
+      if (m.senderId != currentUid && m.seq != null) return m;
+    }
+    return null;
+  }
+
   void _startReply(Message msg) {
+    // Same rule as the read receipt above: replyTo.id is denormalised onto
+    // the new message and shared with everyone, so it must reference a
+    // message that exists server-side. _showMessageOptionsSheet already
+    // routes pending messages to their own sheet, but the swipe-to-reply
+    // gesture reaches here directly.
+    if (msg.seq == null) return;
     setState(() => _replyingTo = msg);
   }
 
@@ -3537,23 +3646,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           }
         }
       }
-      final messages = next.messages;
-      if (messages.isNotEmpty) {
-        Message? lastOtherMsg;
-        for (final m in messages.reversed) {
-          if (m.senderId != currentUid) {
-            lastOtherMsg = m;
-            break;
+      // Only mark-as-read on a real signal: either the initial history load
+      // (opening the chat) or genuinely new messages arriving — NOT on
+      // every in-place modification (a reaction, a read receipt, a
+      // listened-status flip) that ChatMessagesController's diff also
+      // reports as a "changed" snapshot with isInitialLoad false and
+      // addedMessageIds empty. Firing unconditionally on every one of
+      // those used to write to chats/{chatId}
+      // (readBy/lastReadAt/lastReadMsgId/unreadCount) far more often than
+      // real reads happened — confirmed as a real contributor to a
+      // runaway chats/{chatId} write storm (together with the
+      // negotiation-seen dialog bug above).
+      if (next.isInitialLoad || next.addedMessageIds.isNotEmpty) {
+        final messages = next.messages;
+        if (messages.isNotEmpty) {
+          final lastOtherMsg = _lastConfirmedMessageFromOther(
+            messages,
+            currentUid,
+          );
+          if (lastOtherMsg != null &&
+              currentUid.isNotEmpty &&
+              lastOtherMsg.id == _lastMarkedReadMsgId) {
+            // TEMP DIAGNOSTIC — see ChatScreen.debugMarkReadGuardPassed's
+            // own comment.
+            ChatScreen.debugMarkReadGuardBlocked++;
           }
-        }
-        if (lastOtherMsg != null && currentUid.isNotEmpty) {
-          ref
-              .read(firestoreServiceProvider)
-              .markChatAsReadBy(
-                chatId: widget.chatId,
-                uid: currentUid,
-                lastMsgId: lastOtherMsg.id,
-              );
+          if (lastOtherMsg != null &&
+              currentUid.isNotEmpty &&
+              lastOtherMsg.id != _lastMarkedReadMsgId) {
+            // TEMP DIAGNOSTIC — see ChatScreen.debugMarkReadGuardPassed's
+            // own comment.
+            ChatScreen.debugMarkReadGuardPassed++;
+            _lastMarkedReadMsgId = lastOtherMsg.id;
+            ref
+                .read(firestoreServiceProvider)
+                .markChatAsReadBy(
+                  chatId: widget.chatId,
+                  uid: currentUid,
+                  lastMsgId: lastOtherMsg.id,
+                );
+          }
         }
       }
     });
@@ -3571,6 +3703,74 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final otherUidResolved = (otherUid != null && otherUid.isNotEmpty)
         ? otherUid
         : null;
+    // Stuck-unread-badge repair — see _lastUnreadRepairAt's own comment for
+    // the race this exists for. Safe to drive from build(): it only ever
+    // fires while the count is genuinely non-zero for a chat this user has
+    // open, the write it makes sets that same count to 0 (so the very next
+    // snapshot stops it re-firing — it converges rather than looping), and
+    // the 5s throttle bounds it to at most one write per 5 seconds even if
+    // the write itself keeps failing. Deliberately does NOT go through
+    // _lastMarkedReadMsgId: that guard is about "has the newest message I've
+    // read changed", which is exactly what has NOT changed here.
+    final myUnread =
+        ((chatMetaAsync.value?['unreadCount']
+                as Map<String, dynamic>?)?[currentUid]
+            as num?)
+            ?.toInt() ??
+        0;
+    if (myUnread > 0 && currentUid.isNotEmpty) {
+      final now = DateTime.now();
+      final throttled =
+          _lastUnreadRepairAt != null &&
+          now.difference(_lastUnreadRepairAt!) < const Duration(seconds: 5);
+      if (!throttled) {
+        final lastOtherMsg = _lastConfirmedMessageFromOther(
+          chatMessagesState.messages,
+          currentUid,
+        );
+        if (lastOtherMsg != null) {
+          _lastUnreadRepairAt = now;
+          final repairMsgId = lastOtherMsg.id;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            _firestoreService.markChatAsReadBy(
+              chatId: widget.chatId,
+              uid: currentUid,
+              lastMsgId: repairMsgId,
+            );
+          });
+        }
+      }
+    }
+    // Stale-preview repair. The chat card's preview is written server-side
+    // now (onNewMessage / onMessageTombstoned / onMessageDeleted in
+    // functions/src/index.ts), which means the client can notice it has
+    // fallen behind but cannot recompute it — the formatting lives in one
+    // place, on the server, on purpose. So it asks, and the callable
+    // decides whether anything actually needs doing.
+    //
+    // Two things make this behave on a screen that rebuilds constantly: the
+    // comparison itself is a cheap local one that is false in the normal
+    // case, and refreshChatPreviewIfStale keeps a 30s per-chat cooldown on
+    // top (with the callable re-checking staleness server-side before it
+    // writes anything). Chats predating lastMessageSeq report 0 and so heal
+    // on their first open, once.
+    final storedPreviewSeq =
+        (chatMetaAsync.value?['lastMessageSeq'] as int?) ?? 0;
+    final newestKnownSeq = chatMessagesState.messages.isEmpty
+        ? 0
+        : chatMessagesState.messages
+              .map((m) => m.seq ?? 0)
+              .reduce((a, b) => a > b ? a : b);
+    if (chatMetaAsync.hasValue && newestKnownSeq > storedPreviewSeq) {
+      unawaited(
+        _firestoreService.refreshChatPreviewIfStale(
+          chatId: widget.chatId,
+          storedSeq: storedPreviewSeq,
+          newestKnownSeq: newestKnownSeq,
+        ),
+      );
+    }
     // "İş təklif et" negotiation state — see watchChatMeta's own comment on
     // why clearedBy is deliberately absent from this projection but these
     // fields are present.
@@ -3586,85 +3786,128 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final eventType = chatMetaAsync.value?['eventType'] as String?;
     final eventLocation = chatMetaAsync.value?['eventLocation'] as String?;
     final eventNotes = chatMetaAsync.value?['eventNotes'] as String?;
-    final waitingForDate =
-        chatMetaAsync.value?['waitingForDate'] as bool? ?? false;
+    final waitingForDateAtRaw =
+        chatMetaAsync.value?['waitingForDateAt'] as String?;
+    final waitingForDateAt = waitingForDateAtRaw != null
+        ? DateTime.tryParse(waitingForDateAtRaw)
+        : null;
     final recipientAgreedNow =
         chatMetaAsync.value?['recipientAgreed'] as bool? ?? false;
+    final recipientAgreedAtRaw =
+        chatMetaAsync.value?['recipientAgreedAt'] as String?;
+    final recipientAgreedAt = recipientAgreedAtRaw != null
+        ? DateTime.tryParse(recipientAgreedAtRaw)
+        : null;
+    final negotiationSeenAtMap =
+        chatMetaAsync.value?['negotiationSeenAt'] as Map<String, dynamic>? ??
+        {};
     final myUidForNotify = FirebaseAuth.instance.currentUser?.uid ?? '';
     final isInitiatorForNotify = jobOfferBy == myUidForNotify;
-    // First real snapshot for THIS screen instance: seed both "already
-    // shown" markers from whatever the round's current state already is,
-    // WITHOUT popping a dialog for it — otherwise simply opening an
-    // already-agreed (or already-waiting) chat would immediately replay a
-    // stale notification as if it just happened (confirmed on-device: this
-    // exact regression is why the original design tracked a baseline at
-    // all). Every check below this only reacts to what happens AFTER this
-    // point.
-    if (!_negotiationBaselineSeeded && chatMetaAsync.hasValue) {
-      _negotiationBaselineSeeded = true;
-      if (recipientAgreedNow) {
-        _agreedCelebrationShownForOfferAt = jobOfferAtRaw;
-      }
-      if (waitingForDate) {
-        _waitingForDateNudgeShownForOfferAt = jobOfferAtRaw;
+    final mySeenAtRaw = negotiationSeenAtMap[myUidForNotify] as String?;
+    final mySeenAt = mySeenAtRaw != null
+        ? DateTime.tryParse(mySeenAtRaw)
+        : null;
+    // TEMP DIAGNOSTIC — remove once the İş təklif et live-update bug is
+    // confirmed/fixed. Surfaces every change chatMetaProvider's stream
+    // actually delivers to THIS device as an on-screen SnackBar, since
+    // debugPrint isn't observable on the physical test devices.
+    final debugSignature =
+        'jobOfferBy=$jobOfferBy waitingForDateAt=$waitingForDateAtRaw '
+        'eventDate=$eventDateRaw recipientAgreed=$recipientAgreedNow';
+    if (chatMetaAsync.hasValue && _debugLastMetaSignature != debugSignature) {
+      final isFirst = _debugLastMetaSignature == null;
+      debugPrint(
+        '🔧DIAG ${isFirst ? "FIRST" : "UPDATE"} uid=$myUidForNotify $debugSignature',
+      );
+      _debugLastMetaSignature = debugSignature;
+      if (!isFirst) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.blueGrey,
+              duration: const Duration(seconds: 4),
+              content: Text(
+                '🔧 ${DateFormat('HH:mm:ss').format(DateTime.now())} $debugSignature',
+                style: const TextStyle(fontSize: 11),
+              ),
+            ),
+          );
+        });
       }
     }
-    // Checked on every build (not only on a live ref.listen transition) and
-    // keyed by jobOfferAt — a fresh timestamp every time setJobOffer starts
-    // a new round — rather than a plain true/false flag: a transition-only
-    // design only notifies while this exact screen happens to be mounted
-    // at the precise moment the underlying field flips, and permanently
-    // misses it otherwise (confirmed on-device as a real, reproducible gap
-    // — the initiator's own "sizdən tarix gözləyir" nudge silently never
-    // appeared in a live two-device test even though waitingForDate had
-    // genuinely flipped true). Reacting to the CURRENT snapshot instead
-    // fires correctly regardless of when this screen (re)mounts relative to
-    // that flip, and jobOfferAt naturally re-arms both checks for every new
-    // round without needing any separate reset logic.
-    if (jobOfferAtRaw != null) {
-      if (waitingForDate &&
-          isInitiatorForNotify &&
-          _waitingForDateNudgeShownForOfferAt != jobOfferAtRaw) {
-        _waitingForDateNudgeShownForOfferAt = jobOfferAtRaw;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _showCenteredAlert(
-            prefix: '',
-            highlightedName: _otherUserCached?.name ?? '',
-            suffix: ' sizdən tarix gözləyir 📅',
-          );
-          _firestoreService.setWaitingForDate(
-            chatId: widget.chatId,
-            waiting: false,
-          );
-        });
-      }
-      if (recipientAgreedNow &&
-          _agreedCelebrationShownForOfferAt != jobOfferAtRaw) {
-        _agreedCelebrationShownForOfferAt = jobOfferAtRaw;
-        final isInitiatorForCelebration = isInitiatorForNotify;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          final otherName = _otherUserCached?.name ?? '';
-          _showCenteredAlert(
-            prefix: isInitiatorForCelebration ? '✅ ' : '✅ Siz razılaşdınız — ',
-            highlightedName: otherName,
-            suffix: isInitiatorForCelebration ? ' təklifinizi qəbul etdi!' : '',
-            onOk: () {
-              if (!mounted) return;
-              ref
-                  .read(agreementsTabRequestProvider.notifier)
-                  .set(isInitiatorForCelebration ? 'outgoing' : 'incoming');
-              context.go('/agreements');
-            },
-          );
-        });
-      }
+    // Durable, non-lossy negotiation dialog triggers — each signal
+    // (waitingForDateAt, recipientAgreedAt) carries its OWN timestamp,
+    // compared against this uid's own negotiationSeenAt mark (mirrors the
+    // existing lastReadAt.{uid} idiom, see markChatAsReadBy in
+    // firestore_service.dart) instead of a local in-memory "already shown"
+    // flag or a shared self-resetting flag. Fixes a confirmed on-device
+    // bug: both the initiator's "sizdən tarix gözləyir" nudge and the
+    // "agreed" celebration could be silently and permanently missed if the
+    // target screen wasn't live-mounted at the exact instant the
+    // underlying field flipped — reopening the chat now re-derives "is
+    // there anything unseen" from durable state instead of a transition
+    // that only fires while mounted. Agreed takes priority over a stale
+    // pending-date nudge if somehow both are unseen at once (agreed is the
+    // terminal state for this round).
+    if (recipientAgreedAt != null &&
+        (mySeenAt == null || recipientAgreedAt.isAfter(mySeenAt)) &&
+        _recipientAgreedSeenScheduledRaw != recipientAgreedAtRaw) {
+      // Set synchronously, in build() itself, BEFORE the
+      // addPostFrameCallback below — the whole point is that the very next
+      // rebuild (which can land before markNegotiationSeen's write has
+      // round-tripped back through chatMetaAsync) must already see this as
+      // "handled" rather than re-deriving the same stale "unseen" verdict.
+      _recipientAgreedSeenScheduledRaw = recipientAgreedAtRaw;
+      final isInitiatorForCelebration = isInitiatorForNotify;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _negotiationDialogShowing) return;
+        _negotiationDialogShowing = true;
+        final otherName = _otherUserCached?.name ?? '';
+        _showCenteredAlert(
+          prefix: isInitiatorForCelebration ? '✅ ' : '✅ Siz razılaşdınız — ',
+          highlightedName: otherName,
+          suffix: isInitiatorForCelebration ? ' təklifinizi qəbul etdi!' : '',
+          onOk: () {
+            if (!mounted) return;
+            ref
+                .read(agreementsTabRequestProvider.notifier)
+                .set(isInitiatorForCelebration ? 'outgoing' : 'incoming');
+            context.go('/agreements');
+          },
+        ).then((_) => _negotiationDialogShowing = false);
+        _firestoreService.markNegotiationSeen(
+          chatId: widget.chatId,
+          uid: myUidForNotify,
+        );
+      });
+    } else if (isInitiatorForNotify &&
+        waitingForDateAt != null &&
+        (mySeenAt == null || waitingForDateAt.isAfter(mySeenAt)) &&
+        _waitingForDateSeenScheduledRaw != waitingForDateAtRaw) {
+      _waitingForDateSeenScheduledRaw = waitingForDateAtRaw;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _negotiationDialogShowing) return;
+        _negotiationDialogShowing = true;
+        _showCenteredAlert(
+          prefix: '',
+          highlightedName: _otherUserCached?.name ?? '',
+          suffix: ' sizdən tarix gözləyir 📅',
+        ).then((_) => _negotiationDialogShowing = false);
+        _firestoreService.markNegotiationSeen(
+          chatId: widget.chatId,
+          uid: myUidForNotify,
+        );
+      });
     }
     final lastReadAt =
         chatMetaAsync.value?['lastReadAt'] as Map<String, dynamic>? ?? {};
-    final typingMap =
-        chatMetaAsync.value?['typing'] as Map<String, dynamic>? ?? {};
+    // typingMap is deliberately NOT read here — it lives on its own narrow
+    // chatTypingProvider stream, watched only by _buildJobOfferBanner's
+    // small status-line Consumer, so a typing.{uid} write (every ~3s while
+    // composing) rebuilds just that one Text widget instead of this whole
+    // ~1000-line build() method. See watchChatTyping's own comment in
+    // firestore_service.dart for the on-device cost of getting this wrong.
     // Read by the composer's typing-throttle listener (initState) outside
     // build()'s own scope — a plain field write, not setState.
     _jobOfferActive = jobOfferBy != null;
@@ -3913,9 +4156,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               eventType: eventType,
               eventLocation: eventLocation,
               eventNotes: eventNotes,
-              waitingForDate: waitingForDate,
+              waitingForDate: waitingForDateAt != null,
               lastReadAt: lastReadAt,
-              typingMap: typingMap,
               currentUid: currentUid,
               otherUidResolved: otherUidResolved,
             ),

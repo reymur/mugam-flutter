@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 import 'core/calls/call_listener_service.dart';
 import 'core/calls/callkit_service.dart';
+import 'core/media/media_cache_cleanup.dart';
 import 'core/presence/presence_service.dart';
 import 'core/queue/background_queue_processor.dart';
 import 'core/queue/message_send_controller.dart';
@@ -149,6 +150,16 @@ class MugamApp extends ConsumerStatefulWidget {
   ConsumerState<MugamApp> createState() => _MugamAppState();
 }
 
+// Last uid this device was signed in as, used to detect an account change
+// across app launches — see _reconcileLocalStoreWithSignedInUid.
+const String _lastActiveUidKey = 'mugam_last_active_uid_v1';
+// Set the instant an account change is detected and only cleared once the
+// media wipe has actually finished, so killing the app mid-wipe leaves the
+// intent recorded and the next launch finishes the job. Without it, a wipe
+// interrupted halfway would silently leave the rest of the previous
+// account's photos/videos on disk forever, with nothing left to signal it.
+const String _pendingMediaWipeKey = 'mugam_pending_media_wipe_v1';
+
 class _MugamAppState extends ConsumerState<MugamApp> {
   StreamSubscription<User?>? _authSub;
 
@@ -157,6 +168,7 @@ class _MugamAppState extends ConsumerState<MugamApp> {
     super.initState();
     _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
       if (user != null) {
+        unawaited(_reconcileLocalStoreWithSignedInUid(user.uid));
         PushNotificationService.instance.registerToken(user.uid);
         PresenceService.instance.start(user.uid);
         CallListenerService.instance.start(user.uid, (call) {
@@ -194,6 +206,69 @@ class _MugamAppState extends ConsumerState<MugamApp> {
     // previous session (LocalMessageStore.init(), already awaited above)
     // resume retrying immediately, app-wide.
     ref.read(messageSendControllerProvider);
+  }
+
+  // Second half of the cross-account leak fix (see
+  // LocalMessageStore.clearAllForSignOut for the first half and the full
+  // story). clearAllForSignOut only runs on the app's own "Çıxış" flow;
+  // this runs on EVERY sign-in, so it also covers the paths that flow
+  // doesn't own — a server-invalidated session, a token that expired while
+  // the app was killed, a restored device backup, or a future sign-out
+  // call site that forgets to clean up.
+  //
+  // Keyed on the last uid seen rather than on "did we just sign out",
+  // because authStateChanges' null emissions are not a reliable sign-out
+  // signal: Auth restores a persisted session off the main isolate (see
+  // auth_gate_screen.dart's own comment), so treating a transient null as
+  // a sign-out would wipe a legitimately in-flight send on ordinary cold
+  // starts. Signing back into the SAME account deliberately keeps its
+  // pending queue — that's the offline-send guarantee working as intended.
+  Future<void> _reconcileLocalStoreWithSignedInUid(String uid) async {
+    try {
+      final prefs = ref.read(sharedPreferencesProvider);
+      final store = ref.read(localMessageStoreProvider);
+      final previousUid = prefs.getString(_lastActiveUidKey);
+      if (previousUid != null && previousUid != uid) {
+        debugPrint(
+          '🧹 account changed on this device ($previousUid -> $uid) — '
+          'clearing local chat cache, pending queue and media caches',
+        );
+        // Recorded BEFORE any deleting starts (and before _lastActiveUidKey
+        // moves on), so an app kill part-way through can't lose the fact
+        // that a wipe is owed.
+        await prefs.setBool(_pendingMediaWipeKey, true);
+        await store.clearAllForSignOut();
+      }
+      await prefs.setString(_lastActiveUidKey, uid);
+      // Runs both for a change just detected above and for one whose wipe
+      // was interrupted on an earlier launch. Deliberately awaited inside
+      // this method (which the auth listener fires unawaited, so the UI is
+      // never blocked) and deliberately BEFORE the drop/log below, so the
+      // previous account's bytes go first and the new account's own
+      // freshly-cached media — which only starts arriving once its chats
+      // render — isn't what gets thrown away.
+      if (prefs.getBool(_pendingMediaWipeKey) ?? false) {
+        await clearMediaCachesForAccountChange();
+        await prefs.remove(_pendingMediaWipeKey);
+        debugPrint('🧹 media caches cleared for account change');
+      }
+      // Belt and braces for state that predates this guard (or arrives via
+      // a path neither branch above covers): anything queued under a
+      // different uid is unsendable under firestore.rules and is dropped.
+      final dropped = await store.dropForeignPendingMessages(uid);
+      if (dropped > 0) {
+        debugPrint(
+          '🧹 dropped $dropped pending message(s) belonging to another '
+          'account from this device\'s send queue',
+        );
+      }
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'main: local store / signed-in uid reconciliation failed',
+      );
+    }
   }
 
   @override
