@@ -413,6 +413,29 @@ class LocalMessageStore {
   // ChatMessagesController's own added-id diff (see its doc comment) sees
   // one clean before/after pair instead of N rapid-fire intermediate
   // states.
+  //
+  // DO NOT turn this into a two-way sync that deletes local rows missing
+  // from `reals`. It is upsert-only on purpose, and that is the single
+  // property standing between this store and total history loss.
+  //
+  // A Firestore snapshot can legitimately be empty while the chat is full:
+  // served from a cold local cache before the server answers, or delivered
+  // offline. Nothing in a snapshot distinguishes "these are all the
+  // messages" from "this is all I could reach right now" except
+  // `metadata.isFromCache`, which this method never sees — it receives an
+  // already-mapped List<Message>. So an empty or short list here means
+  // "nothing new to apply", never "everything else is gone", and the
+  // `reals.isEmpty` early return below is that rule made literal.
+  //
+  // This is the same class of mistake as N13 (see watchChatClearedAt), one
+  // where the blast radius is the user's entire message history rather than
+  // one stale filter — and unlike there, we get it right here only because
+  // the operation was never expressed as a synchronisation in the first
+  // place. Reaching for "prune rows the server no longer has" is the
+  // tempting version of this; a message deleted for everyone already
+  // arrives as a tombstone document (deletedForAll), and a hard purge is
+  // its own explicit path, so there is nothing that legitimately needs
+  // pruning-by-absence.
   Future<void> upsertManyFromFirestore({
     required String chatId,
     required List<Message> reals,

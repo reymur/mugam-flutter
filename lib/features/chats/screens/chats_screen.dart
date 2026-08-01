@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:firebase_auth/firebase_auth.dart' hide User;
@@ -46,6 +47,17 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
     duration: const Duration(milliseconds: 380),
   );
   bool _searchExpanded = false;
+  // The chat list can now sit in "loading" indefinitely: watchChats
+  // deliberately withholds the empty-and-merely-cached snapshot rather than
+  // let it be rendered as "you have no messages" (N14). That is the honest
+  // state, but an unbounded spinner is its own kind of unhelpful, so after
+  // this wait the screen says so and offers a retry. Bounded, and it heals
+  // by itself the moment a real snapshot arrives — the listener stays
+  // subscribed throughout, exactly as in the chat screen's own equivalent
+  // state (see ChatMessagesState.clearedAtUnavailable).
+  static const Duration _chatsUnknownTimeout = Duration(seconds: 4);
+  Timer? _chatsWaitTimer;
+  bool _chatsUnavailable = false;
   // Same city/instrument/rating/available/online filters as search_screen.dart
   // — reuses its FilterSheet/SearchFilters as-is (see _openFilters below)
   // rather than a separate, chat-specific filter set.
@@ -155,8 +167,37 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
     }
   }
 
+  // Arms/disarms the bounded wait described on _chatsUnknownTimeout, driven
+  // straight off the provider's own state each build rather than from a
+  // one-shot in initState — the stream can go back to loading at any time
+  // (a retry invalidates it), and this way there is one rule instead of two
+  // places that must agree.
+  void _syncChatsWait(AsyncValue<List<Chat>> chatsAsync) {
+    if (chatsAsync.hasValue || chatsAsync.hasError) {
+      _chatsWaitTimer?.cancel();
+      _chatsWaitTimer = null;
+      if (_chatsUnavailable) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _chatsUnavailable = false);
+        });
+      }
+      return;
+    }
+    if (_chatsUnavailable || _chatsWaitTimer != null) return;
+    _chatsWaitTimer = Timer(_chatsUnknownTimeout, () {
+      _chatsWaitTimer = null;
+      if (mounted) setState(() => _chatsUnavailable = true);
+    });
+  }
+
+  void _retryChats() {
+    setState(() => _chatsUnavailable = false);
+    ref.invalidate(chatsProvider(_currentUid));
+  }
+
   @override
   void dispose() {
+    _chatsWaitTimer?.cancel();
     _searchAnimController.dispose();
     _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
@@ -171,6 +212,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
     debugPrint('MY UID: ${FirebaseAuth.instance.currentUser?.uid}');
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final chatsAsync = ref.watch(chatsProvider(currentUid));
+    _syncChatsWait(chatsAsync);
 
     return Scaffold(
       backgroundColor: kBg,
@@ -459,9 +501,45 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
             child: _isSearching
                 ? _buildUserSearchResults()
                 : chatsAsync.when(
-                    loading: () => const Center(
-                      child: CircularProgressIndicator(color: kGold),
-                    ),
+                    // Two different "no list yet" states, and saying which
+                    // one it is matters: the spinner means we're still
+                    // asking, the message below means we asked and got
+                    // nothing back. What this must never do is fall through
+                    // to the empty-state copy — "Hələ mesaj yoxdur" is a
+                    // claim about the user's data, and we don't have their
+                    // data (N14).
+                    loading: () => _chatsUnavailable
+                        ? Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  'Söhbətlər yüklənmədi',
+                                  style: TextStyle(
+                                    color: kText,
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                const Text(
+                                  'Bağlantınızı yoxlayın',
+                                  style: TextStyle(color: kMuted, fontSize: 15),
+                                ),
+                                const SizedBox(height: 12),
+                                TextButton(
+                                  onPressed: _retryChats,
+                                  child: const Text(
+                                    'Yenidən cəhd et',
+                                    style: TextStyle(fontSize: 16),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : const Center(
+                            child: CircularProgressIndicator(color: kGold),
+                          ),
                     error: (err, stack) => Center(
                       child: Padding(
                         padding: const EdgeInsets.all(16),

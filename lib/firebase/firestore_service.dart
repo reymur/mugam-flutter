@@ -152,11 +152,26 @@ class FirestoreService {
     return _watchUsers(_db.collection('users'));
   }
 
+  // Skips the one snapshot that isn't an answer: empty AND merely from the
+  // local cache. That is "we haven't reached the server and have nothing
+  // stored", which the chat list used to render as the sentence "Hələ mesaj
+  // yoxdur" — telling a user with a full inbox that they have no messages
+  // (N14, seen on-device 02.08 on a cold install with no connection). Not
+  // emitting it leaves chatsProvider in its loading state, which the screen
+  // resolves into a real couldn't-load message.
+  //
+  // Deliberately narrow: an empty result WITH isFromCache false is the
+  // server genuinely saying "no chats", and a non-empty cached result is
+  // real data worth showing offline. Only the two together mean silence.
+  // Same test as watchChatClearedAt, one level up (a query rather than a
+  // document) — see its own comment for why this is exact rather than a
+  // heuristic.
   Stream<List<Chat>> watchChats(String uid) {
     return _db
         .collection('chats')
         .where('members', arrayContains: uid)
         .snapshots()
+        .where((snap) => !(snap.docs.isEmpty && snap.metadata.isFromCache))
         .map((snap) {
           final chats = snap.docs
               .map((doc) => Chat.fromFirestore(doc.id, doc.data(), uid))
