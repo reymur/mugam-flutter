@@ -4235,16 +4235,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          // Sized up from 14/12 after reading it on a real
+                          // device: at the smaller size the two lines were
+                          // hard to read, and this is the one screen state
+                          // whose entire job is to be understood and acted
+                          // on rather than glanced past.
                           const Text(
                             'Söhbət yüklənmədi',
-                            style: TextStyle(color: kMuted, fontSize: 14),
+                            style: TextStyle(
+                              color: kText,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 6),
                           const Text(
                             'Bağlantınızı yoxlayın',
-                            style: TextStyle(color: kMuted, fontSize: 12),
+                            style: TextStyle(color: kMuted, fontSize: 15),
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 12),
                           TextButton(
                             onPressed: () => ref
                                 .read(
@@ -4253,7 +4262,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                   ).notifier,
                                 )
                                 .retryClearedAt(),
-                            child: const Text('Yenidən cəhd et'),
+                            child: const Text(
+                              'Yenidən cəhd et',
+                              style: TextStyle(fontSize: 16),
+                            ),
                           ),
                         ],
                       ),
