@@ -3575,9 +3575,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // start or not — see its own doc comment), so chatMessagesState.messages
     // already has real content essentially immediately; no separate passive
     // fallback-cache layer needed here anymore.
-    final AsyncValue<List<Message>> messagesAsync = AsyncValue.data(
-      chatMessagesState.messages,
-    );
+    //
+    // hasLoadedOnce is nonetheless a real gate, not a formality: it also
+    // covers "the clear-chat cutoff isn't known yet", the state in which the
+    // controller deliberately reports no messages at all rather than an
+    // unfiltered list (see ChatMessagesState.hasLoadedOnce). It's normally
+    // already true on the first build — the cutoff is seeded synchronously
+    // from local disk — so the spinner below is reachable only on a chat
+    // this device has genuinely never opened.
+    final AsyncValue<List<Message>> messagesAsync =
+        chatMessagesState.hasLoadedOnce
+        ? AsyncValue.data(chatMessagesState.messages)
+        : const AsyncValue.loading();
     final chatDataAsync = ref.watch(chatDataProvider(widget.chatId));
     // Keeps the starred-ids stream subscribed so _isMessageStarred's
     // ref.read reflects live data in the message options sheet.
@@ -3658,7 +3667,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // runaway chats/{chatId} write storm (together with the
       // negotiation-seen dialog bug above).
       if (next.isInitialLoad || next.addedMessageIds.isNotEmpty) {
-        final messages = next.messages;
+        // rawMessages, not messages: a read receipt is about what arrived,
+        // not about what's on screen. lastReadMsgId is denormalised onto the
+        // shared chat document and resolved by the SENDER's client, so
+        // naming an older message because this user had deleted the newest
+        // one for themselves (or cleared the chat) would leave the sender's
+        // own latest message showing as unread forever — the same failure
+        // shape as L2, from the opposite direction.
+        final messages = next.rawMessages;
         if (messages.isNotEmpty) {
           final lastOtherMsg = _lastConfirmedMessageFromOther(
             messages,
@@ -3724,8 +3740,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           _lastUnreadRepairAt != null &&
           now.difference(_lastUnreadRepairAt!) < const Duration(seconds: 5);
       if (!throttled) {
+        // rawMessages for the same reason as the mark-as-read path above:
+        // this repair writes the same shared lastReadMsgId.
         final lastOtherMsg = _lastConfirmedMessageFromOther(
-          chatMessagesState.messages,
+          chatMessagesState.rawMessages,
           currentUid,
         );
         if (lastOtherMsg != null) {
@@ -3757,9 +3775,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // on their first open, once.
     final storedPreviewSeq =
         (chatMetaAsync.value?['lastMessageSeq'] as int?) ?? 0;
-    final newestKnownSeq = chatMessagesState.messages.isEmpty
+    // rawMessages: "the newest message this device knows exists" is a fact
+    // about the conversation, and the chat-card preview it's compared
+    // against is written from the same server-side view. Asking the visible
+    // list instead would report a lower seq for anyone who had cleared the
+    // chat or deleted the newest message for themselves, and a genuinely
+    // stale preview would then never be noticed.
+    final newestKnownSeq = chatMessagesState.rawMessages.isEmpty
         ? 0
-        : chatMessagesState.messages
+        : chatMessagesState.rawMessages
               .map((m) => m.seq ?? 0)
               .reduce((a, b) => a > b ? a : b);
     if (chatMetaAsync.hasValue && newestKnownSeq > storedPreviewSeq) {
@@ -4175,9 +4199,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       child: Text('Xəta', style: TextStyle(color: kMuted)),
                     ),
                     data: (messages) {
-                      final visibleMessages = messages
-                          .where((m) => !m.deletedFor.contains(currentUid))
-                          .toList();
+                      // Already filtered — per-user "delete for me" and the
+                      // clear-chat cutoff are both applied in one place now
+                      // (message_visibility.dart), so that pagination and
+                      // rendering can't disagree about what counts as a
+                      // visible row. This screen used to apply the
+                      // deletedFor half itself while pagination applied
+                      // neither, which is how a page could load 50 messages
+                      // and show none of them (B7/B8).
+                      final visibleMessages = messages;
                       // LocalMessageStore.watchChat already hands back one
                       // ordered list — pending sends and confirmed history
                       // as the same rows, no separate synthetic-object merge

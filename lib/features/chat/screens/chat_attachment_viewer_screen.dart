@@ -8,6 +8,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../../core/chat/message_visibility.dart';
+import '../../../core/store/local_message_store.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -613,16 +615,37 @@ class _ChatAttachmentViewerScreenState
       data: (media) {
         // chatMediaProvider's own doc comment (watchChatMedia in
         // firestore_service.dart) explicitly requires the caller to apply
-        // the per-user deletedFor filter itself — Firestore has no "array
-        // does not contain" query, so it can't be done server-side.
-        // Missing this let a message the current user had personally
-        // deleted still appear here and be reply-quotable, which then made
-        // chat_screen.dart's reply-jump silently fail afterward (that
-        // screen's own _lastMessages correctly filters deletedFor, by
-        // design, so the target could never be found there — this was
-        // mistaken for a timing race before the real cause was found).
+        // the per-user filters itself — Firestore has no "array does not
+        // contain" query, so deletedFor can't be done server-side, and the
+        // clear-chat cutoff is a per-user field on the chat document that
+        // the message query knows nothing about.
+        //
+        // Missing the deletedFor half let a message the current user had
+        // personally deleted still appear here and be reply-quotable, which
+        // then made chat_screen.dart's reply-jump silently fail afterward
+        // (that screen's own _lastMessages correctly filters it, by design,
+        // so the target could never be found there — this was mistaken for
+        // a timing race before the real cause was found). The cutoff half
+        // was missing outright: after "Çatı təmizlə" the gallery and its
+        // thumbnail strip kept browsing the whole pre-clear media history
+        // even though the chat itself showed none of it. Both now come from
+        // the same predicate the message list and pagination use.
+        //
+        // The cutoff is read synchronously from the local store rather than
+        // watched: this screen is only reachable by tapping a bubble in an
+        // already-open chat, so it has been resolved for a while by the
+        // time we get here (see LocalMessageStore.clearedAtFor).
+        final clearedAt = ref
+            .read(localMessageStoreProvider)
+            .clearedAtFor(widget.chatId);
         final filteredMedia = media
-            .where((m) => !m.deletedFor.contains(widget.currentUid))
+            .where(
+              (m) => isMessageVisible(
+                m,
+                uid: widget.currentUid,
+                clearedAt: clearedAt,
+              ),
+            )
             .toList();
         _resolveInitialPage(filteredMedia);
         final items = filteredMedia.isEmpty

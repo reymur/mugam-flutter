@@ -57,6 +57,15 @@ class LocalMessageStore {
   static const String _historyKeyPrefix = 'mugam_msg_cache_v1_';
   static const String _historyIndexKey = 'mugam_msg_cache_index_v1';
   static const String _pendingKey = 'mugam_pending_queue_v1';
+  // One small blob for ALL chats (chatId -> ISO string, or explicit null for
+  // "known: this chat was never cleared") rather than a key per chat: it has
+  // to be readable synchronously for every chat before the first frame (see
+  // clearedAtFor below), and one map read beats N key lookups. Deliberately
+  // NOT evicted alongside history — a cutoff is a few dozen bytes and is
+  // still correct for a chat whose messages have been evicted, whereas
+  // losing it is exactly the "history without a cutoff" state this whole
+  // mechanism exists to prevent.
+  static const String _clearedKey = 'mugam_msg_cleared_v1';
   static const _debounceDuration = Duration(milliseconds: 400);
 
   // chatId -> (messageId -> Message). Confirmed history merged with
@@ -68,6 +77,9 @@ class LocalMessageStore {
   final Map<String, Timer> _historyDebounce = {};
   Timer? _pendingDebounce;
   bool _pendingLoaded = false;
+  // Lazily read once, then kept in memory — clearedAtFor is on the path to
+  // the first frame of every chat open and must never do disk work there.
+  Map<String, dynamic>? _clearedCache;
 
   // Must be awaited once at app startup (see main.dart), before anything
   // reads/writes a pending send — hydrates every in-flight send across
@@ -115,6 +127,8 @@ class LocalMessageStore {
     }
     await _prefs.remove(_historyIndexKey);
     await _prefs.remove(_pendingKey);
+    await _prefs.remove(_clearedKey);
+    _clearedCache = null;
     _byChat.clear();
     _historyLoaded.clear();
     _accessOrder.clear();
@@ -165,6 +179,80 @@ class LocalMessageStore {
   }
 
   // ---- Reading ----
+
+  // The "Çatı təmizlə" cutoff for this chat, as last learned from Firestore.
+  // SYNCHRONOUS by design: it lives in the same store, under the same
+  // account-scoped lifetime, as the messages it filters, so a chat that has
+  // any local history to render always has its cutoff available in the very
+  // same turn — no await, no stream, nothing for the store's own disk read
+  // to race against. That invariant is the whole fix for N1: the cutoff used
+  // to arrive over the network (watchChatClearedAt) while the messages came
+  // off local disk, so the disk always won and the first frame rendered the
+  // pre-clear history before collapsing to empty.
+  //
+  // Three states, not two — this is what isClearedAtKnown separates:
+  //   known, cleared at T  -> entry present, non-null
+  //   known, never cleared -> entry present, null (written explicitly)
+  //   not known yet        -> no entry at all
+  // "Not known" is only reachable for a chat this account has never had open
+  // on this device (so there is no local history to leak either) or, once,
+  // for a chat whose history predates this mechanism shipping.
+  DateTime? clearedAtFor(String chatId) {
+    final raw = _readCleared()[chatId];
+    if (raw is! String) return null;
+    return DateTime.tryParse(raw);
+  }
+
+  bool isClearedAtKnown(String chatId) =>
+      _readCleared().containsKey(chatId);
+
+  // Records what watchChatClearedAt just reported, including a null (which
+  // is a real, positive answer — "this chat has never been cleared" — and is
+  // stored as such, see the three states above). Written straight through
+  // rather than debounced: it's a single short string, and it is the thing
+  // that decides whether the NEXT cold open of this chat can render its
+  // history at all.
+  Future<void> setClearedAt(String chatId, DateTime? value) async {
+    final cleared = _readCleared();
+    final encoded = value?.toIso8601String();
+    if (cleared.containsKey(chatId) && cleared[chatId] == encoded) return;
+    cleared[chatId] = encoded;
+    try {
+      await _prefs.setString(_clearedKey, jsonEncode(cleared));
+    } catch (e, st) {
+      debugPrint('LocalMessageStore: failed to write cleared blob ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'LocalMessageStore: failed to write cleared blob',
+      );
+    }
+  }
+
+  Map<String, dynamic> _readCleared() {
+    final cached = _clearedCache;
+    if (cached != null) return cached;
+    Map<String, dynamic> parsed;
+    try {
+      final raw = _prefs.getString(_clearedKey);
+      parsed = raw == null
+          ? <String, dynamic>{}
+          : Map<String, dynamic>.from(jsonDecode(raw) as Map);
+    } catch (e, st) {
+      // Corrupted blob: fall back to "nothing known", which degrades to the
+      // network path for every chat rather than to a wrong cutoff.
+      debugPrint('LocalMessageStore: corrupted cleared blob, clearing ($e)');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'LocalMessageStore: corrupted cleared blob',
+      );
+      _prefs.remove(_clearedKey);
+      parsed = <String, dynamic>{};
+    }
+    _clearedCache = parsed;
+    return parsed;
+  }
 
   // Ensures this chat's confirmed history is loaded, emits the current
   // snapshot immediately (async* generators replay the leading `yield` to

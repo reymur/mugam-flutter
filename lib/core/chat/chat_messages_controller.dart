@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../firebase/firestore_service.dart';
 import '../../firebase/models.dart';
 import '../store/local_message_store.dart';
+import 'message_visibility.dart';
 
 // Combined state this controller exposes — messages is the single, already
 // merged and ordered list LocalMessageStore.watchChat(chatId) provides
@@ -15,6 +16,15 @@ import '../store/local_message_store.dart';
 // here the way there used to be).
 class ChatMessagesState {
   final List<Message> messages;
+  // What this device KNOWS about, before any per-user visibility filter —
+  // the same raw list `messages` is derived from. Strictly for bookkeeping
+  // that is about the conversation rather than about the view: read
+  // receipts (lastReadMsgId must name a message the sender can resolve, and
+  // a message you deleted for yourself, or cleared away, is still a message
+  // you received) and the stale-preview seq comparison. NEVER render this —
+  // rendering is what `messages` is for, and mixing the two up is the exact
+  // mistake that made pagination and the message list disagree (B7/B8).
+  final List<Message> rawMessages;
   final bool isInitialLoad;
   // Message ids that are genuinely NEW to `messages` since the previous
   // emission — computed by diffing LocalMessageStore's own before/after
@@ -32,18 +42,24 @@ class ChatMessagesState {
   // wrong "added" signal the way it originally had to).
   final List<String> addedMessageIds;
   final bool isLoadingOlder;
-  // False once a fetchOlderMessages page comes back shorter than requested
-  // — there's nothing older left in this chat. Starts true (unknown) until
-  // the first page load actually confirms it one way or the other.
+  // Whether older messages still EXIST on the server past what's loaded —
+  // strictly a question about documents, never about how many of them the
+  // user can see (see message_visibility.dart's own doc comment for why
+  // conflating the two was B7/B8). False once a fetchOlderMessages page
+  // comes back shorter than requested, or once the cutoff proves nothing
+  // older could ever be visible. Starts true (unknown) until the first page
+  // load actually confirms it one way or the other.
   final bool hasMoreOlder;
-  // True once the local store has delivered at least one snapshot —
-  // including an empty one (a genuinely empty chat). This is what
-  // chat_screen.dart uses to decide whether it's still safe to show a
-  // loading spinner instead of the (possibly empty) real list.
+  // True once this controller can render a truthful list: the local store
+  // has delivered at least one snapshot (including an empty one — a
+  // genuinely empty chat) AND the "Çatı təmizlə" cutoff is known, so what's
+  // about to be painted can't contain messages the user already cleared.
+  // chat_screen.dart shows its loading spinner until this flips.
   final bool hasLoadedOnce;
 
   const ChatMessagesState({
     required this.messages,
+    required this.rawMessages,
     required this.isInitialLoad,
     required this.addedMessageIds,
     required this.isLoadingOlder,
@@ -53,6 +69,7 @@ class ChatMessagesState {
 
   ChatMessagesState copyWith({
     List<Message>? messages,
+    List<Message>? rawMessages,
     bool? isInitialLoad,
     List<String>? addedMessageIds,
     bool? isLoadingOlder,
@@ -61,6 +78,7 @@ class ChatMessagesState {
   }) {
     return ChatMessagesState(
       messages: messages ?? this.messages,
+      rawMessages: rawMessages ?? this.rawMessages,
       isInitialLoad: isInitialLoad ?? this.isInitialLoad,
       addedMessageIds: addedMessageIds ?? this.addedMessageIds,
       isLoadingOlder: isLoadingOlder ?? this.isLoadingOlder,
@@ -145,13 +163,44 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
   Set<String> _previousIds = const {};
   bool _storeHasEmittedOnce = false;
   // "Çatı təmizlə" cutoff for the CURRENT uid only — messages at or before
-  // this are dropped from the output. Fed by its own narrow
+  // this are dropped from the output. Kept live by its own narrow
   // watchChatClearedAt stream, never folded into a ref.watch on the
   // general chat-meta stream: that stream also carries the job-offer
   // typing indicator, which writes every few seconds while an offer is
   // pending — routing that through build() would tear down and recreate
   // _tailSub/_olderSub/_storeSub on every one of those writes.
+  //
+  // The stream is NOT how this value first becomes available, though — see
+  // _clearedAtKnown and LocalMessageStore.clearedAtFor.
   DateTime? _clearedAt;
+  // Whether _clearedAt above means anything yet. Null used to serve double
+  // duty as both "no cutoff" and "haven't heard yet", and since the store
+  // reads off local disk while the cutoff came over the network, "haven't
+  // heard yet" was the state the FIRST FRAME of every cleared chat was
+  // painted in — one frame of the entire pre-clear history, then a collapse
+  // to empty (N1, confirmed on-device). Seeded synchronously from the local
+  // store before anything subscribes, so in practice this is already true
+  // by the time the first frame is built; while it isn't, nothing is
+  // emitted at all (hasLoadedOnce stays false and the screen shows its
+  // spinner) rather than emitting an unfiltered list.
+  bool _clearedAtKnown = false;
+  Timer? _clearedUnknownFallback;
+  String _uid = '';
+
+  // How long to hold the chat in its loading state when the cutoff is
+  // genuinely unknown — no local record AND no answer from Firestore yet.
+  // Only reachable for a chat this account has never opened on this device
+  // (which therefore has no local history to show anyway) or, exactly once,
+  // for history that predates the local cutoff record. If it expires we
+  // render unfiltered: an indefinitely unreadable chat is a worse failure
+  // than a stale frame in a corner case that self-heals on the next open.
+  static const Duration _clearedUnknownTimeout = Duration(seconds: 4);
+
+  // Bounds one loadOlderMessages call when pages keep coming back with
+  // nothing the user can see (a long stretch of "delete for me" messages).
+  // Same rationale as chat_screen's _maxOlderPagesToSearch, smaller number:
+  // this runs on a scroll gesture, not on an explicit "find that message".
+  static const int _maxOlderPagesPerLoad = 5;
 
   @override
   ChatMessagesState build() {
@@ -167,22 +216,59 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
       _tailSub?.cancel();
       _olderSub?.cancel();
       _clearedSub?.cancel();
+      _clearedUnknownFallback?.cancel();
     });
     final uid = FirebaseAuth.instance.currentUser?.uid;
+    _uid = uid ?? '';
+    // Step one, before ANY subscription exists: take the cutoff off local
+    // disk, synchronously. This is what makes the ordering question moot
+    // instead of merely unlikely — there is no window in which the store
+    // could emit while the cutoff is still unknown, because the cutoff is
+    // already resolved on the line above the subscription. See
+    // LocalMessageStore.clearedAtFor for the three states and why a chat
+    // with local history always has a local cutoff to go with it.
+    if (_store.isClearedAtKnown(chatId)) {
+      _clearedAtKnown = true;
+      _clearedAt = _store.clearedAtFor(chatId);
+    } else {
+      // Never opened on this device by this account (nothing local to leak),
+      // or pre-existing history from before this record existed. Hold the
+      // loading state until Firestore answers, bounded by the timeout above.
+      _clearedUnknownFallback = Timer(_clearedUnknownTimeout, () {
+        if (_clearedAtKnown) return;
+        _clearedAtKnown = true;
+        state = _filtered(
+          isInitialLoad: state.isInitialLoad,
+          addedMessageIds: const [],
+          hasLoadedOnce: _storeHasEmittedOnce,
+        );
+      });
+    }
     if (uid != null) {
       _clearedSub = _firestoreService.watchChatClearedAt(chatId, uid).listen((
         clearedAt,
       ) {
+        _clearedUnknownFallback?.cancel();
+        _clearedUnknownFallback = null;
+        _clearedAtKnown = true;
         _clearedAt = clearedAt;
+        // Persist for the next cold open — including a null, which is a
+        // real answer ("never cleared"), not an absence of one.
+        unawaited(_store.setClearedAt(chatId, clearedAt));
         // Nothing new arrived — only the filter changed — so this never
         // reports any added ids, regardless of what the diff below would
         // otherwise say.
         state = _filtered(
           isInitialLoad: state.isInitialLoad,
           addedMessageIds: const [],
-          hasLoadedOnce: state.hasLoadedOnce,
+          hasLoadedOnce: _storeHasEmittedOnce,
         );
       });
+    } else {
+      // Signed out mid-teardown: there is no per-user cutoff to wait for.
+      _clearedUnknownFallback?.cancel();
+      _clearedUnknownFallback = null;
+      _clearedAtKnown = true;
     }
     // The fast path: local disk, no network round trip — this is what lets
     // the chat screen paint real content (including this device's own
@@ -207,7 +293,10 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
       state = _filtered(
         isInitialLoad: isInitial,
         addedMessageIds: addedIds,
-        hasLoadedOnce: true,
+        // Not "the store spoke", but "this list can be trusted" — while the
+        // cutoff is unknown the screen keeps its spinner instead of painting
+        // messages that may be past a cutoff we haven't learned yet.
+        hasLoadedOnce: _clearedAtKnown,
       );
     });
     _tailSub = _firestoreService.watchMessages(chatId).listen((messages) {
@@ -250,6 +339,7 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
     });
     return const ChatMessagesState(
       messages: [],
+      rawMessages: [],
       isInitialLoad: true,
       addedMessageIds: [],
       isLoadingOlder: false,
@@ -281,19 +371,29 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
         });
   }
 
+  // The one visibility test, shared with pagination below so the two can't
+  // disagree about what a page is worth — see message_visibility.dart.
+  bool _isVisible(Message m) =>
+      isMessageVisible(m, uid: _uid, clearedAt: _clearedAt);
+
   ChatMessagesState _filtered({
     required bool isInitialLoad,
     required List<String> addedMessageIds,
     required bool hasLoadedOnce,
   }) {
-    final clearedAt = _clearedAt;
-    final visible = clearedAt == null
-        ? _rawMessages
-        : _rawMessages
-              .where((m) => m.timestamp?.toDate().isAfter(clearedAt) ?? true)
-              .toList();
+    // While the cutoff is unknown this hands back an empty list, not the raw
+    // one — the guarantee is that an unfiltered message never leaves this
+    // controller at all, not merely that the widget tree happens to be
+    // showing a spinner over it (chat_screen is not the only reader of
+    // state.messages: the auto-scroll ref.listen and _lastMessages read it
+    // too, and "safe as long as every consumer remembers to check a flag"
+    // is precisely the kind of contract that decays).
+    final visible = _clearedAtKnown
+        ? _rawMessages.where(_isVisible).toList()
+        : const <Message>[];
     return state.copyWith(
       messages: visible,
+      rawMessages: _rawMessages,
       isInitialLoad: isInitialLoad,
       addedMessageIds: addedMessageIds,
       hasLoadedOnce: hasLoadedOnce,
@@ -303,31 +403,79 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
   // Called when the user scrolls near the top of the currently-loaded
   // history. No-ops (rather than erroring) if a load is already in flight
   // or a previous page already confirmed there's nothing older.
+  //
+  // Keeps fetching until the user actually GAINS something, which is a
+  // different question from whether the fetch returned documents (B7/B8).
+  // A page of 50 messages that are all "delete for me" or all past the
+  // clear-chat cutoff renders as zero new rows: the list doesn't grow, so
+  // the scroll position doesn't move, so nothing ever asks for the next
+  // page — the rest of the history became unreachable without a single
+  // error anywhere. The old code made exactly that mistake twice over: it
+  // ended pagination on page length (a raw document count, taken before any
+  // filtering) and left "nothing appeared" entirely unhandled.
   Future<void> loadOlderMessages() async {
     if (state.isLoadingOlder || !state.hasMoreOlder) return;
-    final boundary = _oldestEverLoaded ?? _tailOldest;
+    var boundary = _oldestEverLoaded ?? _tailOldest;
     if (boundary == null) return; // no messages loaded at all yet
     state = state.copyWith(isLoadingOlder: true);
     try {
-      final page = await _firestoreService.fetchOlderMessages(
-        chatId: chatId,
-        beforeSeq: boundary,
-      );
-      if (page.isEmpty) {
-        state = state.copyWith(isLoadingOlder: false, hasMoreOlder: false);
-        return;
+      var gained = 0;
+      var pages = 0;
+      var moreOlder = true;
+      while (gained == 0 && moreOlder && pages < _maxOlderPagesPerLoad) {
+        final page = await _firestoreService.fetchOlderMessages(
+          chatId: chatId,
+          beforeSeq: boundary!,
+        );
+        pages++;
+        if (page.isEmpty) {
+          moreOlder = false;
+          break;
+        }
+        // Short page = the query hit the start of the collection. This is
+        // the ONLY thing page length is allowed to decide.
+        moreOlder = page.length >= messageTailWindowSize;
+        await _store.upsertManyFromFirestore(chatId: chatId, reals: page);
+        // Every document this query can return is confirmed and therefore
+        // has a seq; a null would mean the next iteration has no boundary to
+        // page from, so stop rather than loop on the same page forever.
+        final oldest = page.first.seq;
+        if (oldest == null) {
+          moreOlder = false;
+          break;
+        }
+        _oldestEverLoaded = oldest;
+        boundary = oldest;
+        gained += page.where(_isVisible).length;
+        // Explicit yield between pages, same rationale (and the same real
+        // ANR) as chat_screen's own paging loop: a page served from
+        // Firestore's local cache resolves near-instantly, so the await
+        // above alone doesn't guarantee the frame scheduler a turn between
+        // this page's store upsert and the next fetch.
+        await Future<void>.delayed(Duration.zero);
+        // The cutoff makes pagination terminable instead of merely
+        // filtered: if even the NEWEST message on this page is at or before
+        // it, everything older is too, so there is nothing left to find. A
+        // cleared chat now stops after one page instead of scanning its
+        // entire history to display nothing.
+        final clearedAt = _clearedAt;
+        if (clearedAt != null && gained == 0) {
+          final newest = page.last.timestamp?.toDate();
+          if (newest != null && !newest.isAfter(clearedAt)) {
+            moreOlder = false;
+            break;
+          }
+        }
       }
-      await _store.upsertManyFromFirestore(chatId: chatId, reals: page);
-      _oldestEverLoaded = page.first.seq;
+      // Once per call rather than once per page — the listener only needs to
+      // end up covering the final range.
+      //
       // First page load: nothing was subscribed yet (no _oldestEverLoaded
-      // existed before this call), so start the older listener now. Later
+      // existed before this call), so this starts the older listener. Later
       // page loads just prepend more history to the range the existing
       // listener's lower bound needs to grow to cover too.
       _resubscribeOlderListener();
-      state = state.copyWith(
-        isLoadingOlder: false,
-        hasMoreOlder: page.length >= messageTailWindowSize,
-      );
+      state = state.copyWith(isLoadingOlder: false, hasMoreOlder: moreOlder);
     } catch (_) {
       state = state.copyWith(isLoadingOlder: false);
     }
