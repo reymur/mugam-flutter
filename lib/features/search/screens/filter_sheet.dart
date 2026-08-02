@@ -91,8 +91,10 @@ class SearchFilters {
       // against the lastSeen (epoch millis) toAlgoliaUserRecord denormalizes
       // (functions/src/algoliaShared.ts), keeps this filter's notion of
       // "online" consistent with what the rest of the app already shows.
+      // onlineQueryWindow, а не onlineGracePeriod: у запроса окно одно на
+      // всех (см. константу), тогда как у каждой сборки оно своё.
       final threshold = DateTime.now()
-          .subtract(User.onlineGracePeriod)
+          .subtract(User.onlineQueryWindow)
           .millisecondsSinceEpoch;
       clauses.add('online:true AND lastSeen > $threshold');
     }

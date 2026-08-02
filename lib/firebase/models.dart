@@ -27,6 +27,16 @@ class User {
   final bool goldRing;
   final bool online;
   final Timestamp? lastSeen;
+  // В каком чате человек СЕЙЧАС (N19). Пишется рядом с сердцебиением
+  // присутствия, поэтому у признака есть срок годности: перестало биться
+  // сердце — значение протухло, даже если само поле осталось.
+  // null — в приложении, но не в чате; ключа нет вовсе — сборка, которая
+  // его не пишет (см. переходное окно N19 в реестре).
+  final String? activeChatId;
+  // Интервал сердцебиения ЭТОЙ сборки. Сервер берёт двойной от него как
+  // окно свежести; клиент — здесь же, чтобы обе стороны судили по одному
+  // правилу, а смена частоты не требовала синхронного обновления всех.
+  final int? presenceIntervalMs;
   final String bio;
   final String? photoURL;
   final int gigs;
@@ -102,6 +112,8 @@ class User {
     required this.goldRing,
     required this.online,
     this.lastSeen,
+    this.activeChatId,
+    this.presenceIntervalMs,
     required this.bio,
     this.photoURL,
     this.gigs = 0,
@@ -131,6 +143,8 @@ class User {
       goldRing: (data['goldRing'] ?? false) as bool,
       online: (data['online'] ?? false) as bool,
       lastSeen: data['lastSeen'] as Timestamp?,
+      activeChatId: data['activeChatId'] as String?,
+      presenceIntervalMs: (data['presenceIntervalMs'] as num?)?.toInt(),
       bio: (data['bio'] ?? '') as String,
       photoURL: data['photoURL'] as String?,
       gigs: (data['gigs'] ?? 0) as int,
@@ -219,12 +233,70 @@ class User {
   // sign out (see docs/presence-system.md). Cross-checking against lastSeen
   // corrects for that: 2 minutes is double the 60s heartbeat interval, so
   // one missed/delayed beat doesn't falsely flip someone offline.
-  bool get isActuallyOnline {
-    if (!online) return false;
+  // Окно берётся из presenceFreshness, а не из константы: сборка
+  // объявляет свой интервал сердцебиения сама, и все признаки
+  // присутствия обязаны судить по одному правилу.
+  //
+  // Почему это важнее экономии: в шапке чата стоит «● Onlayn», а прямо
+  // под ней, в плашке переговоров, — строка присутствия. При разных
+  // окнах через минуту после ухода собеседника они начинали
+  // противоречить друг другу на одном экране («Onlayn» и «1 dəq əvvəl»
+  // одновременно). Два индикатора, спорящих между собой, хуже одного
+  // неточного: человек перестаёт верить обоим.
+  //
+  // Проверка `online` сохранена — она ловит явный выход из аккаунта
+  // (`stop()` пишет false). Убитое приложение ею не ловится вовсе, его
+  // отсекает только свежесть: в проде есть аккаунты с `online: true`,
+  // застрявшим на месяц.
+  bool get isActuallyOnline => online && isPresenceFresh;
+
+  // Окно свежести присутствия — ровно то же правило, что у сервера
+  // (functions/src/presence.ts, freshnessWindowMs): двойной интервал
+  // сердцебиения, объявленный самой сборкой, зажатый в 30–120 с. Поля
+  // нет — сборка его не объявляет, работает прежнее окно 120 с.
+  //
+  // Одно правило на клиенте и на сервере здесь важнее экономии: если
+  // экран покажет «в чате», а сервер в ту же секунду решит «слать push»,
+  // разойдутся не цифры, а обещания, данные человеку.
+  static const Duration presenceFreshnessFloor = Duration(seconds: 30);
+
+  // Окно для запроса «Onlayn indi» в поиске. Отдельная константа, потому
+  // что там окно нужно ОДНО на всех: фильтр уходит в Algolia одним
+  // числовым условием по денормализованному lastSeen, а условие «у
+  // каждого своё окно» в таком запросе не выражается — арифметики по
+  // записи там нет.
+  //
+  // Значение равно окну сборки, бьющейся раз в 30 с, то есть совпадает с
+  // тем, что показывает зелёная точка у всех, кто сегодня в ходу. Для
+  // сборки, не объявляющей интервал, точка держится дольше (120 с), чем
+  // живёт её место в выдаче, — расхождение в безопасную сторону:
+  // человека скорее не покажут, чем покажут отсутствующего.
+  static const Duration onlineQueryWindow = Duration(seconds: 60);
+
+  Duration get presenceFreshness {
+    final declared = presenceIntervalMs;
+    if (declared == null) return onlineGracePeriod;
+    final doubled = Duration(milliseconds: 2 * declared);
+    if (doubled < presenceFreshnessFloor) return presenceFreshnessFloor;
+    if (doubled > onlineGracePeriod) return onlineGracePeriod;
+    return doubled;
+  }
+
+  // Приложение подавало признаки жизни в пределах своего окна. В отличие
+  // от isActuallyOnline не смотрит на `online` вовсе: убитое приложение
+  // оставляет его `true` навсегда, и доверять ему нельзя — доверять можно
+  // только свежести.
+  bool get isPresenceFresh {
     final seen = lastSeen;
     if (seen == null) return false;
-    return DateTime.now().difference(seen.toDate()) < onlineGracePeriod;
+    return DateTime.now().difference(seen.toDate()) < presenceFreshness;
   }
+
+  // Смотрит ли человек СЕЙЧАС именно в этот чат. Оба условия обязательны:
+  // сам признак без срока годности застревал бы навсегда (ровно дефект
+  // N19), а свежесть без признака не говорит, ГДЕ человек находится.
+  bool isViewingChat(String chatId) =>
+      activeChatId == chatId && isPresenceFresh;
 
   // Same shape as isActuallyOnline above: a denormalized field alone isn't
   // trustworthy (mostRecentStatusExpiresAt is only ever written forward by

@@ -46,6 +46,7 @@ import 'file_message_widgets.dart';
 import 'forward_sheet.dart';
 import 'group_info_screen.dart';
 import 'job_offer_date_sheet.dart';
+import 'negotiation_presence_line.dart';
 import 'location_message_widgets.dart';
 import 'location_picker_screen.dart';
 import 'media_thumbnail_cache.dart';
@@ -956,19 +957,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     required String? eventLocation,
     required String? eventNotes,
     required bool waitingForDate,
-    required Map<String, dynamic> lastReadAt,
     required String currentUid,
     required String otherUidResolved,
   }) {
     final isInitiator = jobOfferBy == currentUid;
-
-    final otherReadAt = DateTime.tryParse(
-      lastReadAt[otherUidResolved]?.toString() ?? '',
-    );
-    final hasOtherRead =
-        jobOfferAt != null &&
-        otherReadAt != null &&
-        otherReadAt.isAfter(jobOfferAt);
 
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -998,32 +990,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           // while composing) rebuild only this one status line — see
           // chatTypingProvider's own comment for why it must stay off
           // chat_screen.dart's main build().
-          Consumer(
-            builder: (context, ref, _) {
-              final typingMap =
-                  ref.watch(chatTypingProvider(widget.chatId)).value ?? {};
-              final otherTypingAt = DateTime.tryParse(
-                typingMap[otherUidResolved]?.toString() ?? '',
-              );
-              final isOtherTyping =
-                  otherTypingAt != null &&
-                  DateTime.now().difference(otherTypingAt) <
-                      const Duration(seconds: 5);
-              // Recipient tapped "Razıyam" before a date existed — only
-              // meaningful to show the initiator (mugam-v2's own
-              // setWaitingForDate nudge).
-              final statusText = (isInitiator && waitingForDate)
-                  ? '🤝 cavab gözləyir'
-                  : (isOtherTyping
-                        ? '✍️ yazır...'
-                        : (hasOtherRead ? '👁 baxdı' : '⏳ hələ baxmayıb'));
-              return Text(
-                statusText,
-                style: const TextStyle(color: kMuted, fontSize: 13),
-              );
-            },
-          ),
-          const SizedBox(height: 8),
+          // Строку видит ТОЛЬКО инициатор. Получателю она сообщала,
+          // «посмотрел ли инициатор» — а тот сам это предложение и
+          // создал, то есть сведение бессмысленное. Наблюдалось вживую
+          // 02.08: получатель видел «hələ baxmayıb» про человека,
+          // который минуту назад отправил ему предложение.
+          if (isInitiator) ...[
+            Consumer(
+              builder: (context, ref, _) {
+                final typingMap =
+                    ref.watch(chatTypingProvider(widget.chatId)).value ?? {};
+                return NegotiationPresenceLine(
+                  chatId: widget.chatId,
+                  otherUser: _otherUserCached,
+                  otherTypingAt: DateTime.tryParse(
+                    typingMap[otherUidResolved]?.toString() ?? '',
+                  ),
+                  waitingForDate: waitingForDate,
+                );
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
           Row(
             children: [
               Expanded(
@@ -3983,8 +3971,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         );
       });
     }
-    final lastReadAt =
-        chatMetaAsync.value?['lastReadAt'] as Map<String, dynamic>? ?? {};
     // typingMap is deliberately NOT read here — it lives on its own narrow
     // chatTypingProvider stream, watched only by _buildJobOfferBanner's
     // small status-line Consumer, so a typing.{uid} write (every ~3s while
@@ -4240,7 +4226,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               eventLocation: eventLocation,
               eventNotes: eventNotes,
               waitingForDate: waitingForDateAt != null,
-              lastReadAt: lastReadAt,
               currentUid: currentUid,
               otherUidResolved: otherUidResolved,
             ),
