@@ -2947,15 +2947,6 @@ class FirestoreService {
     }
   }
 
-  // TEMP DIAGNOSTIC (2026-08-01) — real network-call counter, static so it
-  // survives across FirestoreService instance recreation (it's a plain
-  // Provider, so in practice there's only ever one instance, but static
-  // keeps this consistent with the other temp counters). Answers
-  // definitively whether writes chat_screen.dart's own
-  // guard/isInitialLoad gate lets through actually reach this method, vs.
-  // the write storm coming from somewhere else entirely. No extra network
-  // I/O of its own. Remove once confirmed/fixed.
-  static int debugMarkChatAsReadByCallCount = 0;
 
   // Какая расписка уже лежит в документе каждого чата. Живёт в сервисе, а
   // не в состоянии экрана — и это принципиально (A3).
@@ -2980,7 +2971,6 @@ class FirestoreService {
     required String uid,
     required String lastMsgId,
   }) async {
-    debugMarkChatAsReadByCallCount++;
     // Расписка про это же сообщение уже записана — писать нечего.
     // Дело не только в лишней записи в горячий документ: отправитель
     // видит на экране «Məlumat» ВРЕМЯ прочтения, и повторная запись
@@ -3039,15 +3029,6 @@ class FirestoreService {
   // "İş təklif et" — proposes a job to the other party in a 1:1 chat.
   // chat_screen.dart's menu hides this item once jobOfferBy is already
   // set, matching mugam-v2's own {!jobOfferBy && (...)} gating.
-  // TEMP DIAGNOSTIC (2026-08-01) — surfaces the actual exception from this
-  // method's write, which the try/catch below otherwise swallows silently.
-  // debugPrint isn't observable on the physical test devices and
-  // Crashlytics isn't queryable in real time, so this is the only way to
-  // see WHY a confirmed-reproducible "jobOfferBy never lands in Firestore"
-  // failure is happening — chat_screen.dart's debug SnackBar timer surfaces
-  // this string. Remove once confirmed/fixed.
-  static String? debugLastSetJobOfferError;
-
   Future<void> setJobOffer({
     required String chatId,
     required String uid,
@@ -3075,8 +3056,6 @@ class FirestoreService {
         'cancelledBy': null,
       }).timeout(_writeTimeout);
     } catch (e, st) {
-      // TEMP DIAGNOSTIC \u2014 see debugLastSetJobOfferError's own comment.
-      debugLastSetJobOfferError = e.toString();
       debugPrint('\u274c setJobOffer failed: $e');
       FirebaseCrashlytics.instance.recordError(
         e,

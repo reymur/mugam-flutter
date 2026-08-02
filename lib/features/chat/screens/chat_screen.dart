@@ -78,29 +78,6 @@ class ChatScreen extends ConsumerStatefulWidget {
   @override
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 
-  // TEMP DIAGNOSTIC (2026-08-01) — static so counts survive across State
-  // instance recreation, same rationale as
-  // ChatMessagesController.debugBuildCount: measures whether _ChatScreenState
-  // itself (not just the Riverpod controller, which separate evidence
-  // already showed stays stable) is being torn down and rebuilt by
-  // Flutter/GoRouter faster than createState() would suggest — e.g. if
-  // dispose()+initState() are firing back-to-back within the same frame,
-  // fast enough that a remote Firestore listener's own activeUsers diff
-  // (add+remove netting out before the next snapshot reaches it) can't
-  // reveal it, even though a per-widget field like _lastMarkedReadMsgId
-  // would still reset every cycle. No network I/O. Remove once confirmed.
-  static int debugWidgetInitCount = 0;
-  static int debugWidgetDisposeCount = 0;
-  // TEMP DIAGNOSTIC (2026-08-01) — counts how many times the ref.listen
-  // callback's mark-as-read block ran the _lastMarkedReadMsgId comparison,
-  // split by outcome: Passed = guard let it through (id actually differed,
-  // markChatAsReadBy was called), Blocked = guard caught a repeat of the
-  // same id and skipped the write. Cross-referenced against
-  // FirestoreService.debugMarkChatAsReadByCallCount — Passed should equal
-  // that count exactly; if it doesn't, the extra calls are coming from
-  // somewhere other than this code path entirely.
-  static int debugMarkReadGuardPassed = 0;
-  static int debugMarkReadGuardBlocked = 0;
 }
 
 // Neither `record` nor `just_audio` ever sends AVAudioSession the explicit
@@ -202,12 +179,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // DateTime.now(). Same 20s interval and reasoning as
   // about_contact_screen.dart's _presenceRefreshTimer.
   Timer? _presenceRefreshTimer;
-  // TEMP DIAGNOSTIC — see ChatMessagesController.debugBuildCount's own
-  // comment. Surfaces build()/dispose() counts as an on-screen SnackBar
-  // every few seconds (debugPrint isn't observable on the physical test
-  // devices) so it's visible without needing the chat's own chatMetaAsync
-  // to change first, unlike the negotiation debugSignature SnackBar above.
-  Timer? _debugControllerCountTimer;
   StreamSubscription<Amplitude>? _amplitudeSub;
   final List<double> _rawAmplitudes = [];
   bool _isLocked = false;
@@ -265,8 +236,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // ref.listen callbacks below — both outside build()'s own scope — can
   // read the other party's name for the centered alert dialogs.
   User? _otherUserCached;
-  // TEMP DIAGNOSTIC — see build()'s own comment on debugSignature.
-  String? _debugLastMetaSignature;
   // Synchronous dedup guards for the negotiation dialog/markNegotiationSeen
   // side effect below (see build()'s own comment there) — each holds the
   // raw timestamp string of the signal it already scheduled a
@@ -313,8 +282,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   @override
   void initState() {
     super.initState();
-    // TEMP DIAGNOSTIC — see ChatScreen.debugWidgetInitCount's own comment.
-    ChatScreen.debugWidgetInitCount++;
     _firestoreService = ref.read(firestoreServiceProvider);
     _messageController.addListener(() {
       final hasText = _messageController.text.trim().isNotEmpty;
@@ -363,14 +330,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _presenceRefreshTimer = Timer.periodic(const Duration(seconds: 20), (_) {
       if (mounted) setState(() {});
     });
-    // TEMP DIAGNOSTIC timer disabled — the periodic SnackBar it showed
-    // every 3s was covering the composer's text field, making it
-    // impossible to type/send during testing. The underlying counters
-    // (ChatMessagesController.debugBuildCount et al.) are left in place,
-    // just no longer surfaced via a recurring popup — no longer needed
-    // now that the controller/widget lifecycle question they were added
-    // to answer is resolved.
-    _debugControllerCountTimer = null;
   }
 
   void _initBeepPlayer() async {
@@ -396,8 +355,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   @override
   void dispose() {
-    // TEMP DIAGNOSTIC — see ChatScreen.debugWidgetInitCount's own comment.
-    ChatScreen.debugWidgetDisposeCount++;
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     if (currentUid != null && currentUid.isNotEmpty) {
       _firestoreService.removeActiveUser(
@@ -414,7 +371,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _audioRecorder.dispose();
     _recordingTimer?.cancel();
     _presenceRefreshTimer?.cancel();
-    _debugControllerCountTimer?.cancel();
     _typingThrottleTimer?.cancel();
     _amplitudeSub?.cancel();
     _pulseController.dispose();
@@ -3758,13 +3714,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           );
           if (lastOtherMsg != null &&
               currentUid.isNotEmpty &&
-              lastOtherMsg.id == _lastMarkedReadMsgId) {
-            // TEMP DIAGNOSTIC — see ChatScreen.debugMarkReadGuardPassed's
-            // own comment.
-            ChatScreen.debugMarkReadGuardBlocked++;
-          }
-          if (lastOtherMsg != null &&
-              currentUid.isNotEmpty &&
               lastOtherMsg.id != _lastMarkedReadMsgId) {
             // Гвард выше живёт в состоянии экрана и умирает вместе с ним,
             // поэтому при КАЖДОМ повторном открытии чата он пуст — и
@@ -3785,9 +3734,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 (ref.read(chatMetaProvider(widget.chatId)).value?['lastReadMsgId']
                         as Map<String, dynamic>?)?[currentUid]
                     as String?;
-            // TEMP DIAGNOSTIC — see ChatScreen.debugMarkReadGuardPassed's
-            // own comment.
-            ChatScreen.debugMarkReadGuardPassed++;
             _lastMarkedReadMsgId = lastOtherMsg.id;
             if (lastOtherMsg.id != recordedMsgId) {
               ref
@@ -3960,35 +3906,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final mySeenAt = mySeenAtRaw != null
         ? DateTime.tryParse(mySeenAtRaw)
         : null;
-    // TEMP DIAGNOSTIC — remove once the İş təklif et live-update bug is
-    // confirmed/fixed. Surfaces every change chatMetaProvider's stream
-    // actually delivers to THIS device as an on-screen SnackBar, since
-    // debugPrint isn't observable on the physical test devices.
-    final debugSignature =
-        'jobOfferBy=$jobOfferBy waitingForDateAt=$waitingForDateAtRaw '
-        'eventDate=$eventDateRaw recipientAgreed=$recipientAgreedNow';
-    if (chatMetaAsync.hasValue && _debugLastMetaSignature != debugSignature) {
-      final isFirst = _debugLastMetaSignature == null;
-      debugPrint(
-        '🔧DIAG ${isFirst ? "FIRST" : "UPDATE"} uid=$myUidForNotify $debugSignature',
-      );
-      _debugLastMetaSignature = debugSignature;
-      if (!isFirst) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              backgroundColor: Colors.blueGrey,
-              duration: const Duration(seconds: 4),
-              content: Text(
-                '🔧 ${DateFormat('HH:mm:ss').format(DateTime.now())} $debugSignature',
-                style: const TextStyle(fontSize: 11),
-              ),
-            ),
-          );
-        });
-      }
-    }
     // Durable, non-lossy negotiation dialog triggers — each signal
     // (waitingForDateAt, recipientAgreedAt) carries its OWN timestamp,
     // compared against this uid's own negotiationSeenAt mark (mirrors the

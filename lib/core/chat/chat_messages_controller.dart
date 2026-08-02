@@ -140,28 +140,6 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
 
   final String chatId;
 
-  // TEMP DIAGNOSTIC (2026-08-01) — static so the counts survive across
-  // instance recreation, to measure directly whether Riverpod's
-  // autoDispose is tearing this controller down and rebuilding it far more
-  // often than the enclosing chat screen widget (which separate evidence —
-  // the activeUsers field on chats/{chatId} never changing across a live
-  // Firestore diff — already showed stays mounted throughout). Purely
-  // in-memory, no network I/O: read by chat_screen.dart's debug-SnackBar
-  // timer. Remove once the root cause of the chats/{chatId} write storm is
-  // confirmed/fixed.
-  static int debugBuildCount = 0;
-  static int debugDisposeCount = 0;
-  static final List<DateTime> _debugRecentBuilds = [];
-
-  static String debugSnapshot() {
-    final now = DateTime.now();
-    _debugRecentBuilds.removeWhere(
-      (t) => now.difference(t) > const Duration(seconds: 10),
-    );
-    return 'build=$debugBuildCount dispose=$debugDisposeCount '
-        'builds/10s=${_debugRecentBuilds.length}';
-  }
-
   late final FirestoreService _firestoreService;
   late final LocalMessageStore _store;
   StreamSubscription<List<Message>>? _storeSub;
@@ -230,14 +208,9 @@ class ChatMessagesController extends Notifier<ChatMessagesState> {
 
   @override
   ChatMessagesState build() {
-    // TEMP DIAGNOSTIC — see debugBuildCount's own comment above.
-    debugBuildCount++;
-    _debugRecentBuilds.add(DateTime.now());
     _firestoreService = ref.watch(firestoreServiceProvider);
     _store = ref.watch(localMessageStoreProvider);
     ref.onDispose(() {
-      // TEMP DIAGNOSTIC — see debugBuildCount's own comment above.
-      debugDisposeCount++;
       _storeSub?.cancel();
       _tailSub?.cancel();
       _olderSub?.cancel();
