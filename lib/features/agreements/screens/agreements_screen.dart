@@ -2319,6 +2319,10 @@ class _EventFormModalState extends State<_EventFormModal> {
   Future<void> _doSave() async {
     setState(() => _saving = true);
     try {
+      // «Плавающее» гражданское время — НЕ приводить к UTC вместе с
+      // отметками момента (N4, тот же случай, что eventDate на чате):
+      // время тədbir'а привязано к месту проведения, а не к поясу
+      // смотрящего.
       final dateIso = _selectedDate.toIso8601String();
       final notes = _computedNotes;
       if (widget.existingEvent != null) {

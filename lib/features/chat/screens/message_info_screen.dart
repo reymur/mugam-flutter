@@ -33,7 +33,12 @@ class MessageInfoScreen extends ConsumerWidget {
       dt = DateTime.tryParse(value);
     }
     if (dt == null) return '';
-    return DateFormat('d MMM, HH:mm').format(dt);
+    // toLocal() обязателен: deliveredTo/lastReadAt теперь пишутся в UTC
+    // (N4, см. nowInstantIso), а DateFormat рисует ровно то, что ему
+    // дали — без этого время доставки и прочтения показывалось бы по
+    // UTC, то есть на смещение пояса назад. Для значений из Timestamp
+    // вызов безвреден: toDate() и так отдаёт локальное.
+    return DateFormat('d MMM, HH:mm').format(dt.toLocal());
   }
 
   @override

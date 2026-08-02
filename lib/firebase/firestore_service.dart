@@ -10,6 +10,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/models/activity_type.dart';
+import '../core/time/instant_iso.dart';
 import '../core/store/shared_stream.dart';
 import 'models.dart';
 
@@ -2331,7 +2332,7 @@ class FirestoreService {
       if (data == null || data['deletedForAll'] == true) return;
       tx.update(msgRef, {
         'deletedForAll': true,
-        'deletedAt': DateTime.now().toIso8601String(),
+        'deletedAt': nowInstantIso(),
         'text': '',
       });
     });
@@ -2678,7 +2679,7 @@ class FirestoreService {
   }) async {
     try {
       await _db.collection('chats').doc(chatId).update({
-        'deliveredTo.$uid': DateTime.now().toIso8601String(),
+        'deliveredTo.$uid': nowInstantIso(),
       }).timeout(_writeTimeout);
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
@@ -2809,7 +2810,7 @@ class FirestoreService {
     try {
       await _db.collection('chats').doc(chatId).update({
         'readBy': FieldValue.arrayUnion([uid]),
-        'lastReadAt.$uid': DateTime.now().toIso8601String(),
+        'lastReadAt.$uid': nowInstantIso(),
         'lastReadMsgId.$uid': lastMsgId,
         'unreadCount.$uid': 0,
       }).timeout(_writeTimeout);
@@ -2832,7 +2833,7 @@ class FirestoreService {
   }) async {
     try {
       await _db.collection('chats').doc(chatId).update({
-        'clearedBy.$uid': DateTime.now().toIso8601String(),
+        'clearedBy.$uid': nowInstantIso(),
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c clearChatForUser failed: $e');
@@ -2863,7 +2864,7 @@ class FirestoreService {
     try {
       await _db.collection('chats').doc(chatId).update({
         'jobOfferBy': uid,
-        'jobOfferAt': DateTime.now().toIso8601String(),
+        'jobOfferAt': nowInstantIso(),
         // A prior round on this same (persistent, never-forked) chat may
         // have left recipientAgreed stuck at true forever \u2014 acceptJobOffer
         // only ever sets it true, nothing ever resets it back on accept.
@@ -2906,6 +2907,12 @@ class FirestoreService {
   }) async {
     try {
       await _db.collection('chats').doc(chatId).update({
+        // НЕ приводить к UTC вместе с остальными отметками времени
+        // (N4). Это «плавающее» гражданское время: тədbir в 20:00
+        // остаётся в 20:00 в том месте, где он проходит, а не сдвигается
+        // вслед за поясом смотрящего. Перевод в UTC сломал бы показ даты
+        // договора при поездке — то есть создал бы баг там, где его нет.
+        // Единообразие здесь — ложная цель, см. запрет в реестре.
         'eventDate': eventDate.toIso8601String(),
         'eventType': eventType,
         'eventLocation': eventLocation,
@@ -2947,7 +2954,7 @@ class FirestoreService {
   }) async {
     try {
       await _db.collection('chats').doc(chatId).update({
-        'waitingForDateAt': waiting ? DateTime.now().toIso8601String() : null,
+        'waitingForDateAt': waiting ? nowInstantIso() : null,
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c setWaitingForDate failed: $e');
@@ -2972,7 +2979,7 @@ class FirestoreService {
   }) async {
     try {
       await _db.collection('chats').doc(chatId).update({
-        'negotiationSeenAt.$uid': DateTime.now().toIso8601String(),
+        'negotiationSeenAt.$uid': nowInstantIso(),
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c markNegotiationSeen failed: $e');
@@ -3038,7 +3045,7 @@ class FirestoreService {
     try {
       await _db.collection('chats').doc(chatId).update({
         'recipientAgreed': true,
-        'recipientAgreedAt': DateTime.now().toIso8601String(),
+        'recipientAgreedAt': nowInstantIso(),
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c acceptJobOffer failed: $e');
@@ -3060,7 +3067,7 @@ class FirestoreService {
   }) async {
     try {
       await _db.collection('chats').doc(chatId).update({
-        'typing.$uid': DateTime.now().toIso8601String(),
+        'typing.$uid': nowInstantIso(),
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c setTyping failed: $e');

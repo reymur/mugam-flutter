@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import '../core/time/instant_iso.dart';
 
 // Mirrors mugam-v2's users/{uid}/pushTokens/{deviceId} = {token, updatedAt}
 // shape exactly (same collection, same field names, updatedAt as an ISO
@@ -63,7 +64,7 @@ class PushNotificationService {
         .doc(uid)
         .collection('pushTokens')
         .doc(deviceId)
-        .set({'token': token, 'updatedAt': DateTime.now().toIso8601String()});
+        .set({'token': token, 'updatedAt': nowInstantIso()});
   }
 
   Future<void> unregisterToken(String uid) async {
