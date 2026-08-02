@@ -10,6 +10,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/models/activity_type.dart';
+import '../core/store/shared_stream.dart';
 import 'models.dart';
 
 // Live-tail window size for watchMessages (finding #4) — how many of the
@@ -31,7 +32,59 @@ class ChatClearedAt {
   // Callers must not persist or act on `at` while this is false.
   final bool isKnown;
   final DateTime? at;
+
+  // Value equality exists specifically so watchChatClearedAt can end in
+  // `.distinct()`: it now maps off a shared chats/{chatId} listener that
+  // also fires for typing/preview writes, and without equality every
+  // unrelated write to that document would look like a new cutoff and
+  // re-run ChatMessagesController's subscription rebuild.
+  @override
+  bool operator ==(Object other) =>
+      other is ChatClearedAt && other.isKnown == isKnown && other.at == at;
+
+  @override
+  int get hashCode => Object.hash(isKnown, at);
 }
+
+// Deep equality for the projected maps below. Written here rather than
+// pulled from package:collection because that package isn't a declared
+// dependency of this app, and the shapes involved are small and known:
+// maps, lists and scalars, nested a couple of levels at most.
+bool _deepEquals(Object? a, Object? b) {
+  if (identical(a, b)) return true;
+  if (a is Map && b is Map) {
+    if (a.length != b.length) return false;
+    for (final key in a.keys) {
+      if (!b.containsKey(key) || !_deepEquals(a[key], b[key])) return false;
+    }
+    return true;
+  }
+  if (a is List && b is List) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!_deepEquals(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  return a == b;
+}
+
+// Один слушатель на chats/{chatId} вместо трёх (B17).
+//
+// Три проекции ниже — watchChatMeta, watchChatTyping,
+// watchChatClearedAt — обязаны остаться раздельными ПОТОКАМИ: свести их
+// в один было замерено как вредное (запись «печатает» раз в ~3 с
+// перестраивала весь ~1000-строчный build() экрана чата, см. комментарий
+// watchChatTyping). Но раздельные потоки никогда не требовали
+// раздельных СЛУШАТЕЛЕЙ: Firestore тарифицирует чтение документа на
+// каждого слушателя, то есть за одну запись в самый горячий документ
+// приложения платилось трижды.
+//
+// Механику совместного слушателя — повтор последнего снимка новому
+// подписчику, отсутствие щели между повтором и подключением, полное
+// забывание состояния после ухода последнего — держит SharedStream
+// (lib/core/store/shared_stream.dart), где она покрыта тестами. Здесь
+// остаётся только проекция и `.distinct()` на каждой из них.
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -57,6 +110,31 @@ class FirestoreService {
   // seq value itself, which always comes from the transaction's own read of
   // that document, so a stale entry here can't produce a wrong seq.
   final Set<String> _seededCounterChats = {};
+
+  // Живые слушатели chats/{chatId}, по одному на чат (B17). Запись
+  // исчезает сама, как только от неё отписался последний потребитель —
+  // см. SharedStream.
+  final Map<String, SharedStream<DocumentSnapshot<Map<String, dynamic>>>>
+  _sharedChatDocs = {};
+
+  // includeMetadataChanges нужен ровно одному потребителю —
+  // watchChatClearedAt, которому без него не отличить «документа нет в
+  // кэше» от «сервер подтвердил, что документа нет» (N13). Раз слушатель
+  // теперь один на всех, флаг включён на нём; остальным проекциям лишние
+  // события гасит `.distinct()`.
+  Stream<DocumentSnapshot<Map<String, dynamic>>> _watchChatDoc(String chatId) {
+    final shared = _sharedChatDocs.putIfAbsent(
+      chatId,
+      () => SharedStream<DocumentSnapshot<Map<String, dynamic>>>(
+        () => _db
+            .collection('chats')
+            .doc(chatId)
+            .snapshots(includeMetadataChanges: true),
+        onIdle: () => _sharedChatDocs.remove(chatId),
+      ),
+    );
+    return shared.stream;
+  }
 
   Future<User?> fetchUserById(String uid) async {
     final doc = await _db.collection('users').doc(uid).get();
@@ -2479,7 +2557,7 @@ class FirestoreService {
   }
 
   Stream<Map<String, dynamic>> watchChatMeta(String chatId) {
-    return _db.collection('chats').doc(chatId).snapshots().map((snap) {
+    return _watchChatDoc(chatId).map((snap) {
       final data = snap.data() ?? {};
       return {
         // Lets chat_screen.dart's AppBar title resolve off this live
@@ -2544,7 +2622,11 @@ class FirestoreService {
         // field, which reads as 0 and therefore heals on first open.
         'lastMessageSeq': (data['lastMessageSeq'] as num?)?.toInt() ?? 0,
       };
-    });
+      // Общий слушатель приносит и типизацию, и метаданные — всё, что не
+      // меняет именно эту проекцию, гасится здесь, чтобы chat_screen не
+      // перестраивался на чужие записи. Ровно та цена, ради которой эти
+      // потоки и держат раздельными.
+    }).distinct(_deepEquals);
   }
 
   Future<void> markChatAsDelivered({
@@ -2969,10 +3051,7 @@ class FirestoreService {
   // and would never be raised, stranding a genuinely deleted chat in the
   // unknown state forever.
   Stream<ChatClearedAt> watchChatClearedAt(String chatId, String uid) {
-    return _db
-        .collection('chats')
-        .doc(chatId)
-        .snapshots(includeMetadataChanges: true)
+    return _watchChatDoc(chatId)
         .map((snap) {
           if (!snap.exists && snap.metadata.isFromCache) {
             return const ChatClearedAt.unknown();
@@ -2982,7 +3061,8 @@ class FirestoreService {
           final value = raw[uid];
           if (value == null) return const ChatClearedAt.known(null);
           return ChatClearedAt.known(DateTime.tryParse(value.toString()));
-        });
+        })
+        .distinct();
   }
 
   // Narrow, dedicated stream of just the typing map — same rationale as
@@ -2999,9 +3079,9 @@ class FirestoreService {
   // Consumer built around this stream (see _buildJobOfferBanner) should
   // ever watch it.
   Stream<Map<String, dynamic>> watchChatTyping(String chatId) {
-    return _db.collection('chats').doc(chatId).snapshots().map((snap) {
-      return Map<String, dynamic>.from(snap.data()?['typing'] ?? {});
-    });
+    return _watchChatDoc(chatId)
+        .map((snap) => Map<String, dynamic>.from(snap.data()?['typing'] ?? {}))
+        .distinct(_deepEquals);
   }
 
   Future<List<Event>> fetchEvents() async {
