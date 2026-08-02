@@ -391,6 +391,19 @@ class MessageSendController extends Notifier<void> {
   // anymore), but the delay is kept anyway as a deliberate grace window so
   // reactions/read-receipts arriving from the live sync have a moment to
   // land on the now-confirmed row rather than racing its own transition.
+  //
+  // ЗАМЕРЕНО 02.08 (видео с устройства, покадрово): гарантии порядка нет
+  // формально, но на практике порядок устойчив — часики снимает ЖИВОЙ
+  // СЛУШАТЕЛЬ, а не этот путь. При диагностической задержке в 3000 мс
+  // здесь галочки всё равно появлялись через ~500 мс после отправки: то
+  // есть _upsertOne успевал первым, а markConfirmed приходил уже на
+  // сброшенную строку и переписывал её впустую (там теперь стоит
+  // проверка состояния перед записью).
+  //
+  // Убирать этот путь на этом основании НЕЛЬЗЯ: он срабатывает от
+  // возврата транзакции и не зависит от слушателя, то есть на медленной
+  // сети выигрывает уже он. Два пути — не дублирование, а две независимые
+  // дороги к одному факту; подробнее — принцип I5 в реестре.
   Future<void> _confirmAfterDelay({
     required String chatId,
     required String messageId,

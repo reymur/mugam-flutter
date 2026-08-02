@@ -361,6 +361,14 @@ class LocalMessageStore {
   }) async {
     final existing = _byChat[chatId]?[messageId];
     if (existing == null) return;
+    // Живой слушатель почти всегда успевает первым (замер в
+    // MessageSendController._confirmAfterDelay: ~500 мс против 3000 мс),
+    // и тогда строка уже подтверждена ровно этим же номером. Раньше
+    // подтверждение всё равно записывалось поверх — то есть каждая
+    // отправка стоила лишней перезаписи истории и очереди на диск.
+    // Проверить состояние дешевле, чем писать вслепую; путь при этом
+    // остаётся на месте — на медленной сети первым приходит он.
+    if (existing.localSendStatus == null && existing.seq == seq) return;
     await _put(existing.withConfirmedSeq(seq));
     // Same rationale as _upsertOne's own cleanup — whichever of the two
     // paths clears this row's pending state first is the one that owns
