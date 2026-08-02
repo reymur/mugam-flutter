@@ -3728,8 +3728,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             // сюда заходил. Ровно та подмена смысла, что была у deliveredTo
             // (B18): отметка о событии подменялась отметкой о визите.
             //
-            // Счётчик непрочитанных этой проверкой не страдает: его
-            // обнуляет отдельный путь починки ниже (см. _lastUnreadRepairAt).
+            // ВНИМАНИЕ. Здесь стояло «счётчик непрочитанных этой
+            // проверкой не страдает: его обнуляет отдельный путь починки
+            // ниже». Это оказалось неверно (N22): путь починки зовёт тот
+            // же markChatAsReadBy, а идентификатор сообщения у него по
+            // определению тот же самый — счётчик залипает именно на
+            // последнем входящем. Гвард глушил и починку тоже, и число на
+            // карточке чата переставало обнуляться.
+            //
+            // Поэтому починка счётчика больше сюда не ходит: у неё свой
+            // метод, пишущий только unreadCount (см. _lastUnreadRepairAt
+            // ниже). Расписка фиксирует событие, счётчик чинит состояние —
+            // разные задачи, разные записи.
             final recordedMsgId =
                 (ref.read(chatMetaProvider(widget.chatId)).value?['lastReadMsgId']
                         as Map<String, dynamic>?)?[currentUid]
@@ -3792,24 +3802,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           _lastUnreadRepairAt != null &&
           now.difference(_lastUnreadRepairAt!) < const Duration(seconds: 5);
       if (!throttled) {
-        // rawMessages for the same reason as the mark-as-read path above:
-        // this repair writes the same shared lastReadMsgId.
-        final lastOtherMsg = _lastConfirmedMessageFromOther(
-          chatMessagesState.rawMessages,
-          currentUid,
-        );
-        if (lastOtherMsg != null) {
-          _lastUnreadRepairAt = now;
-          final repairMsgId = lastOtherMsg.id;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            _firestoreService.markChatAsReadBy(
-              chatId: widget.chatId,
-              uid: currentUid,
-              lastMsgId: repairMsgId,
-            );
-          });
-        }
+        // Чинит СЧЁТЧИК, а не расписку (N22). Раньше здесь звался
+        // markChatAsReadBy, и это сломалось ровно в тот день, когда у
+        // него появился гвард по идентификатору сообщения: у залипшего
+        // счётчика идентификатор по определению тот же самый — он и
+        // залипает на последнем входящем, — поэтому гвард глушил починку
+        // вместе с холостыми расписками, и число на карточке чата
+        // переставало обнуляться.
+        //
+        // Экран чата открыт, значит человек читает: обнулить счётчик
+        // здесь безусловно правильно. Идентификатор последнего входящего
+        // для этого больше не нужен — а вместе с ним отпала и
+        // единственная причина, по которой починке требовался
+        // rawMessages.
+        _lastUnreadRepairAt = now;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _firestoreService.resetUnreadCount(
+            chatId: widget.chatId,
+            uid: currentUid,
+          );
+        });
       }
     }
     // Stale-preview repair. The chat card's preview is written server-side

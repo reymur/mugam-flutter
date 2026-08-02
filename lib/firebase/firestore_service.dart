@@ -2966,6 +2966,38 @@ class FirestoreService {
     _lastReadMsgIdWritten[chatId] = msgId;
   }
 
+  // Обнуление счётчика непрочитанных — отдельно от расписки (N22).
+  //
+  // Почему не через markChatAsReadBy, как было раньше: у того есть гвард
+  // «расписка про это же сообщение уже записана — писать нечего», и он
+  // прав. Но счётчик залипает ИМЕННО на последнем входящем сообщении —
+  // из-за гонки с Cloud Function, которая инкрементит его асинхронно и
+  // может успеть после того, как читатель уже обнулил (B15). То есть у
+  // починки идентификатор всегда совпадает с записанным, и общий метод
+  // глушил её вместе с холостыми расписками. Стоило это залипшего числа
+  // на карточке чата, найденного тестировщиком в тот же вечер.
+  //
+  // Разделение не только чинит, но и честнее по смыслу: расписка
+  // фиксирует СОБЫТИЕ (что прочитано и когда), счётчик чинит СОСТОЯНИЕ.
+  // Плюс запись дешевле — одно поле вместо трёх, и время прочтения при
+  // починке не сдвигается, чего и добивалась правка A3.
+  Future<void> resetUnreadCount({
+    required String chatId,
+    required String uid,
+  }) async {
+    try {
+      await _db.collection('chats').doc(chatId).update({
+        'unreadCount.$uid': 0,
+      }).timeout(_writeTimeout);
+    } catch (e, st) {
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'FirestoreService: resetUnreadCount failed',
+      );
+    }
+  }
+
   Future<void> markChatAsReadBy({
     required String chatId,
     required String uid,
