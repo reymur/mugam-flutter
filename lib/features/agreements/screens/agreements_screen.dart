@@ -618,7 +618,12 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
 
     String roleText;
     if (cancelled) {
-      roleText = e.cancelledBy == _uid ? 'Siz imtina etdiniz' : '${e.partnerName ?? ''} imtina etdi';
+      // Названа сторона, ПРЕДЛОЖИВШАЯ отмену: отменяют по согласию двое, и
+      // «кто отменил» вопрос без единственного ответа. Тексты остались
+      // прежними — их пересмотр идёт Этапом II вместе со всей карточкой.
+      roleText = e.cancelRequestedBy == _uid
+          ? 'Siz imtina etdiniz'
+          : '${e.partnerName ?? ''} imtina etdi';
     } else {
       roleText = e.ownerUid == _uid ? 'Siz göndərdiniz' : 'Sizə göndərildi';
     }
@@ -1630,7 +1635,7 @@ class _AgreementDetailScreen extends StatelessWidget {
 
     Widget statusBadge;
     if (isCancelled) {
-      final who = event.cancelledBy == currentUid
+      final who = event.cancelRequestedBy == currentUid
           ? 'Siz imtina etdiniz'
           : '${event.partnerName ?? ''} imtina etdi';
       statusBadge = Container(
@@ -1750,7 +1755,7 @@ class _AgreementDetailScreen extends StatelessWidget {
                 children: [
                   _PartyRow(
                     name: event.ownerUid == currentUid ? 'Siz' : (event.partnerName ?? 'Naməlum'),
-                    label: isCancelled && event.cancelledBy == event.ownerUid
+                    label: isCancelled && event.cancelRequestedBy == event.ownerUid
                         ? 'İmtina etdi'
                         : 'Göndərən (Təklif edən)',
                     highlighted: event.ownerUid == currentUid,
@@ -1759,7 +1764,7 @@ class _AgreementDetailScreen extends StatelessWidget {
                   const Divider(color: kBorder, height: 1),
                   _PartyRow(
                     name: event.ownerUid != currentUid ? 'Siz' : (event.partnerName ?? 'Naməlum'),
-                    label: isCancelled && event.cancelledBy == event.partnerUid
+                    label: isCancelled && event.cancelRequestedBy == event.partnerUid
                         ? 'İmtina etdi'
                         : 'Qəbul edən',
                     highlighted: event.ownerUid != currentUid,

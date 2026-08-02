@@ -15,6 +15,7 @@ import {
   getDoc,
   getDocs,
   setDoc,
+  updateDoc,
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
@@ -46,6 +47,7 @@ const CONTACT = "contactUid"; // a real friend of OWNER, not in any privacyList
 const STRANGER = "strangerUid"; // not a friend at all
 const EXCEPTED = "exceptedUid"; // a real friend of OWNER, ALSO in a contactsExcept privacyList
 const ALLOWED = "allowedUid"; // in an onlyShareWith privacyList, NOT a friend at all
+const EVENT = "ev-cancel"; // договор OWNER↔CONTACT для проверок отмены по согласию
 
 beforeAll(async () => {
   testEnv = await initializeTestEnvironment({
@@ -96,6 +98,24 @@ beforeEach(async () => {
     });
     await setDoc(doc(d, `users/${OWNER}/statuses/s-onlyShareWith`), {
       ...base, privacyMode: "onlyShareWith", privacyList: [ALLOWED],
+    });
+
+    // Договор для проверок отмены по согласию: владелец OWNER, вторая
+    // сторона CONTACT, обе в musicians (именно это поле читает правило).
+    await setDoc(doc(d, `personalEvents/${EVENT}`), {
+      ownerUid: OWNER,
+      musicians: [OWNER, CONTACT],
+      partnerUid: CONTACT,
+      date: "2026-09-01T19:00:00.000",
+      type: "Toy",
+      location: "",
+      notes: "",
+      isAgree: true,
+      status: "agreed",
+      cancelRequestedBy: null,
+      cancelRequestedAt: null,
+      cancelConfirmedBy: null,
+      cancelledAt: null,
     });
 
     await setDoc(doc(d, `users/${OWNER}/statuses/s-contacts/viewers/${CONTACT}`), {
@@ -283,4 +303,147 @@ test("friends list: a user CAN read their own friends (list query)", async () =>
 test("friends list: a user CANNOT read another user's friends (list query)", async () => {
   const strangerDb = testEnv.authenticatedContext(STRANGER).firestore();
   await assertFails(getDocs(collection(strangerDb, `users/${OWNER}/friends`)));
+});
+
+// ---------------------------------------------------------------------
+// personalEvents — отмена договора по согласию
+//
+// Проверяется не только разрешённое, но и запрещённое, и запрещённого
+// здесь больше: правило существует РАДИ отказов. Разрешающая половина
+// доказывает лишь, что сценарий вообще работает; смысл «по согласию»
+// держится на том, что одна сторона не может пройти обе ступени сама.
+// ---------------------------------------------------------------------
+
+// Ставит чужой запрос на отмену в обход правил — исходное состояние для
+// проверок подтверждения.
+async function seedCancelRequest(by: string) {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), `personalEvents/${EVENT}`), {
+      cancelRequestedBy: by,
+      cancelRequestedAt: new Date(),
+    });
+  });
+}
+
+test("отмена: вторая сторона МОЖЕТ предложить отмену своим uid", async () => {
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertSucceeds(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      cancelRequestedBy: CONTACT,
+      cancelRequestedAt: new Date(),
+    }),
+  );
+});
+
+test("отмена: владелец МОЖЕТ предложить отмену своим uid", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      cancelRequestedBy: OWNER,
+      cancelRequestedAt: new Date(),
+    }),
+  );
+});
+
+test("отмена: вторая сторона МОЖЕТ подтвердить запрос владельца", async () => {
+  await seedCancelRequest(OWNER);
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertSucceeds(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      status: "cancelled",
+      cancelConfirmedBy: CONTACT,
+      cancelledAt: new Date(),
+    }),
+  );
+});
+
+test("обычная правка договора владельцем не сломана", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      location: "Bakı",
+      notes: "saat 19:00",
+    }),
+  );
+});
+
+test("отмена: НЕЛЬЗЯ выставить cancelRequestedBy чужим uid", async () => {
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      cancelRequestedBy: OWNER,
+      cancelRequestedAt: new Date(),
+    }),
+  );
+});
+
+test("отмена: НЕЛЬЗЯ перевести в cancelled без стоящего запроса", async () => {
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      status: "cancelled",
+      cancelConfirmedBy: CONTACT,
+      cancelledAt: new Date(),
+    }),
+  );
+});
+
+test("отмена: НЕЛЬЗЯ подтвердить собственный запрос", async () => {
+  await seedCancelRequest(CONTACT);
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      status: "cancelled",
+      cancelConfirmedBy: CONTACT,
+      cancelledAt: new Date(),
+    }),
+  );
+});
+
+test("отмена: владелец НЕ может подтвердить собственный запрос", async () => {
+  await seedCancelRequest(OWNER);
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      status: "cancelled",
+      cancelConfirmedBy: OWNER,
+      cancelledAt: new Date(),
+    }),
+  );
+});
+
+test("отмена: владелец НЕ может отменить договор обычной правкой", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), { status: "cancelled" }),
+  );
+});
+
+test("отмена: НЕЛЬЗЯ переписать чужой запрос своим", async () => {
+  await seedCancelRequest(OWNER);
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      cancelRequestedBy: CONTACT,
+      cancelRequestedAt: new Date(),
+    }),
+  );
+});
+
+test("отмена: посторонний не может ни предложить, ни подтвердить", async () => {
+  const strangerDb = testEnv.authenticatedContext(STRANGER).firestore();
+  await assertFails(
+    updateDoc(doc(strangerDb, `personalEvents/${EVENT}`), {
+      cancelRequestedBy: STRANGER,
+      cancelRequestedAt: new Date(),
+    }),
+  );
+  await seedCancelRequest(OWNER);
+  await assertFails(
+    updateDoc(doc(strangerDb, `personalEvents/${EVENT}`), {
+      status: "cancelled",
+      cancelConfirmedBy: STRANGER,
+      cancelledAt: new Date(),
+    }),
+  );
 });

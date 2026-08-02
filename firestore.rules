@@ -616,12 +616,52 @@ service cloud.firestore {
     // personalEvents/{eventId}  (mugam-flutter's calendar/agreements)
     // ---------------------------------------------------------------
     match /personalEvents/{eventId} {
+      function isParty() {
+        return isSignedIn() && request.auth.uid in resource.data.get('musicians', []);
+      }
+
+      // ОТМЕНА ПО СОГЛАСИЮ. Поля отмены изъяты из обычной правки договора
+      // (её по-прежнему делает только владелец) и разрешены исключительно
+      // двумя ходами ниже — иначе «по согласию» осталось бы словом:
+      // владелец мог бы выставить status:'cancelled' в одиночку, потому что
+      // прежнее правило разрешало ему любое поле.
+      function touchesCancel() {
+        return changedKeys().hasAny([
+          'status', 'cancelRequestedBy', 'cancelRequestedAt',
+          'cancelConfirmedBy', 'cancelledAt',
+        ]);
+      }
+
+      // Ход первый: предложить отмену. Только своим uid и только когда
+      // запроса ещё нет — иначе одна сторона могла бы переписать чужой
+      // запрос своим и следом подтвердить его как «чужой».
+      function requestsCancel() {
+        return changedKeys().hasOnly(['cancelRequestedBy', 'cancelRequestedAt'])
+          && request.resource.data.cancelRequestedBy == request.auth.uid
+          && resource.data.get('cancelRequestedBy', null) == null;
+      }
+
+      // Ход второй: подтвердить ЧУЖОЙ запрос. Своего подтвердить нельзя —
+      // на этом всё «по согласию» и держится: без этой строки отмена
+      // делается одной стороной в два тапа.
+      function confirmsCancel() {
+        return changedKeys().hasOnly(['status', 'cancelConfirmedBy', 'cancelledAt'])
+          && request.resource.data.status == 'cancelled'
+          && request.resource.data.cancelConfirmedBy == request.auth.uid
+          && resource.data.get('cancelRequestedBy', null) != null
+          && resource.data.get('cancelRequestedBy', null) != request.auth.uid;
+      }
+
       allow read: if isSignedIn() && (
         resource.data.ownerUid == request.auth.uid ||
         request.auth.uid in resource.data.get('musicians', [])
       );
       allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
-      allow update, delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+      allow update: if isSignedIn() && (
+        (resource.data.ownerUid == request.auth.uid && !touchesCancel())
+        || (isParty() && (requestsCancel() || confirmsCancel()))
+      );
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
     }
 
     // ---------------------------------------------------------------

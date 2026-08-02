@@ -3892,7 +3892,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // А защита от второго договора на ту же сделку устроена в
     // onChatUpdated как `before.recipientAgreed === true -> выход`, то
     // есть сброс флага разрешил бы дубль.
-    final jobOfferRoundOpen = jobOfferBy != null && !recipientAgreedNow;
+    //
+    // ЯВНЫЙ ШАГ ВМЕСТО НАБОРА ФЛАГОВ. `roundStep` отвечает на вопрос «где
+    // раунд» одним значением, а не выводом из четырёх независимых полей.
+    // Откат на прежний вывод оставлен не «на всякий случай», а под
+    // конкретный случай: документы чатов, которых не касались с прежней
+    // сборки, поля не имеют вовсе, и для них «раунд открыт» по-прежнему
+    // означает «предложение есть, согласия нет».
+    //
+    // Ступень «получатель поторопил» (`waitingForDateAt`) шагом намеренно
+    // НЕ стала: это отметка события внутри шага, а не сам шаг. Смешать их
+    // значило бы заставить одно поле отвечать на два вопроса — устройство,
+    // из которого выросли N19, N21 и N22.
+    //
+    // `jobOfferBy != null` вынесено из обеих веток общим условием: у
+    // открытого раунда всегда есть инициатор, обе половины пишутся одной
+    // операцией. Инвариант нужен и по смыслу, и потому, что плашка без
+    // инициатора нарисоваться не может — ей некого называть.
+    final roundStep = chatMetaAsync.value?['roundStep'] as String?;
+    final jobOfferRoundOpen = jobOfferBy != null &&
+        (roundStep != null
+            ? (roundStep == 'proposed' || roundStep == 'dated')
+            : !recipientAgreedNow);
     final recipientAgreedAtRaw =
         chatMetaAsync.value?['recipientAgreedAt'] as String?;
     final recipientAgreedAt = recipientAgreedAtRaw != null

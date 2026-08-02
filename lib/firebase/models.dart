@@ -1195,7 +1195,24 @@ class PersonalEvent {
   final String? partnerUid;
   final String? partnerName;
   final String status;
-  final String? cancelledBy;
+  // ОТМЕНА ДОГОВОРА ПО СОГЛАСИЮ. Четыре поля, каждое отвечает ровно на один
+  // вопрос — «кто предложил», «когда предложил», «кто подтвердил», «когда
+  // отменён». Раньше здесь стояло одно `cancelledBy`, и оно врало бы по
+  // смыслу: при отмене по согласию отменяют двое, а поле называет одного.
+  //
+  // Переименование, а не добавление рядом: поле было мёртвым — 54 договора
+  // в проде, отменённых 0, ни одной записи за всё время. Пока данных нет,
+  // это правка четырёх строк; с данными это была бы миграция.
+  //
+  // Промежуточное состояние, ради которого поля и разведены: запрос стоит,
+  // status ещё 'agreed' — договор в силе, но по нему уже задан вопрос.
+  // Признака-геттера для него здесь намеренно нет: читателя у него пока
+  // тоже нет, а заводить код без читателя в этом проекте уже приходилось
+  // выпалывать (B28, поле completed).
+  final String? cancelRequestedBy;
+  final dynamic cancelRequestedAt;
+  final String? cancelConfirmedBy;
+  final dynamic cancelledAt;
   final dynamic createdAt;
 
   const PersonalEvent({
@@ -1211,7 +1228,10 @@ class PersonalEvent {
     this.partnerUid,
     this.partnerName,
     this.status = 'agreed',
-    this.cancelledBy,
+    this.cancelRequestedBy,
+    this.cancelRequestedAt,
+    this.cancelConfirmedBy,
+    this.cancelledAt,
     this.createdAt,
   });
 
@@ -1229,7 +1249,10 @@ class PersonalEvent {
       partnerUid: data['partnerUid'] as String?,
       partnerName: data['partnerName'] as String?,
       status: (data['status'] ?? 'agreed') as String,
-      cancelledBy: data['cancelledBy'] as String?,
+      cancelRequestedBy: data['cancelRequestedBy'] as String?,
+      cancelRequestedAt: data['cancelRequestedAt'],
+      cancelConfirmedBy: data['cancelConfirmedBy'] as String?,
+      cancelledAt: data['cancelledAt'],
       createdAt: data['createdAt'],
     );
   }

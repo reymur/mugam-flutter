@@ -2721,6 +2721,15 @@ class FirestoreService {
         'cancelledBy': data['cancelledBy'],
         'recipientAgreed': (data['recipientAgreed'] ?? false) as bool,
         'recipientAgreedAt': data['recipientAgreedAt'],
+        // Явный шаг раунда: 'proposed' | 'dated' | 'agreed' | 'ended'.
+        // Отсутствует на документах, которые не трогали с прежней сборки, —
+        // читатель обязан откатываться на прежний вывод по флагам, см.
+        // chat_screen.dart. Кто и когда закрыл раунд отказом: сторону
+        // (передумал инициатор или отказался получатель) даёт сравнение
+        // roundEndedBy с jobOfferBy, отдельного поля для этого намеренно нет.
+        'roundStep': data['roundStep'],
+        'roundEndedBy': data['roundEndedBy'],
+        'roundEndedAt': data['roundEndedAt'],
         'negotiationSeenAt': Map<String, dynamic>.from(
           data['negotiationSeenAt'] ?? {},
         ),
@@ -3086,6 +3095,36 @@ class FirestoreService {
         // "\u0130mtina" sitting on the doc \u2014 clear it so a fresh offer never
         // carries a leftover "X cancelled" value forward.
         'cancelledBy': null,
+        // ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ЧИСТИТСЯ СЛЕД ПРОШЛОГО РАУНДА. С этой
+        // правки cancelChat больше не стирает содержание предложения —
+        // иначе отказ стирал бы сам себя, и «явный отказ как состояние»
+        // закладывать было бы не во что. Значит след живёт до следующего
+        // предложения, и обнулить его обязан именно этот метод.
+        //
+        // Набор полей раунда фиксированный: ни массивов, ни карт по uid
+        // среди них нет (negotiationSeenAt — карта, но и она сбрасывается
+        // здесь и ограничена участниками чата). Поэтому документ чата от
+        // раундов не растёт: каждый следующий переписывает те же ключи.
+        'roundStep': 'proposed',
+        'roundEndedBy': null,
+        'roundEndedAt': null,
+        // Содержание прошлого раунда чистится ЗДЕСЬ ЖЕ, и это не украшение
+        // симметрии. Проверка на устройствах 03.08: после состоявшейся
+        // сделки новое предложение уходило с датой и типом предыдущего —
+        // у инициатора стояло «Tarix dəyiş» вместо «Tarix seç», а у
+        // получателя кнопка «Razıyam» была сразу золотой, то есть он мог
+        // одним тапом согласиться на дату, которой в этом раунде никто не
+        // выбирал, и договор создался бы на данных прошлой сделки.
+        //
+        // Дефект существовал и до правки роли cancelChat, но был виден
+        // только на пути «согласие → новое предложение»: на пути «отказ →
+        // новое предложение» его прятала уборка внутри cancelChat. Убрав
+        // ту уборку ради следа раунда, я обнажил его на обоих путях —
+        // поэтому чистка и переехала сюда целиком.
+        'eventDate': null,
+        'eventType': null,
+        'eventLocation': null,
+        'eventNotes': null,
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c setJobOffer failed: $e');
@@ -3128,6 +3167,10 @@ class FirestoreService {
         // Повторного окна сброс не создаёт: показ гасится отметкой
         // negotiationSeenAt, а не наличием поля.
         'waitingForDateAt': null,
+        // Шаг раунда, а не содержание: «предложение с датой». Пишется и при
+        // повторном заходе через «Tarix dəyiş» — значение то же самое,
+        // запись идемпотентна.
+        'roundStep': 'dated',
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c saveChatEventDate failed: $e');
@@ -3210,13 +3253,29 @@ class FirestoreService {
   }) async {
     try {
       await _db.collection('chats').doc(chatId).update({
+        // Дубль на переходное окно: прежние сборки прячут плашку по
+        // jobOfferBy, новые — по roundStep. Снимается вместе с
+        // recipientAgreed, условие в реестре.
         'cancelledBy': uid,
-        'jobOfferBy': null,
-        'jobOfferAt': null,
-        'eventDate': null,
-        'eventType': null,
-        'eventLocation': null,
-        'eventNotes': null,
+        // Раунд закрыт отказом. Сторона не записывается отдельным полем:
+        // roundEndedBy == jobOfferBy означает «инициатор передумал», иначе
+        // «получатель отказался». В чате на двоих третьего случая нет, так
+        // что вывод полный — а второе поле было бы вторым источником той же
+        // правды, который однажды разойдётся с первым.
+        'roundStep': 'ended',
+        'roundEndedBy': uid,
+        'roundEndedAt': nowInstantIso(),
+        // СОДЕРЖАНИЕ РАУНДА БОЛЬШЕ НЕ СТИРАЕТСЯ. jobOfferBy, jobOfferAt и
+        // event* остаются на документе до следующего предложения — без них
+        // от отказа не оставалось следа вовсе: поле cancelledBy стояло
+        // рядом с пустотой, и «получатель отказался» было неотличимо от
+        // «раунда никогда не было». Чистит их setJobOffer, и только он.
+        //
+        // Что продолжает сбрасываться и почему: recipientAgreed обязан
+        // остаться false, иначе серверный сторож (before.recipientAgreed ===
+        // true -> выход) пропустит следующее согласие; waitingForDateAt и
+        // negotiationSeenAt — отметки показанных окон этого раунда, для
+        // закрытого раунда они бессмысленны.
         'waitingForDateAt': null,
         'recipientAgreed': false,
         'recipientAgreedAt': null,
@@ -3248,6 +3307,11 @@ class FirestoreService {
       await _db.collection('chats').doc(chatId).update({
         'recipientAgreed': true,
         'recipientAgreedAt': nowInstantIso(),
+        // Дубль на переходное окно. Серверный триггер пока смотрит на
+        // recipientAgreed — перевод его на roundStep идёт отдельным шагом,
+        // вместе со снятием дубля, иначе одна выкатка меняла бы и клиента,
+        // и условие срабатывания функции разом.
+        'roundStep': 'agreed',
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c acceptJobOffer failed: $e');
@@ -3417,7 +3481,14 @@ class FirestoreService {
       'partnerUid': null,
       'partnerName': null,
       'status': 'agreed',
-      'cancelledBy': null,
+      // Те же четыре поля, что пишет серверная половина (onChatUpdated):
+      // договор, заведённый вручную, и договор из согласованного предложения
+      // обязаны иметь один набор полей — иначе отмена по согласию работала
+      // бы на одних и молча не работала на других.
+      'cancelRequestedBy': null,
+      'cancelRequestedAt': null,
+      'cancelConfirmedBy': null,
+      'cancelledAt': null,
       'createdAt': FieldValue.serverTimestamp(),
     }).timeout(_writeTimeout);
     return ref.id;

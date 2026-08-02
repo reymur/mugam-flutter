@@ -1374,7 +1374,16 @@ export const onChatUpdated = onDocumentUpdated(
       partnerUid: recipientUid,
       partnerName: recipientName,
       status: "agreed",
-      cancelledBy: null,
+      // Отмена по согласию: четыре поля вместо прежнего одного cancelledBy.
+      // Каждое отвечает на один вопрос — кто предложил, когда предложил,
+      // кто подтвердил, когда отменён. Прежнее имя врало по смыслу: при
+      // отмене по согласию отменяют двое, а поле называло одного.
+      // Переименование обошлось без миграции — поле было мёртвым (54
+      // договора в проде, отменённых 0, записей ни одной).
+      cancelRequestedBy: null,
+      cancelRequestedAt: null,
+      cancelConfirmedBy: null,
+      cancelledAt: null,
       createdAt: FieldValue.serverTimestamp(),
     });
 
