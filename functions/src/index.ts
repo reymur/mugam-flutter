@@ -38,11 +38,46 @@ const agoraAppCertificate = defineSecret("AGORA_APP_CERTIFICATE");
 // same pattern as agoraAppCertificate above.
 const algoliaAdminKey = defineSecret("ALGOLIA_ADMIN_KEY");
 
+// Мёртвый токен удаляется в тот же момент, когда FCM о нём сообщил.
+//
+// Замер 02.08: 673 неудачных отправки за 30 дней, из них 64 за один
+// сегодняшний день, и все — `registration-token-not-registered`. Проверка
+// вхолостую (dryRun, ничего не доставляет) показала, что из пяти
+// различных токенов прода три мертвы, и держат их девять документов на
+// шестерых пользователей. То есть значительная часть всей работы
+// диспетчера уходила в никуда, а документы жили дальше и накапливались.
+//
+// Удаляются РОВНО два кода ошибки — те, что означают «этого получателя
+// больше нет». `invalid-argument` намеренно не в списке: он приходит и на
+// испорченную полезную нагрузку, и удаление по нему стирало бы живые
+// токены из-за нашей же ошибки в теле сообщения.
+const DEAD_TOKEN_CODES = [
+  "messaging/registration-token-not-registered",
+  "messaging/invalid-registration-token",
+];
+
+async function pruneIfTokenDead(
+  e: unknown,
+  tokenRef?: FirebaseFirestore.DocumentReference,
+): Promise<void> {
+  if (!tokenRef) return;
+  const code = (e as { errorInfo?: { code?: string }; code?: string })
+    ?.errorInfo?.code ?? (e as { code?: string })?.code;
+  if (!code || !DEAD_TOKEN_CODES.includes(code)) return;
+  try {
+    await tokenRef.delete();
+    logger.info(`[push] удалён мёртвый токен ${tokenRef.path} (${code})`);
+  } catch (delErr) {
+    logger.warn("Не удалось удалить мёртвый токен", { path: tokenRef.path, delErr });
+  }
+}
+
 async function sendFcmPush(
   token: string,
   title: string,
   body: string,
   data: Record<string, string>,
+  tokenRef?: FirebaseFirestore.DocumentReference,
 ): Promise<void> {
   try {
     await messaging.send({
@@ -53,6 +88,7 @@ async function sendFcmPush(
     });
   } catch (e) {
     logger.warn("FCM push failed", e);
+    await pruneIfTokenDead(e, tokenRef);
   }
 }
 
@@ -68,6 +104,7 @@ async function sendFcmPush(
 async function sendCallDataPush(
   token: string,
   data: Record<string, string>,
+  tokenRef?: FirebaseFirestore.DocumentReference,
 ): Promise<void> {
   try {
     await messaging.send({
@@ -87,6 +124,7 @@ async function sendCallDataPush(
     });
   } catch (e) {
     logger.warn("Call data push failed", e);
+    await pruneIfTokenDead(e, tokenRef);
   }
 }
 
@@ -96,10 +134,60 @@ async function sendCallPushToUid(uid: string, data: Record<string, string>): Pro
     tokensSnap.docs.map(async (tokenDoc) => {
       const token = tokenDoc.data().token as string | undefined;
       if (!token) return;
-      await sendCallDataPush(token, data);
+      await sendCallDataPush(token, data, tokenDoc.ref);
     }),
   );
 }
+
+// Один токен принадлежит одному аккаунту — и это приходится удерживать
+// на сервере (N20).
+//
+// Клиент закрывает два пути из трёх: свой прежний документ он удаляет при
+// смене идентификатора устройства, а при выходе через «Çıxış» — свой
+// токен. Третий путь клиенту недоступен принципиально: если аккаунт
+// сменился БЕЗ явного выхода (сессия отозвана сервером, токен истёк, пока
+// приложение было убито, восстановление устройства из резервной копии —
+// ровно те случаи, ради которых существует _reconcileLocalStoreWithSignedInUid
+// в main.dart), то запись прежнего владельца удалить уже нечем: правила
+// разрешают писать в users/{uid}/pushTokens только самому владельцу, а
+// приложение к этому моменту авторизовано уже как другой человек.
+//
+// Что тогда лежит в базе: один и тот же токен под двумя аккаунтами. Push
+// одному уходит на устройство, где сидит другой, вместе с именем
+// отправителя и началом сообщения. Именно так, судя по данным прода
+// 02.08, и появились три общих токена, один сразу у трёх человек.
+//
+// Операция идемпотентна по природе (проверка существования, потом
+// удаление), поэтому повторный вызов и параллельная регистрация ей
+// безопасны — то же свойство, на котором построен сборщик сирот.
+export const onPushTokenWritten = onDocumentWritten(
+  { document: "users/{uid}/pushTokens/{deviceId}", region: FUNCTIONS_REGION },
+  async (event) => {
+    const token = event.data?.after?.data()?.token as string | undefined;
+    if (!token) return;
+    const owner = event.params.uid;
+
+    // Запрос по коллекции-группе, а не обход всех пользователей: обход
+    // стоил бы одно чтение на каждого пользователя при КАЖДОЙ регистрации
+    // токена, то есть рос бы квадратично. Индекс COLLECTION_GROUP_ASC на
+    // pushTokens.token заведён в firestore.indexes.json — проверено
+    // экспериментом, что без него запрос падает FAILED_PRECONDITION.
+    const snap = await db
+      .collectionGroup("pushTokens")
+      .where("token", "==", token)
+      .get();
+
+    const strays = snap.docs.filter((d) => d.ref.parent.parent?.id !== owner);
+    if (strays.length === 0) return;
+
+    for (const stray of strays) {
+      await stray.ref.delete();
+      logger.info(
+        `[push] токен переехал к ${owner}, снят с прежнего владельца: ${stray.ref.path}`,
+      );
+    }
+  },
+);
 
 // Fans a push out to every device a single user has registered — extracted
 // here (rather than inlined a third time) only because the two
@@ -117,7 +205,7 @@ async function sendPushToUid(
     tokensSnap.docs.map(async (tokenDoc) => {
       const token = tokenDoc.data().token as string | undefined;
       if (!token) return;
-      await sendFcmPush(token, title, body, data);
+      await sendFcmPush(token, title, body, data, tokenDoc.ref);
     }),
   );
 }
@@ -370,7 +458,7 @@ export const onNewMessage = onDocumentCreated(
           tokensSnap.docs.map(async (tokenDoc) => {
             const token = tokenDoc.data().token as string | undefined;
             if (!token) return;
-            await sendFcmPush(token, title, body, data);
+            await sendFcmPush(token, title, body, data, tokenDoc.ref);
           }),
         );
       }),
@@ -1791,6 +1879,101 @@ const orphanSweepDelete = defineBoolean("ORPHAN_SWEEP_DELETE", { default: false 
 // идемпотентен.
 const ORPHAN_SWEEP_TIMEOUT_SECONDS = 540;
 const ORPHAN_SWEEP_TIME_BUDGET_MS = (ORPHAN_SWEEP_TIMEOUT_SECONDS - 60) * 1000;
+
+// Регулярная проверка живости push-токенов (N20).
+//
+// Зачем нужна отдельно от уборки при отправке: `pruneIfTokenDead` снимает
+// мёртвый токен только когда по нему пытались что-то отправить. Токен
+// человека, которому давно никто не пишет, остаётся лежать вечно —
+// именно так и накопились 7 мёртвых документов из 9 к 02.08, при 673
+// неудачных отправках за 30 дней.
+//
+// Живость выясняется отправкой ВХОЛОСТУЮ: FCM проверяет токен, но не
+// доставляет ничего — ни одного уведомления ни на один телефон. Это
+// делает механизм безопасным для регулярного запуска, в отличие от
+// «отправим и посмотрим».
+//
+// Цена замера 02.08: 5 различных токенов на весь проект, то есть 5
+// проверок и один обход крошечной коллекции. Дешевле, чем сборщик сирот,
+// которому нужен обход всей базы.
+//
+// Удаление, как и у сборщика сирот, выключено по умолчанию: сначала
+// отчёт в логах, включение — отдельным шагом через переменную окружения
+// плюс деплой.
+const pushTokenSweepDelete = defineBoolean("PUSH_TOKEN_SWEEP_DELETE", {
+  default: false,
+});
+
+export const sweepDeadPushTokensDaily = onSchedule(
+  {
+    region: FUNCTIONS_REGION,
+    // На 15 минут позже сборщика сирот — намеренно врозь, чтобы в логах
+    // два независимых прогона не переплетались.
+    schedule: "every day 04:35",
+    timeZone: "Asia/Baku",
+    maxInstances: 1,
+    retryCount: 0,
+  },
+  async () => {
+    const dryRun = !pushTokenSweepDelete.value();
+    const startedAtMs = Date.now();
+    const docs = await db.collectionGroup("pushTokens").get();
+
+    // Группировка по токену: один и тот же токен может лежать в
+    // нескольких документах, а проверять его повторно незачем.
+    const byToken = new Map<string, FirebaseFirestore.DocumentReference[]>();
+    for (const d of docs.docs) {
+      const token = d.data().token as string | undefined;
+      if (!token) continue;
+      const list = byToken.get(token) ?? [];
+      list.push(d.ref);
+      byToken.set(token, list);
+    }
+
+    const dead: string[] = [];
+    for (const [token, refs] of byToken) {
+      let code = "";
+      try {
+        await messaging.send({ token, notification: { title: "x", body: "x" } }, true);
+        continue;
+      } catch (e) {
+        code =
+          (e as { errorInfo?: { code?: string } })?.errorInfo?.code ??
+          (e as { code?: string })?.code ??
+          "";
+      }
+      if (!DEAD_TOKEN_CODES.includes(code)) continue;
+      for (const ref of refs) {
+        dead.push(ref.path);
+        if (!dryRun) await ref.delete();
+      }
+    }
+
+    await db
+      .collection("maintenance")
+      .doc("pushTokenSweep")
+      .collection("runs")
+      .add({
+        dryRun,
+        startedAt: new Date(startedAtMs),
+        finishedAt: new Date(),
+        durationMs: Date.now() - startedAtMs,
+        scannedDocs: docs.size,
+        distinctTokens: byToken.size,
+        deadPaths: dead.slice(0, 200),
+        deadCount: dead.length,
+        deleted: dryRun ? 0 : dead.length,
+      })
+      .catch((e) => logger.warn("sweepDeadPushTokens: не записал прогон", e));
+
+    logger.info("sweepDeadPushTokensDaily: finished", {
+      dryRun,
+      scannedDocs: docs.size,
+      distinctTokens: byToken.size,
+      deadCount: dead.length,
+    });
+  },
+);
 
 export const sweepOrphanMediaDaily = onSchedule(
   {

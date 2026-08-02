@@ -8,6 +8,7 @@ import '../../../core/store/local_message_store.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/auth_service.dart';
 import '../../../firebase/firestore_service.dart';
+import '../../../firebase/push_notification_service.dart';
 
 // Reached from the gear icon in ProfileScreen's header (Navigator.push,
 // same pattern as EditProfileScreen and chats_screen.dart's
@@ -215,6 +216,21 @@ class ProfileSettingsScreen extends ConsumerWidget {
       try {
         await service
             .clearActiveUserFromAllChats(uid)
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {}
+      // Токен этого устройства снимается с уходящего аккаунта здесь же и
+      // именно ДО logout(): правила разрешают писать в
+      // users/{uid}/pushTokens только самому владельцу, после выхода
+      // удалить его уже нечем.
+      //
+      // Без этого документ токена оставался у прежнего аккаунта навсегда,
+      // и push для него уходил на устройство, где теперь сидит другой
+      // человек — с именем отправителя и началом текста в теле
+      // уведомления. В проде 02.08 таких общих токенов нашлось три, один
+      // сразу у трёх пользователей.
+      try {
+        await PushNotificationService.instance
+            .unregisterToken(uid)
             .timeout(const Duration(seconds: 5));
       } catch (_) {}
     }
