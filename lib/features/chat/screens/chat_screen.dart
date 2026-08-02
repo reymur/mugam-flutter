@@ -3759,17 +3759,38 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           if (lastOtherMsg != null &&
               currentUid.isNotEmpty &&
               lastOtherMsg.id != _lastMarkedReadMsgId) {
+            // Гвард выше живёт в состоянии экрана и умирает вместе с ним,
+            // поэтому при КАЖДОМ повторном открытии чата он пуст — и
+            // расписка уходила заново, хотя прочитанное сообщение то же
+            // самое. В разбивке A3 такие холостые записи видны отдельным
+            // набором «менялся только lastReadAt»: шесть штук за три часа.
+            //
+            // И это не просто лишняя запись в горячий документ. Отправитель
+            // видит на экране «Məlumat» ВРЕМЯ прочтения — а оно сдвигалось
+            // на момент повторного открытия чата, то есть показывало не
+            // когда сообщение прочли, а когда получатель в последний раз
+            // сюда заходил. Ровно та подмена смысла, что была у deliveredTo
+            // (B18): отметка о событии подменялась отметкой о визите.
+            //
+            // Счётчик непрочитанных этой проверкой не страдает: его
+            // обнуляет отдельный путь починки ниже (см. _lastUnreadRepairAt).
+            final recordedMsgId =
+                (ref.read(chatMetaProvider(widget.chatId)).value?['lastReadMsgId']
+                        as Map<String, dynamic>?)?[currentUid]
+                    as String?;
             // TEMP DIAGNOSTIC — see ChatScreen.debugMarkReadGuardPassed's
             // own comment.
             ChatScreen.debugMarkReadGuardPassed++;
             _lastMarkedReadMsgId = lastOtherMsg.id;
-            ref
-                .read(firestoreServiceProvider)
-                .markChatAsReadBy(
-                  chatId: widget.chatId,
-                  uid: currentUid,
-                  lastMsgId: lastOtherMsg.id,
-                );
+            if (lastOtherMsg.id != recordedMsgId) {
+              ref
+                  .read(firestoreServiceProvider)
+                  .markChatAsReadBy(
+                    chatId: widget.chatId,
+                    uid: currentUid,
+                    lastMsgId: lastOtherMsg.id,
+                  );
+            }
           }
         }
       }
