@@ -1,6 +1,6 @@
 import { getStorage } from "firebase-admin/storage";
 import { getAdminApp, db, clearFirestore, BUCKET } from "./helpers";
-import { sweepOrphanMedia } from "../src/orphanSweep";
+import { sweepOrphanMedia, runOrphanSweepAndRecord } from "../src/orphanSweep";
 
 beforeAll(() => {
   getAdminApp();
@@ -41,13 +41,23 @@ async function exists(path: string): Promise<boolean> {
 // Объекты в эмуляторе создаются «сейчас», поэтому окно ожидания в тестах
 // задаётся не возрастом файла, а сдвигом nowMs вперёд — так проверяется
 // именно граница, а не выдержка паузы в тесте.
-function sweep(opts: { dryRun?: boolean; aheadMs?: number; minAgeMs?: number } = {}) {
+function sweep(
+  opts: {
+    dryRun?: boolean;
+    aheadMs?: number;
+    minAgeMs?: number;
+    maxDeletions?: number;
+    listPageSize?: number;
+  } = {},
+) {
   return sweepOrphanMedia({
     db: db(),
     bucket: bucket(),
     dryRun: opts.dryRun ?? false,
     minAgeMs: opts.minAgeMs ?? DAY,
     nowMs: Date.now() + (opts.aheadMs ?? 2 * DAY),
+    maxDeletions: opts.maxDeletions,
+    listPageSize: opts.listPageSize,
   });
 }
 
@@ -262,4 +272,140 @@ test("повторный прогон по вычищенному бакету �
   const second = await sweep();
   expect(second.orphans).toEqual([]);
   expect(second.deleted).toBe(0);
+});
+
+// ---------------------------------------------------------------------
+// Пределы прогона: он обязан сворачиваться сам, а не быть убитым
+// ---------------------------------------------------------------------
+
+// Разница между двумя видами «не доделал» — здесь она и проверяется.
+// Обход ссылок, прерванный на середине, делает живое медиа неотличимым
+// от сироты, поэтому не даёт права удалить НИЧЕГО.
+test("при прерванном по бюджету обходе ссылок не удаляет ничего", async () => {
+  const orphan = "chats/C1/1700000000000_orphan.jpg";
+  await putObject(orphan);
+  await db().collection("chats").doc("C1").set({ members: ["A", "B"] });
+
+  const result = await sweepOrphanMedia({
+    db: db(),
+    bucket: bucket(),
+    dryRun: false,
+    minAgeMs: DAY,
+    nowMs: Date.now() + 2 * DAY,
+    // Дедлайн в прошлом — обход выходит из бюджета на первой же
+    // проверке, то есть заведомо неполон.
+    deadlineMs: Date.now() - 1,
+  });
+
+  expect(result.stoppedEarly).toBe(true);
+  expect(result.stopReason).toBe("harvest-incomplete");
+  expect(result.deleted).toBe(0);
+  expect(result.orphans).toEqual([]);
+  expect(await exists(orphan)).toBe(true);
+});
+
+// А прерывание на удалении — безопасно: решения уже приняты по полному
+// множеству ссылок, остаток штатно достаётся следующему прогону.
+test("лимит удалений за прогон соблюдается, остаток уходит в следующий прогон", async () => {
+  const orphans = [
+    "chats/C1/1700000000001_a.jpg",
+    "chats/C1/1700000000002_b.jpg",
+    "chats/C1/1700000000003_c.jpg",
+  ];
+  for (const path of orphans) await putObject(path);
+  await db().collection("chats").doc("C1").set({ members: ["A", "B"] });
+
+  const first = await sweep({ maxDeletions: 2 });
+  expect(first.deleted).toBe(2);
+  expect(first.stoppedEarly).toBe(true);
+  expect(first.stopReason).toBe("max-deletions");
+  expect(first.remainingCandidates).toBe(1);
+
+  const second = await sweep({ maxDeletions: 2 });
+  expect(second.deleted).toBe(1);
+  expect(second.stoppedEarly).toBe(false);
+
+  for (const path of orphans) expect(await exists(path)).toBe(false);
+});
+
+// Постраничный листинг: при размере страницы 2 и пяти объектах сборщик
+// обязан увидеть все пять, а не первую страницу.
+test("постраничный листинг Storage обходит все объекты, а не первую страницу", async () => {
+  const orphans = [1, 2, 3, 4, 5].map((n) => `chats/C1/170000000000${n}_page.jpg`);
+  for (const path of orphans) await putObject(path);
+  await db().collection("chats").doc("C1").set({ members: ["A", "B"] });
+
+  const result = await sweep({ listPageSize: 2 });
+
+  expect(result.scannedObjects).toBe(5);
+  expect(result.deleted).toBe(5);
+  for (const path of orphans) expect(await exists(path)).toBe(false);
+});
+
+// ---------------------------------------------------------------------
+// След прогона — то, по чему через месяц можно понять, что пропало
+// ---------------------------------------------------------------------
+
+async function lastRun(): Promise<FirebaseFirestore.DocumentData> {
+  const snap = await db()
+    .collection("maintenance")
+    .doc("orphanSweep")
+    .collection("runs")
+    .get();
+  expect(snap.size).toBe(1);
+  return snap.docs[0].data();
+}
+
+test("прогон записывает в Firestore пути удалённых объектов, а не только счётчики", async () => {
+  const orphan = "chats/C1/1700000000000_orphan.jpg";
+  await putObject(orphan);
+  await db().collection("chats").doc("C1").set({ members: ["A", "B"] });
+
+  await runOrphanSweepAndRecord({
+    db: db(),
+    bucket: bucket(),
+    dryRun: false,
+    minAgeMs: DAY,
+    nowMs: Date.now() + 2 * DAY,
+    trigger: "scheduled",
+  });
+
+  const run = await lastRun();
+  expect(run.trigger).toBe("scheduled");
+  expect(run.dryRun).toBe(false);
+  expect(run.deleted).toBe(1);
+  expect(run.orphanCount).toBe(1);
+  expect(run.orphanPaths).toEqual([
+    expect.objectContaining({ path: orphan }),
+  ]);
+  expect(run.orphanPathsTruncated).toBe(false);
+  expect(run.stoppedEarly).toBe(false);
+});
+
+// Та же защита, что у скрипта, но через ту же точку входа, которой
+// пользуется регулярная функция: цена ошибки здесь ровно та же.
+test("через точку входа регулярной функции пустой обход тоже ничего не удаляет", async () => {
+  const path = "chats/C1/1700000000000_looks-orphaned.jpg";
+  await putObject(path);
+  // Ни одного документа в базе — обход пуст.
+
+  const result = await runOrphanSweepAndRecord({
+    db: db(),
+    bucket: bucket(),
+    dryRun: false,
+    minAgeMs: DAY,
+    nowMs: Date.now() + 2 * DAY,
+    trigger: "scheduled",
+  });
+
+  expect(result.stopReason).toBe("empty-harvest");
+  expect(result.deleted).toBe(0);
+  expect(await exists(path)).toBe(true);
+
+  // Отказ работать тоже обязан оставить след — иначе «ничего не
+  // удалилось» и «сборщик не сработал» снаружи неразличимы.
+  const run = await lastRun();
+  expect(run.stoppedEarly).toBe(true);
+  expect(run.stopReason).toBe("empty-harvest");
+  expect(run.deleted).toBe(0);
 });

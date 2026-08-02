@@ -17,6 +17,33 @@
 // повторный запуск и параллельная живая загрузка ему безопасны — это
 // требование к любому переносу клиент→сервер в этом проекте, см. тот же
 // реестр.
+//
+// ---------------------------------------------------------------------
+// ДВА УРОКА, КОТОРЫЕ ЗДЕСЬ ЗАПРЕЩЕНО «ОПТИМИЗИРОВАТЬ» ОБРАТНО
+// ---------------------------------------------------------------------
+// Оба стоили бы удалённого живого медиа, оба выглядят как лишняя работа,
+// и оба найдены проверкой, а не чтением кода. Если возникает желание
+// сузить любой из двух обходов — сначала перечитать этот блок.
+//
+// 1. Множество ссылок строится ГЛОБАЛЬНО по всем чатам, а не по
+//    чату-владельцу объекта. Причина: forwardMessage (firestore_service
+//    .dart) переиспользует URL исходного сообщения, поэтому сообщение в
+//    чате B штатно ссылается на объект под chats/A/... Сузить обход до
+//    «своего» чата — значит удалить медиа у всех, кому его переслали, и
+//    в чате-владельце это выглядело бы совершенно корректно.
+//
+// 2. Обход идёт по ВСЕЙ базе, а не по списку коллекций, где ссылки
+//    «должны» лежать. Причина: список устаревает молча. Первая версия
+//    смотрела messages/statuses/chats/users — 319 документов из 805,
+//    которые реально есть в проде; agreements, personalEvents и invites
+//    не смотрелись вовсе. То же и внутри документа: значения
+//    обходятся рекурсивно, а не по списку известных полей
+//    (imageURL/videoURL/replyTo.*/mediaUrl/...), потому что забытое поле
+//    здесь стоит ровно столько же.
+//
+// Общая форма обоих: **неполное знание не даёт права удалять**. Отсюда
+// же и третье правило — при пустом или прерванном обходе сборщик не
+// удаляет ничего (см. HarvestResult.complete и проверку scannedDocs).
 
 import { logger } from "firebase-functions";
 import type { Bucket, File } from "@google-cloud/storage";
@@ -110,6 +137,14 @@ function collectSplitMediaRef(data: Record<string, unknown>, into: Set<string>):
 interface HarvestResult {
   paths: Set<string>;
   scannedDocs: number;
+  // false — обход не дошёл до конца (кончился бюджет времени). Тогда
+  // удалять нельзя ВООБЩЕ ничего: недосчитанная ссылка неотличима от
+  // отсутствующей, а «половина знания» здесь означает удаление живого
+  // медиа, ссылка на которое лежала в непросмотренном хвосте. Не то же
+  // самое, что прерваться на середине УДАЛЕНИЯ: там каждое решение уже
+  // принято по полному множеству ссылок и остаток спокойно уходит в
+  // следующий прогон.
+  complete: boolean;
 }
 
 // validatedUploads — это отметка о ЗАЛИВКЕ, а не ссылка на объект
@@ -142,15 +177,28 @@ const NOT_A_REFERENCE_COLLECTIONS = new Set(["validatedUploads"]);
 // обратный индекс путей, отмечен предупреждением в логе ниже.
 const HARVEST_SCALE_WARN_DOCS = 20000;
 
-async function harvestReferencedPaths(db: Firestore): Promise<HarvestResult> {
+async function harvestReferencedPaths(
+  db: Firestore,
+  isOutOfTime: () => boolean,
+): Promise<HarvestResult> {
   const paths = new Set<string>();
   let scannedDocs = 0;
+  let complete = true;
 
+  // Документы читаются страницами по 500, а не одним .get(): память
+  // ограничена страницей независимо от размера коллекции. Бюджет
+  // проверяется на границе страницы — прерваться посреди страницы
+  // смысла нет, она уже прочитана.
   const scanCollection = async (ref: FirebaseFirestore.CollectionReference): Promise<void> => {
+    if (!complete) return;
     if (NOT_A_REFERENCE_COLLECTIONS.has(ref.id)) return;
     const PAGE_SIZE = 500;
     let lastDoc: QueryDocumentSnapshot | undefined;
     for (;;) {
+      if (isOutOfTime()) {
+        complete = false;
+        return;
+      }
       let query: FirebaseFirestore.Query = ref.orderBy("__name__").limit(PAGE_SIZE);
       if (lastDoc) query = query.startAfter(lastDoc);
       const snap = await query.get();
@@ -162,6 +210,7 @@ async function harvestReferencedPaths(db: Firestore): Promise<HarvestResult> {
         scannedDocs++;
         for (const sub of await doc.ref.listCollections()) {
           await scanCollection(sub);
+          if (!complete) return;
         }
       }
       lastDoc = snap.docs[snap.docs.length - 1];
@@ -171,6 +220,7 @@ async function harvestReferencedPaths(db: Firestore): Promise<HarvestResult> {
 
   for (const root of await db.listCollections()) {
     await scanCollection(root);
+    if (!complete) break;
   }
 
   if (scannedDocs > HARVEST_SCALE_WARN_DOCS) {
@@ -180,9 +230,12 @@ async function harvestReferencedPaths(db: Firestore): Promise<HarvestResult> {
       { scannedDocs },
     );
   }
-  logger.info(`orphanSweep: scanned ${scannedDocs} docs across the whole database`);
+  logger.info(
+    `orphanSweep: scanned ${scannedDocs} docs across the whole database` +
+      (complete ? "" : " (INCOMPLETE — ran out of time budget)"),
+  );
 
-  return { paths, scannedDocs };
+  return { paths, scannedDocs, complete };
 }
 
 export interface OrphanObject {
@@ -201,6 +254,15 @@ export interface SweepResult {
   orphanBytes: number;
   deleted: number;
   deleteFailures: number;
+  // Прогон закончился не потому, что работа кончилась. Это НЕ ошибка:
+  // сборщик идемпотентен, остаток уходит в следующий прогон. Ошибкой
+  // было бы молча выдать неполный проход за полный — поэтому причина
+  // здесь и попадает в лог с отчётом.
+  stoppedEarly: boolean;
+  stopReason: string | null;
+  // Сколько сирот осталось необработанными на момент остановки (при
+  // остановке по лимиту/бюджету); 0 при нормальном завершении.
+  remainingCandidates: number;
 }
 
 export interface SweepOptions {
@@ -212,33 +274,120 @@ export interface SweepOptions {
   dryRun?: boolean;
   minAgeMs?: number;
   nowMs?: number;
+  // Абсолютный момент (epoch ms), после которого прогон обязан свернуться
+  // сам. Существует, чтобы функция не падала по таймауту рантайма: убитый
+  // по таймауту прогон не оставил бы ни отчёта, ни записи о том, что
+  // успел удалить.
+  deadlineMs?: number;
+  // Потолок удалений за один прогон. Ограничивает не корректность, а
+  // размер ущерба от ошибки: даже если бы сборщик считал сиротами всё
+  // подряд, за прогон он снёс бы не больше этого числа, а следующий
+  // прогон — уже после того, как это стало видно в отчёте.
+  maxDeletions?: number;
+  // Размер страницы листинга Storage. Вынесен только ради тестов: при
+  // маленьком значении проверяется сама постраничность.
+  listPageSize?: number;
 }
+
+const DEFAULT_MAX_DELETIONS = 500;
+const DEFAULT_LIST_PAGE_SIZE = 1000;
 
 export async function sweepOrphanMedia(opts: SweepOptions): Promise<SweepResult> {
   const { db, bucket } = opts;
   const dryRun = opts.dryRun ?? true;
   const minAgeMs = opts.minAgeMs ?? DEFAULT_MIN_AGE_MS;
   const nowMs = opts.nowMs ?? Date.now();
-
-  const { paths: referenced, scannedDocs } = await harvestReferencedPaths(db);
-
-  const files: File[] = [];
-  for (const prefix of SWEPT_PREFIXES) {
-    const [found] = await bucket.getFiles({ prefix });
-    files.push(...found);
-  }
+  const maxDeletions = opts.maxDeletions ?? DEFAULT_MAX_DELETIONS;
+  const listPageSize = opts.listPageSize ?? DEFAULT_LIST_PAGE_SIZE;
+  const deadlineMs = opts.deadlineMs;
+  const isOutOfTime = () => deadlineMs !== undefined && Date.now() >= deadlineMs;
 
   const result: SweepResult = {
-    scannedObjects: files.length,
-    scannedDocs,
-    referencedPaths: referenced.size,
+    scannedObjects: 0,
+    scannedDocs: 0,
+    referencedPaths: 0,
     skippedTooYoung: 0,
     skippedNotSwept: 0,
     orphans: [],
     orphanBytes: 0,
     deleted: 0,
     deleteFailures: 0,
+    stoppedEarly: false,
+    stopReason: null,
+    remainingCandidates: 0,
   };
+
+  const {
+    paths: referenced,
+    scannedDocs,
+    complete,
+  } = await harvestReferencedPaths(db, isOutOfTime);
+  result.scannedDocs = scannedDocs;
+  result.referencedPaths = referenced.size;
+
+  // Неполный обход — не «мало ссылок», а «неизвестно, какие есть».
+  // Удалять при нём нельзя ничего: ссылка на живое медиа могла лежать
+  // ровно в непрочитанном хвосте. Возвращаемся с флагом; следующий
+  // прогон начнёт заново, сборщик к этому и приспособлен.
+  if (!complete) {
+    result.stoppedEarly = true;
+    result.stopReason = "harvest-incomplete";
+    logger.error(
+      "orphanSweep: aborting — reference harvest did not finish within the time budget; " +
+        "a partial harvest is 'unknown', never 'nothing is referenced'",
+      { scannedDocs },
+    );
+    return result;
+  }
+
+  // Объекты перебираются страницами (autoPaginate: false), а не одним
+  // массивом на весь бакет: при десятках тысяч объектов полный список
+  // File-объектов в памяти — и есть тот самый отказ по памяти, которого
+  // здесь быть не должно.
+  const candidates: OrphanObject[] = [];
+  for (const prefix of SWEPT_PREFIXES) {
+    let pageToken: string | undefined;
+    for (;;) {
+      // getFiles отдаёт [файлы, запрос-за-следующей-страницей, ответ API];
+      // при autoPaginate: false вторая позиция и есть курсор — null на
+      // последней странице.
+      const response = await bucket.getFiles({
+        prefix,
+        maxResults: listPageSize,
+        pageToken,
+        autoPaginate: false,
+      });
+      const files = response[0] as File[];
+      const nextQuery = response[1] as { pageToken?: string } | null | undefined;
+
+      for (const file of files) {
+        result.scannedObjects++;
+        if (!isSweptPath(file.name)) {
+          result.skippedNotSwept++;
+          continue;
+        }
+        if (referenced.has(file.name)) continue;
+
+        const created = file.metadata.timeCreated;
+        const createdMs = created ? Date.parse(created) : NaN;
+        // Объект без разбираемой даты создания считается свежим:
+        // неизвестный возраст — не повод удалять.
+        if (!Number.isFinite(createdMs) || nowMs - createdMs < minAgeMs) {
+          result.skippedTooYoung++;
+          continue;
+        }
+
+        candidates.push({
+          path: file.name,
+          sizeBytes: Number(file.metadata.size ?? 0),
+          createdAt: created ?? "unknown",
+        });
+      }
+
+      pageToken = nextQuery?.pageToken;
+      if (!pageToken) break;
+    }
+  }
 
   // Пустой результат обхода — это «не знаю», а не «ничего не
   // ссылается». Тот же класс ошибки, по которому в этом проекте уже
@@ -247,46 +396,55 @@ export async function sweepOrphanMedia(opts: SweepOptions): Promise<SweepResult>
   // упавший на середине или обрезанный правами обход выглядит ровно как
   // «ссылок нет». Поэтому ноль прочитанных документов при непустом
   // бакете — отказ работать, а не разрешение всё удалить.
-  if (scannedDocs === 0 && files.length > 0) {
+  if (scannedDocs === 0 && result.scannedObjects > 0) {
+    result.stoppedEarly = true;
+    result.stopReason = "empty-harvest";
+    result.remainingCandidates = candidates.length;
     logger.error(
       "orphanSweep: aborting — 0 documents scanned while the bucket is not empty; " +
         "an empty scan is 'unknown', never 'nothing is referenced'",
-      { scannedObjects: files.length },
+      { scannedObjects: result.scannedObjects },
     );
     return result;
   }
 
-  for (const file of files) {
-    if (!isSweptPath(file.name)) {
-      result.skippedNotSwept++;
-      continue;
-    }
-    if (referenced.has(file.name)) continue;
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
 
-    const created = file.metadata.timeCreated;
-    const createdMs = created ? Date.parse(created) : NaN;
-    // Объект без разбираемой даты создания считается свежим: неизвестный
-    // возраст не повод удалять.
-    if (!Number.isFinite(createdMs) || nowMs - createdMs < minAgeMs) {
-      result.skippedTooYoung++;
-      continue;
+    if (!dryRun && result.deleted >= maxDeletions) {
+      result.stoppedEarly = true;
+      result.stopReason = "max-deletions";
+      result.remainingCandidates = candidates.length - i;
+      break;
+    }
+    // Прерваться здесь безопасно, в отличие от обхода ссылок: решение по
+    // каждому объекту уже принято по полному их множеству, и остаток
+    // просто достанется следующему прогону.
+    if (!dryRun && isOutOfTime()) {
+      result.stoppedEarly = true;
+      result.stopReason = "deadline";
+      result.remainingCandidates = candidates.length - i;
+      break;
     }
 
-    const sizeBytes = Number(file.metadata.size ?? 0);
-    result.orphans.push({
-      path: file.name,
-      sizeBytes,
-      createdAt: created ?? "unknown",
-    });
-    result.orphanBytes += sizeBytes;
+    result.orphans.push(candidate);
+    result.orphanBytes += candidate.sizeBytes;
 
     if (!dryRun) {
       try {
-        await file.delete();
+        await bucket.file(candidate.path).delete();
         result.deleted++;
+        // Построчная запись в лог именно на удалении: отчёт агрегатом
+        // отвечает «сколько», а на вопрос «что именно пропало» через
+        // месяц отвечает только эта строка (и запись прогона рядом).
+        logger.info("orphanSweep: deleted", {
+          path: candidate.path,
+          sizeBytes: candidate.sizeBytes,
+          createdAt: candidate.createdAt,
+        });
       } catch (e) {
         result.deleteFailures++;
-        logger.warn("orphanSweep: delete failed", { path: file.name, error: e });
+        logger.warn("orphanSweep: delete failed", { path: candidate.path, error: e });
       }
     }
   }
@@ -300,7 +458,96 @@ export async function sweepOrphanMedia(opts: SweepOptions): Promise<SweepResult>
     orphanBytes: result.orphanBytes,
     deleted: result.deleted,
     deleteFailures: result.deleteFailures,
+    stoppedEarly: result.stoppedEarly,
+    stopReason: result.stopReason,
+    remainingCandidates: result.remainingCandidates,
   });
 
+  return result;
+}
+
+// ---------------------------------------------------------------------
+// Долговременный след прогона
+// ---------------------------------------------------------------------
+// Cloud Logging по умолчанию хранит записи 30 дней, а вопрос «а куда
+// делся вот этот файл» возникает позже — поэтому итог каждого прогона
+// ложится ещё и в Firestore, где живёт столько же, сколько проект.
+//
+// Клиенту коллекция недоступна: в firestore.rules нет ни одного
+// wildcard-правила верхнего уровня, а значит всё неперечисленное
+// запрещено по умолчанию (правило-заглушка на maintenance/** добавлено
+// туда же явно, чтобы это было видно, а не выводилось).
+const SWEEP_RUNS_COLLECTION = "maintenance";
+const SWEEP_RUNS_DOC = "orphanSweep";
+const SWEEP_RUNS_SUBCOLLECTION = "runs";
+
+// Полный список путей в одном документе упёрся бы в лимит 1 МиБ на
+// документ при большой разовой чистке, а обрезанный молча — соврал бы.
+// Поэтому: первые 200 путей в документе, остальное — по счётчику плюс
+// признак обрезки, и все до одного есть построчно в Cloud Logging.
+const MAX_RECORDED_PATHS = 200;
+
+export interface SweepRunMeta {
+  trigger: "scheduled" | "script";
+  dryRun: boolean;
+  startedAtMs: number;
+}
+
+export async function recordSweepRun(
+  db: Firestore,
+  result: SweepResult,
+  meta: SweepRunMeta,
+): Promise<void> {
+  const recorded = result.orphans.slice(0, MAX_RECORDED_PATHS);
+  try {
+    await db
+      .collection(SWEEP_RUNS_COLLECTION)
+      .doc(SWEEP_RUNS_DOC)
+      .collection(SWEEP_RUNS_SUBCOLLECTION)
+      .add({
+        trigger: meta.trigger,
+        dryRun: meta.dryRun,
+        startedAt: new Date(meta.startedAtMs),
+        finishedAt: new Date(),
+        durationMs: Date.now() - meta.startedAtMs,
+        scannedObjects: result.scannedObjects,
+        scannedDocs: result.scannedDocs,
+        referencedPaths: result.referencedPaths,
+        skippedTooYoung: result.skippedTooYoung,
+        skippedNotSwept: result.skippedNotSwept,
+        orphanCount: result.orphans.length,
+        orphanBytes: result.orphanBytes,
+        deleted: result.deleted,
+        deleteFailures: result.deleteFailures,
+        stoppedEarly: result.stoppedEarly,
+        stopReason: result.stopReason,
+        remainingCandidates: result.remainingCandidates,
+        orphanPaths: recorded.map((o) => ({
+          path: o.path,
+          sizeBytes: o.sizeBytes,
+          createdAt: o.createdAt,
+        })),
+        orphanPathsTruncated: result.orphans.length > recorded.length,
+      });
+  } catch (e) {
+    // Отчёт — это след, а не часть работы: прогон уже состоялся, файлы
+    // уже удалены, и падать здесь значило бы потерять ещё и лог в
+    // Cloud Logging из-за необработанного исключения.
+    logger.warn("orphanSweep: failed to record run", e);
+  }
+}
+
+// Единая точка входа для регулярной функции и для скрипта: и след, и
+// сам прогон должны быть одинаковыми независимо от того, кто нажал.
+export async function runOrphanSweepAndRecord(
+  opts: SweepOptions & { trigger: SweepRunMeta["trigger"] },
+): Promise<SweepResult> {
+  const startedAtMs = Date.now();
+  const result = await sweepOrphanMedia(opts);
+  await recordSweepRun(opts.db, result, {
+    trigger: opts.trigger,
+    dryRun: opts.dryRun ?? true,
+    startedAtMs,
+  });
   return result;
 }

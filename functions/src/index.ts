@@ -10,8 +10,10 @@ import {
 } from "firebase-functions/v2/firestore";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { onObjectFinalized } from "firebase-functions/v2/storage";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
-import { defineSecret } from "firebase-functions/params";
+import { defineSecret, defineBoolean } from "firebase-functions/params";
+import { runOrphanSweepAndRecord } from "./orphanSweep";
 import { RtcRole, RtcTokenBuilder } from "agora-token";
 import { algoliasearch } from "algoliasearch";
 import { randomUUID } from "crypto";
@@ -1558,5 +1560,71 @@ export const endCall = onCall(
 
     await callRef.update({ status: "ended" });
     return { ok: true };
+  },
+);
+
+// ---------------------------------------------------------------------
+// Регулярный сборщик осиротевших объектов Storage
+// ---------------------------------------------------------------------
+// Что считается сиротой и почему механизм один на B11 / статусы /
+// B19-B21 — см. orphanSweep.ts, там же оба урока, которые нельзя
+// «оптимизировать» обратно.
+//
+// Удаление выключено по умолчанию и включается ОТДЕЛЬНЫМ осознанным
+// шагом: строка ORPHAN_SWEEP_DELETE=true в functions/.env плюс
+// повторный деплой. Так сделано ровно потому, что закоммиченная
+// удаляющая функция иначе активировалась бы при первом же
+// `firebase deploy` по любому постороннему поводу — молча и для всех
+// сразу. Значение параметра лежит в git, то есть состояние флага видно
+// в истории, а не только в консоли GCP.
+const orphanSweepDelete = defineBoolean("ORPHAN_SWEEP_DELETE", { default: false });
+
+// Расписание, а не реакция на событие: сирота по определению не
+// порождает события (документа, на удаление которого можно было бы
+// подписаться, у неё никогда не было) — именно поэтому onStatusDeleted
+// её и не достаёт.
+//
+// Лимиты: 540 с и 512 МиБ при нынешних 76 объектах и 805 документах —
+// запас в сотни раз (прогон скриптом занимает единицы секунд). Они не
+// страховка «на глазок»: внутри сборщика и обход документов, и листинг
+// объектов идут страницами, а бюджет времени задан ЯВНО и меньше
+// таймаута рантайма — прогон обязан свернуться сам и записать отчёт,
+// а не быть убитым на середине без следа. Остаток работы при этом не
+// теряется: следующий прогон продолжит, сборщик идемпотентен.
+const ORPHAN_SWEEP_TIMEOUT_SECONDS = 540;
+const ORPHAN_SWEEP_TIME_BUDGET_MS = (ORPHAN_SWEEP_TIMEOUT_SECONDS - 60) * 1000;
+
+export const sweepOrphanMediaDaily = onSchedule(
+  {
+    region: FUNCTIONS_REGION,
+    schedule: "every day 04:20",
+    timeZone: "Asia/Baku",
+    timeoutSeconds: ORPHAN_SWEEP_TIMEOUT_SECONDS,
+    memory: "512MiB",
+    // Один прогон за раз: параллельные прогоны друг другу не опасны
+    // (сборщик идемпотентен), но удвоили бы чтения ни за чем.
+    maxInstances: 1,
+    // Ретраев нет намеренно: неудачный прогон не нужно повторять — через
+    // сутки придёт следующий и увидит ту же картину, а сборщик от этого
+    // ничего не теряет.
+    retryCount: 0,
+  },
+  async () => {
+    const dryRun = !orphanSweepDelete.value();
+    const result = await runOrphanSweepAndRecord({
+      db,
+      bucket: getStorage().bucket("mugam-club.firebasestorage.app"),
+      dryRun,
+      deadlineMs: Date.now() + ORPHAN_SWEEP_TIME_BUDGET_MS,
+      trigger: "scheduled",
+    });
+    logger.info("sweepOrphanMediaDaily: finished", {
+      dryRun,
+      orphans: result.orphans.length,
+      orphanBytes: result.orphanBytes,
+      deleted: result.deleted,
+      stoppedEarly: result.stoppedEarly,
+      stopReason: result.stopReason,
+    });
   },
 );

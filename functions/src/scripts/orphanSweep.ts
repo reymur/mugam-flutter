@@ -2,7 +2,9 @@
 //
 // В git есть, в деплой не попадает: файл не импортируется из index.ts,
 // поэтому `firebase deploy --only functions` его не видит — тот же
-// приём, что у algoliaBackfill.ts рядом.
+// приём, что у algoliaBackfill.ts рядом. Регулярный прогон делает
+// sweepOrphanMediaDaily (index.ts) через ту же точку входа; этот скрипт
+// нужен для разовой чистки и для сверки «глазами» до/после.
 //
 // --- Как запускать ---
 // 1. Аутентификация Admin SDK для разового скрипта (в рантайме функций
@@ -10,16 +12,19 @@
 //      gcloud auth application-default login
 // 2. Из functions/:
 //      npm run build
-//      node lib/scripts/orphanSweep.js            # только отчёт, ничего не удаляет
-//      node lib/scripts/orphanSweep.js --delete   # удаление, после сверки отчёта
+//      node lib/scripts/orphanSweep.js                        # только отчёт
+//      node lib/scripts/orphanSweep.js --manifest ../docs/x.md # отчёт + файл со списком
+//      node lib/scripts/orphanSweep.js --delete                # удаление, после сверки
 //
 // Без --delete не удаляет ничего. Повторный запуск безопасен: сборщик
 // идемпотентен по построению (проверка ссылок, потом удаление).
 
+import { writeFileSync } from "fs";
 import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
-import { sweepOrphanMedia, DEFAULT_MIN_AGE_MS } from "../orphanSweep";
+import type { Bucket } from "@google-cloud/storage";
+import { runOrphanSweepAndRecord, DEFAULT_MIN_AGE_MS, type SweepResult } from "../orphanSweep";
 
 const PROJECT_ID = "mugam-club"; // как "default" в .firebaserc
 const BUCKET = "mugam-club.firebasestorage.app";
@@ -28,8 +33,56 @@ function formatMb(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
 }
 
+function argValue(flag: string): string | undefined {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+// Полный объём бакета, включая неподметаемые префиксы (avatars/,
+// groups/) — чтобы «стало меньше на столько-то» можно было проверить
+// снаружи, а не поверить отчёту сборщика на слово.
+async function bucketTotals(bucket: Bucket): Promise<{ count: number; bytes: number }> {
+  const [files] = await bucket.getFiles();
+  let bytes = 0;
+  for (const file of files) bytes += Number(file.metadata.size ?? 0);
+  return { count: files.length, bytes };
+}
+
+function manifestMarkdown(result: SweepResult, mode: string, totals: { count: number; bytes: number }): string {
+  // Сортировка по пути, а не по порядку листинга: файл кладётся в git, и
+  // осмысленный diff между двумя прогонами важнее исходного порядка.
+  const sorted = [...result.orphans].sort((a, b) => a.path.localeCompare(b.path));
+  const lines: string[] = [];
+  lines.push("# Сироты в Storage — список к удалению");
+  lines.push("");
+  lines.push(`Режим прогона: **${mode}**`);
+  lines.push("");
+  lines.push("Сохранено до удаления, чтобы через месяц было с чем сверяться, если");
+  lines.push("окажется, что что-то пропало. Сирота здесь — объект, на который не");
+  lines.push("ссылается ни один документ во всей базе и который старше окна");
+  lines.push(`ожидания (${DEFAULT_MIN_AGE_MS / 3600000} ч). Как это считается — см. functions/src/orphanSweep.ts.`);
+  lines.push("");
+  lines.push("| Показатель | Значение |");
+  lines.push("|---|---|");
+  lines.push(`| Объектов в подметаемых префиксах | ${result.scannedObjects} |`);
+  lines.push(`| Документов просмотрено (вся база) | ${result.scannedDocs} |`);
+  lines.push(`| Ссылок на объекты найдено | ${result.referencedPaths} |`);
+  lines.push(`| Пропущено как моложе окна | ${result.skippedTooYoung} |`);
+  lines.push(`| Сирот | ${result.orphans.length} на ${formatMb(result.orphanBytes)} |`);
+  lines.push(`| Всего в бакете на момент прогона | ${totals.count} объектов, ${formatMb(totals.bytes)} |`);
+  lines.push("");
+  lines.push("| Создан | Размер | Путь |");
+  lines.push("|---|---|---|");
+  for (const orphan of sorted) {
+    lines.push(`| ${orphan.createdAt} | ${formatMb(orphan.sizeBytes)} | \`${orphan.path}\` |`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
 async function main() {
   const dryRun = !process.argv.includes("--delete");
+  const manifestPath = argValue("--manifest");
 
   initializeApp({
     credential: applicationDefault(),
@@ -44,10 +97,14 @@ async function main() {
   );
   console.log(`Окно ожидания: ${DEFAULT_MIN_AGE_MS / 3600000} ч\n`);
 
-  const result = await sweepOrphanMedia({
+  const bucket = getStorage().bucket(BUCKET);
+  const before = await bucketTotals(bucket);
+
+  const result = await runOrphanSweepAndRecord({
     db: getFirestore(),
-    bucket: getStorage().bucket(BUCKET),
+    bucket,
     dryRun,
+    trigger: "script",
   });
 
   // Разбивка по префиксу — в отчёте она и есть главное: реестр ожидал
@@ -71,6 +128,13 @@ async function main() {
     console.log(`  ${prefix}/ — ${entry.count} шт, ${formatMb(entry.bytes)}`);
   }
 
+  if (result.stoppedEarly) {
+    console.log(
+      `\nПрогон свернулся досрочно: ${result.stopReason}; ` +
+        `необработанных кандидатов — ${result.remainingCandidates}.`,
+    );
+  }
+
   if (result.orphans.length > 0) {
     console.log("\nСписок:");
     for (const orphan of result.orphans) {
@@ -80,8 +144,23 @@ async function main() {
     }
   }
 
+  if (manifestPath) {
+    const mode = dryRun ? "только отчёт, до удаления" : "удаление";
+    writeFileSync(manifestPath, manifestMarkdown(result, mode, before), "utf8");
+    console.log(`\nСписок сохранён: ${manifestPath}`);
+  }
+
+  console.log(
+    `\nБакет до прогона:  ${before.count} объектов, ${formatMb(before.bytes)}`,
+  );
   if (!dryRun) {
-    console.log(`\nУдалено: ${result.deleted}, ошибок удаления: ${result.deleteFailures}`);
+    console.log(`Удалено: ${result.deleted}, ошибок удаления: ${result.deleteFailures}`);
+    const after = await bucketTotals(bucket);
+    console.log(`Бакет после:       ${after.count} объектов, ${formatMb(after.bytes)}`);
+    console.log(
+      `Освобождено:       ${before.count - after.count} объектов, ` +
+        `${formatMb(before.bytes - after.bytes)}`,
+    );
   }
 }
 
