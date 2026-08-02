@@ -171,11 +171,20 @@ const NOT_A_REFERENCE_COLLECTIONS = new Set(["validatedUploads"]);
 // список полей (см. collectPathsFromValue), и цена та же — удалённое
 // живое медиа, поэтому здесь тоже обход, а не перечисление.
 //
-// Масштаб: обход стоит одно чтение на документ плюс один listCollections
-// на документ. На нынешних ~800 документах это секунды и доли цента, на
-// сотне тысяч — уже нет. Порог, за которым эту схему надо менять на
-// обратный индекс путей, отмечен предупреждением в логе ниже.
-const HARVEST_SCALE_WARN_DOCS = 20000;
+// Масштаб — по замеру, а не по ощущению. Обход стоит одно чтение на
+// документ плюс один listCollections на документ. Прод, 805 документов:
+// 90 с последовательно, 17 с пачками по 20 (см. LIST_CONCURRENCY ниже),
+// то есть около 47 документов в секунду с ноутбука; из функции в том же
+// регионе будет быстрее, но нижняя граница уже известна.
+//
+// При бюджете 480 с это примерно 22 000 документов на прогон. Порог
+// предупреждения поставлен ниже, чтобы оно успело появиться в логах
+// раньше, чем прогоны начнут упираться в бюджет и переставать удалять
+// (упереться безопасно — сборщик тогда просто ничего не удаляет, — но
+// узнать об этом лучше заранее). Дальше схему надо менять на обратный
+// индекс путей: складывать ссылку при записи документа, а не искать её
+// потом по всей базе.
+const HARVEST_SCALE_WARN_DOCS = 15000;
 
 async function harvestReferencedPaths(
   db: Firestore,
@@ -185,12 +194,26 @@ async function harvestReferencedPaths(
   let scannedDocs = 0;
   let complete = true;
 
+  // Обход стоит одного listCollections на документ — узнать, есть ли у
+  // него подколлекции, дешевле неоткуда. Замер по проду: 805 документов
+  // подряд — 90 с, при том что чтение самих страниц заняло секунды.
+  // То есть время съедали не данные, а 805 последовательных
+  // round-trip'ов. Отсюда пачки: полнота обхода та же (посещаются ровно
+  // те же документы), меняется только то, что ожидание ответа идёт
+  // параллельно. 20 — не подобранный оптимум, а осознанно скромное
+  // число: Firestore такую конкурентность не замечает, а рост дальше
+  // упирается уже в пропускную способность, а не в задержку.
+  const LIST_CONCURRENCY = 20;
+
+  // Очередь вместо рекурсии: глубина вложенности заранее неизвестна, а
+  // стек — единственное, что здесь могло бы кончиться незаметно.
+  const queue: FirebaseFirestore.CollectionReference[] = [];
+
   // Документы читаются страницами по 500, а не одним .get(): память
   // ограничена страницей независимо от размера коллекции. Бюджет
   // проверяется на границе страницы — прерваться посреди страницы
   // смысла нет, она уже прочитана.
   const scanCollection = async (ref: FirebaseFirestore.CollectionReference): Promise<void> => {
-    if (!complete) return;
     if (NOT_A_REFERENCE_COLLECTIONS.has(ref.id)) return;
     const PAGE_SIZE = 500;
     let lastDoc: QueryDocumentSnapshot | undefined;
@@ -203,23 +226,30 @@ async function harvestReferencedPaths(
       if (lastDoc) query = query.startAfter(lastDoc);
       const snap = await query.get();
       if (snap.empty) break;
+
       for (const doc of snap.docs) {
         const data = doc.data();
         collectPathsFromValue(data, paths);
         collectSplitMediaRef(data, paths);
         scannedDocs++;
-        for (const sub of await doc.ref.listCollections()) {
-          await scanCollection(sub);
-          if (!complete) return;
-        }
       }
+
+      for (let i = 0; i < snap.docs.length; i += LIST_CONCURRENCY) {
+        const chunk = snap.docs.slice(i, i + LIST_CONCURRENCY);
+        const subs = await Promise.all(chunk.map((doc) => doc.ref.listCollections()));
+        for (const sub of subs.flat()) queue.push(sub);
+      }
+
       lastDoc = snap.docs[snap.docs.length - 1];
       if (snap.docs.length < PAGE_SIZE) break;
     }
   };
 
-  for (const root of await db.listCollections()) {
-    await scanCollection(root);
+  queue.push(...(await db.listCollections()));
+  while (queue.length > 0) {
+    const next = queue.shift();
+    if (!next) break;
+    await scanCollection(next);
     if (!complete) break;
   }
 
@@ -263,6 +293,13 @@ export interface SweepResult {
   // Сколько сирот осталось необработанными на момент остановки (при
   // остановке по лимиту/бюджету); 0 при нормальном завершении.
   remainingCandidates: number;
+  // Разбивка времени. Нужна не для красоты: обход ссылок — единственная
+  // часть, которая растёт вместе с базой и упирается в бюджет, а по
+  // одной общей длительности не видно, к чему подходит предел. Попадает
+  // и в лог, и в запись прогона, поэтому запас можно смотреть постфактум.
+  harvestMs: number;
+  listMs: number;
+  deleteMs: number;
 }
 
 export interface SweepOptions {
@@ -315,13 +352,18 @@ export async function sweepOrphanMedia(opts: SweepOptions): Promise<SweepResult>
     stoppedEarly: false,
     stopReason: null,
     remainingCandidates: 0,
+    harvestMs: 0,
+    listMs: 0,
+    deleteMs: 0,
   };
 
+  const harvestStartedMs = Date.now();
   const {
     paths: referenced,
     scannedDocs,
     complete,
   } = await harvestReferencedPaths(db, isOutOfTime);
+  result.harvestMs = Date.now() - harvestStartedMs;
   result.scannedDocs = scannedDocs;
   result.referencedPaths = referenced.size;
 
@@ -345,6 +387,7 @@ export async function sweepOrphanMedia(opts: SweepOptions): Promise<SweepResult>
   // File-объектов в памяти — и есть тот самый отказ по памяти, которого
   // здесь быть не должно.
   const candidates: OrphanObject[] = [];
+  const listStartedMs = Date.now();
   for (const prefix of SWEPT_PREFIXES) {
     let pageToken: string | undefined;
     for (;;) {
@@ -388,6 +431,7 @@ export async function sweepOrphanMedia(opts: SweepOptions): Promise<SweepResult>
       if (!pageToken) break;
     }
   }
+  result.listMs = Date.now() - listStartedMs;
 
   // Пустой результат обхода — это «не знаю», а не «ничего не
   // ссылается». Тот же класс ошибки, по которому в этом проекте уже
@@ -408,6 +452,7 @@ export async function sweepOrphanMedia(opts: SweepOptions): Promise<SweepResult>
     return result;
   }
 
+  const deleteStartedMs = Date.now();
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
 
@@ -449,6 +494,8 @@ export async function sweepOrphanMedia(opts: SweepOptions): Promise<SweepResult>
     }
   }
 
+  result.deleteMs = Date.now() - deleteStartedMs;
+
   logger.info("orphanSweep: done", {
     dryRun,
     scannedObjects: result.scannedObjects,
@@ -461,6 +508,9 @@ export async function sweepOrphanMedia(opts: SweepOptions): Promise<SweepResult>
     stoppedEarly: result.stoppedEarly,
     stopReason: result.stopReason,
     remainingCandidates: result.remainingCandidates,
+    harvestMs: result.harvestMs,
+    listMs: result.listMs,
+    deleteMs: result.deleteMs,
   });
 
   return result;
@@ -522,6 +572,9 @@ export async function recordSweepRun(
         stoppedEarly: result.stoppedEarly,
         stopReason: result.stopReason,
         remainingCandidates: result.remainingCandidates,
+        harvestMs: result.harvestMs,
+        listMs: result.listMs,
+        deleteMs: result.deleteMs,
         orphanPaths: recorded.map((o) => ({
           path: o.path,
           sizeBytes: o.sizeBytes,
