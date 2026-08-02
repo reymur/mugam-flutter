@@ -2654,6 +2654,18 @@ class FirestoreService {
   Stream<Map<String, dynamic>> watchChatMeta(String chatId) {
     return _watchChatDoc(chatId).map((snap) {
       final data = snap.data() ?? {};
+      // Сервер только что сказал, какая расписка у нас записана —
+      // запоминаем, чтобы markChatAsReadBy не переписывал её тем же
+      // значением (A3). Делается здесь, а не на экране: экран и его
+      // провайдеры пересоздаются при каждом входе в чат, а ответ нужен
+      // раньше первой попытки записи.
+      final myUid = FirebaseAuth.instance.currentUser?.uid;
+      if (myUid != null) {
+        _noteRecordedReadMsgId(
+          chatId,
+          (data['lastReadMsgId'] as Map<String, dynamic>?)?[myUid] as String?,
+        );
+      }
       return {
         // Lets chat_screen.dart's AppBar title resolve off this live
         // stream alone instead of also waiting on chatDataProvider's
@@ -2832,11 +2844,32 @@ class FirestoreService {
   // which calls this directly (not via PresenceService.stop()) because it
   // must run *before* AuthService().logout() while the user is still
   // authenticated; Firestore rules would reject the write once signed out.
-  Future<void> setUserPresence(String uid, {required bool online}) async {
+  // activeChatId — в каком чате пользователь СЕЙЧАС (N19). Пишется рядом с
+  // сердцебиением присутствия намеренно: у отметки о присутствии обязан
+  // быть срок годности, а здесь он уже есть — `lastSeen` обновляется раз в
+  // 60 с, пока приложение на переднем плане, и перестаёт обновляться, как
+  // только оно свёрнуто, убито или потеряло сеть.
+  //
+  // Прежний признак `activeUsers` в документе чата такого срока не имел:
+  // uid добавлялся при входе на экран и удалялся только в `dispose`.
+  // Свернул приложение с открытым чатом, убил его или потерял связь —
+  // отметка оставалась навсегда, а сервер по ней ПОДАВЛЯЕТ push. То есть
+  // человек молча переставал получать уведомления об этом чате.
+  //
+  // Ключ пишется ВСЕГДА, в том числе как null: по наличию самого поля
+  // сервер отличает новую сборку от старой (см. переходное окно в
+  // реестре, N19). У старой сборки поля нет вовсе — для неё сервер
+  // продолжает смотреть на activeUsers.
+  Future<void> setUserPresence(
+    String uid, {
+    required bool online,
+    String? activeChatId,
+  }) async {
     try {
       await _db.collection('users').doc(uid).update({
         'online': online,
         'lastSeen': FieldValue.serverTimestamp(),
+        'activeChatId': online ? activeChatId : null,
       }).timeout(_writeTimeout);
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
@@ -2900,12 +2933,41 @@ class FirestoreService {
   // I/O of its own. Remove once confirmed/fixed.
   static int debugMarkChatAsReadByCallCount = 0;
 
+  // Какая расписка уже лежит в документе каждого чата. Живёт в сервисе, а
+  // не в состоянии экрана — и это принципиально (A3).
+  //
+  // Гвард в chat_screen сверяется с `chatMetaProvider`, а тот объявлен
+  // autoDispose: при каждом входе в чат провайдер создаётся заново, и
+  // если экран успеет захотеть написать раньше первого снимка, сверять
+  // будет не с чем. Здесь значение переживает и пересоздание экрана, и
+  // пересоздание провайдера, а заполняется из watchChatMeta — то есть
+  // приходит от сервера, а не восстанавливается по памяти экрана.
+  final Map<String, String> _lastReadMsgIdWritten = {};
+
+  // Зовётся из watchChatMeta на каждом снимке документа чата: сервер уже
+  // сказал, какая расписка записана, и повторять её незачем.
+  void _noteRecordedReadMsgId(String chatId, String? msgId) {
+    if (msgId == null) return;
+    _lastReadMsgIdWritten[chatId] = msgId;
+  }
+
   Future<void> markChatAsReadBy({
     required String chatId,
     required String uid,
     required String lastMsgId,
   }) async {
     debugMarkChatAsReadByCallCount++;
+    // Расписка про это же сообщение уже записана — писать нечего.
+    // Дело не только в лишней записи в горячий документ: отправитель
+    // видит на экране «Məlumat» ВРЕМЯ прочтения, и повторная запись
+    // сдвигала его на момент очередного захода в чат, подменяя отметку о
+    // прочтении отметкой о визите (тот же класс, что B18 и B28).
+    //
+    // Проверено на устройстве 02.08: на сборке с этой правкой время в
+    // «Məlumat» при повторных открытиях чата стоит на месте, на сборке
+    // без неё — сдвигается.
+    if (_lastReadMsgIdWritten[chatId] == lastMsgId) return;
+    _lastReadMsgIdWritten[chatId] = lastMsgId;
     try {
       // Здесь был ещё `readBy: arrayUnion([uid])` — убран 02.08 вместе с
       // самим полем (B28). Его никто никогда не читал: ни экран, ни

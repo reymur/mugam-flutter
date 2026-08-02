@@ -32,6 +32,7 @@ import '../../../core/queue/message_send_controller.dart';
 import '../../../core/settings/image_quality_settings.dart';
 import '../../../core/settings/upload_limit_settings.dart';
 import '../../../core/theme/colors.dart';
+import '../../../core/presence/presence_service.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
@@ -353,6 +354,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         uid: currentUid,
       );
       _firestoreService.addActiveUser(chatId: widget.chatId, uid: currentUid);
+      // Признак «смотрю в этот чат» едет вместе с сердцебиением
+      // присутствия (N19). addActiveUser выше пока остаётся: пока в ходу
+      // сборки, не пишущие activeChatId, сервер смотрит на него — см.
+      // переходное окно в реестре.
+      PresenceService.instance.setActiveChat(widget.chatId);
     }
     _presenceRefreshTimer = Timer.periodic(const Duration(seconds: 20), (_) {
       if (mounted) setState(() {});
@@ -398,6 +404,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         chatId: widget.chatId,
         uid: currentUid,
       );
+      PresenceService.instance.setActiveChat(null);
     }
     _messageController.dispose();
     _messageFocusNode.dispose();

@@ -26,6 +26,20 @@ class PresenceService with WidgetsBindingObserver {
   String? _uid;
   Timer? _timer;
   bool _observing = false;
+  // Чат, открытый на экране прямо сейчас (N19). Едет вместе с
+  // сердцебиением присутствия, потому что именно оно даёт отметке срок
+  // годности: свернули приложение — биение прекратилось, и признак
+  // «смотрит в этот чат» протухает сам, без всякой уборки.
+  String? _activeChatId;
+
+  // Зовётся с экрана чата: при открытии — с chatId, при закрытии — с null.
+  // Пишет немедленно, а не ждёт следующего удара сердца: между входом в
+  // чат и подавлением пуша не должно быть минутной дыры.
+  void setActiveChat(String? chatId) {
+    if (_activeChatId == chatId) return;
+    _activeChatId = chatId;
+    if (_uid != null) _writePresence(online: true);
+  }
 
   void start(String uid) {
     // No longer short-circuits when _uid/_timer already look "started" —
@@ -75,7 +89,13 @@ class PresenceService with WidgetsBindingObserver {
   void _writePresence({required bool online}) {
     final uid = _uid;
     if (uid == null) return;
-    unawaited(_firestoreService.setUserPresence(uid, online: online));
+    unawaited(
+      _firestoreService.setUserPresence(
+        uid,
+        online: online,
+        activeChatId: _activeChatId,
+      ),
+    );
   }
 
   @override

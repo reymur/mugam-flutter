@@ -14,6 +14,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
 import { defineSecret, defineBoolean } from "firebase-functions/params";
 import { runOrphanSweepAndRecord } from "./orphanSweep";
+import { isWatchingChatDecision } from "./presence";
 import { RtcRole, RtcTokenBuilder } from "agora-token";
 import { algoliasearch } from "algoliasearch";
 import { randomUUID } from "crypto";
@@ -338,9 +339,13 @@ export const onNewMessage = onDocumentCreated(
     }
 
     const activeUsers: string[] = chat.activeUsers ?? [];
-    const recipients = members.filter(
-      (uid) => uid !== senderId && !activeUsers.includes(uid),
-    );
+    const candidates = members.filter((uid) => uid !== senderId);
+    const recipients: string[] = [];
+    for (const uid of candidates) {
+      if (!(await isWatchingChat(uid, event.params.chatId, activeUsers))) {
+        recipients.push(uid);
+      }
+    }
     if (recipients.length === 0) return;
 
     const isGroup = !!chat.isGroup;
@@ -1144,6 +1149,35 @@ export const onFriendRequestUpdated = onDocumentUpdated(
 // `completed: true`. В коде клиента этого не было никогда — комментарий
 // врал про поведение, что хуже отсутствующего. Исправлено 02.08; самого
 // поля `completed` больше нет ни у кого.
+// Смотрит ли человек прямо сейчас в этот чат — то есть нужно ли молчать
+// вместо push (N19). Само решение живёт в presence.ts чистой функцией,
+// здесь только чтение документа: цена ошибки тут несимметрична и
+// невидима (потерянный push не замечает никто), поэтому решение обязано
+// быть покрыто тестами во всех сочетаниях сборок.
+async function isWatchingChat(
+  uid: string,
+  chatId: string,
+  activeUsers: string[],
+): Promise<boolean> {
+  try {
+    const snap = await db.collection("users").doc(uid).get();
+    const data = snap.data();
+    return isWatchingChatDecision({
+      userData: data,
+      chatId,
+      activeUsers,
+      uid,
+      lastSeenMs: data?.lastSeen?.toMillis?.() ?? null,
+      nowMs: Date.now(),
+    });
+  } catch (e) {
+    // Не смогли выяснить — считаем, что не смотрит. Лишний push лучше
+    // потерянного: первый заметен и раздражает, второй не заметен вовсе.
+    logger.warn("isWatchingChat failed", { uid, chatId, e });
+    return false;
+  }
+}
+
 // Сериализация с рекурсивной сортировкой ключей — сравнивает значения по
 // содержимому, а не по случайному порядку полей в снимке. Используется
 // сторожем в onChatUpdated ниже.
@@ -1194,11 +1228,34 @@ export const onChatUpdated = onDocumentUpdated(
     // не гарантирует порядок ключей в map-полях между снимками, и без
     // этого typing/deliveredTo/lastReadAt выглядели бы изменившимися
     // всегда (ровно эта ошибка уже ловилась в watchChatNegotiation.ts).
+    // Имени поля мало — нужен АВТОР записи. 02.08 сторож показал 19
+    // холостых `lastReadAt` после сборки с правкой, и это было принято за
+    // провал правки; на деле рядом работало второе устройство со старой
+    // сборкой, а лог не различал, чьи это записи. Поэтому у полей-карт,
+    // ключом которых служит uid (lastReadAt, deliveredTo, deliveredSeq,
+    // typing, unreadCount, negotiationSeenAt, clearedBy), выписываются
+    // ещё и изменившиеся ключи: `lastReadAt{6s4Ffvk}`.
+    const describe = (k: string): string => {
+      const b = before[k];
+      const a = after[k];
+      const isMap = (v: unknown) =>
+        v !== null && typeof v === "object" && !Array.isArray(v);
+      if (!isMap(a) && !isMap(b)) return k;
+      const bm = (isMap(b) ? b : {}) as Record<string, unknown>;
+      const am = (isMap(a) ? a : {}) as Record<string, unknown>;
+      const keys = Array.from(new Set([...Object.keys(bm), ...Object.keys(am)]))
+        .filter((sub) => canonicalJson(bm[sub]) !== canonicalJson(am[sub]))
+        .map((sub) => sub.slice(0, 7))
+        .sort();
+      return keys.length ? `${k}{${keys.join("|")}}` : k;
+    };
+
     const changed = Array.from(
       new Set([...Object.keys(before), ...Object.keys(after)]),
     )
       .filter((k) => canonicalJson(before[k]) !== canonicalJson(after[k]))
-      .sort();
+      .sort()
+      .map(describe);
     logger.info(`[chat-write] ${event.params.chatId} ${changed.join(",") || "(без изменений)"}`);
 
     if (before.recipientAgreed === true || after.recipientAgreed !== true) return;
@@ -1275,7 +1332,9 @@ export const onJobOfferWaitingForDate = onDocumentUpdated(
     // the push only, the durable waitingForDateAt/negotiationSeenAt state
     // still gets written regardless, so nothing is lost if this fires.
     const activeUsers: string[] = after.activeUsers ?? [];
-    if (activeUsers.includes(initiatorUid)) return;
+    if (await isWatchingChat(initiatorUid, event.params.chatId, activeUsers)) {
+      return;
+    }
 
     const members: string[] = after.members ?? [];
     const recipientUid = members.find((uid) => uid !== initiatorUid);
