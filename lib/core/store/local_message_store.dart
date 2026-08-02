@@ -83,6 +83,9 @@ class LocalMessageStore {
   final List<String> _accessOrder = [];
   final Map<String, StreamController<List<Message>>> _controllers = {};
   final Map<String, Timer> _historyDebounce = {};
+  // Чат, который прямо сейчас показывает экран, — единственный, чей поток
+  // нельзя закрывать вытеснением (B9). Ставится и снимается в watchChat.
+  String? _openChatId;
   Timer? _pendingDebounce;
   bool _pendingLoaded = false;
   // Lazily read once, then kept in memory — clearedAtFor is on the path to
@@ -275,8 +278,19 @@ class LocalMessageStore {
     // Открылся новый чат — значит все прочие точно не на экране, и
     // накопленное ими при листании можно вернуть к хвосту (B10).
     _trimOtherChats(chatId);
-    yield _sorted(chatId);
-    yield* _controllerFor(chatId).stream;
+    // Тот же признак, что и у _trimOtherChats, только с обратным знаком:
+    // раз экран чата в приложении всегда один, этот чат — открытый, и
+    // вытеснению он не подлежит, пока подписка жива (B9).
+    _openChatId = chatId;
+    try {
+      yield _sorted(chatId);
+      yield* _controllerFor(chatId).stream;
+    } finally {
+      // Только если с тех пор не открыли другой чат: тогда пометка уже
+      // принадлежит ему, и снимать её здесь значило бы снять защиту с
+      // чата, который в этот момент на экране.
+      if (_openChatId == chatId) _openChatId = null;
+    }
   }
 
   // Every currently-pending send across every chat — what the global send
@@ -555,7 +569,12 @@ class LocalMessageStore {
   void _touchAccess(String chatId) {
     _accessOrder.remove(chatId);
     _accessOrder.add(chatId);
-    while (_accessOrder.length > maxCachedChats) {
+    // Ограничитель прохода: защищённый чат возвращается в конец очереди, и
+    // без счётчика цикл крутился бы вечно, если защищены все кандидаты.
+    // За один полный проход либо что-то вытесняется, либо выясняется, что
+    // вытеснять нечего, — остаток разберётся при следующем обращении.
+    var remaining = _accessOrder.length;
+    while (_accessOrder.length > maxCachedChats && remaining-- > 0) {
       final evicted = _accessOrder.removeAt(0);
       // Never evict a chat with a still-pending send in flight — losing
       // track of it in memory would leave it stuck (the retry loop reads
@@ -563,9 +582,14 @@ class LocalMessageStore {
       final hasPending =
           _byChat[evicted]?.values.any((m) => m.localSendStatus != null) ??
           false;
-      if (hasPending) {
+      // И никогда — чат, открытый на экране (B9): вытеснение закрывает его
+      // StreamController, а подписан на него живой ChatMessagesController.
+      // Порядок доступа для этого негоден — его двигает фоновая очередь
+      // отправки, дотрагиваясь до чужих чатов, так что открытый чат вполне
+      // может доехать до головы очереди под пользователем.
+      if (hasPending || evicted == _openChatId) {
         _accessOrder.add(evicted);
-        break;
+        continue;
       }
       _byChat.remove(evicted);
       _historyLoaded.remove(evicted);

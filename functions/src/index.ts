@@ -138,12 +138,51 @@ function previewText(type: string, text: string, fileName?: string): string {
   }
 }
 
-// How far back to look for the replacement preview when the message the
-// chat card currently shows is removed. Matches the client's own former
-// _findLastMessage cap: if every one of the 50 newest messages is deleted
-// for everyone, the card falls back to empty rather than paying for an
-// unbounded scan on every delete.
-const PREVIEW_LOOKBACK_LIMIT = 50;
+// Поиск замены для превью, когда удалено сообщение, которое карточка
+// чата сейчас показывает.
+//
+// Раньше здесь стоял один запрос на 50 сообщений: если все 50 оказывались
+// удалены «для всех», карточка молча становилась пустой, хотя история в
+// чате есть — то есть редкий случай приводил не к более дорогой работе, а
+// к неверному ответу (B14).
+//
+// Теперь страницы расширяются: 10 → 100 → 1000. Обычный случай стал
+// ДЕШЕВЛЕ прежнего (первая же страница из 10 почти всегда содержит
+// неудалённое сообщение — это 10 чтений вместо 50), а платит только
+// патология, ради которой всё и затевалось. Потолок остаётся, но теперь
+// он на порядок дальше и о упоре в него сообщается в лог, а не молчанием.
+const PREVIEW_PAGE_SIZES = [10, 100, 1000];
+
+async function findNewestVisibleMessage(
+  chatRef: FirebaseFirestore.DocumentReference,
+  read: (q: FirebaseFirestore.Query) => Promise<FirebaseFirestore.QuerySnapshot>,
+  chatId: string,
+): Promise<FirebaseFirestore.QueryDocumentSnapshot | null> {
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot | null = null;
+  for (const size of PREVIEW_PAGE_SIZES) {
+    let q = chatRef
+      .collection("messages")
+      .orderBy("seq", "desc")
+      .limit(size);
+    if (cursor) q = q.startAfter(cursor);
+    const snap = await read(q);
+    if (snap.empty) return null;
+    // deletedForAll фильтруется здесь, а не запросом, намеренно:
+    // сообщения, написанные до появления этого поля, его просто не имеют,
+    // а равенство в Firestore никогда не совпадает с отсутствующим полем —
+    // where("deletedForAll","==",false) пропустил бы почти всё.
+    const hit = snap.docs.find((d) => d.data().deletedForAll !== true);
+    if (hit) return hit;
+    // Страница короче запрошенной — история кончилась, дальше нечего.
+    if (snap.size < size) return null;
+    cursor = snap.docs[snap.docs.length - 1];
+  }
+  logger.warn(
+    "findNewestVisibleMessage: упёрлись в потолок, превью станет пустым",
+    { chatId, scanned: PREVIEW_PAGE_SIZES.reduce((a, b) => a + b, 0) },
+  );
+  return null;
+}
 
 // The chat card's preview is written EXCLUSIVELY by this file — the client
 // no longer formats or writes it in any scenario (see the removal of
@@ -169,10 +208,6 @@ async function recomputeChatPreviewAfterRemoval(
 ): Promise<void> {
   if (removedSeq == null) return;
   const chatRef = db.collection("chats").doc(chatId);
-  const newestQuery = chatRef
-    .collection("messages")
-    .orderBy("seq", "desc")
-    .limit(PREVIEW_LOOKBACK_LIMIT);
   try {
     await db.runTransaction(async (tx) => {
       const chatSnap = await tx.get(chatRef);
@@ -181,13 +216,10 @@ async function recomputeChatPreviewAfterRemoval(
       // Not the message the card is showing — nothing to do.
       if (storedSeq !== removedSeq) return;
 
-      const newest = await tx.get(newestQuery);
-      // deletedForAll is filtered here rather than in the query on purpose:
-      // messages written before that field existed simply don't have it,
-      // and a Firestore equality filter never matches a missing field, so
-      // a `where("deletedForAll","==",false)` would skip almost everything.
-      const replacement = newest.docs.find(
-        (d) => d.data().deletedForAll !== true,
+      const replacement = await findNewestVisibleMessage(
+        chatRef,
+        (q) => tx.get(q),
+        chatId,
       );
       if (!replacement) {
         tx.update(chatRef, {
@@ -512,13 +544,10 @@ export const refreshChatPreview = onCall(
     // deliberately-modified one calling this in a loop — gets a single
     // cheap read and nothing else.
     const storedSeq: number = chatSnap.data()?.lastMessageSeq ?? 0;
-    const newest = await chatRef
-      .collection("messages")
-      .orderBy("seq", "desc")
-      .limit(PREVIEW_LOOKBACK_LIMIT)
-      .get();
-    const replacement = newest.docs.find(
-      (d) => d.data().deletedForAll !== true,
+    const replacement = await findNewestVisibleMessage(
+      chatRef,
+      (q) => q.get(),
+      chatId,
     );
     const trueSeq: number = replacement?.data().seq ?? 0;
     if (trueSeq === storedSeq) return { updated: false };

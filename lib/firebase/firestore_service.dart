@@ -336,13 +336,26 @@ class FirestoreService {
             }
           }
           result.addAll(bestPerCounterpart.values);
+          // Tiebreaker по id при равных ключах — тот же, что уже стоит в
+          // getOrCreateDirectChat выше, и по той же причине (B32/B13).
+          // Возврат 0 оставлял порядок на усмотрение сортировки, а она в
+          // Dart не обещает стабильности: две карточки с одинаковым
+          // lastMessageTime могли меняться местами на ровном месте, при
+          // любой перерисовке списка.
+          //
+          // Совпадение ключей — не экзотика, а штатное состояние: сервер
+          // пишет lastMessageTime: null каждому чату, у которого история
+          // удалена целиком (recomputeChatPreviewAfterRemoval), так что
+          // все такие чаты равны между собой. Плюс сообщения, отправленные
+          // в одну миллисекунду.
           result.sort((a, b) {
-            if (a.lastMessageTime == null && b.lastMessageTime == null) {
-              return 0;
-            }
-            if (a.lastMessageTime == null) return 1;
-            if (b.lastMessageTime == null) return -1;
-            return b.lastMessageTime!.compareTo(a.lastMessageTime!);
+            final aTime = a.lastMessageTime;
+            final bTime = b.lastMessageTime;
+            if (aTime == null && bTime == null) return a.id.compareTo(b.id);
+            if (aTime == null) return 1;
+            if (bTime == null) return -1;
+            final byTime = bTime.compareTo(aTime);
+            return byTime != 0 ? byTime : a.id.compareTo(b.id);
           });
           return result;
         });
@@ -1296,6 +1309,13 @@ class FirestoreService {
         .orderBy('seq', descending: true)
         .limit(chatMediaWindowSize)
         .snapshots()
+        // Пустой снимок ИЗ КЭША — не ответ, а молчание (N14). Тот же
+        // признак и та же узость, что у watchChats: пусто с сервера —
+        // настоящий ответ, непустое из кэша — настоящие данные; молчание
+        // это только два условия вместе. Не отдавая такой снимок, поток
+        // оставляет провайдер в состоянии загрузки, и экран рисует
+        // ожидание вместо пустоты, выданной за факт.
+        .where((snap) => !(snap.docs.isEmpty && snap.metadata.isFromCache))
         .map(
           (snap) => snap.docs
               .map((doc) => Message.fromFirestore(doc.id, doc.data()))
@@ -2527,25 +2547,37 @@ class FirestoreService {
 
   // The newest message in the chat that isn't deletedForAll — i.e. the
   // message lastMessage/lastMessageTime should currently denormalize.
-  // Capped at the 50 most recent messages: if every one of those 50 were
-  // deletedForAll (very unlikely — would need 50 consecutive "delete for
-  // everyone"s with nothing sent since), this falls through to "chat looks
-  // empty" rather than paying for an unbounded scan on every delete.
+  //
+  // Страницы расширяются 10 → 100 → 1000, как у серверного близнеца
+  // findNewestVisibleMessage (B14). Прежний единственный запрос на 50
+  // сообщений при полностью удалённом хвосте отвечал «нечего показывать»
+  // вместо «ищи дальше», причём молча. Обычный случай при этом стал
+  // дешевле: почти всегда хватает первой страницы из десяти.
+  static const List<int> _lastMessagePageSizes = [10, 100, 1000];
+
   Future<MapEntry<String, Map<String, dynamic>>?> _findLastMessage(
     String chatId,
   ) async {
-    final snap = await _db
-        .collection('chats')
-        .doc(chatId)
-        .collection('messages')
-        .orderBy('seq', descending: true)
-        .limit(50)
-        .get();
-    for (final doc in snap.docs) {
-      final data = doc.data();
-      if (data['deletedForAll'] != true) {
-        return MapEntry(doc.id, data);
+    DocumentSnapshot<Map<String, dynamic>>? cursor;
+    for (final size in _lastMessagePageSizes) {
+      var query = _db
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages')
+          .orderBy('seq', descending: true)
+          .limit(size);
+      if (cursor != null) query = query.startAfterDocument(cursor);
+      final snap = await query.get();
+      if (snap.docs.isEmpty) return null;
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        if (data['deletedForAll'] != true) {
+          return MapEntry(doc.id, data);
+        }
       }
+      // Страница короче запрошенной — история кончилась.
+      if (snap.docs.length < size) return null;
+      cursor = snap.docs.last;
     }
     return null;
   }
@@ -2595,6 +2627,13 @@ class FirestoreService {
         .collection('starred')
         .orderBy('starredAt', descending: true)
         .snapshots()
+        // Пустой снимок ИЗ КЭША — не ответ, а молчание (N14). Тот же
+        // признак и та же узость, что у watchChats: пусто с сервера —
+        // настоящий ответ, непустое из кэша — настоящие данные; молчание
+        // это только два условия вместе. Не отдавая такой снимок, поток
+        // оставляет провайдер в состоянии загрузки, и экран рисует
+        // ожидание вместо пустоты, выданной за факт.
+        .where((snap) => !(snap.docs.isEmpty && snap.metadata.isFromCache))
         .map(
           (snap) => snap.docs
               .map((doc) => StarredMessage.fromFirestore(doc.id, doc.data()))
@@ -3168,6 +3207,13 @@ class FirestoreService {
         .collection('personalEvents')
         .where('ownerUid', isEqualTo: uid)
         .snapshots()
+        // Пустой снимок ИЗ КЭША — не ответ, а молчание (N14). Тот же
+        // признак и та же узость, что у watchChats: пусто с сервера —
+        // настоящий ответ, непустое из кэша — настоящие данные; молчание
+        // это только два условия вместе. Не отдавая такой снимок, поток
+        // оставляет провайдер в состоянии загрузки, и экран рисует
+        // ожидание вместо пустоты, выданной за факт.
+        .where((snap) => !(snap.docs.isEmpty && snap.metadata.isFromCache))
         .map(
           (snap) => snap.docs
               .map((doc) => PersonalEvent.fromFirestore(doc.id, doc.data()))
@@ -3180,6 +3226,13 @@ class FirestoreService {
         .collection('personalEvents')
         .where('musicians', arrayContains: uid)
         .snapshots()
+        // Пустой снимок ИЗ КЭША — не ответ, а молчание (N14). Тот же
+        // признак и та же узость, что у watchChats: пусто с сервера —
+        // настоящий ответ, непустое из кэша — настоящие данные; молчание
+        // это только два условия вместе. Не отдавая такой снимок, поток
+        // оставляет провайдер в состоянии загрузки, и экран рисует
+        // ожидание вместо пустоты, выданной за факт.
+        .where((snap) => !(snap.docs.isEmpty && snap.metadata.isFromCache))
         .map(
           (snap) => snap.docs
               .map((doc) => PersonalEvent.fromFirestore(doc.id, doc.data()))
