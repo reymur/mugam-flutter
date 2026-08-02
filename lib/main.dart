@@ -17,6 +17,7 @@ import 'core/media/media_cache_cleanup.dart';
 import 'core/presence/presence_service.dart';
 import 'core/queue/background_queue_processor.dart';
 import 'core/queue/message_send_controller.dart';
+import 'core/queue/pending_file_storage.dart';
 import 'core/settings/image_quality_settings.dart';
 import 'core/store/local_message_store.dart';
 import 'core/theme/colors.dart';
@@ -119,6 +120,19 @@ Future<void> _mainImpl() async {
   // below actually has something to iterate.
   final localMessageStore = LocalMessageStore(prefs);
   await localMessageStore.init();
+  // Разовая уборка накопленного до `6175ac1`: файлы, на которые не
+  // ссылается ни одна запись очереди (N2). Строго ПОСЛЕ init() — он и
+  // делает список ссылок полным, а неполный список здесь означал бы
+  // удаление файла у живой отправки. Не ожидается: запуск приложения
+  // не должен зависеть от обхода каталога.
+  unawaited(
+    deleteUnreferencedPendingFiles(
+      localMessageStore
+          .allPending()
+          .map((m) => m.localFilePath)
+          .whereType<String>(),
+    ),
+  );
   // Best-effort retry for the offline media-send queue while the app is
   // backgrounded (but not fully killed — see background_queue_processor.dart
   // for what's deliberately out of scope). registerPeriodicTask's frequency
