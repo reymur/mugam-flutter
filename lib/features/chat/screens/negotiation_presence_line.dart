@@ -30,7 +30,7 @@ import '../../../firebase/models.dart';
 //
 // Формулировки намеренно мягкие. Присутствие врёт не дольше 60 секунд
 // (убийство приложения, сворачивание, обрыв сети — замерено трижды
-// 02.08), поэтому «çatdadır» («в чате») допустимо, а «смотрит прямо
+// 02.08), поэтому «Baxır» («смотрит») допустимо, а «смотрит прямо
 // сейчас» было бы ложью в пределах этого окна.
 class NegotiationPresenceLine extends StatefulWidget {
   const NegotiationPresenceLine({
@@ -122,7 +122,7 @@ class _NegotiationPresenceLineState extends State<NegotiationPresenceLine> {
     if (other == null) return const SizedBox.shrink();
 
     if (other.isViewingChat(widget.chatId)) {
-      return const _LineText('👀 çatdadır');
+      return const _LineText('👀 Baxır');
     }
     if (other.isPresenceFresh) {
       return const _LineText('📱 tətbiqdədir');
