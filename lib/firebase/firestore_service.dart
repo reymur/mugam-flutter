@@ -2680,6 +2680,11 @@ class FirestoreService {
         // deliveredTo рядом остаётся только на время переходного окна,
         // пока в ходу сборки, которые номер не пишут.
         'deliveredSeq': Map<String, dynamic>.from(data['deliveredSeq'] ?? {}),
+        // Время доставки — момент, когда продвинулся deliveredSeq. Нужен
+        // экрану «Məlumat»: номер отвечает «докуда доставлено», но не
+        // «когда», а показывать там время визита нельзя (см.
+        // _recordDeliveries).
+        'deliveredAt': Map<String, dynamic>.from(data['deliveredAt'] ?? {}),
         'lastReadMsgId': Map<String, dynamic>.from(data['lastReadMsgId'] ?? {}),
         'lastReadAt': Map<String, dynamic>.from(data['lastReadAt'] ?? {}),
         // Needed by chat_screen.dart's own "unread badge is stuck" repair
@@ -2784,7 +2789,21 @@ class FirestoreService {
       _db
           .collection('chats')
           .doc(doc.id)
-          .update({'deliveredSeq.$uid': lastSeq})
+          .update({
+            'deliveredSeq.$uid': lastSeq,
+            // Момент САМОЙ доставки, а не последнего открытия чата.
+            // Пишется этой же операцией намеренно: отдельная запись стоила
+            // бы второго обновления горячего документа (A3), а нужна она
+            // ровно тогда же, когда продвинулся номер.
+            //
+            // Зачем понадобилось: экран «Məlumat» показывал время
+            // «Çatdırıldı» из `deliveredTo`, то есть из отметки визита, и
+            // на устройстве 02.08 доставка оказалась ПОЗЖЕ прочтения
+            // (20:38 против 20:37) — получатель просто пять раз заходил в
+            // чат после того, как прочитал. Номер `deliveredSeq` эту
+            // строку починить не мог: он не время.
+            'deliveredAt.$uid': nowInstantIso(),
+          })
           .timeout(_writeTimeout)
           .catchError((Object e, StackTrace st) {
             // Откат отметки: иначе одна неудачная запись навсегда

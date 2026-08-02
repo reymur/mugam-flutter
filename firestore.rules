@@ -353,8 +353,8 @@ service cloud.firestore {
       }
 
       // Every ordinary field on a chat doc (lastMessage, lastMessageTime,
-      // deliveredTo.{uid}, deliveredSeq.{uid}, lastReadAt.{uid},
-      // lastReadMsgId.{uid},
+      // deliveredTo.{uid}, deliveredSeq.{uid}, deliveredAt.{uid},
+      // lastReadAt.{uid}, lastReadMsgId.{uid},
       // unreadCount.{uid}, activeUsers, typing.{uid}, name, photoURL,
       // cancelledBy, closedBy, jobOfferBy, eventDate/Type/
       // Location/Notes, waitingForDateAt, preview, ...) stays writable by

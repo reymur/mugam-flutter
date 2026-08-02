@@ -8,6 +8,69 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 
+// Legacy chat docs stored deliveredTo/lastReadAt as bool `true` before the
+// timestamp migration; anything that isn't a String means "no exact time
+// available" rather than a cast error.
+String? asTimeString(dynamic value) => value is String ? value : null;
+
+// Время строки «Çatdırıldı» на экране «Məlumat».
+//
+// Источники по убыванию честности: `deliveredAt` пишется в момент
+// продвижения `deliveredSeq`, то есть фиксирует СОБЫТИЕ доставки;
+// `deliveredTo` — момент последнего ОТКРЫТИЯ чата, то есть отметка
+// визита, и остаётся запасным вариантом только на время переходного окна
+// B18, пока живы сборки, нового поля не пишущие.
+//
+// Показанное время зажимается в отрезок [отправлено, прочитано], и обе
+// границы поставлены не для красоты — каждую наблюдали на устройстве
+// 02.08 как настоящий перевёрнутый порядок.
+//
+// ВЕРХНЯЯ — временем прочтения. Прочесть недоставленное нельзя, значит
+// доставка не может быть позже прочтения. Нужна потому, что две отметки
+// пишут РАЗНЫЕ места по одному и тому же снимку — расписку экран чата,
+// доставку список чатов, — и порядок между ними ничем не гарантирован.
+// Наблюдалось: «Çatdırıldı 20:38» под «Oxundu 20:37».
+//
+// НИЖНЯЯ — временем самого сообщения. `deliveredAt`, как и `lastReadAt`,
+// живёт НА ЧАТЕ, а не на сообщении: это момент, когда последний раз
+// продвинулся `deliveredSeq`. Если он раньше самого сообщения, то
+// относится к более ранней доставке и про это сообщение не говорит
+// ничего. Наблюдалось: «Çatdırıldı 21:28» под «Göndərildi 21:32» —
+// получатель сидел в чате, отметку доставки пишет список чатов, поэтому
+// номер до нового сообщения не дошёл вовсе, а на экран уходило время
+// чужого, более раннего события.
+//
+// Что показывается вместо непригодной отметки: время прочтения, если
+// прочитано («доставлено не позже, чем прочитано» — самое точное, что
+// известно), иначе ничего. Пустая строка честнее выдуманной минуты, а
+// сама строка «Çatdırıldı» остаётся на месте: факт доставки известен,
+// неизвестен только момент.
+String? resolveDeliveredTime({
+  required String uid,
+  required bool isRead,
+  required Map<String, dynamic> deliveredAt,
+  required Map<String, dynamic> deliveredTo,
+  required Map<String, dynamic> lastReadAt,
+  DateTime? sentAt,
+}) {
+  final raw = asTimeString(deliveredAt[uid]) ?? asTimeString(deliveredTo[uid]);
+  final readRaw = asTimeString(lastReadAt[uid]);
+  if (raw == null) return isRead ? readRaw : null;
+  final delivered = DateTime.tryParse(raw);
+  if (delivered == null) return raw;
+
+  // Нижняя граница: отметка старше самого сообщения — не про него.
+  if (sentAt != null && delivered.isBefore(sentAt)) {
+    return isRead ? readRaw : null;
+  }
+
+  // Верхняя граница.
+  if (!isRead || readRaw == null) return raw;
+  final read = DateTime.tryParse(readRaw);
+  if (read == null) return raw;
+  return delivered.isAfter(read) ? readRaw : raw;
+}
+
 class MessageInfoScreen extends ConsumerWidget {
   final String chatId;
   final Message message;
@@ -21,9 +84,7 @@ class MessageInfoScreen extends ConsumerWidget {
   // Legacy chat docs stored deliveredTo/lastReadAt as bool `true` before the
   // timestamp migration; treat anything that isn't a String as "no exact
   // time available" instead of throwing on the cast.
-  String? _asTimeString(dynamic value) {
-    return value is String ? value : null;
-  }
+  String? _asTimeString(dynamic value) => asTimeString(value);
 
   String _formatInfoTime(dynamic value) {
     DateTime? dt;
@@ -83,6 +144,10 @@ class MessageInfoScreen extends ConsumerWidget {
       final recipients = members.where((m) => m != message.senderId).toList();
       final deliveredTo =
           chatMeta['deliveredTo'] as Map<String, dynamic>? ?? {};
+      final deliveredSeq =
+          chatMeta['deliveredSeq'] as Map<String, dynamic>? ?? {};
+      final deliveredAt =
+          chatMeta['deliveredAt'] as Map<String, dynamic>? ?? {};
       final lastReadMsgId =
           chatMeta['lastReadMsgId'] as Map<String, dynamic>? ?? {};
       final lastReadAt = chatMeta['lastReadAt'] as Map<String, dynamic>? ?? {};
@@ -112,6 +177,30 @@ class MessageInfoScreen extends ConsumerWidget {
             lastReadTimestamp.compareTo(message.timestamp!) >= 0;
       }
 
+      // Доставлено ли ЭТО сообщение — тем же правилом, что и галочки
+      // (deliveryStatusFor): номер имеет приоритет, старая отметка времени
+      // работает запасным вариантом, пока живы сборки, номер не пишущие.
+      // Раньше экран смотрел только на `deliveredTo != null`, то есть мог
+      // сказать «Çatdırıldı» под сообщением, под которым галочка стояла
+      // одна: два места отвечали на один вопрос по-разному.
+      bool deliveredToUid(String uid) {
+        final seq = (deliveredSeq[uid] as num?)?.toInt();
+        final msgSeq = message.seq;
+        if (seq != null && msgSeq != null) return seq >= msgSeq;
+        return deliveredTo[uid] != null;
+      }
+
+      String? deliveredTimeFor(String uid, {required bool isRead}) {
+        return resolveDeliveredTime(
+          uid: uid,
+          isRead: isRead,
+          deliveredAt: deliveredAt,
+          deliveredTo: deliveredTo,
+          lastReadAt: lastReadAt,
+          sentAt: message.timestamp?.toDate().toUtc(),
+        );
+      }
+
       final rows = <Widget>[
         _buildInfoRow(
           Icons.done,
@@ -123,14 +212,14 @@ class MessageInfoScreen extends ConsumerWidget {
       if (recipients.length <= 1) {
         final uid = recipients.isEmpty ? null : recipients.first;
         final isRead = uid != null && readByUid(uid);
-        final isDelivered = uid != null && (deliveredTo[uid] != null || isRead);
+        final isDelivered = uid != null && (deliveredToUid(uid) || isRead);
         final otherName = chatData?['name'] as String? ?? '';
         if (isDelivered) {
           rows.add(
             _buildInfoRow(
               Icons.done_all,
               'Çatdırıldı',
-              _formatInfoTime(_asTimeString(deliveredTo[uid])),
+              _formatInfoTime(deliveredTimeFor(uid, isRead: isRead)),
             ),
           );
         }
@@ -150,14 +239,14 @@ class MessageInfoScreen extends ConsumerWidget {
         // как «кто именно прочитал», и агрегат на него не отвечает.
         final read = recipients.where(readByUid).toList();
         final delivered = recipients
-            .where((u) => deliveredTo[u] != null && !read.contains(u))
+            .where((u) => deliveredToUid(u) && !read.contains(u))
             .toList();
         final pending = recipients
             .where((u) => !read.contains(u) && !delivered.contains(u))
             .toList();
 
         void addGroup(String title, List<String> uids, IconData icon,
-            Color color, Map<String, dynamic> times) {
+            Color color, String? Function(String uid) timeFor) {
           if (uids.isEmpty) return;
           rows.add(_buildSectionTitle(title, uids.length));
           for (final uid in uids) {
@@ -166,15 +255,19 @@ class MessageInfoScreen extends ConsumerWidget {
                 uid: uid,
                 icon: icon,
                 color: color,
-                time: _formatInfoTime(_asTimeString(times[uid])),
+                time: _formatInfoTime(timeFor(uid)),
               ),
             );
           }
         }
 
-        addGroup('Oxudu', read, Icons.done_all, kReadBlue, lastReadAt);
-        addGroup('Çatdırıldı', delivered, Icons.done_all, kMuted, deliveredTo);
-        addGroup('Gözləyir', pending, Icons.access_time, kMuted, const {});
+        addGroup('Oxudu', read, Icons.done_all, kReadBlue,
+            (uid) => _asTimeString(lastReadAt[uid]));
+        // isRead: false здесь не допущение, а состав списка: прочитавшие
+        // участники ушли в раздел «Oxudu» строкой выше.
+        addGroup('Çatdırıldı', delivered, Icons.done_all, kMuted,
+            (uid) => deliveredTimeFor(uid, isRead: false));
+        addGroup('Gözləyir', pending, Icons.access_time, kMuted, (_) => null);
       }
 
       body = SingleChildScrollView(
