@@ -112,24 +112,46 @@ interface HarvestResult {
   scannedDocs: number;
 }
 
-// Множество ссылок строится ГЛОБАЛЬНО, по всем чатам сразу, а не по
-// чату-владельцу объекта. Это не запас прочности, а обязательное
-// условие: forwardMessage переиспользует URL исходного сообщения, то
-// есть сообщение в чате B штатно ссылается на объект под chats/A/...
-// Разбор по чатам удалил бы медиа у всех, кому его переслали.
+// validatedUploads — это отметка о ЗАЛИВКЕ, а не ссылка на объект
+// (onChatMediaUploaded пишет её на finalize, до и независимо от того,
+// появится ли документ сообщения). Считать её ссылкой значило бы
+// объявить каждый залитый объект вечно нужным и превратить сборщик в
+// no-op ровно на тех сиротах, ради которых он написан. Пути в её полях
+// не лежат, имя файла — в id документа, а id здесь не разбираются, так
+// что пропуск ещё и экономит чтения.
+const NOT_A_REFERENCE_COLLECTIONS = new Set(["validatedUploads"]);
+
+// Множество ссылок строится ГЛОБАЛЬНО — по всей базе, а не по владельцу
+// объекта и не по списку коллекций, где ссылки «должны» лежать.
+//
+// Глобально по чатам — обязательное условие, а не запас прочности:
+// forwardMessage переиспользует URL исходного сообщения, то есть
+// сообщение в чате B штатно ссылается на объект под chats/A/...; разбор
+// по чатам удалил бы медиа у всех, кому переслали.
+//
+// По всей базе — по итогу проверки 02.08: в проде 805 документов в 8
+// корневых коллекциях, а список «где ссылки бывают» (messages, statuses,
+// chats, users) покрывал 319 из них. agreements, personalEvents, invites
+// не смотрелись вовсе. Список коллекций устаревает ровно так же, как
+// список полей (см. collectPathsFromValue), и цена та же — удалённое
+// живое медиа, поэтому здесь тоже обход, а не перечисление.
+//
+// Масштаб: обход стоит одно чтение на документ плюс один listCollections
+// на документ. На нынешних ~800 документах это секунды и доли цента, на
+// сотне тысяч — уже нет. Порог, за которым эту схему надо менять на
+// обратный индекс путей, отмечен предупреждением в логе ниже.
+const HARVEST_SCALE_WARN_DOCS = 20000;
+
 async function harvestReferencedPaths(db: Firestore): Promise<HarvestResult> {
   const paths = new Set<string>();
   let scannedDocs = 0;
 
-  const scan = async (
-    makeQuery: () => FirebaseFirestore.Query,
-    label: string,
-  ): Promise<void> => {
+  const scanCollection = async (ref: FirebaseFirestore.CollectionReference): Promise<void> => {
+    if (NOT_A_REFERENCE_COLLECTIONS.has(ref.id)) return;
     const PAGE_SIZE = 500;
     let lastDoc: QueryDocumentSnapshot | undefined;
-    let count = 0;
     for (;;) {
-      let query = makeQuery().orderBy("__name__").limit(PAGE_SIZE);
+      let query: FirebaseFirestore.Query = ref.orderBy("__name__").limit(PAGE_SIZE);
       if (lastDoc) query = query.startAfter(lastDoc);
       const snap = await query.get();
       if (snap.empty) break;
@@ -137,23 +159,28 @@ async function harvestReferencedPaths(db: Firestore): Promise<HarvestResult> {
         const data = doc.data();
         collectPathsFromValue(data, paths);
         collectSplitMediaRef(data, paths);
+        scannedDocs++;
+        for (const sub of await doc.ref.listCollections()) {
+          await scanCollection(sub);
+        }
       }
-      count += snap.docs.length;
-      scannedDocs += snap.docs.length;
       lastDoc = snap.docs[snap.docs.length - 1];
       if (snap.docs.length < PAGE_SIZE) break;
     }
-    logger.info(`orphanSweep: scanned ${count} docs in ${label}`);
   };
 
-  // messages и statuses — где ссылки живут на самом деле; chats и users
-  // добавлены не ради известных полей, а чтобы «документ, о котором я не
-  // подумал» не стоил живого медиа. На нынешнем масштабе это несколько
-  // сотен чтений, цена вопроса — доли цента.
-  await scan(() => db.collectionGroup("messages"), "collectionGroup(messages)");
-  await scan(() => db.collectionGroup("statuses"), "collectionGroup(statuses)");
-  await scan(() => db.collection("chats"), "chats");
-  await scan(() => db.collection("users"), "users");
+  for (const root of await db.listCollections()) {
+    await scanCollection(root);
+  }
+
+  if (scannedDocs > HARVEST_SCALE_WARN_DOCS) {
+    logger.warn(
+      "orphanSweep: full-database harvest is outgrowing its design — " +
+        "replace it with a reverse index of storage paths before it gets slower",
+      { scannedDocs },
+    );
+  }
+  logger.info(`orphanSweep: scanned ${scannedDocs} docs across the whole database`);
 
   return { paths, scannedDocs };
 }

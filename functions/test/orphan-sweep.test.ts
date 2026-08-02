@@ -154,6 +154,44 @@ test("не трогает медиа статуса, пока жив его до
   expect(await exists(orphan)).toBe(false);
 });
 
+// Регрессия на реальную дыру: обход сначала смотрел только messages/
+// statuses/chats/users — 319 документов из 805, которые есть в проде.
+// Ссылка из agreements/personalEvents/invites стоила бы живого медиа.
+test("не трогает объект, на который ссылается документ из посторонней коллекции", async () => {
+  const live = "chats/C1/1700000000000_in-agreement.jpg";
+  await putObject(live);
+  await db().collection("agreements").doc("a1").set({
+    chatId: "C1",
+    attachmentUrl: downloadUrl(live),
+  });
+
+  const result = await sweep();
+
+  expect(result.orphans).toEqual([]);
+  expect(await exists(live)).toBe(true);
+});
+
+// Обратная сторона того же: validatedUploads — отметка о заливке, а не
+// ссылка. Если считать её ссылкой, сборщик станет no-op ровно на тех
+// сиротах, ради которых написан (у сироты такая отметка как раз есть:
+// файл-то залился).
+test("отметка в validatedUploads не спасает объект от удаления", async () => {
+  const orphan = "chats/C1/1700000000000_uploaded-never-sent.jpg";
+  await putObject(orphan);
+  await db().collection("chats").doc("C1").set({ members: ["A", "B"] });
+  await db()
+    .collection("validatedUploads")
+    .doc("C1")
+    .collection("files")
+    .doc("1700000000000_uploaded-never-sent.jpg")
+    .set({ uploaderUid: "A", size: 42, contentType: "image/jpeg" });
+
+  const result = await sweep();
+
+  expect(result.orphans.map((o) => o.path)).toEqual([orphan]);
+  expect(await exists(orphan)).toBe(false);
+});
+
 test("не трогает объект моложе окна ожидания", async () => {
   const fresh = "chats/C1/1700000000000_fresh.jpg";
   await putObject(fresh);
