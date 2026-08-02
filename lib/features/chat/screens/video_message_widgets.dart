@@ -58,11 +58,18 @@ enum MessageDeliveryStatus { queued, uploading, failed, sentUnconfirmed, deliver
 //
 // isMe и пустой список гасят расчёт так же, как раньше гасил null:
 // чужие сообщения и чат без других участников не имеют чего показывать.
+// deliveredSeq/deliveredTo — новая и старая отметка доставки (B18).
+// Новая говорит, ДОКУДА доставлено (номер сообщения), старая — лишь
+// когда получатель последний раз открывал чат, и потому зажигала вторую
+// галочку под сообщением, которого он ещё не получал. Пока живы сборки,
+// не пишущие номер, читаются обе: номер имеет приоритет, старая отметка
+// работает запасным вариантом — см. «переходное окно» в реестре.
 MessageDeliveryStatus deliveryStatusFor({
   required Message msg,
   required bool isMe,
   required List<String> otherUids,
   required Map<String, dynamic> deliveredTo,
+  required Map<String, dynamic> deliveredSeq,
   required Map<String, dynamic> lastReadMsgId,
   required List<String> allMsgIds,
   required int index,
@@ -84,8 +91,19 @@ MessageDeliveryStatus deliveryStatusFor({
     return lastReadIndex != -1 && index >= lastReadIndex;
   }
 
+  bool deliveredFor(String uid) {
+    final seq = (deliveredSeq[uid] as num?)?.toInt();
+    final msgSeq = msg.seq;
+    // Номер есть у обеих сторон — единственный честный ответ.
+    if (seq != null && msgSeq != null) return seq >= msgSeq;
+    // Иначе переходное окно: у получателя сборка, которая номер не пишет.
+    // Возвращаемся к прежнему поведению вместо того, чтобы гасить галочку
+    // у всех разом.
+    return deliveredTo[uid] != null;
+  }
+
   if (otherUids.every(readBy)) return MessageDeliveryStatus.read;
-  if (otherUids.every((uid) => deliveredTo[uid] != null || readBy(uid))) {
+  if (otherUids.every((uid) => deliveredFor(uid) || readBy(uid))) {
     return MessageDeliveryStatus.delivered;
   }
   return MessageDeliveryStatus.sentUnconfirmed;

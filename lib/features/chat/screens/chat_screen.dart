@@ -2802,6 +2802,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     String currentUid,
     List<String> otherUids,
     Map<String, dynamic> deliveredTo,
+    Map<String, dynamic> deliveredSeq,
     Map<String, dynamic> lastReadMsgId,
     String? prevSenderId,
   ) {
@@ -2844,6 +2845,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       isMe: isMe,
       otherUids: otherUids,
       deliveredTo: deliveredTo,
+      deliveredSeq: deliveredSeq,
       lastReadMsgId: lastReadMsgId,
       allMsgIds: allMsgIds,
       index: index,
@@ -3776,6 +3778,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final chatMetaAsync = ref.watch(chatMetaProvider(widget.chatId));
     final deliveredTo =
         chatMetaAsync.value?['deliveredTo'] as Map<String, dynamic>? ?? {};
+    final deliveredSeq =
+        chatMetaAsync.value?['deliveredSeq'] as Map<String, dynamic>? ?? {};
     final lastReadMsgId =
         chatMetaAsync.value?['lastReadMsgId'] as Map<String, dynamic>? ?? {};
     final members = (chatMetaAsync.value?['members'] as List?)?.cast<String>();
@@ -4411,6 +4415,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                             currentUid,
                             otherUids,
                             deliveredTo,
+                            deliveredSeq,
                             lastReadMsgId,
                             // Chronologically-previous message: with index
                             // 0 = newest, that's the NEXT index, not i - 1.

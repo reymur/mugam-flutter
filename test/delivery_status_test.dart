@@ -12,13 +12,14 @@ import 'package:mugam_flutter/firebase/models.dart';
 // истории. Поэтому «прочитано» это index >= индекса последнего
 // прочитанного, а не наоборот.
 
-Message _msg({String id = 'm2', String? localSendStatus}) {
+Message _msg({String id = 'm2', String? localSendStatus, int? seq = 42}) {
   return Message(
     id: id,
     chatId: 'c1',
     senderId: 'me',
     text: 'hello',
     type: 'text',
+    seq: seq,
     localSendStatus: localSendStatus,
   );
 }
@@ -30,15 +31,18 @@ void main() {
   MessageDeliveryStatus statusFor({
     required List<String> otherUids,
     Map<String, dynamic> deliveredTo = const {},
+    Map<String, dynamic> deliveredSeq = const {},
     Map<String, dynamic> lastReadMsgId = const {},
     bool isMe = true,
     String? localSendStatus,
+    int? msgSeq = 42,
   }) {
     return deliveryStatusFor(
-      msg: _msg(localSendStatus: localSendStatus),
+      msg: _msg(localSendStatus: localSendStatus, seq: msgSeq),
       isMe: isMe,
       otherUids: otherUids,
       deliveredTo: deliveredTo,
+      deliveredSeq: deliveredSeq,
       lastReadMsgId: lastReadMsgId,
       allMsgIds: allIds,
       index: index,
@@ -197,6 +201,87 @@ void main() {
       expect(
         statusFor(otherUids: const []),
         MessageDeliveryStatus.sentUnconfirmed,
+      );
+    });
+  });
+
+  group('отметка доставки по номеру, а не по времени (B18)', () {
+    test('номер дошёл до этого сообщения — две серые', () {
+      expect(
+        statusFor(otherUids: ['a'], deliveredSeq: {'a': 42}),
+        MessageDeliveryStatus.delivered,
+      );
+    });
+
+    test('номер дошёл дальше — тоже доставлено', () {
+      expect(
+        statusFor(otherUids: ['a'], deliveredSeq: {'a': 99}),
+        MessageDeliveryStatus.delivered,
+      );
+    });
+
+    test('номер отстал — НЕ доставлено, даже если старая отметка стоит', () {
+      // Ровно случай из боевых данных: deliveredTo на 8,3 часа старше
+      // сообщения, а галочка горела. Номер эту ложь перебивает.
+      expect(
+        statusFor(
+          otherUids: ['a'],
+          deliveredTo: {'a': '2026-08-02T05:52:03.000Z'},
+          deliveredSeq: {'a': 41},
+        ),
+        MessageDeliveryStatus.sentUnconfirmed,
+      );
+    });
+
+    test('номера нет вовсе — переходное окно, работает старая отметка', () {
+      expect(
+        statusFor(otherUids: ['a'], deliveredTo: {'a': 'ts'}),
+        MessageDeliveryStatus.delivered,
+      );
+    });
+
+    test('у сообщения нет номера — тоже запасной вариант', () {
+      expect(
+        statusFor(
+          otherUids: ['a'],
+          deliveredTo: {'a': 'ts'},
+          deliveredSeq: {'a': 1},
+          msgSeq: null,
+        ),
+        MessageDeliveryStatus.delivered,
+      );
+    });
+
+    test('группа: один по номеру, второй по старой отметке', () {
+      expect(
+        statusFor(
+          otherUids: ['a', 'b'],
+          deliveredTo: {'b': 'ts'},
+          deliveredSeq: {'a': 42},
+        ),
+        MessageDeliveryStatus.delivered,
+      );
+    });
+
+    test('группа: один отстал по номеру — одна галочка', () {
+      expect(
+        statusFor(
+          otherUids: ['a', 'b'],
+          deliveredTo: {'a': 'ts', 'b': 'ts'},
+          deliveredSeq: {'a': 42, 'b': 41},
+        ),
+        MessageDeliveryStatus.sentUnconfirmed,
+      );
+    });
+
+    test('прочтение важнее любой отметки доставки', () {
+      expect(
+        statusFor(
+          otherUids: ['a'],
+          deliveredSeq: {'a': 1},
+          lastReadMsgId: {'a': 'm2'},
+        ),
+        MessageDeliveryStatus.read,
       );
     });
   });

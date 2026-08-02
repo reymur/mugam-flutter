@@ -295,6 +295,11 @@ class FirestoreService {
         .snapshots()
         .where((snap) => !(snap.docs.isEmpty && snap.metadata.isFromCache))
         .map((snap) {
+          // Отметка доставки ставится ЗДЕСЬ, а не на экране чата (B18):
+          // список чатов — единственное место, где устройство узнаёт о
+          // новом сообщении, не открывая переписку. Именно это и значит
+          // «доставлено»: сообщение доехало до устройства получателя.
+          _recordDeliveries(snap, uid);
           final chats = snap.docs
               .map((doc) => Chat.fromFirestore(doc.id, doc.data(), uid))
               .toList();
@@ -2659,6 +2664,10 @@ class FirestoreService {
         'isGroup': data['isGroup'] ?? false,
         'members': List<String>.from(data['members'] ?? const []),
         'deliveredTo': Map<String, dynamic>.from(data['deliveredTo'] ?? {}),
+        // Докуда доставлено каждому — по номеру сообщения (B18).
+        // deliveredTo рядом остаётся только на время переходного окна,
+        // пока в ходу сборки, которые номер не пишут.
+        'deliveredSeq': Map<String, dynamic>.from(data['deliveredSeq'] ?? {}),
         'lastReadMsgId': Map<String, dynamic>.from(data['lastReadMsgId'] ?? {}),
         'lastReadAt': Map<String, dynamic>.from(data['lastReadAt'] ?? {}),
         // Needed by chat_screen.dart's own "unread badge is stuck" repair
@@ -2726,6 +2735,57 @@ class FirestoreService {
         st,
         reason: 'FirestoreService: markChatAsDelivered failed',
       );
+    }
+  }
+
+  // Докуда доставлено — по номеру сообщения, а не по времени (B18).
+  //
+  // Что было не так со временем: `deliveredTo.{uid}` хранит момент
+  // последнего ОТКРЫТИЯ чата, а галочка проверяла его на `!= null`. То
+  // есть вторая галочка означала «собеседник когда-то заходил сюда», и
+  // горела под сообщением, которое он заведомо не получал: в боевых
+  // данных нашёлся чат, где отметка на 8,3 часа старше сообщения. Тот же
+  // класс, что `readBy` (B28), только этот виден пользователю.
+  //
+  // Ключ к защите от петли «снимок → запись → снимок» — сходимость: после
+  // записи `deliveredSeq` равен `lastMessageSeq`, и условие ниже перестаёт
+  // выполняться. Кэш в памяти закрывает окно между отправкой запроса и
+  // приходом снимка с результатом, когда условие ещё истинно, — без него
+  // пачка снимков успевала бы породить пачку одинаковых записей. Ровно из
+  // такого механизма вырос write-шторм, разобранный в A3.
+  final Map<String, int> _deliveredSeqWritten = {};
+
+  void _recordDeliveries(
+    QuerySnapshot<Map<String, dynamic>> snap,
+    String uid,
+  ) {
+    for (final doc in snap.docs) {
+      final data = doc.data();
+      final lastSeq = (data['lastMessageSeq'] as num?)?.toInt() ?? 0;
+      if (lastSeq <= 0) continue;
+      final deliveredSeq = data['deliveredSeq'] as Map<String, dynamic>?;
+      final mine = (deliveredSeq?[uid] as num?)?.toInt() ?? 0;
+      if (lastSeq <= mine) continue;
+      final written = _deliveredSeqWritten[doc.id] ?? 0;
+      if (lastSeq <= written) continue;
+      _deliveredSeqWritten[doc.id] = lastSeq;
+      _db
+          .collection('chats')
+          .doc(doc.id)
+          .update({'deliveredSeq.$uid': lastSeq})
+          .timeout(_writeTimeout)
+          .catchError((Object e, StackTrace st) {
+            // Откат отметки: иначе одна неудачная запись навсегда
+            // закрыла бы этот чат от повторной попытки в этой сессии.
+            if (_deliveredSeqWritten[doc.id] == lastSeq) {
+              _deliveredSeqWritten[doc.id] = written;
+            }
+            FirebaseCrashlytics.instance.recordError(
+              e,
+              st,
+              reason: 'FirestoreService: deliveredSeq write failed',
+            );
+          });
     }
   }
 
