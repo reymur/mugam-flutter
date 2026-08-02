@@ -2883,12 +2883,17 @@ class FirestoreService {
     String uid, {
     required bool online,
     String? activeChatId,
+    int? presenceIntervalMs,
   }) async {
     try {
       await _db.collection('users').doc(uid).update({
         'online': online,
         'lastSeen': FieldValue.serverTimestamp(),
         'activeChatId': online ? activeChatId : null,
+        // Интервал сердцебиения этой сборки: сервер берёт двойной от него
+        // как срок годности отметки присутствия (см. freshnessWindowMs).
+        if (presenceIntervalMs != null)
+          'presenceIntervalMs': presenceIntervalMs,
       }).timeout(_writeTimeout);
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(

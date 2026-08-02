@@ -1,4 +1,9 @@
-import { isWatchingChatDecision, PRESENCE_FRESH_MS } from "../src/presence";
+import {
+  isWatchingChatDecision,
+  PRESENCE_FRESH_MIN_MS,
+  PRESENCE_FRESH_MS,
+  freshnessWindowMs,
+} from "../src/presence";
 
 // N19: решение «молчать вместо push» во всех сочетаниях старой и новой
 // сборки. Цена ошибки здесь несимметрична и невидима — потерянный push не
@@ -100,5 +105,66 @@ describe("срок годности отметки", () => {
     expect(
       decide({ userData: { activeChatId: CHAT }, lastSeenMs: null }),
     ).toBe(false);
+  });
+});
+
+// Окно свежести объявляет сама сборка — иначе смена интервала
+// сердцебиения требовала бы обновить сервер и все установленные сборки
+// одновременно, а разошедшаяся пара давала бы push человеку, читающему
+// чат прямо сейчас.
+describe("окно свежести объявляется сборкой", () => {
+  test("поля нет — прежние 120 с", () => {
+    expect(freshnessWindowMs({})).toBe(PRESENCE_FRESH_MS);
+  });
+
+  test("интервал 30 с — окно 60 с", () => {
+    expect(freshnessWindowMs({ presenceIntervalMs: 30_000 })).toBe(60_000);
+  });
+
+  test("интервал 60 с — окно прежние 120 с", () => {
+    expect(freshnessWindowMs({ presenceIntervalMs: 60_000 })).toBe(120_000);
+  });
+
+  test("мусор в поле не сужает окно", () => {
+    expect(freshnessWindowMs({ presenceIntervalMs: "часто" })).toBe(
+      PRESENCE_FRESH_MS,
+    );
+    expect(freshnessWindowMs({ presenceIntervalMs: NaN })).toBe(
+      PRESENCE_FRESH_MS,
+    );
+  });
+
+  test("нижняя граница: слишком частый интервал не делает окно короче 30 с", () => {
+    // Иначе одно потерянное сердцебиение выталкивало бы наружу человека,
+    // который смотрит в экран.
+    expect(freshnessWindowMs({ presenceIntervalMs: 1_000 })).toBe(
+      PRESENCE_FRESH_MIN_MS,
+    );
+  });
+
+  test("верхняя граница: редкий интервал не растягивает окно", () => {
+    expect(freshnessWindowMs({ presenceIntervalMs: 10 * 60_000 })).toBe(
+      PRESENCE_FRESH_MS,
+    );
+  });
+
+  test("сборка с 30-секундным ударом: 70 с молчания — уже push", () => {
+    // При прежнем общем окне 120 с этот человек ещё считался бы
+    // смотрящим, хотя приложение молчит больше двух его интервалов.
+    expect(
+      decide({
+        userData: { activeChatId: CHAT, presenceIntervalMs: 30_000 },
+        lastSeenMs: NOW - 70_000,
+      }),
+    ).toBe(false);
+  });
+
+  test("сборка с 30-секундным ударом: одно пропущенное — всё ещё молчим", () => {
+    expect(
+      decide({
+        userData: { activeChatId: CHAT, presenceIntervalMs: 30_000 },
+        lastSeenMs: NOW - 31_000,
+      }),
+    ).toBe(true);
   });
 });

@@ -22,6 +22,28 @@ class PresenceService with WidgetsBindingObserver {
   // actually in the foreground.
   static const _heartbeatInterval = Duration(seconds: 60);
 
+  // Пока чат открыт — вдвое чаще, и вот почему.
+  //
+  // Сервер подавляет push, пока отметка присутствия свежа, а протухает
+  // она через двойной интервал. При ударе раз в 60 с это значит, что
+  // человек, ушедший из приложения, ещё 60–120 секунд уведомлений не
+  // получает: замер на устройстве 02.08 — удары прекратились в 20:46:09,
+  // решение перевернулось в 20:48:10. Учащение до 30 с сужает это окно до
+  // 30–60 секунд.
+  //
+  // Учащается ТОЛЬКО при открытом чате, потому что свежесть решает
+  // единственный вопрос — «смотрит ли он прямо сейчас в ЭТОТ чат», и
+  // задаётся он лишь когда activeChatId совпал. В остальном приложении
+  // частота ничего не меняет и остаётся прежней.
+  //
+  // Платится это записями в users/{uid} — 2 в минуту на человека,
+  // сидящего в чате. Документ чата, вокруг которого крутится весь A3, не
+  // затрагивается вовсе.
+  static const _heartbeatIntervalInChat = Duration(seconds: 30);
+
+  Duration get _currentInterval =>
+      _activeChatId != null ? _heartbeatIntervalInChat : _heartbeatInterval;
+
   final FirestoreService _firestoreService = FirestoreService();
   String? _uid;
   Timer? _timer;
@@ -38,7 +60,12 @@ class PresenceService with WidgetsBindingObserver {
   void setActiveChat(String? chatId) {
     if (_activeChatId == chatId) return;
     _activeChatId = chatId;
-    if (_uid != null) _writePresence(online: true);
+    if (_uid != null) {
+      _writePresence(online: true);
+      // Частота зависит от того, открыт ли чат, поэтому таймер
+      // пересоздаётся вместе с признаком, а не только при старте.
+      _startTimer();
+    }
   }
 
   void start(String uid) {
@@ -81,7 +108,7 @@ class PresenceService with WidgetsBindingObserver {
   void _startTimer() {
     _timer?.cancel();
     _timer = Timer.periodic(
-      _heartbeatInterval,
+      _currentInterval,
       (_) => _writePresence(online: true),
     );
   }
@@ -94,6 +121,11 @@ class PresenceService with WidgetsBindingObserver {
         uid,
         online: online,
         activeChatId: _activeChatId,
+        // Сборка объявляет свой интервал сама — сервер берёт двойной от
+        // него как срок годности отметки. Без этого поля он остаётся на
+        // прежних 120 с, поэтому менять частоту можно, не обновляя
+        // сервер и все установленные сборки разом.
+        presenceIntervalMs: _currentInterval.inMilliseconds,
       ),
     );
   }

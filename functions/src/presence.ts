@@ -10,9 +10,36 @@
 // Чистая функция позволяет проверить все сочетания старой и новой сборки
 // разом, без эмулятора и без FCM.
 
-// Двойной интервал сердцебиения присутствия (60 с) — ровно как окно
+// Окно свежести по умолчанию — для сборок, которые свой интервал
+// сердцебиения не объявляют. Двойной интервал в 60 с, ровно как окно
 // User.isActuallyOnline на клиенте.
 export const PRESENCE_FRESH_MS = 2 * 60 * 1000;
+
+// Нижняя граница окна. Меньше 30 с делать нельзя: одно потерянное
+// сердцебиение не должно выталкивать человека, который смотрит в экран, —
+// лишний push раздражает сильнее пропущенного.
+export const PRESENCE_FRESH_MIN_MS = 30 * 1000;
+
+// Сборка объявляет свой интервал сердцебиения сама, а окно — всегда
+// двойное от объявленного.
+//
+// Почему не константой на сервере: интервал живёт в клиенте, и любое его
+// изменение иначе требовало бы синхронного обновления сервера И всех
+// установленных сборок разом — иначе сборка с редким сердцебиением
+// начала бы получать push прямо во время чтения чата. Здесь этой связки
+// нет: поля нет — работает прежнее окно 120 с, поле есть — окно ровно
+// под эту сборку. Тот же приём, что с ключом activeChatId выше:
+// отсутствие поля само по себе является сведением о сборке.
+export function freshnessWindowMs(userData: Record<string, unknown>): number {
+  const declared = userData.presenceIntervalMs;
+  if (typeof declared !== "number" || !Number.isFinite(declared)) {
+    return PRESENCE_FRESH_MS;
+  }
+  const doubled = 2 * declared;
+  if (doubled < PRESENCE_FRESH_MIN_MS) return PRESENCE_FRESH_MIN_MS;
+  if (doubled > PRESENCE_FRESH_MS) return PRESENCE_FRESH_MS;
+  return doubled;
+}
 
 export interface WatchDecisionInput {
   // Документ пользователя. undefined — документа нет вовсе.
@@ -46,8 +73,10 @@ export function isWatchingChatDecision(input: WatchDecisionInput): boolean {
   // застревал. Смотрит ли человек в ЭТОТ чат?
   if (userData.activeChatId !== chatId) return false;
 
-  // И давно ли приложение давало о себе знать. Свёрнуто, убито или без
-  // сети — сердцебиение прекращается, отметка протухает сама.
+  // И давно ли приложение давало о себе знать. Свёрнуто, убито, экран
+  // погас или сети нет — сердцебиение прекращается, отметка протухает
+  // сама. Замер на устройстве 02.08: удары прекратились в 20:46:09,
+  // решение перевернулось в 20:48:10, то есть ровно по окну.
   if (lastSeenMs == null) return false;
-  return nowMs - lastSeenMs < PRESENCE_FRESH_MS;
+  return nowMs - lastSeenMs < freshnessWindowMs(userData);
 }
