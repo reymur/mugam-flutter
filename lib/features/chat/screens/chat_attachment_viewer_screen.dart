@@ -648,9 +648,18 @@ class _ChatAttachmentViewerScreenState
             )
             .toList();
         _resolveInitialPage(filteredMedia);
-        final items = filteredMedia.isEmpty
-            ? [widget.initialMessage]
-            : filteredMedia;
+        // Открытое вложение обязано быть тем, по которому нажали. Список
+        // может его не содержать по двум причинам: он пуст, либо
+        // сообщение старше окна живого слушателя (chatMediaWindowSize,
+        // watchChatMedia). Во втором случае _resolveInitialPage не находит
+        // индекс и оставляет _currentIndex нулевым — без этой проверки
+        // экран показал бы ПЕРВОЕ медиа списка вместо запрошенного, молча
+        // и правдоподобно. Показываем тогда одно вложение без ленты
+        // соседей: сузить набор честнее, чем подменить содержимое.
+        final hasInitial = filteredMedia.any(
+          (m) => m.id == widget.initialMessage.id,
+        );
+        final items = hasInitial ? filteredMedia : [widget.initialMessage];
         final currentMessage = items[_currentIndex.clamp(0, items.length - 1)];
         final isStarred =
             starredAsync.value?.any((m) => m.id == currentMessage.id) ??

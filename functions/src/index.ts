@@ -374,6 +374,51 @@ export const onNewMessage = onDocumentCreated(
 // but-still-unread message self-corrects at that point same as
 // messageCount's own uncorrected legacy gap above — it never lingers past
 // the recipient's next real read.
+// ---------------------------------------------------------------------
+// chats/{chatId} — гарантия наличия lastMessageTime
+// ---------------------------------------------------------------------
+// Существует ради одной конкретной вещи: клиент mugam-flutter сортирует
+// список чатов запросом `orderBy('lastMessageTime')`, а Firestore
+// ИСКЛЮЧАЕТ из результата документы, у которых поля нет вовсе (не путать
+// с явным null — тот в выдачу попадает). Значит любой чат без этого поля
+// не просто встанет не туда, а исчезнет из списка целиком.
+//
+// Поля нет ровно у одного класса чатов: созданных mugam-v2 и ещё не
+// получивших ни одного сообщения. Проверено по исходникам v2
+// (src/firebase/firestore.ts): при создании чата оно пишет lastMessageAt,
+// createdAt и другие поля, а lastMessageTime не пишет нигде — этого
+// имени в его коде нет вовсе; свой список чатов v2 сортирует по
+// lastMessageAt. Первое же сообщение в таком чате закрывает дыру само
+// (onNewMessage выше пишет lastMessageTime), но до него чат был бы
+// невидим.
+//
+// Триггер на создание, а не на запись: срабатывает один раз за всю жизнь
+// документа, поэтому не пополняет собой список функций, поднимающихся на
+// каждую запись в этот горячий документ (см. A3 в реестре).
+//
+// Значение берётся из lastMessageAt (его пишут оба приложения при
+// создании), с откатом на createdAt и, в последнюю очередь, на время
+// срабатывания. Идемпотентно по построению: поле уже есть — выходим.
+export const onChatCreated = onDocumentCreated(
+  "chats/{chatId}",
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const data = snap.data();
+    if ("lastMessageTime" in data) return;
+
+    const fallback = data.lastMessageAt ?? data.createdAt ?? FieldValue.serverTimestamp();
+    try {
+      await snap.ref.update({ lastMessageTime: fallback });
+      logger.info("onChatCreated: backfilled lastMessageTime", {
+        chatId: event.params.chatId,
+      });
+    } catch (e) {
+      logger.warn("onChatCreated: lastMessageTime backfill failed", e);
+    }
+  },
+);
+
 export const onMessageDeleted = onDocumentDeleted(
   "chats/{chatId}/messages/{messageId}",
   async (event) => {

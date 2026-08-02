@@ -19,6 +19,28 @@ import 'models.dart';
 // than this growing per chat's total history size.
 const int messageTailWindowSize = 50;
 
+// Сколько самых свежих чатов держит живой список (B31). Замер по проду
+// 02.08: 7 чатов во всём проекте, максимум 6 у одного пользователя, —
+// то есть сегодня граница не задевает никого и заведена на вырост.
+//
+// Это отсечка, а не страница: чат за пределами сотни самых свежих в
+// список не попадёт вовсе, и подгрузки по прокрутке здесь нет. Для
+// нынешних чисел это неотличимо от «показываем всё», но настоящая
+// постраничность списка чатов — отдельная работа, если счёт пойдёт на
+// сотни.
+const int chatListWindowSize = 100;
+
+// Сколько самых свежих медиа чата держит живой слушатель галереи (B33).
+// Замер по проду 02.08: 42 медиа-сообщения во всём проекте, самый
+// большой чат — 278 сообщений любого типа. Граница сегодня недостижима.
+//
+// Последствие, которое нельзя оставлять молчаливым: медиа старше окна в
+// галерею не попадает, поэтому открытие такого вложения из переписки
+// показывает его одно, без ленты соседей (см.
+// ChatAttachmentViewerScreen — там это обработано явно, а не приводит к
+// показу чужой фотографии вместо запрошенной).
+const int chatMediaWindowSize = 200;
+
 // The answer to "where is this user's Çatı təmizlə cutoff in this chat" —
 // a tri-state, because "we haven't been told" and "there is no cutoff" are
 // different answers that a nullable DateTime cannot tell apart. See
@@ -248,6 +270,27 @@ class FirestoreService {
     return _db
         .collection('chats')
         .where('members', arrayContains: uid)
+        // Порядок и граница — на сервере, а не только в памяти (B31).
+        // Раньше запрос тянул все чаты пользователя целиком и
+        // пересортировывал их в клиенте на любое изменение любого из них.
+        //
+        // Сортировка именно по lastMessageTime, а не по lastMessageAt,
+        // хотя второе поле пишут оба приложения: lastMessageAt после
+        // создания чата обновляет только mugam-v2, а сообщения из этого
+        // приложения его не двигают — порядок по нему был бы неверным.
+        // lastMessageTime, наоборот, поддерживает onNewMessage для
+        // сообщений обоих приложений.
+        //
+        // Плата за этот выбор — документы, у которых поля НЕТ вовсе,
+        // Firestore из выдачи выбрасывает, а такие создаёт mugam-v2 (в
+        // его коде этого имени нет). Поэтому запрос опирается на
+        // серверную гарантию: onChatCreated (functions/src/index.ts)
+        // проставляет поле при создании любого чата, кем бы он ни был
+        // создан. Явный null полем считается и из выдачи не выпадает —
+        // он штатно бывает у чата с полностью удалённой историей и
+        // сортируется в конец, ровно как и в прежней сортировке в памяти.
+        .orderBy('lastMessageTime', descending: true)
+        .limit(chatListWindowSize)
         .snapshots()
         .where((snap) => !(snap.docs.isEmpty && snap.metadata.isFromCache))
         .map((snap) {
@@ -1247,12 +1290,21 @@ class FirestoreService {
         .doc(chatId)
         .collection('messages')
         .where('type', whereIn: ['image', 'video'])
-        .orderBy('seq', descending: false)
+        // Живой слушатель ограничен окном самых свежих медиа (B33) —
+        // раньше он держал подписку на все медиа чата разом. Запрос идёт
+        // по убыванию seq именно ради этого: с limit по возрастанию в
+        // окно попали бы самые СТАРЫЕ медиа, то есть ровно не те.
+        .orderBy('seq', descending: true)
+        .limit(chatMediaWindowSize)
         .snapshots()
         .map(
           (snap) => snap.docs
               .map((doc) => Message.fromFirestore(doc.id, doc.data()))
               .where((m) => !m.deletedForAll)
+              // Обратно по возрастанию: порядок ленты и полосы превью —
+              // часть контракта этого потока, окном он меняться не должен.
+              .toList()
+              .reversed
               .toList(),
         );
   }
@@ -1679,39 +1731,14 @@ class FirestoreService {
     // keeps writing this one. Both halves have to move together, onto a
     // one-off recount — see the Cloud Function's own comment.
     //
-    // DO NOT await this, and do not "harden" it with a retry loop that
-    // does. That exact change was made once for the preview write and had
-    // to be reverted: a Firestore write only completes when the server acks
-    // it, so on a slow link it consumed the send path's whole timeout
-    // budget and perfectly good messages were reported as failed and left
-    // sitting in "sending" (see _commitMessage's own comment for the full
-    // account). The message is already committed by the time this runs;
-    // nothing about a counter for the media strip's header may delay or
-    // fail a send.
-    //
-    // Fire-and-forget is acceptable here specifically because the failure
-    // mode is bounded and already scheduled to be repaired: a dropped
-    // increment drifts this counter, and the pending move of both halves
-    // to the server comes with a one-off recount from the real number of
-    // image messages, which corrects whatever drift has accumulated by
-    // then. The preview could not be treated this way — nothing recomputes
-    // it on a schedule — which is exactly why it went to the server
-    // instead. The catchError below is what keeps a drop visible rather
-    // than silent.
-    unawaited(
-      _db
-          .collection('chats')
-          .doc(chatId)
-          .update({'mediaImageCount': FieldValue.increment(1)})
-          .timeout(_writeTimeout)
-          .catchError((Object e, StackTrace st) {
-            FirebaseCrashlytics.instance.recordError(
-              e,
-              st,
-              reason: 'FirestoreService: mediaImageCount increment failed',
-            );
-          }),
-    );
+    // Счётчик изображений здесь больше не пишется (N3). Раньше на
+    // каждую отправленную фотографию уходила ОТДЕЛЬНАЯ запись в
+    // chats/{chatId} — в тот самый горячий документ, ради которого
+    // превью свели в одну серверную транзакцию (B16), а слушателей — в
+    // одного (B17). Само число теперь считается по запросу и точно, см.
+    // countChatImages ниже; денормализованное поле, которое можно
+    // расходить с реальностью, просто перестало существовать, поэтому
+    // ни переносить на сервер, ни пересчитывать миграцией нечего.
     return seq;
   }
 
@@ -2295,26 +2322,51 @@ class FirestoreService {
         .doc(chatId)
         .collection('messages')
         .doc(messageId);
-    // Transaction, not a plain update: needs the message's own type (to
-    // know whether mediaImageCount needs decrementing) and must be
-    // idempotent against a repeat call on an already-deleted message
-    // (which would otherwise double-decrement).
-    final wasImage = await _db.runTransaction((tx) async {
+    // Транзакция, а не простое обновление: повторный вызов на уже
+    // удалённом сообщении не должен ничего менять второй раз.
+    // Раньше она читала ещё и тип сообщения — только чтобы решить,
+    // уменьшать ли mediaImageCount; вторая половина этой пары ушла
+    // вместе с первой (N3, см. sendImageMessage).
+    await _db.runTransaction((tx) async {
       final snap = await tx.get(msgRef);
       final data = snap.data();
-      if (data == null || data['deletedForAll'] == true) return false;
+      if (data == null || data['deletedForAll'] == true) return;
       tx.update(msgRef, {
         'deletedForAll': true,
         'deletedAt': DateTime.now().toIso8601String(),
         'text': '',
       });
-      return data['type'] == 'image';
     });
-    if (wasImage) {
-      await _db.collection('chats').doc(chatId).update({
-        'mediaImageCount': FieldValue.increment(-1),
-      });
-    }
+  }
+
+  // Точное число видимых изображений чата — по запросу, вместо
+  // денормализованного счётчика (N3).
+  //
+  // Два агрегатных запроса вместо чтения поля: агрегат тарифицируется как
+  // одно чтение на каждую тысячу совпавших документов, то есть на любом
+  // реальном чате это одно-два чтения — дешевле, чем держать поле,
+  // которое пишется на каждую отправку фотографии и умеет разъезжаться.
+  //
+  // Вычитание, а не один запрос с фильтром: «не удалено у всех» в
+  // Firestore не выражается — у подавляющего большинства сообщений поля
+  // deletedForAll нет вовсе, а запрос по отсутствующему полю ничего не
+  // находит. Зато `deletedForAll == true` находит ровно те, где его
+  // проставил deleteMessageForAll, — их и вычитаем из общего числа.
+  Future<int> countChatImages(String chatId) async {
+    final messages = _db
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages');
+    final all = await messages.where('type', isEqualTo: 'image').count().get();
+    final tombstoned = await messages
+        .where('type', isEqualTo: 'image')
+        .where('deletedForAll', isEqualTo: true)
+        .count()
+        .get();
+    final total = all.count ?? 0;
+    final removed = tombstoned.count ?? 0;
+    final visible = total - removed;
+    return visible < 0 ? 0 : visible;
   }
 
   // Per-chat throttle for refreshChatPreview below. The client-side half of
@@ -2576,12 +2628,6 @@ class FirestoreService {
         // this asynchronously, so it can land AFTER the reader's own
         // markChatAsReadBy zeroed it, leaving a permanent phantom count.
         'unreadCount': Map<String, dynamic>.from(data['unreadCount'] ?? {}),
-        // Maintained by sendImageMessage/deleteMessageForAll via atomic
-        // FieldValue.increment — every chat was backfilled with an
-        // accurate starting value before that logic went live (one-off
-        // Cloud Function migration, already run and spot-checked), so no
-        // "field missing" fallback is needed here.
-        'mediaImageCount': (data['mediaImageCount'] as num?)?.toInt() ?? 0,
         // Live so a group rename/role change reflects in the app bar
         // without needing to reopen the chat screen — see chat_screen.dart's
         // app bar, which reads these instead of the one-time
@@ -3433,6 +3479,16 @@ final starredMessagesProvider =
     StreamProvider.family<List<StarredMessage>, String>((ref, uid) {
       return ref.watch(firestoreServiceProvider).watchStarredMessages(uid);
     });
+
+// Число видимых изображений чата — считается по требованию, на экране,
+// который его показывает (N3). Autodispose по умолчанию у FutureProvider
+// .family: пересчёт происходит при входе на экран, а не живёт фоном.
+final chatImageCountProvider = FutureProvider.family<int, String>((
+  ref,
+  chatId,
+) {
+  return ref.watch(firestoreServiceProvider).countChatImages(chatId);
+});
 
 final chatMediaProvider = StreamProvider.family<List<Message>, String>((
   ref,

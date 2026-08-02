@@ -272,6 +272,9 @@ class LocalMessageStore {
   // then forwards every future mutation.
   Stream<List<Message>> watchChat(String chatId) async* {
     await _ensureHistoryLoaded(chatId);
+    // Открылся новый чат — значит все прочие точно не на экране, и
+    // накопленное ими при листании можно вернуть к хвосту (B10).
+    _trimOtherChats(chatId);
     yield _sorted(chatId);
     yield* _controllerFor(chatId).stream;
   }
@@ -497,6 +500,55 @@ class LocalMessageStore {
       // pending-blob load) is always more current than confirmed history —
       // never let a stale disk read of history clobber it.
       chatMessages.putIfAbsent(m.id, () => m);
+    }
+  }
+
+  // Оставляет в памяти у ушедшего с экрана чата только хвост — столько
+  // же, сколько хранится на диске (B10).
+  //
+  // Почему только у ушедшего, а не у любого: при листании вверх карта
+  // растёт страницами, и это ровно те сообщения, которые пользователь
+  // сейчас видит. Урезать активный чат — значит выдёргивать строки
+  // из-под глаз; чтобы делать это безопасно, хранилищу пришлось бы знать
+  // видимое окно, а оно про экран не знает ничего. Поэтому граница
+  // применяется в момент, когда чат перестал быть текущим: на экране
+  // ничего нет, а следующий вход всё равно начинает с хвоста и
+  // подгружает старое заново.
+  //
+  // Сообщения с незавершённой отправкой не выкидываются никогда, каким
+  // бы старым ни был их seq: очередь ретраев читает их именно отсюда
+  // (та же причина, по которой ниже не вытесняется весь такой чат).
+  void _trimToTail(String chatId) {
+    final chatMessages = _byChat[chatId];
+    if (chatMessages == null || chatMessages.length <= maxMessagesPerChat) {
+      return;
+    }
+    final sorted = _sorted(chatId);
+    final keep = <String, Message>{};
+    for (final m in sorted.reversed.take(maxMessagesPerChat)) {
+      keep[m.id] = m;
+    }
+    for (final m in sorted) {
+      if (m.localSendStatus != null) keep[m.id] = m;
+    }
+    _byChat[chatId] = keep;
+  }
+
+  // Урезает все чаты, кроме открывающегося. Зовётся из watchChat — то
+  // есть в момент, когда экран чата подписывается на этот стор.
+  //
+  // Момент выбран не «когда удобно», а по единственному признаку,
+  // который здесь достоверен: экран чата в приложении всегда один (см.
+  // комментарий watchChat), поэтому в эту секунду про все ОСТАЛЬНЫЕ
+  // чаты точно известно, что их никто не показывает. Порядок доступа
+  // (_accessOrder) для этого не годится: его двигает и фоновая очередь
+  // отправки, дотрагиваясь до чужого чата, — по нему открытый сейчас
+  // чат легко оказался бы «предыдущим» и был бы урезан прямо под
+  // пользователем.
+  void _trimOtherChats(String openChatId) {
+    for (final chatId in _byChat.keys.toList()) {
+      if (chatId == openChatId) continue;
+      _trimToTail(chatId);
     }
   }
 

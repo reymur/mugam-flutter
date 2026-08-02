@@ -352,14 +352,19 @@ class _SettingsTile extends StatelessWidget {
 // Real data: counts this chat's image messages, matching the reference
 // screenshot's "97" style trailing count. Tapping is still a stub — a full
 // media grid viewer is out of scope for this round.
+//
+// Читает точный счёт по запросу (chatImageCountProvider), а не поле
+// mediaImageCount из документа чата: поле убрано вместе с записями,
+// которые его вели (N3 — см. FirestoreService.countChatImages). Тот же
+// приём, что у соседнего _StarredTile, который тоже считает по данным, а
+// не по денормализованному числу.
 class _MediaTile extends ConsumerWidget {
   final String chatId;
   const _MediaTile({required this.chatId});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final count = ref.watch(chatMetaProvider(chatId)).value?['mediaImageCount']
-        as int?;
+    final count = ref.watch(chatImageCountProvider(chatId)).value;
     return _SettingsTile(
       icon: Icons.image_outlined,
       title: 'Media, keçidlər və sənədlər',

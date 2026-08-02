@@ -20,7 +20,15 @@ const int pendingQueueMaxAttempts = 8;
 // Storage upload step only (image/video/audio/file) — kept generous since a
 // large video over a slow connection can legitimately take a while; this is
 // the ONE real "is the network actually working" gate.
-const Duration pendingQueueUploadTimeout = Duration(seconds: 60);
+//
+// 120 с, а не 60 (B20). Прежнего значения не хватало на крупное видео по
+// медленной сети: приложение снимает и шлёт куски по 30 с, а это единицы
+// мегабайт — на канале порядка 0.5 Мбит/с одна такая заливка честно идёт
+// дольше минуты и обрывалась по таймауту, хотя сеть работала. Цена
+// увеличения невелика и ограничена: заливка идёт в очереди, пользователь
+// её не ждёт, а по-настоящему мёртвая сеть всё равно упирается в этот
+// потолок и уходит в ретрай (их не больше pendingQueueMaxAttempts).
+const Duration pendingQueueUploadTimeout = Duration(seconds: 120);
 // Final Firestore write step (FirestoreService._commitMessage, via
 // sendMessage/sendImageMessage/etc.) — deliberately a SEPARATE, shorter
 // budget from the upload timeout above, and the ONLY timeout left around
