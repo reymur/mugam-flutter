@@ -57,3 +57,17 @@ test-results.json
 # Xcode auto-bumps LastUpgradeVersion on every build/run — no real signal,
 # just churn on every commit that happens to follow a build.
 ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
+
+# Черновой материал под иконки: коллажи из ChatGPT, из которых нарезались
+# рабочие иконки, и рабочая папка нарезки. На диске нужны, в репозитории
+# им не место — они однажды заехали сюда целиком (~14 МБ) вместе с
+# несвязанным коммитом.
+#
+# Намеренно НЕ игнорируются нарезанные иконки рядом (assets/icons/essas/,
+# faaliyyet_icons/, calendar.png, check.png и прочие): они пока нигде не
+# используются, но это кандидаты в боевые ассеты, и молча пропустить их
+# при `git add`, когда до них дойдёт дело, хуже, чем лишний раз увидеть
+# их в `git status`. Настоящая защита от повторного заезда — коммитить
+# явными путями, а не `git add -A`.
+assets/icons/ChatGPT Image *
+assets/icons/Новая папка/
