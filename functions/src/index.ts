@@ -1115,12 +1115,63 @@ export const onFriendRequestUpdated = onDocumentUpdated(
 // `completed: true`. В коде клиента этого не было никогда — комментарий
 // врал про поведение, что хуже отсутствующего. Исправлено 02.08; самого
 // поля `completed` больше нет ни у кого.
+// Сериализация с рекурсивной сортировкой ключей — сравнивает значения по
+// содержимому, а не по случайному порядку полей в снимке. Используется
+// сторожем в onChatUpdated ниже.
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(sortKeysDeep(value));
+}
+
+function sortKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (value === null || typeof value !== "object") return value;
+  // Timestamp и прочие небанальные объекты Firestore — через toJSON, иначе
+  // порядок их внутренних полей тоже пришлось бы угадывать.
+  const asJson = value as { toJSON?: () => unknown };
+  if (typeof asJson.toJSON === "function") return asJson.toJSON();
+  const obj = value as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(obj).sort()) out[k] = sortKeysDeep(obj[k]);
+  return out;
+}
+
 export const onChatUpdated = onDocumentUpdated(
   "chats/{chatId}",
   async (event) => {
     const before = event.data?.before.data();
     const after = event.data?.after.data();
     if (!before || !after) return;
+
+    // ПОСТОЯННЫЙ СТОРОЖ, А НЕ ВРЕМЕННАЯ ДИАГНОСТИКА (не снимать вместе с
+    // A5). Одна строка на каждое обновление документа чата, с перечнем
+    // изменившихся полей.
+    //
+    // Зачем: с 30.07 по 01.08 этот документ обновлялся 310 634 раза при
+    // 441 отправленном сообщении. Минутный разрез показал не нагрузку, а
+    // петлю обратной связи: ровное плато 2400–2700 записей в минуту (40 в
+    // секунду) по 23 минуты подряд, включается и обрывается мгновенно,
+    // ночью, при нуле сообщений в тот час. Петля исчезла 01.08, но какая
+    // именно правка её оборвала — восстановить постфактум не удалось: в
+    // окне перелома на устройства попало несколько сборок сразу, а
+    // счётчик вызовов не знает, какое поле писалось.
+    //
+    // Отсюда правило: считать вызовы — мало, надо знать имя поля. Эта
+    // строка стоит один console.log на обновление (в спокойные сутки ~340
+    // строк) и превращает следующий такой случай из недели догадок в один
+    // grep. Возврат петли виден по одному и тому же набору полей,
+    // повторяющемуся десятки раз в секунду.
+    //
+    // Ключи сортируются рекурсивно перед сравнением намеренно: Firestore
+    // не гарантирует порядок ключей в map-полях между снимками, и без
+    // этого typing/deliveredTo/lastReadAt выглядели бы изменившимися
+    // всегда (ровно эта ошибка уже ловилась в watchChatNegotiation.ts).
+    const changed = Array.from(
+      new Set([...Object.keys(before), ...Object.keys(after)]),
+    )
+      .filter((k) => canonicalJson(before[k]) !== canonicalJson(after[k]))
+      .sort();
+    logger.info(`[chat-write] ${event.params.chatId} ${changed.join(",") || "(без изменений)"}`);
+
     if (before.recipientAgreed === true || after.recipientAgreed !== true) return;
 
     const initiatorUid: string | undefined = after.jobOfferBy;
