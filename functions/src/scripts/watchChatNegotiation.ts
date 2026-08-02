@@ -57,7 +57,16 @@ function format(value: unknown): string {
   if (typeof asTimestamp?.toDate === "function") {
     return asTimestamp.toDate!().toISOString();
   }
-  if (typeof value === "object") return JSON.stringify(value);
+  // Ключи сортируются намеренно: Firestore не гарантирует их порядок
+  // между снимками, и без сортировки один и тот же negotiationSeenAt
+  // выглядел бы изменившимся при каждой пересборке снимка — наблюдалось
+  // 02.08 как две ложные «смены» подряд.
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const k of Object.keys(obj).sort()) sorted[k] = obj[k];
+    return JSON.stringify(sorted);
+  }
   return String(value);
 }
 
