@@ -858,9 +858,42 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // FirestoreService.cancelChat) — nothing was agreed, so the chat itself
   // stays open and visible; unlike _acceptJobOffer below, this deliberately
   // does NOT pop the screen.
+  //
+  // Подтверждение обязательно (A2): один тап стирает десять полей —
+  // предложение, дату, тип, место, заметки, согласие и обе отметки
+  // просмотра, — а кнопка стоит вплотную к «Tarix dəyiş». Наблюдалось
+  // вживую 02.08: промах уничтожал полностью согласованную негоциацию без
+  // единого вопроса. Диалог намеренно такой же, как у «Çatı təmizlə»
+  // выше — тот же вес разрушительного действия, тот же вид.
+  //
+  // Спрашиваем всегда, а не только при заполненной дате: после N16 плашка
+  // живёт лишь пока раунд открыт, значит терять есть что в любом случае.
   Future<void> _cancelJobOffer() async {
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     if (currentUid == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        title: const Text('İş təklifindən imtina', style: TextStyle(color: kText)),
+        content: const Text(
+          'Təklif, seçilmiş tarix və razılaşma silinəcək. Davam etmək '
+          'istəyirsiniz?',
+          style: TextStyle(color: kMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Geri', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('İmtina et', style: TextStyle(color: kRed)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     await _firestoreService.cancelChat(chatId: widget.chatId, uid: currentUid);
     if (!mounted) return;
     _showCopySnackBar('İmtina edildi');
@@ -3845,6 +3878,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         : null;
     final recipientAgreedNow =
         chatMetaAsync.value?['recipientAgreed'] as bool? ?? false;
+    // Раунд переговоров ОТКРЫТ: предложение есть и согласие ещё не
+    // получено (N16). Один выводимый признак на все места, где раньше
+    // стояли две независимые проверки `jobOfferBy != null`, — плашка,
+    // кнопка «İş təklif et» в шапке и throttle записи «печатает».
+    //
+    // До этой правки раунд завершался ровно одним способом — отменой:
+    // согласие не трогает `jobOfferBy`, поэтому после состоявшейся сделки
+    // плашка висела у обеих сторон, кнопка нового предложения оставалась
+    // скрытой, и единственным способом выйти было «İmtina» — та самая
+    // кнопка, чья разрушительность описана в A2. Наблюдалось вживую 02.08.
+    //
+    // Признак строится на `recipientAgreed`, а НЕ на серверном
+    // `completed`: первый относится к текущему раунду (его сбрасывает
+    // setJobOffer) и виден обеим сторонам сразу, не дожидаясь Cloud
+    // Function.
+    //
+    // Поля при этом намеренно не очищаются. `recipientAgreedAt` — durable
+    // триггер поздравительного окна (см. ниже): сотрёшь его, и окно молча
+    // потеряется у той стороны, чей экран в тот момент не был открыт.
+    // А защита от второго договора на ту же сделку устроена в
+    // onChatUpdated как `before.recipientAgreed === true -> выход`, то
+    // есть сброс флага разрешил бы дубль.
+    final jobOfferRoundOpen = jobOfferBy != null && !recipientAgreedNow;
     final recipientAgreedAtRaw =
         chatMetaAsync.value?['recipientAgreedAt'] as String?;
     final recipientAgreedAt = recipientAgreedAtRaw != null
@@ -3962,7 +4018,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // firestore_service.dart for the on-device cost of getting this wrong.
     // Read by the composer's typing-throttle listener (initState) outside
     // build()'s own scope — a plain field write, not setState.
-    _jobOfferActive = jobOfferBy != null;
+    _jobOfferActive = jobOfferRoundOpen;
     // mugam-v2 writes a 1:1 chat's `name` field from the initiator's
     // perspective at creation time (the other participant's name) and never
     // updates it — the recipient reading it back sees their OWN name
@@ -4183,7 +4239,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               icon: const Icon(Icons.more_vert, color: kGold),
               onPressed: () => _showChatMenu(
                 context,
-                hasActiveJobOffer: jobOfferBy != null,
+                hasActiveJobOffer: jobOfferRoundOpen,
               ),
             ),
           ],
@@ -4199,7 +4255,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         children: [
           if ((chatMetaAsync.value?['isGroup'] ?? chatDataAsync.value?['isGroup']) != true &&
               otherUidResolved != null &&
-              jobOfferBy != null &&
+              jobOfferRoundOpen &&
               currentUid.isNotEmpty)
             _buildJobOfferBanner(
               jobOfferBy: jobOfferBy,

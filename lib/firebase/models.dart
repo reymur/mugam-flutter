@@ -270,15 +270,25 @@ class Chat {
   final List<String> members;
   final bool isGroup;
   final String? photoURL;
-  // Historical marker only — an "İş təklif et" negotiation that finished
-  // (agreed or cancelled) on this chat. Does NOT hide the chat or fork a
-  // new thread for this pair (watchChats/getOrCreateDirectChat both
-  // ignore it): a pair always has exactly one persistent 1:1 chat,
-  // regardless of how many negotiations came and went on it. Confirmed on
-  // real testing that hiding+forking on this field was actively confusing
-  // (chat "disappearing" mid-conversation, "Mesaj" opening a different
-  // thread than the Çat tab) — reverted from that mugam-v2-parity design.
-  final bool completed;
+  // Поля `completed` здесь больше нет — оно удалено целиком (02.08).
+  //
+  // Оно осталось от отменённой схемы «завершённый чат форкается в новый»
+  // (парность с mugam-v2), которую свернули после живой проверки: чат
+  // «исчезал» посреди разговора, а «Mesaj» открывал не ту ветку. С уходом
+  // той схемы поле перестало на что-либо влиять — его писали (клиент при
+  // создании чата, onChatUpdated после сделки) и разбирали здесь, но НЕ
+  // читал никто и никогда.
+  //
+  // Признаком раунда переговоров оно быть и не могло: `setJobOffer` его
+  // не сбрасывает, поэтому после первой же сделки оно навсегда true —
+  // включая все последующие раунды. Открытость раунда выводится из
+  // `jobOfferBy` и `recipientAgreed` (см. jobOfferRoundOpen в
+  // chat_screen.dart).
+  //
+  // Удалено, а не оставлено «на всякий случай», именно потому, что живая
+  // на вид запись — ловушка: кто-нибудь однажды обопрётся на неё как на
+  // рабочий признак. Историю сделок хранит personalEvents, у каждого
+  // договора есть agreementChatId обратно на чат.
   // Empty for every 1:1 chat (mugam-v2 never wrote either field for those —
   // only createGroupChat does) and for group docs from before these fields
   // existed, so an empty default is the correct "absent" value here, not a
@@ -331,11 +341,10 @@ class Chat {
   final DateTime? recipientAgreedAt;
   // uid of whoever tapped "İmtina" (cancel) on a pending job offer — set by
   // cancelChat, same moment either party's decision ends the negotiation
-  // without ever creating a PersonalEvent. Deliberately does NOT also set
-  // completed:true (see cancelChat's own comment, firestore_service.dart) —
-  // an unrelated PersonalEvent's own cancelledBy field (models.dart below)
-  // is what agreements_screen.dart actually reads for the cancelled-tədbir
-  // UI; this chat-doc field currently has no reader.
+  // without ever creating a PersonalEvent. Отменённое предложение договора
+  // не создаёт вовсе; на экране «Müqavilələr» состояние «отменён» читается
+  // из собственного поля cancelledBy у PersonalEvent, а не отсюда. У этого
+  // поля на документе чата читателя по-прежнему нет.
   final String? cancelledBy;
   // Per-uid "last typed at" timestamp (ISO string on the doc), scoped
   // ONLY to driving the job-offer banners' status line — this app has no
@@ -356,7 +365,6 @@ class Chat {
     required this.members,
     required this.isGroup,
     this.photoURL,
-    this.completed = false,
     this.admins = const [],
     this.createdBy = '',
     this.messageCount = 0,
@@ -399,7 +407,6 @@ class Chat {
       members: List<String>.from(data['members'] as List? ?? const []),
       isGroup: data['isGroup'] ?? false,
       photoURL: data['photoURL'],
-      completed: (data['completed'] ?? false) as bool,
       admins: List<String>.from(data['admins'] as List? ?? const []),
       createdBy: data['createdBy'] ?? '',
       messageCount: (data['messageCount'] as num?)?.toInt() ?? 0,

@@ -1107,9 +1107,14 @@ export const onFriendRequestUpdated = onDocumentUpdated(
 //
 // Deliberately does NOT react to cancelledBy (mugam-flutter has no
 // separate "agreements" collection to log a cancellation into, unlike
-// mugam-v2 — FirestoreService.cancelChat's own chat-doc write, completed:
-// true + cancelledBy, is the entire cancel path; no PersonalEvent is ever
-// created for a cancelled offer).
+// mugam-v2): cancelChat просто сбрасывает поля переговоров и проставляет
+// cancelledBy, никакого PersonalEvent для отменённого предложения не
+// создаётся.
+//
+// Прежняя редакция этого абзаца утверждала, что cancelChat пишет ещё и
+// `completed: true`. В коде клиента этого не было никогда — комментарий
+// врал про поведение, что хуже отсутствующего. Исправлено 02.08; самого
+// поля `completed` больше нет ни у кого.
 export const onChatUpdated = onDocumentUpdated(
   "chats/{chatId}",
   async (event) => {
@@ -1148,9 +1153,11 @@ export const onChatUpdated = onDocumentUpdated(
       createdAt: FieldValue.serverTimestamp(),
     });
 
-    await db.collection("chats").doc(event.params.chatId).update({
-      completed: true,
-    });
+    // Здесь была ещё одна запись в chats/{chatId} — `completed: true`.
+    // Убрана 02.08 вместе с самим полем: его никто никогда не читал (см.
+    // комментарий на его месте в models.dart), а лишняя запись шла в тот
+    // самый горячий документ, ради которого превью свели в одну
+    // транзакцию (B16), а слушателей — в одного (B17).
 
     await sendPushToUid(
       initiatorUid,

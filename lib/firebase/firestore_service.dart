@@ -837,7 +837,6 @@ class FirestoreService {
     await _db.collection('chats').doc(detId).set({
       'isGroup': false,
       'members': [myUid, otherUid],
-      'completed': false,
       'preview': '',
       'lastMessageAt': now,
       'lastMessageTime': now,
@@ -885,7 +884,6 @@ class FirestoreService {
       'lastMessageAt': now,
       'lastMessageTime': now,
       'createdAt': now,
-      'completed': false,
       'unreadCount': <String, int>{},
       // First message written below gets seq 1 directly (no transaction —
       // the chat doc doesn't exist for anyone else to race yet).
@@ -2660,7 +2658,6 @@ class FirestoreService {
         'negotiationSeenAt': Map<String, dynamic>.from(
           data['negotiationSeenAt'] ?? {},
         ),
-        'completed': (data['completed'] ?? false) as bool,
         // Which message the shared card preview currently describes. Read
         // by chat_screen.dart purely to notice when it has fallen behind
         // the messages actually present and ask the server to recompute
@@ -2913,6 +2910,15 @@ class FirestoreService {
         'eventType': eventType,
         'eventLocation': eventLocation,
         'eventNotes': eventNotes,
+        // Причина напоминания «ждут от вас дату» только что исчезла —
+        // дата выбрана (N17). Раньше это поле не сбрасывал никто до конца
+        // раунда, а статусная строка плашки инициатора проверяет его
+        // ПЕРВЫМ: с первого раннего тапа и до согласия там висело
+        // «🤝 cavab gözləyir», перекрывая и «печатает», и «прочитал».
+        //
+        // Повторного окна сброс не создаёт: показ гасится отметкой
+        // negotiationSeenAt, а не наличием поля.
+        'waitingForDateAt': null,
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c saveChatEventDate failed: $e');
