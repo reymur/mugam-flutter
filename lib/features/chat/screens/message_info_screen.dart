@@ -74,35 +74,33 @@ class MessageInfoScreen extends ConsumerWidget {
         ),
       );
     } else {
-      final members = (chatMeta['members'] as List?)?.cast<String>();
-      final otherUid = members?.firstWhere(
-        (m) => m != message.senderId,
-        orElse: () => '',
-      );
-      final otherUidResolved = (otherUid != null && otherUid.isNotEmpty)
-          ? otherUid
-          : null;
+      final members =
+          (chatMeta['members'] as List?)?.cast<String>() ?? const <String>[];
+      // Все получатели, а не первый попавшийся участник (B29). В диалоге
+      // список из одного человека — экран выглядит ровно как раньше; в
+      // группе раньше показывалось состояние произвольного участника,
+      // выданное за состояние всей группы.
+      final recipients = members.where((m) => m != message.senderId).toList();
       final deliveredTo =
           chatMeta['deliveredTo'] as Map<String, dynamic>? ?? {};
       final lastReadMsgId =
           chatMeta['lastReadMsgId'] as Map<String, dynamic>? ?? {};
       final lastReadAt = chatMeta['lastReadAt'] as Map<String, dynamic>? ?? {};
 
-      bool isDelivered = false;
-      bool isRead = false;
-      if (otherUidResolved != null) {
-        final lastReadId = lastReadMsgId[otherUidResolved] as String?;
-        // Compared by timestamp, not list position (finding #4) — a
-        // paginated messages list has no stable "index" for a message
-        // outside whatever's currently loaded. The read-up-to message is
-        // almost always recent (near the tail, already loaded); falling
-        // back to messageByIdProvider only costs a single extra document
-        // read for the rare case it's well back in a long history.
+      // Compared by timestamp, not list position (finding #4) — a
+      // paginated messages list has no stable "index" for a message
+      // outside whatever's currently loaded. The read-up-to message is
+      // almost always recent (near the tail, already loaded); falling
+      // back to messageByIdProvider only costs a single extra document
+      // read for the rare case it's well back in a long history.
+      bool readByUid(String uid) {
+        final lastReadId = lastReadMsgId[uid] as String?;
+        if (lastReadId == null || message.timestamp == null) return false;
         Timestamp? lastReadTimestamp;
         final loaded = messages.where((m) => m.id == lastReadId);
-        if (lastReadId != null && loaded.isNotEmpty) {
+        if (loaded.isNotEmpty) {
           lastReadTimestamp = loaded.first.timestamp;
-        } else if (lastReadId != null) {
+        } else {
           lastReadTimestamp = ref
               .watch(
                 messageByIdProvider((chatId: chatId, messageId: lastReadId)),
@@ -110,45 +108,78 @@ class MessageInfoScreen extends ConsumerWidget {
               .value
               ?.timestamp;
         }
-        isRead =
-            lastReadTimestamp != null &&
-            message.timestamp != null &&
+        return lastReadTimestamp != null &&
             lastReadTimestamp.compareTo(message.timestamp!) >= 0;
-        isDelivered = deliveredTo[otherUidResolved] != null || isRead;
       }
-      final deliveredAt = otherUidResolved != null
-          ? _asTimeString(deliveredTo[otherUidResolved])
-          : null;
-      final readAt = otherUidResolved != null
-          ? _asTimeString(lastReadAt[otherUidResolved])
-          : null;
-      final otherName = chatData?['name'] as String? ?? '';
 
-      body = Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildInfoRow(
-              Icons.done,
-              'Göndərildi',
-              _formatInfoTime(message.timestamp),
-            ),
-            if (isDelivered)
-              _buildInfoRow(
-                Icons.done_all,
-                'Çatdırıldı',
-                _formatInfoTime(deliveredAt),
-              ),
-            if (isRead)
-              _buildInfoRow(
-                Icons.done_all,
-                otherName.isNotEmpty ? '$otherName oxudu' : 'Oxundu',
-                _formatInfoTime(readAt),
-                color: kReadBlue,
-              ),
-          ],
+      final rows = <Widget>[
+        _buildInfoRow(
+          Icons.done,
+          'Göndərildi',
+          _formatInfoTime(message.timestamp),
         ),
+      ];
+
+      if (recipients.length <= 1) {
+        final uid = recipients.isEmpty ? null : recipients.first;
+        final isRead = uid != null && readByUid(uid);
+        final isDelivered = uid != null && (deliveredTo[uid] != null || isRead);
+        final otherName = chatData?['name'] as String? ?? '';
+        if (isDelivered) {
+          rows.add(
+            _buildInfoRow(
+              Icons.done_all,
+              'Çatdırıldı',
+              _formatInfoTime(_asTimeString(deliveredTo[uid])),
+            ),
+          );
+        }
+        if (isRead) {
+          rows.add(
+            _buildInfoRow(
+              Icons.done_all,
+              otherName.isNotEmpty ? '$otherName oxudu' : 'Oxundu',
+              _formatInfoTime(_asTimeString(lastReadAt[uid])),
+              color: kReadBlue,
+            ),
+          );
+        }
+      } else {
+        // Группа: одна строка на участника. Свести их в «Çatdırıldı» без
+        // имён нельзя — вопрос, ради которого этот экран открывают, звучит
+        // как «кто именно прочитал», и агрегат на него не отвечает.
+        final read = recipients.where(readByUid).toList();
+        final delivered = recipients
+            .where((u) => deliveredTo[u] != null && !read.contains(u))
+            .toList();
+        final pending = recipients
+            .where((u) => !read.contains(u) && !delivered.contains(u))
+            .toList();
+
+        void addGroup(String title, List<String> uids, IconData icon,
+            Color color, Map<String, dynamic> times) {
+          if (uids.isEmpty) return;
+          rows.add(_buildSectionTitle(title, uids.length));
+          for (final uid in uids) {
+            rows.add(
+              _MemberStatusRow(
+                uid: uid,
+                icon: icon,
+                color: color,
+                time: _formatInfoTime(_asTimeString(times[uid])),
+              ),
+            );
+          }
+        }
+
+        addGroup('Oxudu', read, Icons.done_all, kReadBlue, lastReadAt);
+        addGroup('Çatdırıldı', delivered, Icons.done_all, kMuted, deliveredTo);
+        addGroup('Gözləyir', pending, Icons.access_time, kMuted, const {});
+      }
+
+      body = SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: rows),
       );
     }
 
@@ -167,6 +198,21 @@ class MessageInfoScreen extends ConsumerWidget {
         ),
       ),
       body: body,
+    );
+  }
+
+  Widget _buildSectionTitle(String title, int count) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 14, bottom: 4),
+      child: Text(
+        '$title ($count)',
+        style: TextStyle(
+          color: kMuted,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.5,
+        ),
+      ),
     );
   }
 
@@ -189,6 +235,47 @@ class MessageInfoScreen extends ConsumerWidget {
             ),
           ),
           Text(time, style: TextStyle(color: kMuted, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+}
+
+// Строка участника группы. Отдельный виджет, а не метод: имя тянется из
+// currentUserProvider, и без собственного ConsumerWidget каждая строка
+// подписывала бы на пользователей весь экран целиком.
+class _MemberStatusRow extends ConsumerWidget {
+  final String uid;
+  final IconData icon;
+  final Color color;
+  final String time;
+
+  const _MemberStatusRow({
+    required this.uid,
+    required this.icon,
+    required this.color,
+    required this.time,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(currentUserProvider(uid)).value;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 10),
+          Text(user?.emoji ?? '👤', style: const TextStyle(fontSize: 14)),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              user?.name ?? 'İstifadəçi',
+              style: const TextStyle(color: kText, fontSize: 14),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Text(time, style: const TextStyle(color: kMuted, fontSize: 12)),
         ],
       ),
     );

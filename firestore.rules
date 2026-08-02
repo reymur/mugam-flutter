@@ -353,9 +353,9 @@ service cloud.firestore {
       }
 
       // Every ordinary field on a chat doc (lastMessage, lastMessageTime,
-      // deliveredTo.{uid}, readBy, lastReadAt.{uid}, lastReadMsgId.{uid},
+      // deliveredTo.{uid}, lastReadAt.{uid}, lastReadMsgId.{uid},
       // unreadCount.{uid}, activeUsers, typing.{uid}, name, photoURL,
-      // completed, cancelledBy, closedBy, jobOfferBy, eventDate/Type/
+      // cancelledBy, closedBy, jobOfferBy, eventDate/Type/
       // Location/Notes, waitingForDateAt, preview, ...) stays writable by
       // ANY current member, including writes keyed by a DIFFERENT member's
       // uid — this is real, confirmed behavior in both apps (e.g. the

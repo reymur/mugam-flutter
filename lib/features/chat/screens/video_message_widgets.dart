@@ -37,15 +37,31 @@ import 'media_thumbnail_cache.dart';
 // question.
 enum MessageDeliveryStatus { queued, uploading, failed, sentUnconfirmed, delivered, read }
 
-// isMe/otherUid gate the delivered/read computation the same way the old
-// inline logic did (group chats / other people's messages have no
-// meaningful otherUid-keyed receipt to check) — anything that isn't
-// queued/uploading/failed and doesn't qualify for that check is
-// sentUnconfirmed, matching the prior fallback behavior exactly.
+// Принимает СПИСОК остальных участников, а не одного собеседника (B29).
+// Раньше сюда приходил `members.firstWhere((m) => m != currentUid)` — в
+// диалоге это ровно собеседник, а в группе просто первый попавшийся
+// участник, чей статус и выдавался за состояние всей группы: две синие
+// галочки означали «один произвольный человек прочитал», причём какой
+// именно — зависело от порядка элементов в массиве members.
+//
+// Семантика теперь как в WhatsApp и одинакова для диалога и группы:
+//   две синие — прочитали ВСЕ остальные участники;
+//   две серые — доставлено ВСЕМ;
+//   одна      — отправлено на сервер, но кто-то ещё не получил.
+// Для диалога список состоит из одного человека, то есть поведение
+// побайтово прежнее — меняется только группа.
+//
+// «Доставлено» считается как «есть отметка доставки ИЛИ уже прочитано»:
+// у прочитавшего участника отметка доставки может отсутствовать в старых
+// документах, и без этого допущения группа откатывалась бы с двух
+// галочек на одну. Ровно так же это устроено на экране «Məlumat».
+//
+// isMe и пустой список гасят расчёт так же, как раньше гасил null:
+// чужие сообщения и чат без других участников не имеют чего показывать.
 MessageDeliveryStatus deliveryStatusFor({
   required Message msg,
   required bool isMe,
-  required String? otherUid,
+  required List<String> otherUids,
   required Map<String, dynamic> deliveredTo,
   required Map<String, dynamic> lastReadMsgId,
   required List<String> allMsgIds,
@@ -59,12 +75,19 @@ MessageDeliveryStatus deliveryStatusFor({
     case 'failed':
       return MessageDeliveryStatus.failed;
   }
-  if (!isMe || otherUid == null) return MessageDeliveryStatus.sentUnconfirmed;
-  final lastReadId = lastReadMsgId[otherUid] as String?;
-  final lastReadIndex = lastReadId != null ? allMsgIds.indexOf(lastReadId) : -1;
-  final isRead = lastReadIndex != -1 && index >= lastReadIndex;
-  if (isRead) return MessageDeliveryStatus.read;
-  if (deliveredTo[otherUid] != null) return MessageDeliveryStatus.delivered;
+  if (!isMe || otherUids.isEmpty) return MessageDeliveryStatus.sentUnconfirmed;
+
+  bool readBy(String uid) {
+    final lastReadId = lastReadMsgId[uid] as String?;
+    final lastReadIndex =
+        lastReadId != null ? allMsgIds.indexOf(lastReadId) : -1;
+    return lastReadIndex != -1 && index >= lastReadIndex;
+  }
+
+  if (otherUids.every(readBy)) return MessageDeliveryStatus.read;
+  if (otherUids.every((uid) => deliveredTo[uid] != null || readBy(uid))) {
+    return MessageDeliveryStatus.delivered;
+  }
   return MessageDeliveryStatus.sentUnconfirmed;
 }
 

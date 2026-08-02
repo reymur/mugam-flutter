@@ -442,7 +442,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
-  void _showMessageOptionsSheet(Message msg, bool isMe, {String? otherUid}) {
+  void _showMessageOptionsSheet(
+    Message msg,
+    bool isMe, {
+    List<String> otherUids = const [],
+  }) {
     if (msg.localSendStatus != null) {
       _showPendingMessageOptionsSheet(msg);
       return;
@@ -524,7 +528,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               ),
               onTap: () => _toggleStarMessage(msg),
             ),
-            if (isMe && otherUid != null)
+            if (isMe && otherUids.isNotEmpty)
               ListTile(
                 leading: const Icon(Icons.info_outline, color: kGold),
                 title: const Text('Məlumat', style: TextStyle(color: kText)),
@@ -2796,7 +2800,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     int index,
     List<String> allMsgIds,
     String currentUid,
-    String? otherUid,
+    List<String> otherUids,
     Map<String, dynamic> deliveredTo,
     Map<String, dynamic> lastReadMsgId,
     String? prevSenderId,
@@ -2838,7 +2842,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final status = deliveryStatusFor(
       msg: msg,
       isMe: isMe,
-      otherUid: otherUid,
+      otherUids: otherUids,
       deliveredTo: deliveredTo,
       lastReadMsgId: lastReadMsgId,
       allMsgIds: allMsgIds,
@@ -2866,7 +2870,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         // Only a real gap when it's my own 1-1-chat message with nothing
         // to show yet — group chats / other people's messages show no
         // checkmark at all, matching the previous fallback exactly.
-        if (isMe && otherUid != null) {
+        if (isMe && otherUids.isNotEmpty) {
           checkIconData = Icons.done;
           checkColor = const Color(0xFF1A0E00).withAlpha(128);
           overlayCheckColor = Colors.white70;
@@ -2936,8 +2940,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       child: _SwipeableMessageBubble(
         onReply: () => _startReply(msg),
         onLongPress: () =>
-            _showMessageOptionsSheet(msg, isMe, otherUid: otherUid),
-        onInfo: isMe && otherUid != null ? () => _openMessageInfo(msg) : null,
+            _showMessageOptionsSheet(msg, isMe, otherUids: otherUids),
+        onInfo: isMe && otherUids.isNotEmpty ? () => _openMessageInfo(msg) : null,
         child: Align(
           alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
           child: Column(
@@ -3220,7 +3224,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                 padding: const EdgeInsets.only(left: 6),
                                 child: _timeCheckmarkRow(
                                   isMe,
-                                  otherUid,
+                                  otherUids,
                                   msg,
                                   time,
                                   checkMark,
@@ -3277,7 +3281,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         isMe: isMe,
                         timeCheckmarkOverlay: _timeCheckmarkRow(
                           isMe,
-                          otherUid,
+                          otherUids,
                           msg,
                           time,
                           overlayCheckMark,
@@ -3297,11 +3301,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         // Sender-side "did they actually listen" status —
                         // only meaningful for a 1-1 chat's own sent
                         // message, same gating as the checkmarks above.
-                        showListenedStatus: isMe && otherUid != null,
+                        showListenedStatus: isMe && otherUids.isNotEmpty,
                         isRead: isRead,
+                        // «Прослушали» — тоже про всех остальных, а не про
+                        // произвольного участника группы (B29).
                         listenedByOther:
-                            otherUid != null &&
-                            msg.listenedBy.contains(otherUid),
+                            otherUids.isNotEmpty &&
+                            otherUids.every(msg.listenedBy.contains),
                         listenedByMe: msg.listenedBy.contains(currentUid),
                         caption: msg.text,
                         onListened:
@@ -3319,7 +3325,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                             : null,
                         timeCheckmarkRow: _timeCheckmarkRow(
                           isMe,
-                          otherUid,
+                          otherUids,
                           msg,
                           time,
                           checkMark,
@@ -3373,7 +3379,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         isMe: isMe,
                         timeCheckmarkOverlay: _timeCheckmarkRow(
                           isMe,
-                          otherUid,
+                          otherUids,
                           msg,
                           time,
                           overlayCheckMark,
@@ -3398,7 +3404,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         caption: msg.text,
                         timeCheckmarkRow: _timeCheckmarkRow(
                           isMe,
-                          otherUid,
+                          otherUids,
                           msg,
                           time,
                           checkMark,
@@ -3421,7 +3427,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         isMe: isMe,
                         timeCheckmarkOverlay: _timeCheckmarkRow(
                           isMe,
-                          otherUid,
+                          otherUids,
                           msg,
                           time,
                           overlayCheckMark,
@@ -3437,7 +3443,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         msg.type != 'file' &&
                         msg.type != 'location') ...[
                       const SizedBox(height: 2),
-                      _timeCheckmarkRow(isMe, otherUid, msg, time, checkMark),
+                      _timeCheckmarkRow(isMe, otherUids, msg, time, checkMark),
                     ],
                   ],
                 ),
@@ -3468,14 +3474,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // video content there instead of the bubble's flat background.
   Widget _timeCheckmarkRow(
     bool isMe,
-    String? otherUid,
+    List<String> otherUids,
     Message msg,
     String time,
     Widget? checkMark, {
     Color? textColor,
   }) {
     return GestureDetector(
-      onTap: isMe && otherUid != null ? () => _openMessageInfo(msg) : null,
+      onTap: isMe && otherUids.isNotEmpty ? () => _openMessageInfo(msg) : null,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -3780,6 +3786,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final otherUidResolved = (otherUid != null && otherUid.isNotEmpty)
         ? otherUid
         : null;
+    // Все остальные участники — то, из чего считаются галочки и статус
+    // «прослушано» (B29). otherUidResolved выше для этого не годится: в
+    // группе это первый попавшийся элемент members, и его состояние
+    // выдавалось за состояние всей группы. Он остаётся только там, где
+    // собеседник действительно один — шапка чата, звонки, «печатает».
+    final otherUids =
+        members?.where((m) => m != currentUid).toList() ?? const <String>[];
     // Stuck-unread-badge repair — see _lastUnreadRepairAt's own comment for
     // the race this exists for. Safe to drive from build(): it only ever
     // fires while the count is genuinely non-zero for a chat this user has
@@ -4396,7 +4409,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                             i,
                             allMsgIds,
                             currentUid,
-                            otherUidResolved,
+                            otherUids,
                             deliveredTo,
                             lastReadMsgId,
                             // Chronologically-previous message: with index

@@ -2808,8 +2808,14 @@ class FirestoreService {
   }) async {
     debugMarkChatAsReadByCallCount++;
     try {
+      // Здесь был ещё `readBy: arrayUnion([uid])` — убран 02.08 вместе с
+      // самим полем (B28). Его никто никогда не читал: ни экран, ни
+      // функции, ни правила. При этом список рос монотонно и никогда не
+      // очищался при новом сообщении, то есть даже как признак «все
+      // прочли последнее» он был бы ложным — достаточно было один раз
+      // открыть чат, чтобы навсегда попасть в этот список. Считает
+      // прочтение `lastReadMsgId.{uid}` ниже, и только он.
       await _db.collection('chats').doc(chatId).update({
-        'readBy': FieldValue.arrayUnion([uid]),
         'lastReadAt.$uid': nowInstantIso(),
         'lastReadMsgId.$uid': lastMsgId,
         'unreadCount.$uid': 0,
