@@ -3557,16 +3557,24 @@ class FirestoreService {
   /// немедленно — и при неудаче функции он приходил в список, где ничего
   /// не появилось, без единого слова о том, что пошло не так.
   ///
-  /// Запрос по одному равенству: составной индекс для него не нужен
-  /// (правило из N15), автоматических одиночных достаточно. Читать вправе
-  /// обе стороны — получатель числится в `musicians`.
-  Future<bool> agreementExistsForChat(String chatId) async {
+  /// ФОРМА ЗАПРОСА ЗАДАНА ПРАВИЛАМИ, А НЕ УДОБСТВОМ. Первая редакция
+  /// фильтровала по одному `agreementChatId` — и сервер отказывал по
+  /// правам: чтение `personalEvents` разрешено владельцу ИЛИ участнику, а
+  /// фильтр по чату этого не доказывает. Firestore авторизует запрос
+  /// только когда его СОБСТВЕННЫЕ фильтры доказывают правило для любого
+  /// возможного результата (та же ловушка, что у ленты статусов, коммит
+  /// d6b2ad6 и комментарий выше в этом файле).
+  ///
+  /// Поэтому фильтр — по участию, ровно той же формы, что у
+  /// `eventsAsParticipantProvider`, а совпадение по чату проверяется уже
+  /// на клиенте: договоров у человека десятки, не тысячи.
+  Future<bool> agreementExistsForChat(String chatId, String uid) async {
     final snap = await _db
         .collection('personalEvents')
-        .where('agreementChatId', isEqualTo: chatId)
-        .limit(1)
-        .get();
-    return snap.docs.isNotEmpty;
+        .where('musicians', arrayContains: uid)
+        .get()
+        .timeout(_writeTimeout);
+    return snap.docs.any((d) => d.data()['agreementChatId'] == chatId);
   }
 
   /// Удалить мероприятие — у ВСЕХ. Правила разрешают это только

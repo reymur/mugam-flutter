@@ -28,14 +28,14 @@ void main() {
 
     // Два независимых слушателя на ОДИН аргумент — как родительский экран
     // и открытая поверх него карточка.
-    container.listen(family('uid-1'), (_, __) {}, fireImmediately: true);
-    container.listen(family('uid-1'), (_, __) {}, fireImmediately: true);
+    container.listen(family('uid-1'), (_, _) {}, fireImmediately: true);
+    container.listen(family('uid-1'), (_, _) {}, fireImmediately: true);
 
     expect(creations, 1,
         reason: 'второй слушатель не должен порождать второй поток');
 
     // Разный аргумент — уже другой провайдер, и это тоже часть правила.
-    container.listen(family('uid-2'), (_, __) {}, fireImmediately: true);
+    container.listen(family('uid-2'), (_, _) {}, fireImmediately: true);
     expect(creations, 2);
   });
 
@@ -51,8 +51,8 @@ void main() {
     final container = ProviderContainer();
     addTearDown(container.dispose);
 
-    final a = container.listen(family('u'), (_, __) {}, fireImmediately: true);
-    final b = container.listen(family('u'), (_, __) {}, fireImmediately: true);
+    final a = container.listen(family('u'), (_, _) {}, fireImmediately: true);
+    final b = container.listen(family('u'), (_, _) {}, fireImmediately: true);
     expect(creations, 1);
 
     // Ушёл один — поток остаётся: карточка закрылась, родительский экран

@@ -974,11 +974,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   /// холодная, 0,13 с прогретая, Этап 3). Не дождались — это не «наверное
   /// ещё идёт», а повод сказать человеку правду.
   Future<void> _waitForAgreement() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
     final deadline = DateTime.now().add(const Duration(seconds: 20));
     while (DateTime.now().isBefore(deadline)) {
       if (!mounted) return;
-      if (await _firestoreService.agreementExistsForChat(widget.chatId)) {
-        return;
+      // Ошибка запроса НЕ должна оставлять кнопку занятой навсегда.
+      // Первая редакция была без перехвата, и отказ по правам (форма
+      // запроса не доказывала правило чтения) улетал наружу: кнопка
+      // залипала в «Müqavilə yaradılır…», а поздравление, привязанное к
+      // тому же признаку, не показывалось НИ У КОГО. Наблюдалось на двух
+      // устройствах 04.08.
+      try {
+        if (await _firestoreService.agreementExistsForChat(
+          widget.chatId,
+          uid,
+        )) {
+          return;
+        }
+      } catch (e) {
+        debugPrint('agreementExistsForChat failed: $e');
       }
       await Future.delayed(const Duration(milliseconds: 700));
     }
@@ -993,22 +1008,74 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final dateRaw = meta?['eventDate'] as String?;
     final type = (meta?['eventType'] as String?) ?? '';
     final place = (meta?['eventLocation'] as String?) ?? '';
-    final what = [
-      if (type.isNotEmpty) type,
-      if (dateRaw != null && fmtEventDate(dateRaw).isNotEmpty)
-        '${fmtEventDate(dateRaw)} ${fmtEventTime(dateRaw)}'.trim(),
-      if (place.isNotEmpty) place,
-    ].join(' · ');
+    final notes = (meta?['eventNotes'] as String?) ?? '';
+    final when = (dateRaw != null && fmtEventDate(dateRaw).isNotEmpty)
+        ? '${fmtEventDate(dateRaw)}  ${fmtEventTime(dateRaw)}'.trim()
+        : '';
     final ok = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: kBg2,
-        title: const Text('Müqavilə yaradılacaq', style: TextStyle(color: kText)),
-        content: Text(
-          what.isEmpty
-              ? 'Razılaşdıqdan sonra müqavilə yaradılacaq.'
-              : '$what\n\nRazılaşdıqdan sonra müqavilə yaradılacaq.',
-          style: const TextStyle(color: kMuted),
+        title: Text(
+          'Müqavilə yaradılacaq',
+          style: GoogleFonts.nunito(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: kText,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        // Предмет договорённости — ОТДЕЛЬНОЙ карточкой, тем же видом, что
+        // в диалоге конфликта. Раньше он и поясняющая фраза были свалены
+        // в один серый абзац: человек читал сплошняком и не находил
+        // глазами главное — на что именно он соглашается.
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: kBg3,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: kGold.withAlpha(60)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  if (type.isNotEmpty) ...[
+                    Text(
+                      type,
+                      style: GoogleFonts.nunito(
+                        color: kGold,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    const Divider(color: kBorder, height: 1),
+                    const SizedBox(height: 10),
+                  ],
+                  if (when.isNotEmpty)
+                    _dealLine('🕐', when),
+                  if (place.trim().isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    _dealLine('📍', place.trim()),
+                  ],
+                  if (notes.trim().isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    _dealLine('📝', notes.trim()),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Razılaşdıqdan sonra müqavilə yaradılacaq',
+              style: TextStyle(color: kMuted, fontSize: 13, height: 1.3),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -1017,13 +1084,40 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Razıyam', style: TextStyle(color: kGold)),
+            child: const Text(
+              'Razıyam',
+              style: TextStyle(color: kGold, fontWeight: FontWeight.bold),
+            ),
           ),
         ],
       ),
     );
     return ok == true;
   }
+
+  /// Строка предмета договорённости: значок слева, значение — читаемым
+  /// светлым, а не серым. Это факт, на который человек соглашается, а не
+  /// пояснение.
+  static Widget _dealLine(String icon, String value) => Row(
+    mainAxisAlignment: MainAxisAlignment.center,
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(icon, style: const TextStyle(fontSize: 13)),
+      const SizedBox(width: 6),
+      Flexible(
+        child: Text(
+          value,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: kText,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            height: 1.3,
+          ),
+        ),
+      ),
+    ],
+  );
 
   /// Согласие НЕ дошло до базы — сеть оборвалась в момент нажатия.
   ///
@@ -4226,8 +4320,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         // Не показали — «просмотрено» НЕ ставим и признак планирования
         // сбрасываем: окно durable, оно покажется на следующей
         // перерисовке, как только договор появится.
-        final ready =
-            await _firestoreService.agreementExistsForChat(widget.chatId);
+        // Тот же перехват, что в ожидании: отказ или обрыв не должны
+        // молча съедать поздравление — при ошибке считаем «ещё нет» и
+        // пробуем на следующей перерисовке.
+        var ready = false;
+        try {
+          ready = await _firestoreService
+              .agreementExistsForChat(widget.chatId, myUidForNotify);
+        } catch (e) {
+          debugPrint('agreementExistsForChat (celebration) failed: $e');
+        }
         if (!mounted) return;
         if (!ready) {
           _recipientAgreedSeenScheduledRaw = null;
