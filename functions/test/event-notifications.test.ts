@@ -3,6 +3,7 @@ import {
   diffEvents,
   editedBody,
   EventSnapshot,
+  eventWallClock,
   fmtEventWhen,
   planUpdatePushes,
   pushDeleted,
@@ -304,5 +305,33 @@ describe("подавление присутствием", () => {
     assert.equal(isWatchingEventDecision({
       ...base, userData: undefined, eventId: "e1", lastSeenMs: 1_000_000,
     }), false);
+  });
+});
+
+describe("три формы даты в проде (N26)", () => {
+  it("плавающая читается как есть — запрет N4 не нарушен", () => {
+    assert.equal(eventWallClock("2026-08-08T17:30:00.000"),
+      "2026-08-08T17:30:00.000");
+    assert.equal(eventWallClock("2026-07-29T18:12:37.122341"),
+      "2026-07-29T18:12:37.122341");
+  });
+
+  it("старая UTC-запись приводится к бакинским стенным часам", () => {
+    // 15:50Z — это 19:50 в Баку. Без перевода напоминание ушло бы на
+    // четыре часа раньше срока.
+    assert.equal(eventWallClock("2026-07-01T15:50:02.000Z"),
+      "2026-07-01T19:50:02");
+    assert.equal(fmtEventWhen("2026-07-01T15:50:02.000Z"),
+      "1 İyul 2026, 19:50");
+  });
+
+  it("запись с явным смещением тоже приводится", () => {
+    assert.equal(eventWallClock("2026-08-08T13:30:00+00:00"),
+      "2026-08-08T17:30:00");
+  });
+
+  it("мусор не роняет разбор и не подменяется", () => {
+    assert.equal(eventWallClock(""), "");
+    assert.equal(eventWallClock("не дата"), "не дата");
   });
 });

@@ -25,6 +25,8 @@ import {
   pushReplaced,
   recipientsOf,
   ReminderKind,
+  eventWallClock,
+  BAKU_OFFSET_MS,
 } from "./eventNotifications";
 import { RtcRole, RtcTokenBuilder } from "agora-token";
 import { algoliasearch } from "algoliasearch";
@@ -2244,13 +2246,30 @@ export const remindUpcomingEventsHourly = onSchedule(
       const to = new Date(from.getTime() + 60 * 60 * 1000);
       const fromIso = from.toISOString().slice(0, 19);
       const toIso = to.toISOString().slice(0, 19);
+      // Окно запроса РАСШИРЕНО на четыре часа в обе стороны, а точная
+      // проверка сделана в коде после приведения к стенным часам.
+      //
+      // Причина: в проде `date` лежит в трёх формах (N4), и старая
+      // UTC-запись отличается от стенных часов ровно на бакинское
+      // смещение. Запрос сравнивает СТРОКИ и о формах ничего не знает —
+      // сузь окно, и такая запись просто не попала бы в выборку.
+      // Расширение стоит нескольких лишних чтений, пропуск стоил бы
+      // напоминания, не пришедшего вовсе.
+      const wideFrom = new Date(from.getTime() - BAKU_OFFSET_MS)
+        .toISOString().slice(0, 19);
+      const wideTo = new Date(to.getTime() + BAKU_OFFSET_MS)
+        .toISOString().slice(0, 19);
       const due = await db.collection("personalEvents")
-        .where("date", ">=", fromIso)
-        .where("date", "<", toIso)
+        .where("date", ">=", wideFrom)
+        .where("date", "<", wideTo)
         .get();
       for (const doc of due.docs) {
         const e = toEventSnapshot(doc.data());
         if (e.status === "cancelled") continue;
+        // Точная граница — уже по стенным часам, в той же шкале, в какой
+        // человек видит дату на карточке.
+        const wall = eventWallClock(e.date);
+        if (wall < fromIso || wall >= toIso) continue;
         const key = `${doc.id}_${w.kind}`;
         if (!(await claimNotificationOnce(`reminder_${key}`))) continue;
         // Напоминание идёт ВСЕМ, включая владельца: это не уведомление о
