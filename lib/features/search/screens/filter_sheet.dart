@@ -131,6 +131,11 @@ class FilterSheet extends StatefulWidget {
     required TextEditingController nameController,
   }) {
     return showModalBottomSheet<SearchFilters>(
+      // Тап по затемнённому фону не закрывает: по нему легко попасть,
+      // целясь в поле формы, и терять введённое из-за промаха обидно.
+      // Свайп и кнопка отмены закрывают как обычно — они делаются
+      // намеренно. Одно правило на все листы С ВВОДОМ (N28).
+      isDismissible: false,
       context: context,
       backgroundColor: kBg2,
       isScrollControlled: true,

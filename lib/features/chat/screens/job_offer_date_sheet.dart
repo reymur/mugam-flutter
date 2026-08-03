@@ -147,13 +147,11 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
   final _scrollController = ScrollController();
   final _warningKey = GlobalKey();
 
-  // Снимок начального состояния — по нему и только по нему решается,
-  // спрашивать ли при закрытии. Хранится отдельно от widget.initial*,
-  // потому что там половина значений null, а сравнивать надо с тем, что
-  // человек реально увидел открытым, включая умолчания.
+  // Дата, с которой лист открылся. Нужна ровно для одного — отличить
+  // «человек ВЫБРАЛ прошлое» от «лист открыт на давнем предложении, чья
+  // дата уже прошла»: во втором случае запрет запер бы его в углу,
+  // требуя сдвинуть дату ради правки соседнего поля.
   late final DateTime _openedWithDate;
-  late final String _openedWithType;
-  late final String _openedWithNotes;
 
   @override
   void initState() {
@@ -168,8 +166,6 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
       text: widget.initialLocation ?? '',
     );
     _openedWithDate = _selectedDate;
-    _openedWithType = _selectedType;
-    _openedWithNotes = _notes.joined;
   }
 
   @override
@@ -178,15 +174,6 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
     _scrollController.dispose();
     super.dispose();
   }
-
-  // «Лист трогали» — любое отличие от того, с чем он открылся. Пустой
-  // лист закрывается молча: вопрос на пустом месте раздражает не меньше,
-  // чем потеря введённого, и быстро приучает жать «да» не глядя.
-  bool get _isDirty =>
-      _selectedDate != _openedWithDate ||
-      _selectedType != _openedWithType ||
-      _notes.joined != _openedWithNotes ||
-      _locationController.text.trim() != (widget.initialLocation ?? '').trim();
 
   // Дата в прошлом. Проверка на отправке, а не запретом в колесе:
   // WheelDateTimePicker общий с календарём договоров, где прошлая дата
@@ -234,34 +221,6 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
 
   PersonalEvent? _conflictAt(DateTime when, List<PersonalEvent> events) =>
       exactConflictAt(when, events);
-
-  Future<bool> _confirmDiscard() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: kBg2,
-        title: const Text(
-          'Dəyişikliklər itəcək',
-          style: TextStyle(color: kText),
-        ),
-        content: const Text(
-          'Yazdıqlarınız saxlanılmayacaq. Çıxmaq istəyirsiniz?',
-          style: TextStyle(color: kMuted),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Geri', style: TextStyle(color: kMuted)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Çıx', style: TextStyle(color: kRed)),
-          ),
-        ],
-      ),
-    );
-    return ok == true;
-  }
 
   /// Ровно тот же круг, что в календаре (`_showConflictFlow`): посмотреть
   /// мероприятие → вернуться и снова спросить; заменить → отправить как
@@ -438,21 +397,20 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
       pastDate: _pastDatePicked,
     );
 
-    // canPop: false плюс ручной pop — единственный способ перехватить и
-    // свайп вниз, и системную «назад» одинаково. Без этого свайп уносит
-    // введённое молча, что и записано в плане как отдельное раздражение.
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
-        // Навигатор берётся ДО await: после диалога ссылаться на context
-        // этого build уже нельзя, а State.mounted про него ничего не
-        // говорит.
-        final navigator = Navigator.of(context);
-        if (_isDirty && !await _confirmDiscard()) return;
-        if (mounted) navigator.pop();
-      },
-      child: Container(
+    // Обёртки PopScope здесь больше нет, и это снятие целиком, а не
+    // наполовину.
+    //
+    // Она существовала ради вопроса «Dəyişikliklər itəcək» при закрытии.
+    // Вопрос снят решением владельца 04.08, а сама обёртка перехватывала
+    // только СИСТЕМНЫЙ возврат: закрытие свайпом зовёт `Navigator.pop`
+    // напрямую, и PopScope его не видит (разбор — в реестре, «PopScope не
+    // видит программный pop»). Оставлять её значило бы держать код,
+    // который ничего не делает, — то же, что уже выпалывалось с `onSaved`
+    // и `cancelPending`.
+    //
+    // Случайную потерю введённого закрывает не вопрос, а запрет на
+    // закрытие тапом по фону (`chat_screen.dart` → `isDismissible: false`).
+    return Container(
         margin: EdgeInsets.only(top: 60, bottom: bottomInset),
         decoration: const BoxDecoration(
           color: kBg2,
@@ -627,7 +585,6 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
             ),
           ],
         ),
-      ),
     );
   }
 }
