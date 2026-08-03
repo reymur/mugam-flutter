@@ -129,7 +129,13 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
   // диалоге конфликта. До тех пор, пока он не сдвинет колесо, отправка
   // заблокирована: он попросил выбрать другое время, и «всё равно
   // отправить» противоречило бы его же ответу.
+  //
+  // Два поля, а не одно, потому что и конфликты бывают двух видов: точное
+  // совпадение минуты и занятый день. Ответив «Yeni tədbir» на занятый
+  // день, человек просит другой ДЕНЬ — снимать такой запрет сдвигом
+  // времени внутри того же дня было бы подменой его ответа.
   DateTime? _blockedTime;
+  DateTime? _blockedDay;
 
   final _scrollController = ScrollController();
   final _warningKey = GlobalKey();
@@ -193,6 +199,12 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
       _selectedDate.hour == _blockedTime!.hour &&
       _selectedDate.minute == _blockedTime!.minute;
 
+  bool get _isDayBlocked =>
+      _blockedDay != null && _sameDay(_selectedDate, _blockedDay!);
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
   /// Свои мероприятия — и те, где человек владелец, и те, куда его
   /// позвали. Дедуп по id обязателен: владелец числится и в собственном
   /// массиве участников, поэтому его события приходят обоими потоками.
@@ -214,23 +226,39 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
     return byId.values.toList();
   }
 
-  /// Совпадение с точностью до минуты — то же правило, что в календаре.
+  /// Все свои мероприятия на выбранный ДЕНЬ, по возрастанию времени.
   /// Отменённые не считаются: договор со статусом `cancelled` времени
   /// человека уже не занимает, и предупреждать о нём значило бы держать
-  /// его занятым навсегда.
-  PersonalEvent? _conflictAt(DateTime when, List<PersonalEvent> events) {
+  /// день занятым навсегда.
+  ///
+  /// Почему проверяется день, а не только минута. В календаре человек
+  /// видит дату целиком и сам понимает, занята она или нет. Здесь он видит
+  /// только колесо — и о том, что на этот день у него уже что-то есть,
+  /// не узнаёт вовсе, пока не совпадёт минута в минуту. А совпадения минут
+  /// в жизни почти не бывает: мешает не одинаковое время, а второй тədbir
+  /// в тот же день.
+  List<PersonalEvent> _eventsOnDay(DateTime when, List<PersonalEvent> events) {
+    final out = <({PersonalEvent event, DateTime at})>[];
     for (final e in events) {
       if (e.date.isEmpty) continue;
       if (e.status == 'cancelled') continue;
       try {
         final d = DateTime.parse(e.date);
-        if (d.year == when.year &&
-            d.month == when.month &&
-            d.day == when.day &&
-            d.hour == when.hour &&
-            d.minute == when.minute) {
-          return e;
-        }
+        if (_sameDay(d, when)) out.add((event: e, at: d));
+      } catch (_) {
+        continue;
+      }
+    }
+    out.sort((a, b) => a.at.compareTo(b.at));
+    return out.map((x) => x.event).toList();
+  }
+
+  /// Совпадение с точностью до минуты — то же правило, что в календаре.
+  PersonalEvent? _conflictAt(DateTime when, List<PersonalEvent> events) {
+    for (final e in _eventsOnDay(when, events)) {
+      try {
+        final d = DateTime.parse(e.date);
+        if (d.hour == when.hour && d.minute == when.minute) return e;
       } catch (_) {
         continue;
       }
@@ -271,7 +299,10 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
   /// есть; новое → заблокировать это время и заставить выбрать другое.
   /// Второй диалог не изобретается намеренно — вопрос у человека один и
   /// тот же, откуда бы он в него ни пришёл.
-  Future<void> _showConflictFlow(PersonalEvent conflict) async {
+  Future<void> _showConflictFlow(
+    PersonalEvent conflict, {
+    required bool exactTime,
+  }) async {
     if (!mounted) return;
     final answer = await showDialog<String>(
       context: context,
@@ -281,7 +312,16 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
     if (answer == 'replace') {
       _commit();
     } else if (answer == 'new') {
-      setState(() => _blockedTime = _selectedDate);
+      // Запрет ставится ровно на то, о чём спрашивали: совпала минута —
+      // занята минута, занят день — занят день. Иначе ответ «выберу
+      // другое» снимался бы действием, которого человек не делал.
+      setState(() {
+        if (exactTime) {
+          _blockedTime = _selectedDate;
+        } else {
+          _blockedDay = _selectedDate;
+        }
+      });
       await _scrollToWarning();
     } else if (answer == 'view') {
       final allUsers = ref.read(allUsersProvider).asData?.value ?? const <User>[];
@@ -293,7 +333,7 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
         ),
       );
       // Человек вернулся — вопрос остался, спрашиваем снова.
-      await _showConflictFlow(conflict);
+      await _showConflictFlow(conflict, exactTime: exactTime);
     }
   }
 
@@ -335,15 +375,23 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
       );
       return;
     }
-    // Человек сам сказал «выберу другое время» — пока не сдвинул, отправка
+    // Человек сам сказал «выберу другое» — пока не сдвинул, отправка
     // молчит и показывает, почему.
-    if (_isTimeBlocked) {
+    if (_isTimeBlocked || _isDayBlocked) {
       await _scrollToWarning();
       return;
     }
-    final conflict = _conflictAt(_selectedDate, _myEvents);
-    if (conflict != null) {
-      await _showConflictFlow(conflict);
+    final events = _myEvents;
+    // Точное совпадение спрашивается первым: оно строже и говорит человеку
+    // больше, чем «на этот день что-то есть».
+    final exact = _conflictAt(_selectedDate, events);
+    if (exact != null) {
+      await _showConflictFlow(exact, exactTime: true);
+      return;
+    }
+    final sameDay = _eventsOnDay(_selectedDate, events);
+    if (sameDay.isNotEmpty) {
+      await _showConflictFlow(sameDay.first, exactTime: false);
       return;
     }
     _commit();
@@ -376,23 +424,84 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
     fontWeight: FontWeight.w600,
   );
 
-  Widget _warningBanner({required Key key, required String text}) => Container(
+  // Предупреждение о занятом времени. Две строки, а не одна: заголовок
+  // отвечает «что не так», подпись — «чем именно занято». Одной строкой
+  // это читалось сплошняком и на узком экране переносилось посреди
+  // названия мероприятия.
+  //
+  // Значок вынесен в свой кружок слева, а не приклеен к тексту эмодзи:
+  // эмодзи внутри строки уезжает вместе с переносом и теряет смысл
+  // «отметка на полях».
+  Widget _warningBanner({
+    required Key key,
+    required String title,
+    required String detail,
+  }) => Container(
     key: key,
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
     decoration: BoxDecoration(
-      color: kRed.withAlpha(25),
-      borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: kRed.withAlpha(80)),
+      color: kRed.withAlpha(22),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: kRed.withAlpha(90)),
     ),
-    child: Text(
-      text,
-      style: const TextStyle(
-        color: kRed,
-        fontSize: 13,
-        fontWeight: FontWeight.w600,
-      ),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 22,
+          height: 22,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: kRed.withAlpha(45),
+            shape: BoxShape.circle,
+          ),
+          child: const Text('!', style: TextStyle(
+            color: kRed,
+            fontSize: 13,
+            fontWeight: FontWeight.w900,
+            height: 1.1,
+          )),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  color: kRed,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                  height: 1.25,
+                ),
+              ),
+              if (detail.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Text(
+                  detail,
+                  style: TextStyle(
+                    color: kRed.withAlpha(200),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w500,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
     ),
   );
+
+  /// «Toy · 17:20 · Bakı» — из того, что у мероприятия вообще заполнено.
+  /// Пустые части не оставляют висящих разделителей.
+  String _eventSummary(PersonalEvent e) => [
+    if (e.type.isNotEmpty) e.type,
+    if (fmtEventTime(e.date).isNotEmpty) fmtEventTime(e.date),
+    if (e.location.isNotEmpty) e.location,
+  ].join(' · ');
 
   @override
   Widget build(BuildContext context) {
@@ -401,7 +510,43 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
     // то есть предупреждение появляется ПРИ ВЫБОРЕ даты, а не только после
     // нажатия «отправить». Диалог при этом не всплывает: он спрашивает, что
     // делать, и на каждый щелчок колеса такой вопрос был бы издевательством.
-    final liveConflict = _conflictAt(_selectedDate, _myEvents);
+    // Что показать над «MƏKAN». Четыре случая, и они не равнозначны:
+    // запреты («я сам попросил другое») старше находок, а точное
+    // совпадение минуты старше занятого дня — оно говорит больше.
+    final events = _myEvents;
+    final exact = _conflictAt(_selectedDate, events);
+    final onDay = _eventsOnDay(_selectedDate, events);
+    final ({String title, String detail})? banner;
+    if (_isTimeBlocked) {
+      banner = (
+        title:
+            '${_blockedTime!.hour.toString().padLeft(2, '0')}:'
+            '${_blockedTime!.minute.toString().padLeft(2, '0')} artıq məşğuldur',
+        detail: 'Zəhmət olmasa başqa vaxt seçin',
+      );
+    } else if (_isDayBlocked) {
+      banner = (
+        title: 'Bu gün məşğuldur',
+        detail: 'Zəhmət olmasa başqa gün seçin',
+      );
+    } else if (exact != null) {
+      banner = (
+        title: 'Bu vaxtda sizin tədbiriniz var',
+        detail: _eventSummary(exact),
+      );
+    } else if (onDay.isNotEmpty) {
+      // Занятый день — то, чего в листе не было видно вовсе: совпадение
+      // минута в минуту в жизни почти не случается, мешает второй тədbir
+      // в тот же день. В календаре это видно самой сеткой, здесь — нет.
+      banner = (
+        title: onDay.length == 1
+            ? 'Bu gün sizin tədbiriniz var'
+            : 'Bu gün sizin ${onDay.length} tədbiriniz var',
+        detail: onDay.map(_eventSummary).join('\n'),
+      );
+    } else {
+      banner = null;
+    }
 
     // canPop: false плюс ручной pop — единственный способ перехватить и
     // свайп вниз, и системную «назад» одинаково. Без этого свайп уносит
@@ -500,30 +645,28 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
                       value: _selectedDate,
                       onChanged: (d) => setState(() {
                         _selectedDate = d;
-                        // Человек сдвинул время — его же просьба «дай
-                        // выбрать другое» исполнена, запрет снимается сам.
+                        // Человек сдвинул — его же просьба «дай выбрать
+                        // другое» исполнена, запрет снимается сам. Каждый
+                        // запрет снимается своим действием: запрет на
+                        // минуту — сдвигом времени, запрет на день —
+                        // сменой дня.
                         if (_blockedTime != null &&
                             (d.hour != _blockedTime!.hour ||
                                 d.minute != _blockedTime!.minute)) {
                           _blockedTime = null;
                         }
+                        if (_blockedDay != null &&
+                            !_sameDay(d, _blockedDay!)) {
+                          _blockedDay = null;
+                        }
                       }),
                     ),
-                    if (_isTimeBlocked) ...[
+                    if (banner != null) ...[
                       const SizedBox(height: 8),
                       _warningBanner(
                         key: _warningKey,
-                        text:
-                            '⚠️ ${_blockedTime!.hour.toString().padLeft(2, '0')}:'
-                            '${_blockedTime!.minute.toString().padLeft(2, '0')} '
-                            'artıq məşğuldur — zəhmət olmasa başqa vaxt seçin',
-                      ),
-                    ] else if (liveConflict != null) ...[
-                      const SizedBox(height: 8),
-                      _warningBanner(
-                        key: _warningKey,
-                        text: '⚠️ Bu vaxtda sizin tədbiriniz var'
-                            '${liveConflict.type.isNotEmpty ? ' — ${liveConflict.type}' : ''}',
+                        title: banner.title,
+                        detail: banner.detail,
                       ),
                     ],
                     const SizedBox(height: 16),
