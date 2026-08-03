@@ -6,6 +6,7 @@ import '../../../core/theme/colors.dart';
 import '../../../core/time/az_date_format.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../../shared/widgets/event_conflict_banner.dart';
 import '../../../shared/widgets/event_conflict_dialog.dart';
 import '../../../shared/widgets/event_notes_picker.dart';
 import '../../../shared/widgets/wheel_date_time_picker.dart';
@@ -130,12 +131,18 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
   // заблокирована: он попросил выбрать другое время, и «всё равно
   // отправить» противоречило бы его же ответу.
   //
-  // Два поля, а не одно, потому что и конфликты бывают двух видов: точное
-  // совпадение минуты и занятый день. Ответив «Yeni tədbir» на занятый
-  // день, человек просит другой ДЕНЬ — снимать такой запрет сдвигом
-  // времени внутри того же дня было бы подменой его ответа.
+  // Поле ОДНО, и только на минуту. Запрета на целый день больше нет:
+  // владелец 03.08 переиграл прежнее правило — «Yeni tədbir» на занятый
+  // ДЕНЬ теперь просто отправляет, потому что дневное мероприятие и
+  // вечерний той в одну дату это обычная жизнь, а не ошибка. Запирать
+  // остаётся только точное совпадение минуты, где человек оказался бы в
+  // двух местах разом.
+  //
+  // Прежнее поле `_blockedDay` удалено, а не оставлено «на будущее»: его
+  // никто больше не выставлял бы, а читаемое-но-никогда-не-записываемое
+  // поле — ровно та ловушка, что уже выпалывалась дважды (`completed`,
+  // `readBy`).
   DateTime? _blockedTime;
-  DateTime? _blockedDay;
 
   final _scrollController = ScrollController();
   final _warningKey = GlobalKey();
@@ -195,15 +202,7 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
       _selectedDate != _openedWithDate && _selectedDate.isBefore(DateTime.now());
 
   bool get _isTimeBlocked =>
-      _blockedTime != null &&
-      _selectedDate.hour == _blockedTime!.hour &&
-      _selectedDate.minute == _blockedTime!.minute;
-
-  bool get _isDayBlocked =>
-      _blockedDay != null && _sameDay(_selectedDate, _blockedDay!);
-
-  static bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
+      isConflictTimeBlocked(_selectedDate, _blockedTime);
 
   /// Свои мероприятия — и те, где человек владелец, и те, куда его
   /// позвали. Дедуп по id обязателен: владелец числится и в собственном
@@ -226,45 +225,15 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
     return byId.values.toList();
   }
 
-  /// Все свои мероприятия на выбранный ДЕНЬ, по возрастанию времени.
-  /// Отменённые не считаются: договор со статусом `cancelled` времени
-  /// человека уже не занимает, и предупреждать о нём значило бы держать
-  /// день занятым навсегда.
-  ///
-  /// Почему проверяется день, а не только минута. В календаре человек
-  /// видит дату целиком и сам понимает, занята она или нет. Здесь он видит
-  /// только колесо — и о том, что на этот день у него уже что-то есть,
-  /// не узнаёт вовсе, пока не совпадёт минута в минуту. А совпадения минут
-  /// в жизни почти не бывает: мешает не одинаковое время, а второй тədbir
-  /// в тот же день.
-  List<PersonalEvent> _eventsOnDay(DateTime when, List<PersonalEvent> events) {
-    final out = <({PersonalEvent event, DateTime at})>[];
-    for (final e in events) {
-      if (e.date.isEmpty) continue;
-      if (e.status == 'cancelled') continue;
-      try {
-        final d = DateTime.parse(e.date);
-        if (_sameDay(d, when)) out.add((event: e, at: d));
-      } catch (_) {
-        continue;
-      }
-    }
-    out.sort((a, b) => a.at.compareTo(b.at));
-    return out.map((x) => x.event).toList();
-  }
+  /// Правила «что считается занятым» — общие с календарём
+  /// (`shared/widgets/event_conflict_banner.dart`). Здесь только вызовы:
+  /// разойдись эти два экрана в самом правиле, одинаковый вид плашки уже
+  /// ничего бы не значил.
+  List<PersonalEvent> _eventsOnDay(DateTime when, List<PersonalEvent> events) =>
+      conflictEventsOnDay(when, events);
 
-  /// Совпадение с точностью до минуты — то же правило, что в календаре.
-  PersonalEvent? _conflictAt(DateTime when, List<PersonalEvent> events) {
-    for (final e in _eventsOnDay(when, events)) {
-      try {
-        final d = DateTime.parse(e.date);
-        if (d.hour == when.hour && d.minute == when.minute) return e;
-      } catch (_) {
-        continue;
-      }
-    }
-    return null;
-  }
+  PersonalEvent? _conflictAt(DateTime when, List<PersonalEvent> events) =>
+      exactConflictAt(when, events);
 
   Future<bool> _confirmDiscard() async {
     final ok = await showDialog<bool>(
@@ -299,41 +268,51 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
   /// есть; новое → заблокировать это время и заставить выбрать другое.
   /// Второй диалог не изобретается намеренно — вопрос у человека один и
   /// тот же, откуда бы он в него ни пришёл.
+  ///
+  /// Передаются ВСЕ мешающие мероприятия, а не первое: при нескольких в
+  /// дне диалог показывает их списком с переключателем, и «то самое»
+  /// выбирает человек. Раньше сюда уходил `.first`, то есть вопрос
+  /// задавался про произвольное из них.
   Future<void> _showConflictFlow(
-    PersonalEvent conflict, {
+    List<PersonalEvent> conflicts, {
     required bool exactTime,
   }) async {
     if (!mounted) return;
-    final answer = await showDialog<String>(
+    if (conflicts.isEmpty) return;
+    final answer = await showDialog<EventConflictChoice>(
       context: context,
-      builder: (_) => EventConflictDialog(conflict: conflict),
+      builder: (_) => EventConflictDialog(
+        conflicts: conflicts,
+        currentUid: widget.currentUid,
+      ),
     );
-    if (!mounted) return;
-    if (answer == 'replace') {
+    if (!mounted || answer == null) return;
+    if (answer.action == 'replace') {
       _commit();
-    } else if (answer == 'new') {
-      // Запрет ставится ровно на то, о чём спрашивали: совпала минута —
-      // занята минута, занят день — занят день. Иначе ответ «выберу
-      // другое» снимался бы действием, которого человек не делал.
-      setState(() {
-        if (exactTime) {
-          _blockedTime = _selectedDate;
-        } else {
-          _blockedDay = _selectedDate;
-        }
-      });
+    } else if (answer.action == 'new') {
+      // «Yeni tədbir» — «это отдельное мероприятие, отправляй как есть».
+      //
+      // Минуты не совпадают (занят лишь день) — два мероприятия в один
+      // день обычное дело, мешать нечему: отправляем. Запрет остаётся
+      // только на точное совпадение минуты, где человек оказался бы в
+      // двух местах разом.
+      //
+      // Прежнее правило («занят день → занят весь день») переиграно
+      // владельцем 03.08: оно запирало обычный случай — дневное
+      // мероприятие и вечерний той в одну дату.
+      if (!exactTime) {
+        _commit();
+        return;
+      }
+      setState(() => _blockedTime = _selectedDate);
       await _scrollToWarning();
-    } else if (answer == 'view') {
-      final allUsers = ref.read(allUsersProvider).asData?.value ?? const <User>[];
-      await Navigator.of(context).push(
-        agreementConflictEventRoute(
-          event: conflict,
-          currentUid: widget.currentUid,
-          allUsers: allUsers,
-        ),
-      );
-      // Человек вернулся — вопрос остался, спрашиваем снова.
-      await _showConflictFlow(conflict, exactTime: exactTime);
+    } else if (answer.action == 'view') {
+      await _openConflictEvent(answer.event);
+      if (!mounted) return;
+      // Человек вернулся — вопрос остался, спрашиваем снова. Этим ответ
+      // «Bax» и отличается от стрелки в самом предупреждении: там вопрос
+      // ещё не задан, и возвращать человека не к чему.
+      await _showConflictFlow(conflicts, exactTime: exactTime);
     }
   }
 
@@ -377,7 +356,7 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
     }
     // Человек сам сказал «выберу другое» — пока не сдвинул, отправка
     // молчит и показывает, почему.
-    if (_isTimeBlocked || _isDayBlocked) {
+    if (_isTimeBlocked) {
       await _scrollToWarning();
       return;
     }
@@ -386,12 +365,12 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
     // больше, чем «на этот день что-то есть».
     final exact = _conflictAt(_selectedDate, events);
     if (exact != null) {
-      await _showConflictFlow(exact, exactTime: true);
+      await _showConflictFlow([exact], exactTime: true);
       return;
     }
     final sameDay = _eventsOnDay(_selectedDate, events);
     if (sameDay.isNotEmpty) {
-      await _showConflictFlow(sameDay.first, exactTime: false);
+      await _showConflictFlow(sameDay, exactTime: false);
       return;
     }
     _commit();
@@ -424,129 +403,40 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
     fontWeight: FontWeight.w600,
   );
 
-  // Предупреждение о занятом времени. Две строки, а не одна: заголовок
-  // отвечает «что не так», подпись — «чем именно занято». Одной строкой
-  // это читалось сплошняком и на узком экране переносилось посреди
-  // названия мероприятия.
-  //
-  // Значок вынесен в свой кружок слева, а не приклеен к тексту эмодзи:
-  // эмодзи внутри строки уезжает вместе с переносом и теряет смысл
-  // «отметка на полях».
-  Widget _warningBanner({
-    required Key key,
-    required String title,
-    required String detail,
-  }) => Container(
-    key: key,
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    decoration: BoxDecoration(
-      color: kRed.withAlpha(22),
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: kRed.withAlpha(90)),
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 22,
-          height: 22,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: kRed.withAlpha(45),
-            shape: BoxShape.circle,
-          ),
-          child: const Text('!', style: TextStyle(
-            color: kRed,
-            fontSize: 13,
-            fontWeight: FontWeight.w900,
-            height: 1.1,
-          )),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  color: kRed,
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w700,
-                  height: 1.25,
-                ),
-              ),
-              if (detail.isNotEmpty) ...[
-                const SizedBox(height: 3),
-                Text(
-                  detail,
-                  style: TextStyle(
-                    color: kRed.withAlpha(200),
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w500,
-                    height: 1.3,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
-
-  /// «Toy · 17:20 · Bakı» — из того, что у мероприятия вообще заполнено.
-  /// Пустые части не оставляют висящих разделителей.
-  String _eventSummary(PersonalEvent e) => [
-    if (e.type.isNotEmpty) e.type,
-    if (fmtEventTime(e.date).isNotEmpty) fmtEventTime(e.date),
-    if (e.location.isNotEmpty) e.location,
-  ].join(' · ');
+  /// Открыть экран мероприятия. Один путь и для ответа «Bax» в диалоге, и
+  /// для стрелки в предупреждении — иначе два входа на один экран
+  /// разъехались бы по составу данных, как уже случалось с копиями в
+  /// пушевом маршруте (N23).
+  Future<void> _openConflictEvent(PersonalEvent e) async {
+    final allUsers =
+        ref.read(allUsersProvider).asData?.value ?? const <User>[];
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      agreementConflictEventRoute(
+        event: e,
+        currentUid: widget.currentUid,
+        allUsers: allUsers,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    // Живой конфликт на выбранное время — считается на каждой перерисовке,
-    // то есть предупреждение появляется ПРИ ВЫБОРЕ даты, а не только после
-    // нажатия «отправить». Диалог при этом не всплывает: он спрашивает, что
-    // делать, и на каждый щелчок колеса такой вопрос был бы издевательством.
-    // Что показать над «MƏKAN». Четыре случая, и они не равнозначны:
-    // запреты («я сам попросил другое») старше находок, а точное
-    // совпадение минуты старше занятого дня — оно говорит больше.
-    final events = _myEvents;
-    final exact = _conflictAt(_selectedDate, events);
-    final onDay = _eventsOnDay(_selectedDate, events);
-    final ({String title, String detail})? banner;
-    if (_isTimeBlocked) {
-      banner = (
-        title:
-            '${_blockedTime!.hour.toString().padLeft(2, '0')}:'
-            '${_blockedTime!.minute.toString().padLeft(2, '0')} artıq məşğuldur',
-        detail: 'Zəhmət olmasa başqa vaxt seçin',
-      );
-    } else if (_isDayBlocked) {
-      banner = (
-        title: 'Bu gün məşğuldur',
-        detail: 'Zəhmət olmasa başqa gün seçin',
-      );
-    } else if (exact != null) {
-      banner = (
-        title: 'Bu vaxtda sizin tədbiriniz var',
-        detail: _eventSummary(exact),
-      );
-    } else if (onDay.isNotEmpty) {
-      // Занятый день — то, чего в листе не было видно вовсе: совпадение
-      // минута в минуту в жизни почти не случается, мешает второй тədbir
-      // в тот же день. В календаре это видно самой сеткой, здесь — нет.
-      banner = (
-        title: onDay.length == 1
-            ? 'Bu gün sizin tədbiriniz var'
-            : 'Bu gün sizin ${onDay.length} tədbiriniz var',
-        detail: onDay.map(_eventSummary).join('\n'),
-      );
-    } else {
-      banner = null;
-    }
+    // Живой конфликт на выбранное время — считается на каждой
+    // перерисовке, то есть предупреждение появляется ПРИ ВЫБОРЕ даты, а не
+    // только после нажатия «отправить». Диалог при этом не всплывает: он
+    // спрашивает, что делать, и на каждый щелчок колеса такой вопрос был
+    // бы издевательством.
+    //
+    // Правила «что показать и в каком порядке» — общие с календарным окном
+    // (shared/widgets/event_conflict_banner.dart). Здесь только вызов.
+    final banner = resolveConflictBanner(
+      selectedDate: _selectedDate,
+      events: _myEvents,
+      blockedTime: _blockedTime,
+      pastDate: _pastDatePicked,
+    );
 
     // canPop: false плюс ручной pop — единственный способ перехватить и
     // свайп вниз, и системную «назад» одинаково. Без этого свайп уносит
@@ -655,18 +545,16 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
                                 d.minute != _blockedTime!.minute)) {
                           _blockedTime = null;
                         }
-                        if (_blockedDay != null &&
-                            !_sameDay(d, _blockedDay!)) {
-                          _blockedDay = null;
-                        }
                       }),
                     ),
                     if (banner != null) ...[
                       const SizedBox(height: 8),
-                      _warningBanner(
+                      EventConflictBanner(
                         key: _warningKey,
                         title: banner.title,
                         detail: banner.detail,
+                        events: banner.events,
+                        onOpenEvent: _openConflictEvent,
                       ),
                     ],
                     const SizedBox(height: 16),

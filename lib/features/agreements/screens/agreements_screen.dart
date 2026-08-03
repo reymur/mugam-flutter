@@ -14,6 +14,8 @@ import '../../../core/time/az_date_format.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
+import '../../../core/presence/presence_service.dart';
+import '../../../shared/widgets/event_conflict_banner.dart';
 import '../../../shared/widgets/event_conflict_dialog.dart';
 import '../../../shared/widgets/event_notes_picker.dart';
 import '../../../shared/widgets/wheel_date_time_picker.dart';
@@ -1734,8 +1736,24 @@ class _AgreementDetailScreen extends ConsumerStatefulWidget {
 class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> {
   final _flash = _RemoteChangeFlash();
 
+  // Отметка «смотрю в эту карточку» — тот же механизм присутствия, что у
+  // чата, но своим полем (`activeEventId`). Пока карточка открыта, сервер
+  // не шлёт уведомлений об ЭТОМ мероприятии: человек и так видит правку
+  // своими глазами, а пуш поверх открытого экрана раздражает.
+  //
+  // Снимается в dispose, а протухает сама вместе с сердцебиением — свернул
+  // приложение, и отметка перестаёт быть свежей без всякой уборки. Ровно
+  // это и чинил N19: признак без срока годности глушил уведомления
+  // навсегда.
+  @override
+  void initState() {
+    super.initState();
+    PresenceService.instance.setActiveEvent(widget.eventId);
+  }
+
   @override
   void dispose() {
+    PresenceService.instance.setActiveEvent(null);
     _flash.dispose();
     super.dispose();
   }
@@ -1991,8 +2009,24 @@ class _PersonalEventDetailScreenState
     extends ConsumerState<_PersonalEventDetailScreen> {
   final _flash = _RemoteChangeFlash();
 
+  // Отметка «смотрю в эту карточку» — тот же механизм присутствия, что у
+  // чата, но своим полем (`activeEventId`). Пока карточка открыта, сервер
+  // не шлёт уведомлений об ЭТОМ мероприятии: человек и так видит правку
+  // своими глазами, а пуш поверх открытого экрана раздражает.
+  //
+  // Снимается в dispose, а протухает сама вместе с сердцебиением — свернул
+  // приложение, и отметка перестаёт быть свежей без всякой уборки. Ровно
+  // это и чинил N19: признак без срока годности глушил уведомления
+  // навсегда.
+  @override
+  void initState() {
+    super.initState();
+    PresenceService.instance.setActiveEvent(widget.eventId);
+  }
+
   @override
   void dispose() {
+    PresenceService.instance.setActiveEvent(null);
     _flash.dispose();
     super.dispose();
   }
@@ -2386,7 +2420,71 @@ class _EventFormModalState extends State<_EventFormModal> {
   // строку пишет лист предложения работы, а разбирает этот экран.
   late EventNotesValue _notes;
   bool _saving = false;
+  // Время и день, которые человек сам объявил занятыми, ответив «Yeni
+  // tədbir». Два поля, а не одно: ответив так на занятый ДЕНЬ, он просит
+  // другой день, и снимать такой запрет сдвигом времени внутри того же дня
+  // было бы подменой его ответа. Ровно как в листе «İş təklif et».
   DateTime? _blockedTime;
+
+  /// Дата, с которой окно открылось. Прошлое запрещается именно ПРИ
+  /// ВЫБОРЕ, а не вообще: если правят давнее мероприятие, чья дата уже
+  /// прошла, и меняют в нём одно место — запрет на сохранение запер бы
+  /// человека в углу, требуя сдвинуть дату ради правки соседнего поля.
+  /// То же правило и в листе «İş təklif et».
+  late final DateTime _openedWithDate;
+
+  // ПЕРЕНОС УЧАСТНИКОВ ПРИ ЗАМЕНЕ.
+  //
+  // «Əvəz et» сносит старое мероприятие и создаёт новое. Без переноса
+  // музыканты старого теряли бы его молча: ошибки нет нигде, просто
+  // мероприятие исчезло. Это тот же класс, что выпалывается по всему
+  // проекту — действие делает больше, чем обещает, и молчит об этом.
+  //
+  // Три требования владельца, и каждое отражено ниже:
+  //   1. состав виден в форме ДО нажатия — поэтому подмешиваем сразу, как
+  //      только появилось предупреждение, а не в момент записи;
+  //   2. явно убранного перенос не возвращает — `_explicitlyRemoved`;
+  //   3. участники узнают о замене — уведомление шлёт сервер.
+  //
+  // Ответ «Yeni tədbir» подмешанное снимает: там человек говорит «это
+  // отдельное мероприятие», и чужой состав ему не нужен.
+  final Set<String> _explicitlyRemoved = <String>{};
+  final Set<String> _mergedFromConflict = <String>{};
+
+  void _mergeConflictParticipants(List<PersonalEvent> conflicts) {
+    final add = <String>[];
+    for (final e in conflicts) {
+      for (final uid in e.participantUids) {
+        if (uid == widget.currentUid) continue;
+        if (_explicitlyRemoved.contains(uid)) continue;
+        if (_selectedParticipantUids.contains(uid)) continue;
+        add.add(uid);
+      }
+    }
+    if (add.isEmpty) return;
+    // Вне кадра отрисовки: зовётся из build при появлении предупреждения.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        _selectedParticipantUids.addAll(add);
+        _mergedFromConflict.addAll(add);
+      });
+    });
+  }
+
+  void _unmergeConflictParticipants() {
+    if (_mergedFromConflict.isEmpty) return;
+    setState(() {
+      _selectedParticipantUids
+          .removeWhere((u) => _mergedFromConflict.contains(u));
+      _mergedFromConflict.clear();
+    });
+  }
+
+  bool get _pastDatePicked =>
+      _selectedDate != _openedWithDate &&
+      _selectedDate.isBefore(DateTime.now());
+
   final _scrollController = ScrollController();
   final _warningKey = GlobalKey();
   final _locationKey = GlobalKey();
@@ -2402,6 +2500,7 @@ class _EventFormModalState extends State<_EventFormModal> {
     super.initState();
     _type = widget.initialType.isNotEmpty ? widget.initialType : 'Toy';
     _selectedDate = widget.initialDate;
+    _openedWithDate = widget.initialDate;
     _location = widget.initialLocation;
     _locationController.text = _location;
     _selectedParticipantUids = List<String>.from(widget.initialParticipantUids);
@@ -2419,59 +2518,128 @@ class _EventFormModalState extends State<_EventFormModal> {
 
   String get _computedNotes => _notes.joined;
 
-  bool get _isTimeBlocked {
-    if (_blockedTime == null) return false;
-    return _selectedDate.hour == _blockedTime!.hour &&
-        _selectedDate.minute == _blockedTime!.minute;
-  }
+  bool get _isTimeBlocked =>
+      isConflictTimeBlocked(_selectedDate, _blockedTime);
 
-  Future<void> _showConflictFlow(PersonalEvent conflict) async {
+  /// Мероприятие, которое сейчас правят, само с собой конфликтовать не
+  /// может. У листа предложения такого нет — он всегда создаёт новое.
+  String? get _excludeEventId => widget.existingEvent?.id;
+
+  /// Передаются ВСЕ мешающие мероприятия, а не первое: при нескольких в
+  /// дне диалог показывает их списком с переключателем, и «то самое»
+  /// выбирает человек.
+  Future<void> _showConflictFlow(
+    List<PersonalEvent> conflicts, {
+    required bool exactTime,
+  }) async {
     if (!mounted) return;
-    final dialogResult = await showDialog<String>(
+    if (conflicts.isEmpty) return;
+    final choice = await showDialog<EventConflictChoice>(
       context: context,
-      builder: (_) => EventConflictDialog(conflict: conflict),
+      builder: (_) => EventConflictDialog(
+        conflicts: conflicts,
+        currentUid: widget.currentUid,
+        canReplace: true,
+      ),
     );
-    if (!mounted) return;
+    if (!mounted || choice == null) return;
+    final dialogResult = choice.action;
     if (dialogResult == 'replace') {
-      await _doSave();
+      // «Заменить» — это переписать ВЫБРАННОЕ мероприятие тем, что человек
+      // сейчас ввёл, а не завести второе рядом. Раньше кнопка называлась
+      // «Əvəz et», но ничего не заменяла: просто сохраняла новое, и их
+      // становилось два.
+      //
+      // Переписывание, а не удаление с созданием заново: документ, его
+      // участники и связь с договором остаются на месте. Удаление было бы
+      // необратимо и у второй стороны договор просто исчез бы.
+      //
+      // Заменять можно только СВОЁ — диалог не даёт нажать кнопку на
+      // чужом, и то же требуют правила (`allow update/delete` только
+      // владельцу).
+      await _replaceEvent(choice.event);
     } else if (dialogResult == 'new') {
-      try {
-        setState(() => _blockedTime = DateTime.parse(conflict.date));
-      } catch (e, st) {
-        FirebaseCrashlytics.instance.recordError(
-          e,
-          st,
-          reason: 'agreements_screen: DateTime.parse(conflict.date) failed',
-        );
+      // «Yeni tədbir» — «это отдельное мероприятие, сохрани его как есть».
+      //
+      // Если минуты НЕ совпадают (занят лишь день), два мероприятия в один
+      // день — обычное дело, и мешать нечему: сохраняем. Запрет остаётся
+      // только на точное совпадение минуты — там два мероприятия в одну и
+      // ту же минуту означали бы, что человек в двух местах разом.
+      //
+      // Прежнее правило («запрет ставится ровно на то, о чём спрашивали»,
+      // то есть занят день → занят весь день) переигран владельцем 03.08:
+      // на деле оно запирало обычный случай — вечерний той и дневное
+      // мероприятие в одну дату.
+      // «Это отдельное мероприятие» — значит и состав его собственный:
+      // подмешанное из конфликтующего снимаем.
+      _unmergeConflictParticipants();
+      if (!exactTime) {
+        await _doSave();
+        return;
       }
+      setState(() => _blockedTime = _selectedDate);
+      await _scrollToWarning();
     } else if (dialogResult == 'view') {
-      final isOwn = conflict.ownerUid == widget.currentUid;
-      final categoryTitle = isOwn ? 'Şəxsi tədbir' : 'Dəvətli tədbir';
-      await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => _ConflictEventScreen(
-          event: conflict,
-          categoryTitle: categoryTitle,
-          currentUid: widget.currentUid,
-          allUsers: widget.allUsers,
-        ),
-      ));
-      // User returned back — re-show conflict dialog recursively
-      await _showConflictFlow(conflict);
+      await _openConflictEvent(choice.event);
+      if (!mounted) return;
+      // Человек вернулся — вопрос остался, спрашиваем снова. Этим ответ
+      // «Bax» и отличается от стрелки в самой плашке: там вопрос ещё не
+      // задан, и возвращать человека не к чему.
+      await _showConflictFlow(conflicts, exactTime: exactTime);
     }
   }
 
+  /// Открыть экран мероприятия. Один путь и для ответа «Bax» в диалоге, и
+  /// для стрелки в плашке — иначе два входа на один экран разъехались бы
+  /// по составу данных, как уже случалось с копиями в пушевом маршруте
+  /// (N23).
+  Future<void> _openConflictEvent(PersonalEvent conflict) async {
+    final isOwn = conflict.ownerUid == widget.currentUid;
+    final categoryTitle = isOwn ? 'Şəxsi tədbir' : 'Dəvətli tədbir';
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => _ConflictEventScreen(
+        event: conflict,
+        categoryTitle: categoryTitle,
+        currentUid: widget.currentUid,
+        allUsers: widget.allUsers,
+      ),
+    ));
+  }
+
+  /// Прокрутить к предупреждению. Пауза — чтобы оно успело появиться в
+  /// дереве: до setState его контекста ещё нет, и прокручивать не к чему.
+  Future<void> _scrollToWarning() async {
+    await Future.delayed(const Duration(milliseconds: 50));
+    if (!mounted) return;
+    final ctx = _warningKey.currentContext;
+    // Проверяется живость ИМЕННО этого контекста, а не только State:
+    // предупреждение могло уйти из дерева, пока мы ждали, — например
+    // человек в те же миллисекунды сдвинул колесо и снял запрет.
+    if (ctx == null || !ctx.mounted) return;
+    await Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeInOut,
+      alignment: 0.5,
+    );
+  }
+
+  // Порядок проверок при сохранении — тот же, что в листе «İş təklif et»
+  // (_submit): сначала собственный запрет человека, потом точное
+  // совпадение минуты, потом занятый день. Точное совпадение спрашивается
+  // раньше: оно строже и говорит больше, чем «на этот день что-то есть».
   Future<void> _handleSave() async {
     if (_saving) return;
+    // Прошлое — раньше всего: предупреждение о нём живое, и прокрутить к
+    // нему честнее, чем показать всплывающую строчку поверх формы.
+    if (_pastDatePicked) {
+      await _scrollToWarning();
+      return;
+    }
+    // Человек сам сказал «выберу другое» — пока не сдвинул, сохранение
+    // молчит и показывает, почему.
     if (_isTimeBlocked) {
-      await Future.delayed(const Duration(milliseconds: 50));
-      if (_warningKey.currentContext != null) {
-        Scrollable.ensureVisible(
-          _warningKey.currentContext!,
-          duration: const Duration(milliseconds: 400),
-          curve: Curves.easeInOut,
-          alignment: 0.5,
-        );
-      }
+      await _scrollToWarning();
       return;
     }
 
@@ -2489,22 +2657,17 @@ class _EventFormModalState extends State<_EventFormModal> {
       return;
     }
 
-    final conflicts = widget.allCombinedEvents.where((e) {
-      if (widget.existingEvent != null && e.id == widget.existingEvent!.id) return false;
-      if (e.date.isEmpty) return false;
-      try {
-        final d = DateTime.parse(e.date);
-        return _sameDay(d, _selectedDate) &&
-            d.hour == _selectedDate.hour &&
-            d.minute == _selectedDate.minute;
-      } catch (_) {
-        return false;
-      }
-    }).toList();
-
-    if (conflicts.isNotEmpty) {
-      final conflict = conflicts.first;
-      await _showConflictFlow(conflict);
+    final events = widget.allCombinedEvents;
+    final exact = exactConflictAt(_selectedDate, events,
+        excludeEventId: _excludeEventId);
+    if (exact != null) {
+      await _showConflictFlow([exact], exactTime: true);
+      return;
+    }
+    final sameDay = conflictEventsOnDay(_selectedDate, events,
+        excludeEventId: _excludeEventId);
+    if (sameDay.isNotEmpty) {
+      await _showConflictFlow(sameDay, exactTime: false);
       return;
     }
     await _doSave();
@@ -2537,6 +2700,10 @@ class _EventFormModalState extends State<_EventFormModal> {
           'location': _location,
           'notes': notes,
           'musicians': _selectedParticipantUids,
+          // Признак автора — от него зависит, кому уйдёт уведомление и
+          // чьё имя в нём будет. Правила не дают поставить чужой uid.
+          'lastActionBy': widget.currentUid,
+          'lastActionType': 'edited',
         });
       } else {
         await widget.firestoreService.addPersonalEvent(
@@ -2565,12 +2732,160 @@ class _EventFormModalState extends State<_EventFormModal> {
     }
   }
 
+  /// «Əvəz et» — заменить ВЫБРАННОЕ мероприятие тем, что человек ввёл
+  /// сейчас, вместо создания второго рядом.
+  ///
+  /// Правило владельца 03.08: своё удаляется у всех участников, чужое —
+  /// только у себя (правила не дают участнику снести общий документ, и
+  /// это верно: в мероприятии заняты другие люди).
+  Future<void> _replaceEvent(PersonalEvent target) async {
+    final mine = target.ownerUid == widget.currentUid;
+    // Чужое мероприятие удаляется, а не переписывается: переписать его
+    // правила не дают (update только владельцу), а удалить участнику
+    // разрешено — ради мероприятия, потерявшего силу, до владельца
+    // которого не достучаться.
+    //
+    // Подтверждение обязательно и отдельно от диалога конфликта: у второй
+    // стороны договор исчезнет без её ведома, и это не то действие, о
+    // котором человек должен догадываться по названию кнопки.
+    if (!mine) {
+      final ok = await _confirmDeleteForeign(target);
+      if (!ok || !mounted) return;
+    }
+    setState(() => _saving = true);
+    try {
+      widget.onWillSave?.call(<String, String>{
+        'type': _type,
+        'date': _selectedDate.toIso8601String(),
+        'location': _location,
+        'notes': _computedNotes,
+      });
+      // Правило владельца 03.08, буквально: «если инициатор я сам —
+      // мероприятие удаляется у всех участников; если мероприятие чужое —
+      // удаляется только у меня».
+      if (mine) {
+        // Своё — сносим документ целиком: у всех участников оно исчезает.
+        await widget.firestoreService.deletePersonalEvent(target.id);
+      } else {
+        // Чужое НЕ удаляется: в нём заняты другие люди, и у них оно
+        // должно остаться. Убираем из него себя — тогда оно пропадает из
+        // моего календаря и перестаёт мешать, а у остальных живёт
+        // дальше. Правило владельца 03.08: «своё удаляется у всех, чужое
+        // — только у меня».
+        //
+        // Порядок именно такой: если выход откажет по правам, своё не
+        // создастся и дублей не будет. Обратный порядок оставил бы два
+        // мероприятия при первом же отказе.
+        await widget.firestoreService
+            .leavePersonalEvent(target.id, widget.currentUid);
+      }
+      // Своё — записываем в любом случае: замена это «старого нет, новое
+      // есть». Правимое мероприятие подменить собой не может — оно
+      // исключено из конфликтов (`_excludeEventId`), поэтому удалить
+      // документ, который тут же правим, нечем.
+      if (widget.existingEvent != null) {
+        await widget.firestoreService
+            .updatePersonalEvent(widget.existingEvent!.id, {
+          'date': _selectedDate.toIso8601String(),
+          'type': _type,
+          'location': _location,
+          'notes': _computedNotes,
+          'musicians': _selectedParticipantUids,
+          'lastActionBy': widget.currentUid,
+          'lastActionType': 'replaced',
+        });
+      } else {
+        await widget.firestoreService.addPersonalEvent(
+          ownerUid: widget.currentUid,
+          date: _selectedDate.toIso8601String(),
+          type: _type,
+          location: _location,
+          notes: _computedNotes,
+          participantUids: _selectedParticipantUids,
+          // Пара «удалили старое — создали новое» опознаётся сервером по
+          // этой ссылке и даёт ОДНО уведомление «tədbir əvəz edildi»
+          // вместо «silindi» + «əlavə olundunuz».
+          replacedEventId: target.id,
+        );
+      }
+      if (mounted) Navigator.of(context).pop();
+    } catch (e, st) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Xəta: $e'), backgroundColor: kRed),
+        );
+      }
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'agreements_screen: replace event failed',
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  /// Подтверждение удаления ЧУЖОГО мероприятия.
+  ///
+  /// Отдельным вопросом, а не строчкой в диалоге конфликта: там человек
+  /// отвечает «что делать с моим временем», а здесь — соглашается стереть
+  /// чужую запись, которая у второй стороны исчезнет без её ведома. Два
+  /// разных решения, и второе тяжелее первого.
+  ///
+  /// Тот же вид, что у «Çatı təmizlə» и «İmtina» — в этом приложении так
+  /// выглядят необратимые действия.
+  Future<bool> _confirmDeleteForeign(PersonalEvent target) async {
+    final owner = widget.allUsers
+        .where((u) => u.id == target.ownerUid)
+        .map((u) => u.name)
+        .firstOrNull;
+    final whose = (owner == null || owner.isEmpty)
+        ? 'başqa istifadəçinin'
+        : '$owner adlı istifadəçinin';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        title: const Text(
+          'Bu tədbir sizin deyil',
+          style: TextStyle(color: kText),
+        ),
+        content: Text(
+          '«${eventConflictSummary(target)}» — $whose tədbiridir.\n\n'
+          'Yalnız sizin təqvimdən silinəcək. Digər iştirakçılarda '
+          'qalacaq.',
+          style: const TextStyle(color: kMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Geri', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Sil', style: TextStyle(color: kRed)),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   Future<void> _openParticipantPicker() async {
     await showDialog(
       context: context,
       builder: (_) => _ParticipantPickerDialog(
         selectedUids: _selectedParticipantUids,
-        onChanged: (uids) => setState(() => _selectedParticipantUids = uids),
+        onChanged: (uids) => setState(() {
+          // Кого человек убрал руками — запоминаем: перенос из
+          // конфликтующего мероприятия не должен возвращать его обратно.
+          for (final gone in _selectedParticipantUids) {
+            if (!uids.contains(gone)) _explicitlyRemoved.add(gone);
+          }
+          _explicitlyRemoved.removeAll(uids);
+          _mergedFromConflict.removeWhere((u) => !uids.contains(u));
+          _selectedParticipantUids = uids;
+        }),
         currentUid: widget.currentUid,
       ),
     );
@@ -2579,6 +2894,27 @@ class _EventFormModalState extends State<_EventFormModal> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    // Живой конфликт на выбранное время — считается на каждой перерисовке,
+    // то есть предупреждение появляется ПРИ ВЫБОРЕ, а не только после
+    // нажатия «сохранить». Диалог при этом не всплывает: он спрашивает,
+    // что делать, и на каждый щелчок колеса такой вопрос был бы
+    // издевательством.
+    //
+    // Правила «что показать и в каком порядке» — общие с листом
+    // «İş təklif et» (shared/widgets/event_conflict_banner.dart).
+    final banner = resolveConflictBanner(
+      selectedDate: _selectedDate,
+      events: widget.allCombinedEvents,
+      blockedTime: _blockedTime,
+      excludeEventId: _excludeEventId,
+      pastDate: _pastDatePicked,
+    );
+    // Состав конфликтующих мероприятий подмешивается в форму СРАЗУ, как
+    // только появилось предупреждение: требование «виден до нажатия и
+    // правится». Убранного руками не возвращает — см. _explicitlyRemoved.
+    if (banner != null && banner.events.isNotEmpty) {
+      _mergeConflictParticipants(banner.events);
+    }
     return Container(
       margin: EdgeInsets.only(top: 60, bottom: bottomInset),
       decoration: const BoxDecoration(
@@ -2661,34 +2997,37 @@ class _EventFormModalState extends State<_EventFormModal> {
               onChanged: (d) {
                 setState(() {
                   _selectedDate = d;
+                  // Человек сдвинул — его же просьба «дай выбрать другое»
+                  // исполнена, запрет снимается сам. Каждый запрет
+                  // снимается своим действием: запрет на минуту — сдвигом
+                  // времени, запрет на день — сменой дня.
                   if (_blockedTime != null &&
-                      (d.hour != _blockedTime!.hour || d.minute != _blockedTime!.minute)) {
+                      (d.hour != _blockedTime!.hour ||
+                          d.minute != _blockedTime!.minute)) {
                     _blockedTime = null;
                   }
                 });
               },
             ),
-            if (_isTimeBlocked) ...[
+            // Предупреждение о занятом времени — общий виджет И общие
+            // правила с листом «İş təklif et»
+            // (shared/widgets/event_conflict_banner.dart).
+            //
+            // До 03.08 здесь стояла своя однострочная плашка с эмодзи ⚠️,
+            // и показывалась она только ПОСЛЕ ответа «Yeni tədbir»: пока
+            // человек крутил колесо, календарь про занятое время молчал.
+            // Лист к тому времени предупреждал живьём — то есть разошлись
+            // не только вид, но и момент появления, а заметить это можно
+            // было только глазами. Требование владельца 03.08: «пусть
+            // будет одно и то же в обоих местах».
+            if (banner != null) ...[
               const SizedBox(height: 8),
-              Container(
+              EventConflictBanner(
                 key: _warningKey,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: kRed.withAlpha(25),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: kRed.withAlpha(80)),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '⚠️ ${_blockedTime!.hour.toString().padLeft(2, '0')}:${_blockedTime!.minute.toString().padLeft(2, '0')} '
-                        'artıq məşğuldur — zəhmət olmasa başqa vaxt seçin',
-                        style: const TextStyle(color: kRed, fontSize: 13, fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ],
-                ),
+                title: banner.title,
+                detail: banner.detail,
+                events: banner.events,
+                onOpenEvent: _openConflictEvent,
               ),
             ],
             if (widget.mode == 'time-only') ...[

@@ -2892,6 +2892,7 @@ class FirestoreService {
     String uid, {
     required bool online,
     String? activeChatId,
+    String? activeEventId,
     int? presenceIntervalMs,
   }) async {
     try {
@@ -2899,6 +2900,10 @@ class FirestoreService {
         'online': online,
         'lastSeen': FieldValue.serverTimestamp(),
         'activeChatId': online ? activeChatId : null,
+        // Карточка мероприятия — своё поле рядом, тот же механизм. Тоже
+        // всегда, в том числе null: иначе отметка «смотрю сюда» пережила
+        // бы уход с экрана и глушила уведомления навсегда — ровно N19.
+        'activeEventId': online ? activeEventId : null,
         // Интервал сердцебиения этой сборки: сервер берёт двойной от него
         // как срок годности отметки присутствия (см. freshnessWindowMs).
         if (presenceIntervalMs != null)
@@ -3487,6 +3492,10 @@ class FirestoreService {
         );
   }
 
+  /// [replacedEventId] — id мероприятия, взамен которого это создано
+  /// («Əvəz et»). По нему сервер узнаёт пару «удалили старое, создали
+  /// новое» и шлёт ОДНО уведомление «tədbir əvəz edildi» вместо двух —
+  /// «silindi» и «əlavə olundunuz», из которых первое пугает зря.
   Future<String> addPersonalEvent({
     required String ownerUid,
     required String date,
@@ -3494,6 +3503,7 @@ class FirestoreService {
     required String location,
     required String notes,
     required List<String> participantUids,
+    String? replacedEventId,
   }) async {
     final ref = await _db.collection('personalEvents').add({
       'ownerUid': ownerUid,
@@ -3515,6 +3525,12 @@ class FirestoreService {
       'cancelRequestedAt': null,
       'cancelConfirmedBy': null,
       'cancelledAt': null,
+      'replacedEventId': replacedEventId,
+      // Признак автора: Firestore-триггер видит before/after, но не видит,
+      // КТО писал, а от этого зависит, кому уходит уведомление и чьё имя в
+      // нём стоит. Правила не дают выставить его чужим uid.
+      'lastActionBy': ownerUid,
+      'lastActionType': replacedEventId == null ? 'created' : 'replaced',
       'createdAt': FieldValue.serverTimestamp(),
     }).timeout(_writeTimeout);
     return ref.id;
@@ -3522,6 +3538,42 @@ class FirestoreService {
 
   Future<void> updatePersonalEvent(String eventId, Map<String, dynamic> data) {
     return _db.collection('personalEvents').doc(eventId).update(data).timeout(_writeTimeout);
+  }
+
+  /// Удалить мероприятие — у ВСЕХ. Правила разрешают это только
+  /// владельцу.
+  Future<void> deletePersonalEvent(String eventId) {
+    return _db
+        .collection('personalEvents')
+        .doc(eventId)
+        .delete()
+        .timeout(_writeTimeout);
+  }
+
+  /// Выйти из ЧУЖОГО мероприятия — убрать себя из участников.
+  ///
+  /// Не удаление: в мероприятии заняты и другие люди, у них оно остаётся.
+  /// Из календаря вышедшего оно пропадает и перестаёт конфликтовать с
+  /// новыми датами — ровно то, ради чего ход и заведён (`firestore.rules`
+  /// → personalEvents → `leavesEvent`, разбор там же).
+  ///
+  /// `arrayRemove`, а не перезапись списка: он идемпотентен по природе —
+  /// повторный вызов ничего не портит, и две попытки подряд не могут
+  /// вычеркнуть лишнего. Тот же принцип, что у сборщика сирот.
+  Future<void> leavePersonalEvent(String eventId, String uid) {
+    return _db
+        .collection('personalEvents')
+        .doc(eventId)
+        .update({
+          'musicians': FieldValue.arrayRemove([uid]),
+          // Без этих двух полей «вышел сам» и «владелец убрал» на сервере
+          // неразличимы — из musicians в обоих случаях пропадает один uid,
+          // — и уведомление ушло бы не тому. Правило `leavesEvent`
+          // разрешает ровно эту тройку ключей и ничего сверх.
+          'lastActionBy': uid,
+          'lastActionType': 'left',
+        })
+        .timeout(_writeTimeout);
   }
 
   Future<List<String>> loadReadAgreementIds(String uid) async {
