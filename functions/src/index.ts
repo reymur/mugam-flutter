@@ -2224,7 +2224,17 @@ const REMINDER_WINDOWS: { kind: ReminderKind; aheadMs: number }[] = [
 ];
 
 export const remindUpcomingEventsHourly = onSchedule(
-  { schedule: "every 1 hours", timeZone: "Asia/Baku" },
+  {
+    // Регион тот же, что у всего остального: Firestore лежит в Европе, и
+    // почасовой обход из us-central1 платил бы за каждый запрос
+    // трансатлантической задержкой. При первом деплое регион не был
+    // указан, функция уехала в us-central1 — поймано проверкой по gcloud.
+    region: FUNCTIONS_REGION,
+    schedule: "every 1 hours",
+    timeZone: "Asia/Baku",
+    maxInstances: 1,
+    retryCount: 0,
+  },
   async () => {
     // «Сейчас» по бакинским стенным часам — в той же шкале, в какой
     // записаны сами мероприятия.
