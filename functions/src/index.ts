@@ -14,7 +14,18 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
 import { defineSecret, defineBoolean } from "firebase-functions/params";
 import { runOrphanSweepAndRecord } from "./orphanSweep";
-import { isWatchingChatDecision } from "./presence";
+import { isWatchingChatDecision, isWatchingEventDecision } from "./presence";
+import {
+  EventPush,
+  EventSnapshot,
+  planUpdatePushes,
+  pushAdded,
+  pushDeleted,
+  pushReminder,
+  pushReplaced,
+  recipientsOf,
+  ReminderKind,
+} from "./eventNotifications";
 import { RtcRole, RtcTokenBuilder } from "agora-token";
 import { algoliasearch } from "algoliasearch";
 import { randomUUID } from "crypto";
@@ -2016,5 +2027,229 @@ export const sweepOrphanMediaDaily = onSchedule(
       stoppedEarly: result.stoppedEarly,
       stopReason: result.stopReason,
     });
+  },
+);
+
+// ===========================================================================
+// УВЕДОМЛЕНИЯ ОБ ИЗМЕНЕНИЯХ МЕРОПРИЯТИЯ
+// ===========================================================================
+// Всё, что меняет мероприятие и касается другого человека, шлётся ОТСЮДА, с
+// сервера, а не из приложения. Причина не в удобстве: клиентское
+// уведомление не уйдёт вовсе, когда приложение закрыто, — а закрыто оно как
+// раз тогда, когда уведомление и нужно, — и продублируется при повторе
+// отправки. Тот же довод, по которому превью сообщений переехало на сервер
+// (B16) и по которому создание договора живёт в onChatUpdated.
+//
+// Тексты и правила «кому и что» лежат в eventNotifications.ts чистыми
+// функциями и покрыты тестами без эмулятора: цена ошибки несимметрична —
+// лишнее уведомление человек заметит и пожалуется, потерянное не заметит
+// никто.
+
+// ИДЕМПОТЕНТНОСТЬ. Cloud Functions гарантирует доставку события «хотя бы
+// один раз», то есть повтор при сбое — норма, а не исключение. Без защиты
+// человек получил бы два одинаковых уведомления, и это ровно тот дефект,
+// который в чате уже ловили (B15, залипший счётчик от повторного вызова).
+//
+// Ключ — id самого события Cloud Functions: он стабилен между повторами
+// одной доставки и различен у разных изменений. Маркер кладётся в отдельную
+// коллекцию, а НЕ в документ мероприятия: запись в него подняла бы этот же
+// триггер снова и породила уведомление о собственном уведомлении.
+async function claimNotificationOnce(eventKey: string): Promise<boolean> {
+  const ref = db.collection("maintenance").doc("eventNotifications")
+    .collection("sent").doc(eventKey);
+  try {
+    await ref.create({ at: FieldValue.serverTimestamp() });
+    return true;
+  } catch {
+    logger.info("[event-push] повтор доставки, пропущено", { eventKey });
+    return false;
+  }
+}
+
+function toEventSnapshot(d: Record<string, unknown>): EventSnapshot {
+  return {
+    ownerUid: (d.ownerUid as string) ?? "",
+    date: (d.date as string) ?? "",
+    type: (d.type as string) ?? "",
+    location: (d.location as string) ?? "",
+    notes: (d.notes as string) ?? "",
+    musicians: Array.isArray(d.musicians) ? (d.musicians as string[]) : [],
+    cancelRequestedBy: (d.cancelRequestedBy as string) ?? null,
+    cancelConfirmedBy: (d.cancelConfirmedBy as string) ?? null,
+    status: (d.status as string) ?? "agreed",
+    replacedEventId: (d.replacedEventId as string) ?? null,
+    lastActionBy: (d.lastActionBy as string) ?? null,
+    lastActionType: (d.lastActionType as EventSnapshot["lastActionType"]) ?? null,
+  };
+}
+
+async function displayName(uid: string): Promise<string> {
+  if (!uid) return "İstifadəçi";
+  const snap = await db.collection("users").doc(uid).get();
+  return (snap.data()?.name as string) ??
+    (snap.data()?.displayName as string) ?? "İstifadəçi";
+}
+
+// ПОДАВЛЕНИЕ ПРИСУТСТВИЕМ. Тот же механизм, что в чате: отметка активного
+// экрана плюс окно свежести (presence.ts). Поле своё — `activeEventId`, —
+// потому что вопрос другой: «смотрит в эту карточку», а не «смотрит в этот
+// чат». Одно поле на два вопроса это устройство N19/N21/N22.
+//
+// При любой неопределённости решаем СЛАТЬ: лишний push заметен и поправим,
+// потерянный не заметен никем.
+async function sendEventPushes(pushes: EventPush[]): Promise<void> {
+  const nowMs = Date.now();
+  await Promise.all(pushes.map(async (p) => {
+    try {
+      const userSnap = await db.collection("users").doc(p.uid).get();
+      const userData = userSnap.data();
+      const lastSeen = userData?.lastSeen;
+      const lastSeenMs =
+        lastSeen && typeof lastSeen.toMillis === "function"
+          ? lastSeen.toMillis()
+          : null;
+      const watching = isWatchingEventDecision({
+        userData,
+        eventId: p.data.eventId,
+        uid: p.uid,
+        lastSeenMs,
+        nowMs,
+      });
+      if (watching) {
+        logger.info("[event-push] смотрит карточку, молчим", {
+          uid: p.uid, eventId: p.data.eventId, type: p.data.type,
+        });
+        return;
+      }
+      logger.info("[event-push] шлём", {
+        uid: p.uid, type: p.data.type, title: p.title,
+      });
+      await sendPushToUid(p.uid, p.title, p.body, p.data);
+    } catch (e) {
+      logger.warn("[event-push] отправка не удалась", { uid: p.uid, e });
+    }
+  }));
+}
+
+export const onPersonalEventCreated = onDocumentCreated(
+  "personalEvents/{eventId}",
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    if (!(await claimNotificationOnce(event.id))) return;
+    const after = toEventSnapshot(snap.data());
+    const actor = after.lastActionBy ?? after.ownerUid;
+    const actorName = await displayName(actor);
+
+    // ЗАМЕНА — одно уведомление вместо двух. Новое мероприятие несёт
+    // `replacedEventId`, по нему и опознаётся пара «удалили старое,
+    // создали новое». Без него участник получил бы подряд «silindi» и
+    // «əlavə olundunuz» об одном действии, причём первое пугает зря.
+    const pushes = after.replacedEventId
+      ? recipientsOf(after, actor).map((uid) =>
+          pushReplaced(uid, event.params.eventId, actorName, after))
+      : recipientsOf(after, actor).map((uid) =>
+          pushAdded(uid, event.params.eventId, actorName, after));
+    await sendEventPushes(pushes);
+  },
+);
+
+export const onPersonalEventUpdated = onDocumentUpdated(
+  "personalEvents/{eventId}",
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after) return;
+    const b = toEventSnapshot(before);
+    const a = toEventSnapshot(after);
+    const actor = a.lastActionBy ?? a.ownerUid;
+    const actorName = await displayName(actor);
+    const pushes = planUpdatePushes({
+      eventId: event.params.eventId,
+      before: b,
+      after: a,
+      actorName,
+    });
+    if (pushes.length === 0) return;
+    if (!(await claimNotificationOnce(event.id))) return;
+    await sendEventPushes(pushes);
+  },
+);
+
+export const onPersonalEventDeleted = onDocumentDeleted(
+  "personalEvents/{eventId}",
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const gone = toEventSnapshot(snap.data());
+    // Удалять может только владелец (firestore.rules), поэтому автор
+    // выводится, а не берётся из `lastActionBy`: удаление документа не
+    // оставляет места, куда его записать.
+    const actor = gone.ownerUid;
+    const recipients = recipientsOf(gone, actor);
+    if (recipients.length === 0) return;
+
+    // ЗАМЕНА: если старое мероприятие снесли ради нового, «silindi» слать
+    // не надо — про замену скажет onPersonalEventCreated одним точным
+    // уведомлением. Ждать создание нечем, поэтому смотрим, не появилось
+    // ли уже мероприятие, ссылающееся на это.
+    const replacement = await db.collection("personalEvents")
+      .where("replacedEventId", "==", event.params.eventId).limit(1).get();
+    if (!replacement.empty) {
+      logger.info("[event-push] удаление ради замены, молчим", {
+        eventId: event.params.eventId,
+      });
+      return;
+    }
+    if (!(await claimNotificationOnce(event.id))) return;
+    const actorName = await displayName(actor);
+    await sendEventPushes(recipients.map((uid) =>
+      pushDeleted(uid, event.params.eventId, actorName, gone)));
+  },
+);
+
+// НАПОМИНАНИЯ. Раз в час, потому что сроков два — за сутки и за три часа, —
+// а суточный прогон не может попасть в трёхчасовое окно.
+//
+// Расписание в Asia/Baku, и это не косметика: `date` мероприятия — это
+// «плавающее гражданское время» (N4), 17:30 там, где мероприятие идёт.
+// Считать окна по UTC значило бы сдвинуть все напоминания на четыре часа.
+//
+// Отметка об отправке кладётся в отдельную коллекцию, а НЕ в документ
+// мероприятия: запись в него подняла бы onPersonalEventUpdated и породила
+// уведомление «tədbir dəyişdi» о собственном напоминании.
+const REMINDER_WINDOWS: { kind: ReminderKind; aheadMs: number }[] = [
+  { kind: "24h", aheadMs: 24 * 60 * 60 * 1000 },
+  { kind: "3h", aheadMs: 3 * 60 * 60 * 1000 },
+];
+
+export const remindUpcomingEventsHourly = onSchedule(
+  { schedule: "every 1 hours", timeZone: "Asia/Baku" },
+  async () => {
+    // «Сейчас» по бакинским стенным часам — в той же шкале, в какой
+    // записаны сами мероприятия.
+    const nowBaku = new Date(Date.now() + 4 * 60 * 60 * 1000);
+    for (const w of REMINDER_WINDOWS) {
+      const from = new Date(nowBaku.getTime() + w.aheadMs);
+      const to = new Date(from.getTime() + 60 * 60 * 1000);
+      const fromIso = from.toISOString().slice(0, 19);
+      const toIso = to.toISOString().slice(0, 19);
+      const due = await db.collection("personalEvents")
+        .where("date", ">=", fromIso)
+        .where("date", "<", toIso)
+        .get();
+      for (const doc of due.docs) {
+        const e = toEventSnapshot(doc.data());
+        if (e.status === "cancelled") continue;
+        const key = `${doc.id}_${w.kind}`;
+        if (!(await claimNotificationOnce(`reminder_${key}`))) continue;
+        // Напоминание идёт ВСЕМ, включая владельца: это не уведомление о
+        // чужом действии, а сообщение о времени, и владелец забывает так
+        // же, как остальные.
+        const everyone = recipientsOf(e, null);
+        await sendEventPushes(everyone.map((uid) =>
+          pushReminder(uid, doc.id, e, w.kind)));
+      }
+    }
   },
 );

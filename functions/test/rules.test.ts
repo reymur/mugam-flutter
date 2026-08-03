@@ -17,6 +17,7 @@ import {
   setDoc,
   updateDoc,
   serverTimestamp,
+  deleteDoc,
   Timestamp,
 } from "firebase/firestore";
 import { PROJECT_ID, FIRESTORE_EMULATOR_PORT, db, waitFor } from "./helpers";
@@ -446,4 +447,105 @@ test("отмена: посторонний не может ни предложи
       cancelledAt: new Date(),
     }),
   );
+});
+
+// ---------------------------------------------------------------------
+// personalEvents — выход из чужого мероприятия и признак автора
+//
+// Ход заведён 03.08: «своё удаляется у всех, чужое — только у меня».
+// Удалять документ участнику нельзя (в мероприятии заняты другие), но
+// вычеркнуть из него СЕБЯ он вправе.
+//
+// Запрещённого здесь снова больше, чем разрешённого: ход существует ради
+// границ. Признак автора (`lastActionBy`) сервер принимает на веру — на
+// нём держится решение, кому слать уведомление, — поэтому подделать его
+// не должно быть возможно НИКОМУ, включая владельца.
+// ---------------------------------------------------------------------
+
+test("выход: участник МОЖЕТ вычеркнуть себя из чужого мероприятия", async () => {
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertSucceeds(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      musicians: [OWNER],
+      lastActionBy: CONTACT,
+      lastActionType: "left",
+    }),
+  );
+});
+
+test("выход: участник НЕ может вычеркнуть кого-то другого", async () => {
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      musicians: [CONTACT],
+      lastActionBy: CONTACT,
+      lastActionType: "left",
+    }),
+  );
+});
+
+test("выход: участник НЕ может под видом выхода изменить дату", async () => {
+  // Главная граница хода: он меняет состав и только состав. Иначе через
+  // «выход» правился бы весь договор.
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      musicians: [OWNER],
+      date: "2027-01-01T10:00:00.000",
+      lastActionBy: CONTACT,
+      lastActionType: "left",
+    }),
+  );
+});
+
+test("выход: участник НЕ может выставить lastActionBy чужим uid", async () => {
+  // Подделка автора означала бы уведомление «{Ad} sizi çıxardı» с чужим
+  // именем — сервер этому признаку доверяет безоговорочно.
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      musicians: [OWNER],
+      lastActionBy: OWNER,
+      lastActionType: "left",
+    }),
+  );
+});
+
+test("выход: владелец НЕ может выставить lastActionBy чужим uid", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      location: "Gülüstan",
+      lastActionBy: CONTACT,
+    }),
+  );
+});
+
+test("выход: владелец МОЖЕТ править своё, отметив себя автором", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      location: "Gülüstan",
+      lastActionBy: OWNER,
+      lastActionType: "edited",
+    }),
+  );
+});
+
+test("выход: посторонний не может вычеркнуть себя из чужого мероприятия", async () => {
+  const strangerDb = testEnv.authenticatedContext(STRANGER).firestore();
+  await assertFails(
+    updateDoc(doc(strangerDb, `personalEvents/${EVENT}`), {
+      musicians: [OWNER],
+      lastActionBy: STRANGER,
+      lastActionType: "left",
+    }),
+  );
+});
+
+test("удаление: участник НЕ может удалить чужое мероприятие целиком", async () => {
+  // Именно эта граница и заставила завести «выход»: в мероприятии заняты
+  // другие люди, и у них оно должно остаться.
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(deleteDoc(doc(contactDb, `personalEvents/${EVENT}`)));
 });

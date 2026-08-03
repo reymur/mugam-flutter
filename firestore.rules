@@ -652,15 +652,56 @@ service cloud.firestore {
           && resource.data.get('cancelRequestedBy', null) != request.auth.uid;
       }
 
+      // ВЫЙТИ ИЗ ЧУЖОГО МЕРОПРИЯТИЯ. Добавлено 03.08 по требованию
+      // владельца: «своё удаляется у всех, чужое — только у меня».
+      //
+      // Зачем понадобилось: мероприятие, потерявшее силу, висит в
+      // календаре участника, конфликтует с новыми датами, а его владелец
+      // до уборки не добрался и связаться с ним нельзя. Удалять документ
+      // целиком участнику нельзя — в мероприятии заняты и другие люди, у
+      // них оно должно остаться.
+      //
+      // Ход намеренно узкий: меняется ТОЛЬКО список участников, и ровно на
+      // удаление себя. Ни дату, ни место, ни статус этим ходом не тронуть,
+      // и вычеркнуть кого-то ещё — тоже: новый список обязан совпасть со
+      // старым минус сам просящий. Владельцу этот ход не нужен и не даётся
+      // — своё он правит и удаляет обычным путём.
+      // Признак автора обязателен: Firestore-триггер видит before/after, но
+      // НЕ видит, кто писал. Без него «владелец убрал участника» и
+      // «участник вышел сам» неразличимы — из `musicians` в обоих случаях
+      // пропадает один uid, — и уведомление ушло бы не тому.
+      //
+      // Подделать его нельзя: `lastActionBy` обязан быть самим просящим.
+      function stampsSelf() {
+        return request.resource.data.lastActionBy == request.auth.uid;
+      }
+
+      function leavesEvent() {
+        return changedKeys().hasOnly(['musicians', 'lastActionBy', 'lastActionType'])
+          && stampsSelf()
+          && request.resource.data.lastActionType == 'left'
+          && resource.data.ownerUid != request.auth.uid
+          && request.auth.uid in resource.data.get('musicians', [])
+          && !(request.auth.uid in request.resource.data.musicians)
+          && request.resource.data.musicians ==
+             resource.data.musicians.removeAll([request.auth.uid]);
+      }
+
       allow read: if isSignedIn() && (
         resource.data.ownerUid == request.auth.uid ||
         request.auth.uid in resource.data.get('musicians', [])
       );
       allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
-      allow update: if isSignedIn() && (
-        (resource.data.ownerUid == request.auth.uid && !touchesCancel())
-        || (isParty() && (requestsCancel() || confirmsCancel()))
-      );
+      // Признак автора нельзя подделать НИКОМУ, включая владельца: если
+      // `lastActionBy` в записи меняется, он обязан быть самим просящим.
+      // Иначе уведомление «{Ad} sizi çıxardı» назвало бы не того человека,
+      // а доверяет ему сервер безоговорочно — он для того и заведён.
+      allow update: if isSignedIn()
+        && (!changedKeys().hasAny(['lastActionBy']) || stampsSelf())
+        && (
+          (resource.data.ownerUid == request.auth.uid && !touchesCancel())
+          || (isParty() && (requestsCancel() || confirmsCancel() || leavesEvent()))
+        );
       allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
     }
 

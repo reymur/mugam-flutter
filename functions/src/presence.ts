@@ -41,6 +41,41 @@ export function freshnessWindowMs(userData: Record<string, unknown>): number {
   return doubled;
 }
 
+// СМОТРИТ ЛИ ЧЕЛОВЕК В ЭТУ КАРТОЧКУ МЕРОПРИЯТИЯ.
+//
+// Отдельное поле `activeEventId`, а не переиспользование `activeChatId`.
+// Механизм один — та же отметка присутствия, то же окно свежести,
+// `freshnessWindowMs` ниже, — а вопросов два: «смотрит в этот чат» и
+// «смотрит в эту карточку». Нагрузить одно поле двумя смыслами значило бы
+// повторить устройство, из которого выросли N19 (отметка визита глушила
+// push), N21 (время визита выдавалось за время доставки) и N22 (расписка
+// обнуляла чужой счётчик). В реестре на это стоит прямой запрет.
+//
+// Переходного окна, как у `activeChatId`, здесь НЕТ и не нужно: поля не
+// было никогда, поэтому его отсутствие означает «сборка про карточки
+// ничего не сообщает» — и решение по умолчанию «слать». Направление
+// выбрано намеренно: лишний push заметен и поправим, потерянный не
+// заметен никем.
+export interface WatchEventDecisionInput {
+  userData: Record<string, unknown> | undefined;
+  eventId: string;
+  uid: string;
+  lastSeenMs: number | null;
+  nowMs: number;
+}
+
+// true — человек прямо сейчас смотрит на карточку ЭТОГО мероприятия,
+// push слать не надо.
+export function isWatchingEventDecision(
+  input: WatchEventDecisionInput,
+): boolean {
+  const { userData, eventId, lastSeenMs, nowMs } = input;
+  if (!userData) return false;
+  if (userData.activeEventId !== eventId) return false;
+  if (lastSeenMs == null) return false;
+  return nowMs - lastSeenMs < freshnessWindowMs(userData);
+}
+
 export interface WatchDecisionInput {
   // Документ пользователя. undefined — документа нет вовсе.
   userData: Record<string, unknown> | undefined;
