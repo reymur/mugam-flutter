@@ -376,6 +376,7 @@ export function pushReminder(
   eventId: string,
   e: EventSnapshot,
   kind: ReminderKind,
+  hoursLeft: number,
 ): EventPush {
   const where = e.location?.trim();
   const tail = [fmtEventWhen(e.date), where && where.length > 0 ? where : null]
@@ -383,10 +384,70 @@ export function pushReminder(
     .join(", ");
   return {
     uid,
-    title: kind === "24h" ? "Sabah tədbiriniz var" : "Tədbirə 3 saat qaldı",
+    title: reminderTitle(hoursLeft),
     body: `${eventTitleOf(e)} — ${tail}`,
     data: openEvent(eventId, `event_reminder_${kind}`),
   };
+}
+
+/**
+ * Заголовок считается от ФАКТИЧЕСКОГО остатка, а не от названия окна.
+ *
+ * Это не мелочь. Догнанное напоминание с текстом «осталось 3 часа», когда
+ * на деле осталось два, — ровно тот класс, который в проекте выпалывается
+ * весь: отметка утверждает то, чего не проверяла. Поэтому число берётся из
+ * данных в момент отправки.
+ *
+ * «Sabah» (завтра) остаётся только там, где это правда по существу —
+ * больше двадцати часов; иначе слово обещало бы запас, которого нет.
+ */
+export function reminderTitle(hoursLeft: number): string {
+  if (hoursLeft >= 20) return "Sabah tədbiriniz var";
+  if (hoursLeft < 1) return "Tədbirə az qaldı";
+  return `Tədbirə ${Math.round(hoursLeft)} saat qaldı`;
+}
+
+/**
+ * Ключ отметки «напоминание отправлено».
+ *
+ * В ключ входит СТЕННОЕ ВРЕМЯ мероприятия, а не только его id. Причина
+ * найдена разбором 03.08: мероприятие переносят уже после отправки
+ * напоминания, и ключ по одному id запер бы новое — человек получил бы
+ * напоминание о старом времени и ни одного о новом.
+ *
+ * Со временем в ключе перенос сам открывает новое окно, а правка места
+ * или заметок (время не менялось) второго напоминания не порождает.
+ * Старая отметка остаётся сиротой и никому не мешает.
+ */
+export function reminderKey(
+  eventId: string,
+  kind: ReminderKind,
+  wallClock: string,
+): string {
+  return `reminder_${eventId}_${kind}_${wallClock}`;
+}
+
+/**
+ * Догонять ли окно, которое уже прошло.
+ *
+ * Догон существует ради ПРОПУЩЕННЫХ ПРОГОНОВ — сбой, деплой, задержка
+ * планировщика. Он не должен срабатывать для окна, которого не было вовсе:
+ * если мероприятие создали позже, чем окно прошло, напоминать не о чем —
+ * человек только что получил «Tədbirə əlavə olundunuz» и знает о нём
+ * ровно то же самое.
+ *
+ * `createdAtMs === null` (поле не проставилось) трактуется как «событие
+ * было» — направление выбрано так, чтобы сомнение приводило к лишнему
+ * напоминанию, а не к потерянному: первое заметно и поправимо, второе не
+ * замечает никто.
+ */
+export function shouldCatchUp(
+  eventWallMs: number,
+  aheadMs: number,
+  createdAtMs: number | null,
+): boolean {
+  if (createdAtMs === null) return true;
+  return createdAtMs <= eventWallMs - aheadMs;
 }
 
 // ---------------------------------------------------------------------------

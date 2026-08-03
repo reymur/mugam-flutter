@@ -24,7 +24,9 @@ import {
   pushReminder,
   pushReplaced,
   recipientsOf,
+  reminderKey,
   ReminderKind,
+  shouldCatchUp,
   eventWallClock,
   BAKU_OFFSET_MS,
 } from "./eventNotifications";
@@ -2220,6 +2222,21 @@ export const onPersonalEventDeleted = onDocumentDeleted(
 // Отметка об отправке кладётся в отдельную коллекцию, а НЕ в документ
 // мероприятия: запись в него подняла бы onPersonalEventUpdated и породила
 // уведомление «tədbir dəyişdi» о собственном напоминании.
+// ПОРОГ, А НЕ ПОЛОСА. Прежняя редакция брала ровно часовую полосу на 24 и
+// на 3 часа вперёд, и полосы стыковались встык. Это давало три молчаливых
+// потери, разобранные 03.08:
+//
+//   1. пропущенный прогон (сбой, деплой, задержка GCP — случилось в тот
+//      же день) оставлял в покрытии часовую дыру, и всё, что в неё попало,
+//      не получало напоминания вовсе;
+//   2. дрейф расписания создавал щели между полосами: прогон в 13:02
+//      закрывал [16:02,17:02), следующий в 14:05 — [17:05,18:05);
+//   3. догона не было ни для чего.
+//
+// Теперь берётся ВСЁ впереди в пределах порога, а «ровно один раз»
+// обеспечивает отметка. Пропущенный прогон догоняется следующим, дрейф
+// расписания перестаёт значить что-либо, а дубль невозможен по устройству
+// отметки (create() плюс maxInstances: 1).
 const REMINDER_WINDOWS: { kind: ReminderKind; aheadMs: number }[] = [
   { kind: "24h", aheadMs: 24 * 60 * 60 * 1000 },
   { kind: "3h", aheadMs: 3 * 60 * 60 * 1000 },
@@ -2239,45 +2256,59 @@ export const remindUpcomingEventsHourly = onSchedule(
   },
   async () => {
     // «Сейчас» по бакинским стенным часам — в той же шкале, в какой
-    // записаны сами мероприятия.
-    const nowBaku = new Date(Date.now() + 4 * 60 * 60 * 1000);
-    for (const w of REMINDER_WINDOWS) {
-      const from = new Date(nowBaku.getTime() + w.aheadMs);
-      const to = new Date(from.getTime() + 60 * 60 * 1000);
-      const fromIso = from.toISOString().slice(0, 19);
-      const toIso = to.toISOString().slice(0, 19);
-      // Окно запроса РАСШИРЕНО на четыре часа в обе стороны, а точная
-      // проверка сделана в коде после приведения к стенным часам.
-      //
-      // Причина: в проде `date` лежит в трёх формах (N4), и старая
-      // UTC-запись отличается от стенных часов ровно на бакинское
-      // смещение. Запрос сравнивает СТРОКИ и о формах ничего не знает —
-      // сузь окно, и такая запись просто не попала бы в выборку.
-      // Расширение стоит нескольких лишних чтений, пропуск стоил бы
-      // напоминания, не пришедшего вовсе.
-      const wideFrom = new Date(from.getTime() - BAKU_OFFSET_MS)
-        .toISOString().slice(0, 19);
-      const wideTo = new Date(to.getTime() + BAKU_OFFSET_MS)
-        .toISOString().slice(0, 19);
-      const due = await db.collection("personalEvents")
-        .where("date", ">=", wideFrom)
-        .where("date", "<", wideTo)
-        .get();
-      for (const doc of due.docs) {
-        const e = toEventSnapshot(doc.data());
-        if (e.status === "cancelled") continue;
-        // Точная граница — уже по стенным часам, в той же шкале, в какой
-        // человек видит дату на карточке.
-        const wall = eventWallClock(e.date);
-        if (wall < fromIso || wall >= toIso) continue;
-        const key = `${doc.id}_${w.kind}`;
-        if (!(await claimNotificationOnce(`reminder_${key}`))) continue;
+    // записаны сами мероприятия (N4: date это не момент на оси, а запись
+    // в календаре).
+    const nowMs = Date.now();
+    const nowWall = new Date(nowMs + BAKU_OFFSET_MS)
+      .toISOString().slice(0, 19);
+    const maxAhead = Math.max(...REMINDER_WINDOWS.map((w) => w.aheadMs));
+    // Окно запроса расширено на бакинское смещение: в проде date лежит в
+    // трёх формах (N26), и старая UTC-запись отличается от стенных часов
+    // ровно на него. Запрос сравнивает СТРОКИ и о формах не знает.
+    const wideTo = new Date(nowMs + maxAhead + 2 * BAKU_OFFSET_MS)
+      .toISOString().slice(0, 19);
+    const wideFrom = new Date(nowMs - BAKU_OFFSET_MS)
+      .toISOString().slice(0, 19);
+
+    const upcoming = await db.collection("personalEvents")
+      .where("date", ">=", wideFrom)
+      .where("date", "<", wideTo)
+      .get();
+
+    for (const doc of upcoming.docs) {
+      const e = toEventSnapshot(doc.data());
+      // Отменённое время не занимает и напоминания не заслуживает.
+      if (e.status === "cancelled") continue;
+
+      const wall = eventWallClock(e.date);
+      const wallMs = Date.parse(`${wall}Z`) - BAKU_OFFSET_MS;
+      if (Number.isNaN(wallMs)) continue;
+      // Уже началось — молчим. Порог открыт только вперёд: напоминание о
+      // прошедшем хуже отсутствия напоминания.
+      if (wallMs <= nowMs) continue;
+
+      const createdAt = doc.data().createdAt;
+      const createdAtMs =
+        createdAt && typeof createdAt.toMillis === "function"
+          ? createdAt.toMillis()
+          : null;
+
+      for (const w of REMINDER_WINDOWS) {
+        if (wallMs - nowMs > w.aheadMs) continue;
+        // Окно, которого не было: мероприятие создали позже, чем оно
+        // прошло. Догон существует ради пропущенных прогонов, а не ради
+        // окон, которых не существовало.
+        if (!shouldCatchUp(wallMs, w.aheadMs, createdAtMs)) continue;
+
+        const key = reminderKey(doc.id, w.kind, wall);
+        if (!(await claimNotificationOnce(key))) continue;
+
+        const hoursLeft = (wallMs - nowMs) / (60 * 60 * 1000);
         // Напоминание идёт ВСЕМ, включая владельца: это не уведомление о
         // чужом действии, а сообщение о времени, и владелец забывает так
         // же, как остальные.
-        const everyone = recipientsOf(e, null);
-        await sendEventPushes(everyone.map((uid) =>
-          pushReminder(uid, doc.id, e, w.kind)));
+        await sendEventPushes(recipientsOf(e, null).map((uid) =>
+          pushReminder(uid, doc.id, e, w.kind, hoursLeft)));
       }
     }
   },

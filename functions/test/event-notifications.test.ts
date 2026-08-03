@@ -9,6 +9,9 @@ import {
   pushDeleted,
   pushReminder,
   recipientsOf,
+  reminderKey,
+  reminderTitle,
+  shouldCatchUp,
 } from "../src/eventNotifications";
 import { isWatchingEventDecision } from "../src/presence";
 
@@ -243,18 +246,64 @@ describe("удаление", () => {
 });
 
 describe("напоминания", () => {
-  it("за сутки и за три часа — разные заголовки", () => {
-    assert.equal(pushReminder(GUEST, "e1", ev(), "24h").title,
-      "Sabah tədbiriniz var");
-    assert.equal(pushReminder(GUEST, "e1", ev(), "3h").title,
-      "Tədbirə 3 saat qaldı");
+  it("заголовок считается от фактического остатка, а не от названия окна", () => {
+    // Догнанное напоминание с «осталось 3 часа», когда осталось два, —
+    // отметка, утверждающая то, чего не проверяла.
+    assert.equal(reminderTitle(23.4), "Sabah tədbiriniz var");
+    assert.equal(reminderTitle(20), "Sabah tədbiriniz var");
+    assert.equal(reminderTitle(19.4), "Tədbirə 19 saat qaldı");
+    assert.equal(reminderTitle(3), "Tədbirə 3 saat qaldı");
+    assert.equal(reminderTitle(1.6), "Tədbirə 2 saat qaldı");
+    assert.equal(reminderTitle(0.4), "Tədbirə az qaldı");
   });
 
   it("в теле — время и место, без висящих разделителей", () => {
-    assert.equal(pushReminder(GUEST, "e1", ev(), "24h").body,
+    assert.equal(pushReminder(GUEST, "e1", ev(), "24h", 23).body,
       "«Toy» — 8 Avqust 2026, 17:30, İnci qarayev");
-    assert.equal(pushReminder(GUEST, "e1", ev({ location: "" }), "24h").body,
+    assert.equal(pushReminder(GUEST, "e1", ev({ location: "" }), "24h", 23).body,
       "«Toy» — 8 Avqust 2026, 17:30");
+  });
+
+  it("перенос мероприятия открывает НОВОЕ напоминание", () => {
+    // Ключ по одному id запер бы его: отметка о старом времени стоит, а
+    // время уже другое — человек получил бы напоминание о том времени,
+    // которого больше нет, и ни одного о новом.
+    const a = reminderKey("e1", "24h", "2026-08-08T17:30:00");
+    const b = reminderKey("e1", "24h", "2026-08-09T20:00:00");
+    assert.notEqual(a, b);
+  });
+
+  it("правка места второго напоминания не порождает", () => {
+    // Время не менялось — ключ тот же.
+    assert.equal(
+      reminderKey("e1", "3h", "2026-08-08T17:30:00"),
+      reminderKey("e1", "3h", "2026-08-08T17:30:00"),
+    );
+  });
+
+  it("догоняется окно, пропущенное из-за несостоявшегося прогона", () => {
+    const wall = Date.parse("2026-08-08T17:30:00Z");
+    const ahead = 24 * 3600 * 1000;
+    // Мероприятие создано за неделю — окно существовало, значит прогон
+    // просто не отработал, и догнать надо.
+    const created = wall - 7 * 24 * 3600 * 1000;
+    assert.equal(shouldCatchUp(wall, ahead, created), true);
+  });
+
+  it("НЕ догоняется окно, которого не было: создали позже его прохождения", () => {
+    const wall = Date.parse("2026-08-08T17:30:00Z");
+    const ahead = 24 * 3600 * 1000;
+    // Создано за 17 часов — суточное окно к тому моменту уже прошло.
+    // Человек только что получил «Tədbirə əlavə olundunuz».
+    const created = wall - 17 * 3600 * 1000;
+    assert.equal(shouldCatchUp(wall, ahead, created), false);
+    // Трёхчасовое при этом придёт: его окно ещё впереди.
+    assert.equal(shouldCatchUp(wall, 3 * 3600 * 1000, created), true);
+  });
+
+  it("нет createdAt — трактуем как «было», сомнение в сторону лишнего", () => {
+    const wall = Date.parse("2026-08-08T17:30:00Z");
+    assert.equal(shouldCatchUp(wall, 24 * 3600 * 1000, null), true);
   });
 });
 
