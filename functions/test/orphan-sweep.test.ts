@@ -409,3 +409,57 @@ test("через точку входа регулярной функции пу�
   expect(run.stopReason).toBe("empty-harvest");
   expect(run.deleted).toBe(0);
 });
+
+// ---------------------------------------------------------------------
+// ЗАПРЕТ, ЗАКРЫТЫЙ ТЕСТОМ, А НЕ КОММЕНТАРИЕМ
+//
+// В шапке сборщика записано: ссылки ищутся по ВСЕЙ базе, список коллекций
+// не перечисляется. Запрет появился после настоящей поломки — первая
+// версия смотрела messages/statuses/chats/users, то есть 319 документов из
+// 805, а `agreements`, `personalEvents` и `invites` не смотрелись вовсе.
+// Сборщик снёс бы живое медиа, на которое ссылается документ из
+// непросмотренной коллекции.
+//
+// Комментарий такой запрет не держит: он адресован тому, кто правит эту
+// строку, а сузить обход можно и дописав рядом (разбор — «Комментарий
+// защищает строку, а не класс», реестр 04.08). Тест держит: он создаёт
+// ссылку в коллекции, которой в коде нет НИГДЕ, и требует, чтобы объект
+// уцелел.
+// ---------------------------------------------------------------------
+test("ссылка из коллекции, не упомянутой в коде, спасает объект от удаления", async () => {
+  const path = "chats/c-unknown-coll/keep-me.jpg";
+  await putObject(path);
+
+  // Коллекция намеренно с выдуманным именем: если обход когда-нибудь
+  // снова станет списком известных коллекций, эта ссылка в него не
+  // попадёт, и тест упадёт — ровно там, где раньше падал прод.
+  await db()
+    .collection("someFutureCollectionNobodyKnowsAbout")
+    .doc("d1")
+    .set({ media: downloadUrl(path) });
+
+  const result = await sweep();
+
+  expect(result.deleted).toBe(0);
+  const [exists] = await bucket().file(path).exists();
+  expect(exists).toBe(true);
+});
+
+test("ссылка из ПОДколлекции произвольной глубины тоже спасает", async () => {
+  // Вторая половина того же запрета: обход идёт вглубь, а не только по
+  // корневым коллекциям.
+  const path = "chats/c-deep/keep-me-too.jpg";
+  await putObject(path);
+
+  await db()
+    .collection("weirdRoot").doc("a")
+    .collection("weirdChild").doc("b")
+    .collection("weirdGrandChild").doc("c")
+    .set({ any: downloadUrl(path) });
+
+  const result = await sweep();
+
+  expect(result.deleted).toBe(0);
+  const [exists] = await bucket().file(path).exists();
+  expect(exists).toBe(true);
+});

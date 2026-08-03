@@ -2467,15 +2467,17 @@ class _EventFormModalState extends State<_EventFormModal> {
   final Set<String> _mergedFromConflict = <String>{};
 
   void _mergeConflictParticipants(List<PersonalEvent> conflicts) {
-    final add = <String>[];
-    for (final e in conflicts) {
-      for (final uid in e.participantUids) {
-        if (uid == widget.currentUid) continue;
-        if (_explicitlyRemoved.contains(uid)) continue;
-        if (_selectedParticipantUids.contains(uid)) continue;
-        add.add(uid);
-      }
-    }
+    // Само правило — в общей чистой функции (event_conflict_banner.dart),
+    // здесь только применение: правило должно быть проверяемо тестом, а
+    // не жить внутри состояния виджета. Дефект 04.08 нашёлся глазами
+    // именно потому, что проверить его было нечем.
+    final add = participantsToMerge(
+      conflicts: conflicts,
+      current: _selectedParticipantUids,
+      explicitlyRemoved: _explicitlyRemoved,
+      currentUid: widget.currentUid,
+      isEditing: widget.existingEvent != null,
+    );
     if (add.isEmpty) return;
     // Вне кадра отрисовки: зовётся из build при появлении предупреждения.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2490,8 +2492,10 @@ class _EventFormModalState extends State<_EventFormModal> {
   void _unmergeConflictParticipants() {
     if (_mergedFromConflict.isEmpty) return;
     setState(() {
-      _selectedParticipantUids
-          .removeWhere((u) => _mergedFromConflict.contains(u));
+      _selectedParticipantUids = participantsAfterUnmerge(
+        current: _selectedParticipantUids,
+        merged: _mergedFromConflict,
+      );
       _mergedFromConflict.clear();
     });
   }
@@ -2768,6 +2772,18 @@ class _EventFormModalState extends State<_EventFormModal> {
       if (!ok || !mounted) return;
     }
     setState(() => _saving = true);
+    // Люди ЗАМЕНЯЕМОГО мероприятия доносятся здесь, а не при появлении
+    // предупреждения: до нажатия «Əvəz et» неизвестно, какое из
+    // нескольких заменяют. Когда конфликт один, они уже в форме и видны
+    // заранее — этот вызов тогда ничего не добавляет.
+    final carry = participantsToMerge(
+      conflicts: [target],
+      current: _selectedParticipantUids,
+      explicitlyRemoved: _explicitlyRemoved,
+      currentUid: widget.currentUid,
+      isEditing: false,
+    );
+    if (carry.isNotEmpty) _selectedParticipantUids.addAll(carry);
     try {
       widget.onWillSave?.call(<String, String>{
         'type': _type,

@@ -3568,13 +3568,26 @@ class FirestoreService {
   /// Поэтому фильтр — по участию, ровно той же формы, что у
   /// `eventsAsParticipantProvider`, а совпадение по чату проверяется уже
   /// на клиенте: договоров у человека десятки, не тысячи.
-  Future<bool> agreementExistsForChat(String chatId, String uid) async {
+  /// [roundAt] — `jobOfferAt` текущего раунда. Обязателен: без него
+  /// «договор этого раунда» неотличим от «договор когда-либо в этом
+  /// чате», а прошлый договор лежит в чате всегда, начиная со второй
+  /// сделки. Проверка отвечала бы «готово» мгновенно, и ожидание после
+  /// «Razıyam» не ждало бы ничего (N29).
+  Future<bool> agreementExistsForRound(
+    String chatId,
+    String uid,
+    String? roundAt,
+  ) async {
+    if (roundAt == null || roundAt.isEmpty) return false;
     final snap = await _db
         .collection('personalEvents')
         .where('musicians', arrayContains: uid)
         .get()
         .timeout(_writeTimeout);
-    return snap.docs.any((d) => d.data()['agreementChatId'] == chatId);
+    return snap.docs.any((d) {
+      final v = d.data();
+      return v['agreementChatId'] == chatId && v['jobOfferAt'] == roundAt;
+    });
   }
 
   /// Удалить мероприятие — у ВСЕХ. Правила разрешают это только

@@ -986,9 +986,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // тому же признаку, не показывалось НИ У КОГО. Наблюдалось на двух
       // устройствах 04.08.
       try {
-        if (await _firestoreService.agreementExistsForChat(
+        final roundAt = ref.read(chatMetaProvider(widget.chatId)).value?[
+            'jobOfferAt'] as String?;
+        if (await _firestoreService.agreementExistsForRound(
           widget.chatId,
           uid,
+          roundAt,
         )) {
           return;
         }
@@ -4325,8 +4328,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         // пробуем на следующей перерисовке.
         var ready = false;
         try {
-          ready = await _firestoreService
-              .agreementExistsForChat(widget.chatId, myUidForNotify);
+          ready = await _firestoreService.agreementExistsForRound(
+            widget.chatId,
+            myUidForNotify,
+            chatMetaAsync.value?['jobOfferAt'] as String?,
+          );
         } catch (e) {
           debugPrint('agreementExistsForChat (celebration) failed: $e');
         }
