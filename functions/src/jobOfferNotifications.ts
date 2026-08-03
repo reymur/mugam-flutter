@@ -91,6 +91,7 @@ export function fmtDateTransition(oldIso: string, newIso: string): string {
 
 export interface OfferSnapshot {
   jobOfferBy?: string | null;
+  jobOfferAt?: string | null;
   eventDate?: string | null;
   eventType?: string | null;
   eventLocation?: string | null;
@@ -192,7 +193,22 @@ export function planOfferPushes(input: {
 }): OfferPush[] {
   const { chatId, before, after, members, actorName } = input;
 
-  const offerAppeared = !before.jobOfferBy && !!after.jobOfferBy;
+  // НОВОЕ ПРЕДЛОЖЕНИЕ определяется по `jobOfferAt`, а не по появлению
+  // `jobOfferBy`.
+  //
+  // Найдено живым прогоном 04.08: `jobOfferBy` между раундами НЕ
+  // очищается — после состоявшейся сделки он остаётся стоять, и новое
+  // предложение просто переписывает поля поверх. Признак «поле появилось
+  // из пустого» срабатывал бы ровно один раз за всю жизнь чата, на самом
+  // первом предложении; все последующие уходили бы как «Təklif dəyişdi».
+  // Ровно это и наблюдалось в логе.
+  //
+  // `jobOfferAt` подходит потому, что его переписывает `setJobOffer` при
+  // каждом новом предложении и НЕ трогает `saveChatEventDate` («Tarix
+  // dəyiş») — проверено по обоим методам, а не выведено.
+  const offerAppeared =
+    !!after.jobOfferBy &&
+    (before.jobOfferAt ?? "") !== (after.jobOfferAt ?? "");
   const cancelledNow =
     !!before.jobOfferBy && !after.jobOfferBy && !!after.cancelledBy;
   const initiator = after.jobOfferBy ?? before.jobOfferBy ?? null;

@@ -11,6 +11,7 @@ const MEMBERS = [INIT, RECIP];
 
 const base = {
   jobOfferBy: INIT,
+  jobOfferAt: "2026-08-03T20:55:37.545118Z",
   eventDate: "2026-08-08T17:30:00.000",
   eventType: "Toy",
   eventLocation: "İnci qarayev",
@@ -68,7 +69,7 @@ describe("что уходит второй стороне", () => {
   it("предложение появилось — получателю, с предметом сделки", () => {
     const p = planOfferPushes({
       chatId: "c1",
-      before: { jobOfferBy: null },
+      before: { jobOfferBy: null, jobOfferAt: null },
       after: base,
       members: MEMBERS,
       actorName: "Rafael",
@@ -84,12 +85,50 @@ describe("что уходит второй стороне", () => {
   it("НЕ уходит автору: инициатор своё предложение не получает", () => {
     const p = planOfferPushes({
       chatId: "c1",
-      before: { jobOfferBy: null },
+      before: { jobOfferBy: null, jobOfferAt: null },
       after: base,
       members: MEMBERS,
       actorName: "Rafael",
     });
     assert.equal(p.some((x) => x.uid === INIT), false);
+  });
+
+
+  it("ВТОРОЕ предложение в том же чате — тоже «Yeni iş təklifi»", () => {
+    // Найдено живым прогоном 04.08. jobOfferBy между раундами НЕ
+    // очищается: после состоявшейся сделки он остаётся стоять. Прежний
+    // тест сеял `before: { jobOfferBy: null }` — то есть проверял первое
+    // в истории чата предложение, а не обычное, и дефект пропустил.
+    const prevRound = {
+      ...base,
+      jobOfferAt: "2026-08-03T14:05:52.629597Z",
+      eventDate: "2026-08-10T17:20:00.000",
+      recipientAgreed: true,
+    };
+    const p = planOfferPushes({
+      chatId: "c1",
+      before: prevRound,
+      after: { ...base, recipientAgreed: false },
+      members: MEMBERS,
+      actorName: "Rafael",
+    });
+    assert.equal(p.length, 1);
+    assert.equal(p[0].uid, RECIP);
+    assert.equal(p[0].title, "Yeni iş təklifi");
+  });
+
+  it("«Tarix dəyiş» — это изменение, а не новое предложение", () => {
+    // saveChatEventDate не трогает jobOfferAt, поэтому признак не путает
+    // два разных действия.
+    const p = planOfferPushes({
+      chatId: "c1",
+      before: base,
+      after: { ...base, eventDate: "2026-08-12T21:00:00.000" },
+      members: MEMBERS,
+      actorName: "Rafael",
+    });
+    assert.equal(p.length, 1);
+    assert.equal(p[0].title, "Təklif dəyişdi");
   });
 
   it("смена даты — переход, а не только новое значение", () => {
