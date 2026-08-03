@@ -3070,21 +3070,35 @@ class FirestoreService {
   // "İş təklif et" — proposes a job to the other party in a 1:1 chat.
   // chat_screen.dart's menu hides this item once jobOfferBy is already
   // set, matching mugam-v2's own {!jobOfferBy && (...)} gating.
+  // Предложение создаётся СРАЗУ содержательным: дата, тип, место и
+  // заметки выбираются в листе ДО отправки и уходят одной записью
+  // (пункт 3 плана). Состояния «предложение есть, даты нет» новая
+  // сборка больше не создаёт — отсюда и `roundStep: 'dated'` ниже, шаг
+  // `proposed` этим методом не пишется вовсе.
+  //
+  // Параметры содержания обязательны намеренно, включая те, что могут
+  // быть пустыми строками. Необязательный параметр здесь означал бы
+  // «можно вызвать и не передать» — то есть оставленную лазейку создать
+  // пустое предложение мимо листа. Пустоту передаёт вызывающий, явно.
   Future<void> setJobOffer({
     required String chatId,
     required String uid,
+    required DateTime eventDate,
+    required String eventType,
+    required String eventLocation,
+    required String eventNotes,
   }) async {
     try {
       await _db.collection('chats').doc(chatId).update({
         'jobOfferBy': uid,
         'jobOfferAt': nowInstantIso(),
         // A prior round on this same (persistent, never-forked) chat may
-        // have left recipientAgreed stuck at true forever \u2014 acceptJobOffer
+        // have left recipientAgreed stuck at true forever — acceptJobOffer
         // only ever sets it true, nothing ever resets it back on accept.
-        // Without clearing it here, a second "\u0130\u015f t\u0259klif et" round's
-        // Raz\u0131yam tap writes recipientAgreed:true again, but the
+        // Without clearing it here, a second "İş təklif et" round's
+        // Razıyam tap writes recipientAgreed:true again, but the
         // onChatUpdated Cloud Function's guard (before.recipientAgreed ===
-        // true -> return) would see it as ALREADY true and never re-fire \u2014
+        // true -> return) would see it as ALREADY true and never re-fire —
         // silently skipping PersonalEvent creation for every round after
         // the first.
         'recipientAgreed': false,
@@ -3092,7 +3106,7 @@ class FirestoreService {
         'waitingForDateAt': null,
         'negotiationSeenAt': {},
         // A prior round may have left a stale cancelledBy from an earlier
-        // "\u0130mtina" sitting on the doc \u2014 clear it so a fresh offer never
+        // "İmtina" sitting on the doc — clear it so a fresh offer never
         // carries a leftover "X cancelled" value forward.
         'cancelledBy': null,
         // ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ЧИСТИТСЯ СЛЕД ПРОШЛОГО РАУНДА. С этой
@@ -3105,7 +3119,7 @@ class FirestoreService {
         // среди них нет (negotiationSeenAt — карта, но и она сбрасывается
         // здесь и ограничена участниками чата). Поэтому документ чата от
         // раундов не растёт: каждый следующий переписывает те же ключи.
-        'roundStep': 'proposed',
+        'roundStep': 'dated',
         'roundEndedBy': null,
         'roundEndedAt': null,
         // Содержание прошлого раунда чистится ЗДЕСЬ ЖЕ, и это не украшение
@@ -3121,10 +3135,22 @@ class FirestoreService {
         // новое предложение» его прятала уборка внутри cancelChat. Убрав
         // ту уборку ради следа раунда, я обнажил его на обоих путях —
         // поэтому чистка и переехала сюда целиком.
-        'eventDate': null,
-        'eventType': null,
-        'eventLocation': null,
-        'eventNotes': null,
+        //
+        // С пунктом 3 сюда приходят уже выбранные значения, и это делает
+        // тот дефект невозможным по устройству, а не по внимательности:
+        // все четыре поля пишутся ВСЕГДА и безусловно, включая пустые
+        // строки у места и заметок. Уцелеть прошлому значению негде —
+        // каждое из четырёх перезаписывается на каждом новом предложении.
+        // НЕ заменять пустое значение на пропуск ключа ради экономии: тем
+        // самым вернётся ровно та дыра, через которую дата прошлой сделки
+        // доезжала до нового раунда.
+        //
+        // НЕ приводить дату к UTC — то же «плавающее» гражданское время,
+        // что и в saveChatEventDate ниже (N4).
+        'eventDate': eventDate.toIso8601String(),
+        'eventType': eventType,
+        'eventLocation': eventLocation,
+        'eventNotes': eventNotes,
       }).timeout(_writeTimeout);
     } catch (e, st) {
       debugPrint('\u274c setJobOffer failed: $e');

@@ -749,11 +749,31 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
+  // Тап по «İş təklif et» больше НИЧЕГО не пишет — он открывает лист
+  // (пункт 3 плана). Запись уходит только по «Təklifi göndər», и уходит
+  // сразу содержательной: дата, тип, место, заметки одной операцией.
+  //
+  // Отсюда два следствия, каждое закрывает строку из карты опыта:
+  // пустого предложения больше не бывает, и сам тап по пункту меню стал
+  // обратимым — до отправки закрыть лист значит не создать ничего.
   void _proposeJobOffer() {
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     if (currentUid == null) return;
-    _firestoreService.setJobOffer(chatId: widget.chatId, uid: currentUid);
-    _showCopySnackBar('📅 İş təklifi göndərildi');
+    _openJobOfferDateSheet(
+      title: 'İş təklifi',
+      submitLabel: 'Təklifi göndər',
+      onSubmit: (date, type, location, notes) {
+        _firestoreService.setJobOffer(
+          chatId: widget.chatId,
+          uid: currentUid,
+          eventDate: date,
+          eventType: type,
+          eventLocation: location,
+          eventNotes: notes,
+        );
+        _showCopySnackBar('📅 İş təklifi göndərildi');
+      },
+    );
   }
 
   // "Çatı təmizlə" — per-user only (FirestoreService.clearChatForUser):
@@ -791,11 +811,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (mounted) _showCopySnackBar('🗑 Çat təmizləndi');
   }
 
+  // Один лист на два момента — создание предложения и правку уже
+  // отправленного. Различаются подписями и тем, куда уходит результат:
+  // по умолчанию (правка) это saveChatEventDate, при создании вызывающий
+  // передаёт свой onSubmit с setJobOffer.
   void _openJobOfferDateSheet({
     DateTime? initialDate,
     String? initialType,
     String? initialLocation,
     String? initialNotes,
+    String title = 'Tədbir tarixi',
+    String submitLabel = 'Yadda saxla',
+    void Function(DateTime date, String type, String location, String notes)?
+        onSubmit,
   }) {
     showModalBottomSheet(
       context: context,
@@ -809,15 +837,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         initialType: initialType,
         initialLocation: initialLocation,
         initialNotes: initialNotes,
-        onSave: (date, type, location, notes) {
-          _firestoreService.saveChatEventDate(
-            chatId: widget.chatId,
-            eventDate: date,
-            eventType: type,
-            eventLocation: location,
-            eventNotes: notes,
-          );
-        },
+        title: title,
+        submitLabel: submitLabel,
+        onSave: onSubmit ??
+            (date, type, location, notes) {
+              _firestoreService.saveChatEventDate(
+                chatId: widget.chatId,
+                eventDate: date,
+                eventType: type,
+                eventLocation: location,
+                eventNotes: notes,
+              );
+            },
       ),
     );
   }
@@ -982,6 +1013,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             if (eventLocation != null && eventLocation.isNotEmpty)
               Text(
                 '📍 $eventLocation',
+                style: const TextStyle(color: kGold, fontWeight: FontWeight.w600),
+              ),
+            // Заметки не видел НИКТО — ни тот, кто их написал, ни тот, кому
+            // они адресованы. Человек вводил текст в поле «Qeydlər», и текст
+            // исчезал из виду совсем, хотя доезжал до базы и до договора.
+            // Показываем обеим сторонам: предложение без них не полное.
+            if (eventNotes != null && eventNotes.isNotEmpty)
+              Text(
+                '📝 $eventNotes',
                 style: const TextStyle(color: kGold, fontWeight: FontWeight.w600),
               ),
             const SizedBox(height: 8),
