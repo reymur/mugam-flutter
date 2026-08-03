@@ -825,13 +825,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     void Function(DateTime date, String type, String location, String notes)?
         onSubmit,
   }) {
+    final currentUid = FirebaseAuth.instance.currentUser?.uid;
+    if (currentUid == null) return;
     showModalBottomSheet(
       context: context,
-      backgroundColor: kBg2,
+      // Прозрачный фон и никакой формы здесь: лист рисует свой контейнер
+      // сам, во весь экран с закреплёнными шапкой и кнопками — один в один
+      // с календарным окном (agreements_screen.dart → _openAddModal).
+      // Оставь тут kBg2 и скруглённую форму, и под собственным фоном листа
+      // проступил бы второй, со своим скруглением.
+      backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
       builder: (_) => JobOfferDateSheet(
         initialDate: initialDate,
         initialType: initialType,
@@ -839,6 +843,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         initialNotes: initialNotes,
         title: title,
         submitLabel: submitLabel,
+        currentUid: currentUid,
         onSave: onSubmit ??
             (date, type, location, notes) {
               _firestoreService.saveChatEventDate(

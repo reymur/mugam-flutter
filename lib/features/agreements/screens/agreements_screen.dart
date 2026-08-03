@@ -10,9 +10,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
+import '../../../core/time/az_date_format.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
+import '../../../shared/widgets/event_conflict_dialog.dart';
+import '../../../shared/widgets/event_notes_picker.dart';
 import '../../../shared/widgets/wheel_date_time_picker.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../search/screens/filter_sheet.dart';
@@ -22,32 +25,14 @@ import '../../user/screens/user_profile_screen.dart';
 // ---------------------------------------------------------------------------
 // Azerbaijani month names
 // ---------------------------------------------------------------------------
-const _azMonths = [
-  'Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'İyun',
-  'İyul', 'Avqust', 'Sentyabr', 'Oktyabr', 'Noyabr', 'Dekabr',
-];
-
-String _azMonth(int month) => _azMonths[month - 1];
-
-String _fmtDate(String iso) {
-  if (iso.isEmpty) return '';
-  try {
-    final d = DateTime.parse(iso);
-    return '${d.day} ${_azMonth(d.month)} ${d.year}';
-  } catch (_) {
-    return iso;
-  }
-}
-
-String _fmtTime(String iso) {
-  if (iso.isEmpty) return '';
-  try {
-    final d = DateTime.parse(iso);
-    return '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
-  } catch (_) {
-    return '';
-  }
-}
+// Сами таблица месяцев и разбор даты события переехали в
+// core/time/az_date_format.dart: их читает ещё и общий диалог конфликта,
+// который показывает и этот экран, и лист предложения работы. Здесь
+// оставлены короткие псевдонимы, чтобы не править девять мест вызова —
+// но реализация одна, и разойтись копиям негде.
+String _azMonth(int month) => azMonthFull(month);
+String _fmtDate(String iso) => fmtEventDate(iso);
+String _fmtTime(String iso) => fmtEventTime(iso);
 
 String _fmtCreatedAt(dynamic ts) {
   if (ts == null) return '';
@@ -2219,6 +2204,29 @@ class _PersonalEventDetailScreenState
 // ---------------------------------------------------------------------------
 // _ConflictEventScreen
 // ---------------------------------------------------------------------------
+// Публичная точка входа: лист предложения работы (chat/screens/
+// job_offer_date_sheet.dart) показывает тот же общий диалог конфликта, и
+// по ответу «Bax» обязан открыть ровно этот экран, а не свой похожий.
+//
+// Экран остаётся приватным намеренно: он тянет за собой карточку события
+// (`_EventCard`) и экран подробностей (`_PersonalEventDetailScreen`), и
+// вытаскивать их наружу ради одного вызова значило бы разобрать половину
+// этого файла. Наружу отдан только маршрут.
+Route<void> agreementConflictEventRoute({
+  required PersonalEvent event,
+  required String currentUid,
+  required List<User> allUsers,
+}) => MaterialPageRoute(
+  builder: (_) => _ConflictEventScreen(
+    event: event,
+    categoryTitle: event.ownerUid == currentUid
+        ? 'Şəxsi tədbir'
+        : 'Dəvətli tədbir',
+    currentUid: currentUid,
+    allUsers: allUsers,
+  ),
+);
+
 class _ConflictEventScreen extends StatefulWidget {
   final PersonalEvent event;
   final String categoryTitle;
@@ -2372,10 +2380,11 @@ class _EventFormModalState extends State<_EventFormModal> {
   late DateTime _selectedDate;
   late String _location;
   late List<String> _selectedParticipantUids;
-  late List<String> _noteOptions;
-  String _otherNote = '';
-  bool _otherExpanded = false;
-  String _freeNote = '';
+  // Заметки целиком (галочки формы одежды + свободный текст) живут одним
+  // разобранным значением из shared/widgets/event_notes_picker.dart. Ни
+  // список пунктов, ни склейка строки здесь больше не повторяются: ту же
+  // строку пишет лист предложения работы, а разбирает этот экран.
+  late EventNotesValue _notes;
   bool _saving = false;
   DateTime? _blockedTime;
   final _scrollController = ScrollController();
@@ -2384,18 +2393,8 @@ class _EventFormModalState extends State<_EventFormModal> {
   bool _showLocationError = false;
 
   static const _eventTypes = ['Toy', 'Konsert', 'Bayram', 'Digər'];
-  static const _noteChoices = [
-    'Qara kostyum və ağ köynək',
-    'Qara köynək sərbəst',
-    'Qalstuk',
-    'Baboçka',
-    'Yumru boğaz köynək sərbəst',
-    'Digər...',
-  ];
 
   final _locationController = TextEditingController();
-  final _otherNoteController = TextEditingController();
-  final _freeNoteController = TextEditingController();
   final _participantSearchController = TextEditingController();
 
   @override
@@ -2407,38 +2406,18 @@ class _EventFormModalState extends State<_EventFormModal> {
     _locationController.text = _location;
     _selectedParticipantUids = List<String>.from(widget.initialParticipantUids);
 
-    // Parse existing notes into checkboxes + free text
-    _noteOptions = [];
-    _freeNote = '';
-    if (widget.initialNotes.isNotEmpty) {
-      final parts = widget.initialNotes.split(', ');
-      for (final p in parts) {
-        if (_noteChoices.sublist(0, 5).contains(p)) {
-          _noteOptions.add(p);
-        } else if (p.isNotEmpty) {
-          _freeNote = (_freeNote.isEmpty) ? p : '$_freeNote, $p';
-        }
-      }
-      _freeNoteController.text = _freeNote;
-    }
+    _notes = EventNotesValue.parse(widget.initialNotes);
   }
 
   @override
   void dispose() {
     _locationController.dispose();
-    _otherNoteController.dispose();
-    _freeNoteController.dispose();
     _participantSearchController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
-  String get _computedNotes {
-    final parts = List<String>.from(_noteOptions);
-    if (_otherExpanded && _otherNote.isNotEmpty) parts.add(_otherNote);
-    if (_freeNote.isNotEmpty) parts.add(_freeNote);
-    return parts.join(', ');
-  }
+  String get _computedNotes => _notes.joined;
 
   bool get _isTimeBlocked {
     if (_blockedTime == null) return false;
@@ -2450,7 +2429,7 @@ class _EventFormModalState extends State<_EventFormModal> {
     if (!mounted) return;
     final dialogResult = await showDialog<String>(
       context: context,
-      builder: (_) => _ConflictDialog(conflict: conflict),
+      builder: (_) => EventConflictDialog(conflict: conflict),
     );
     if (!mounted) return;
     if (dialogResult == 'replace') {
@@ -2872,145 +2851,19 @@ class _EventFormModalState extends State<_EventFormModal> {
               ),
             ),
             const SizedBox(height: 16),
-            // Notes checklist
-            const Text('GEYİM',
-                style: TextStyle(
-                    fontSize: 11,
-                    letterSpacing: 0.8,
-                    color: kMuted,
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            ..._noteChoices.sublist(0, 5).map((choice) {
-              final sel = _noteOptions.contains(choice);
-              return GestureDetector(
-                onTap: () => setState(() {
-                  if (_noteOptions.contains(choice)) {
-                    _noteOptions.remove(choice);
-                  } else {
-                    _noteOptions.add(choice);
-                  }
-                }),
-                child: Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-                  decoration: BoxDecoration(
-                    color: _noteOptions.contains(choice)
-                        ? kGold.withAlpha(25)
-                        : kBg3,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: _noteOptions.contains(choice) ? kGold : kBorder,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        choice,
-                        style: TextStyle(
-                          color: sel ? kGold : kText,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      if (sel)
-                        const Text('✓', style: TextStyle(color: kGold, fontSize: 14)),
-                    ],
-                  ),
-                ),
-              );
-            }),
-            // "Digər..." toggle
-            GestureDetector(
-              onTap: () => setState(() => _otherExpanded = !_otherExpanded),
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-                decoration: BoxDecoration(
-                  color: _otherExpanded ? kGold.withAlpha(25) : kBg3,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _otherExpanded ? kGold : kBorder),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Digər...',
-                      style: TextStyle(
-                        color: _otherExpanded ? kGold : kText,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (_otherExpanded)
-                      const Text('✓', style: TextStyle(color: kGold, fontSize: 14)),
-                  ],
-                ),
-              ),
+            // Форма одежды и свободная заметка — общий виджет
+            // (shared/widgets/event_notes_picker.dart), тот же, что в листе
+            // предложения работы. Список пунктов и склейка строки живут
+            // там: договор создаётся из предложения, а правится здесь, то
+            // есть строку пишет один экран, а разбирает другой.
+            EventNotesPicker(
+              value: _notes,
+              onChanged: (v) => setState(() => _notes = v),
+              // Свободная заметка здесь показывается только в режиме с
+              // участниками — так было до выделения виджета, поведение
+              // сохранено как есть.
+              showFreeNote: widget.mode == 'time-only',
             ),
-            if (_otherExpanded) ...[
-              const SizedBox(height: 6),
-              TextField(
-                controller: _otherNoteController,
-                onChanged: (v) => _otherNote = v,
-                style: const TextStyle(color: kText, fontSize: 14),
-                decoration: InputDecoration(
-                  hintText: 'Digər əlavə...',
-                  hintStyle: const TextStyle(color: kMuted),
-                  filled: true,
-                  fillColor: kBg3,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: kBorder),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: kBorder),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: kGold),
-                  ),
-                ),
-              ),
-            ],
-            if (widget.mode == 'time-only') ...[
-              const SizedBox(height: 16),
-              const Text('ƏLAVƏ QEYDLƏR',
-                  style: TextStyle(
-                      fontSize: 11,
-                      letterSpacing: 0.8,
-                      color: kMuted,
-                      fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _freeNoteController,
-                onChanged: (v) => _freeNote = v,
-                maxLines: 3,
-                style: const TextStyle(color: kText, fontSize: 14),
-                decoration: InputDecoration(
-                  hintText: 'Əlavə qeydlər...',
-                  hintStyle: const TextStyle(color: kMuted),
-                  filled: true,
-                  fillColor: kBg3,
-                  contentPadding: const EdgeInsets.all(14),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: kBorder),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: kBorder),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: kGold),
-                  ),
-                ),
-              ),
-            ],
                   const SizedBox(height: 20),
                 ],
               ),
@@ -3070,155 +2923,6 @@ class _EventFormModalState extends State<_EventFormModal> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// _ConflictDialog
-// ---------------------------------------------------------------------------
-class _ConflictDialog extends StatelessWidget {
-  final PersonalEvent conflict;
-
-  const _ConflictDialog({
-    required this.conflict,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: kBg2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '⚠️ Bu tarixdə tədbir var',
-              style: GoogleFonts.nunito(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: kRed,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: kBg3,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: kGold.withAlpha(60)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  if (conflict.type.isNotEmpty) ...[
-                    Text(
-                      conflict.type,
-                      style: GoogleFonts.nunito(
-                        color: kGold,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 10),
-                    const Divider(color: kBorder, height: 1),
-                    const SizedBox(height: 10),
-                  ],
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (conflict.location.isNotEmpty) ...[
-                        const Text('📍', style: TextStyle(fontSize: 13)),
-                        const SizedBox(width: 4),
-                        Flexible(
-                          child: Text(
-                            conflict.location,
-                            style: const TextStyle(
-                              color: kText,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (conflict.date.isNotEmpty)
-                          const SizedBox(width: 12),
-                      ],
-                      if (conflict.date.isNotEmpty) ...[
-                        const Text('🕐', style: TextStyle(fontSize: 13)),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${_fmtDate(conflict.date)}  ${_fmtTime(conflict.date)}',
-                          style: const TextStyle(
-                            color: kText,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop('view'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: kGold,
-                      side: const BorderSide(color: kGold),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                    ),
-                    child: const Text('Bax'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.of(context).pop('replace'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: kGold,
-                      foregroundColor: const Color(0xFF1A0E00),
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                    ),
-                    child: const Text('Əvəz et',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.of(context).pop('new'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: kBg3,
-                      foregroundColor: kMuted,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          side: const BorderSide(color: kBorder)),
-                    ),
-                    child: const Text('Yeni tədbir'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
       ),
     );
   }
