@@ -1495,14 +1495,27 @@ class _DetailRow extends StatelessWidget {
   final String label;
   final String value;
   final bool last;
+  // Строка только что изменилась чужой правкой (см. _RemoteChangeFlash).
+  final bool flash;
 
-  const _DetailRow({required this.label, required this.value, this.last = false});
+  const _DetailRow({
+    required this.label,
+    required this.value,
+    this.last = false,
+    this.flash = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+    // Заливка, а не мигание: мигание в списке из пяти строк читается как
+    // сбой отрисовки. Гаснет плавно — момент, когда подсветка сходит на
+    // нет, сам по себе показывает, что изменение уже не новое.
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 600),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
       decoration: BoxDecoration(
+        color: flash ? kGold.withAlpha(46) : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
         border: last
             ? null
             : const Border(bottom: BorderSide(color: kBorder)),
@@ -1586,6 +1599,79 @@ class _PartyRow extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // AgreementDetail screen
 // ---------------------------------------------------------------------------
+// Подсветка изменения, ПРИЕХАВШЕГО ИЗВНЕ.
+//
+// Зачем. После N23 чужая правка доезжает до открытой карточки и молча
+// подменяет значение. Человек смотрит на экран, дата меняется — и если он
+// в этот момент моргнул, он не узнает, что договор вообще трогали, и
+// продолжит помнить старую дату. Живое обновление без признака хуже
+// устаревшего экрана: устаревший хотя бы честно показывает одно и то же.
+//
+// Почему только чужое. Своё сохранение человек только что сделал руками,
+// мигать ему незачем. А главное — признак, который загорается всегда,
+// перестают замечать за неделю, и тогда он не сработает там, где нужен.
+// Отличаем по значению, а не по флагу «я только что сохранял»: лист
+// возвращает то, что записал, и если пришедшее значение совпало с ним —
+// это наша собственная запись вернулась через поток. Флаг «подавить
+// следующее изменение» проглотил бы чужую правку, случившуюся в ту же
+// секунду; сравнение по значению — нет.
+class _RemoteChangeFlash {
+  static const _duration = Duration(seconds: 4);
+
+  Map<String, String>? _prev;
+  Map<String, String>? _selfSaved;
+  Timer? _timer;
+  Set<String> flashing = const {};
+
+  // Ключи — имена ПОЛЕЙ, а не подписи строк. Подписи у двух карточек
+  // разные («Vaxt» против «Saat», «Əlavələr» против «Qeyd»), и ключ по
+  // подписи молча перестал бы совпадать на второй из них. Дата с временем
+  // живут в одном поле, поэтому обе строки, нарисованные из него, просят
+  // один и тот же ключ и загораются вместе — это правда: сдвиг времени и
+  // есть изменение даты.
+  static Map<String, String> _fieldsOf(PersonalEvent e) => {
+        'type': e.type,
+        'date': e.date,
+        'location': e.location,
+        'notes': e.notes,
+      };
+
+  void rememberSelfSave(Map<String, String>? saved) => _selfSaved = saved;
+
+  // Вызывается в начале build. Значение flashing выставляется синхронно,
+  // поэтому текущая же перерисовка уже покажет подсветку; setState нужен
+  // только на её гашение, и он приходит из таймера — вне build.
+  void sync(PersonalEvent event, void Function() onExpire) {
+    final now = _fieldsOf(event);
+    final prev = _prev;
+    _prev = now;
+    // Первый кадр карточки: сравнивать не с чем, и подсвечивать при
+    // открытии нечего — иначе загоралось бы всё подряд на каждом входе.
+    if (prev == null) return;
+
+    final changed = now.keys.where((k) => now[k] != prev[k]).toSet();
+    if (changed.isEmpty) return;
+
+    final self = _selfSaved;
+    if (self != null) {
+      changed.removeWhere((k) => now[k] == self[k]);
+      // Своё сохранение засчитывается ровно один раз: следующее изменение
+      // тех же полей уже чужое.
+      _selfSaved = null;
+    }
+    if (changed.isEmpty) return;
+
+    flashing = changed;
+    _timer?.cancel();
+    _timer = Timer(_duration, () {
+      flashing = const {};
+      onExpire();
+    });
+  }
+
+  void dispose() => _timer?.cancel();
+}
+
 // Обе карточки ниже ищут своё событие так: сначала среди собственных, потом
 // среди тех, где человек участник. Дедупликация не нужна — берём первое
 // совпадение, а id уникален на всю базу.
@@ -1641,7 +1727,7 @@ Widget _eventGoneScaffold(String title, VoidCallback onBack) {
 // Лишней подписки это не создаёт: `personalEventsProvider(uid)` уже
 // слушает родительский экран, а Riverpod на одинаковый аргумент семейства
 // отдаёт ту же самую.
-class _AgreementDetailScreen extends ConsumerWidget {
+class _AgreementDetailScreen extends ConsumerStatefulWidget {
   final String eventId;
   final String currentUid;
   final VoidCallback onBack;
@@ -1651,6 +1737,23 @@ class _AgreementDetailScreen extends ConsumerWidget {
     required this.currentUid,
     required this.onBack,
   });
+
+  @override
+  ConsumerState<_AgreementDetailScreen> createState() =>
+      _AgreementDetailScreenState();
+}
+
+// Состояние здесь ровно одно и служит одной цели — подсветке чужой
+// правки. Само событие по-прежнему берётся из потока на каждой
+// перерисовке, копии в состоянии нет (N23).
+class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> {
+  final _flash = _RemoteChangeFlash();
+
+  @override
+  void dispose() {
+    _flash.dispose();
+    super.dispose();
+  }
 
   User? _findUser(List<User> allUsers, String uid) {
     try {
@@ -1670,7 +1773,9 @@ class _AgreementDetailScreen extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    final currentUid = widget.currentUid;
+    final onBack = widget.onBack;
     final personalEvents =
         ref.watch(personalEventsProvider(currentUid)).asData?.value ?? [];
     final eventsAsParticipant =
@@ -1678,8 +1783,12 @@ class _AgreementDetailScreen extends ConsumerWidget {
     final allUsers = ref.watch(allUsersProvider).asData?.value ?? [];
     final firestoreService = ref.read(firestoreServiceProvider);
 
-    final event = _findEvent(eventId, personalEvents, eventsAsParticipant);
+    final event = _findEvent(widget.eventId, personalEvents, eventsAsParticipant);
     if (event == null) return _eventGoneScaffold('Müqavilə', onBack);
+
+    _flash.sync(event, () {
+      if (mounted) setState(() {});
+    });
 
     final isCancelled = event.status == 'cancelled';
     final isOwner = event.ownerUid == currentUid;
@@ -1749,6 +1858,7 @@ class _AgreementDetailScreen extends ConsumerWidget {
                     allCombinedEvents: [...personalEvents, ...eventsAsParticipant],
                     currentUid: currentUid,
                     firestoreService: firestoreService,
+                    onWillSave: _flash.rememberSelfSave,
                   ),
                 );
               },
@@ -1781,11 +1891,27 @@ class _AgreementDetailScreen extends ConsumerWidget {
                 ),
                 child: Column(
                   children: [
-                    _DetailRow(label: 'Növ', value: event.type),
-                    _DetailRow(label: 'Tarix', value: _fmtDate(event.date)),
-                    _DetailRow(label: 'Vaxt', value: _fmtTime(event.date)),
-                    _DetailRow(label: 'Yer', value: event.location),
-                    _DetailRow(label: 'Əlavələr', value: event.notes, last: true),
+                    _DetailRow(
+                        label: 'Növ',
+                        value: event.type,
+                        flash: _flash.flashing.contains('type')),
+                    _DetailRow(
+                        label: 'Tarix',
+                        value: _fmtDate(event.date),
+                        flash: _flash.flashing.contains('date')),
+                    _DetailRow(
+                        label: 'Vaxt',
+                        value: _fmtTime(event.date),
+                        flash: _flash.flashing.contains('date')),
+                    _DetailRow(
+                        label: 'Yer',
+                        value: event.location,
+                        flash: _flash.flashing.contains('location')),
+                    _DetailRow(
+                        label: 'Əlavələr',
+                        value: event.notes,
+                        last: true,
+                        flash: _flash.flashing.contains('notes')),
                   ],
                 ),
               ),
@@ -1860,7 +1986,7 @@ class _AgreementDetailScreen extends ConsumerWidget {
 // маршрутом) в него уезжали копиями ещё и `allUsers` с обоими списками
 // событий, то есть устаревали не только поля события, но и имена
 // участников.
-class _PersonalEventDetailScreen extends ConsumerWidget {
+class _PersonalEventDetailScreen extends ConsumerStatefulWidget {
   final String eventId;
   final String currentUid;
   final VoidCallback onBack;
@@ -1870,6 +1996,21 @@ class _PersonalEventDetailScreen extends ConsumerWidget {
     required this.currentUid,
     required this.onBack,
   });
+
+  @override
+  ConsumerState<_PersonalEventDetailScreen> createState() =>
+      _PersonalEventDetailScreenState();
+}
+
+class _PersonalEventDetailScreenState
+    extends ConsumerState<_PersonalEventDetailScreen> {
+  final _flash = _RemoteChangeFlash();
+
+  @override
+  void dispose() {
+    _flash.dispose();
+    super.dispose();
+  }
 
   User? _findUser(List<User> allUsers, String uid) {
     try {
@@ -1889,7 +2030,9 @@ class _PersonalEventDetailScreen extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    final currentUid = widget.currentUid;
+    final onBack = widget.onBack;
     final personalEvents =
         ref.watch(personalEventsProvider(currentUid)).asData?.value ?? [];
     final eventsAsParticipant =
@@ -1897,8 +2040,12 @@ class _PersonalEventDetailScreen extends ConsumerWidget {
     final allUsers = ref.watch(allUsersProvider).asData?.value ?? [];
     final firestoreService = ref.read(firestoreServiceProvider);
 
-    final event = _findEvent(eventId, personalEvents, eventsAsParticipant);
+    final event = _findEvent(widget.eventId, personalEvents, eventsAsParticipant);
     if (event == null) return _eventGoneScaffold('Tədbir', onBack);
+
+    _flash.sync(event, () {
+      if (mounted) setState(() {});
+    });
 
     final isOwner = event.ownerUid == currentUid;
     final initiatorUid = isOwner ? currentUid : event.ownerUid;
@@ -1943,6 +2090,7 @@ class _PersonalEventDetailScreen extends ConsumerWidget {
                     allCombinedEvents: [...personalEvents, ...eventsAsParticipant],
                     currentUid: currentUid,
                     firestoreService: firestoreService,
+                    onWillSave: _flash.rememberSelfSave,
                   ),
                 );
               },
@@ -1987,11 +2135,27 @@ class _PersonalEventDetailScreen extends ConsumerWidget {
               ),
               child: Column(
                 children: [
-                  _DetailRow(label: 'Növ', value: event.type),
-                  _DetailRow(label: 'Yer', value: event.location),
-                  _DetailRow(label: 'Tarix', value: _fmtDate(event.date)),
-                  _DetailRow(label: 'Saat', value: _fmtTime(event.date)),
-                  _DetailRow(label: 'Qeyd', value: event.notes, last: true),
+                  _DetailRow(
+                      label: 'Növ',
+                      value: event.type,
+                      flash: _flash.flashing.contains('type')),
+                  _DetailRow(
+                      label: 'Yer',
+                      value: event.location,
+                      flash: _flash.flashing.contains('location')),
+                  _DetailRow(
+                      label: 'Tarix',
+                      value: _fmtDate(event.date),
+                      flash: _flash.flashing.contains('date')),
+                  _DetailRow(
+                      label: 'Saat',
+                      value: _fmtTime(event.date),
+                      flash: _flash.flashing.contains('date')),
+                  _DetailRow(
+                      label: 'Qeyd',
+                      value: event.notes,
+                      last: true,
+                      flash: _flash.flashing.contains('notes')),
                 ],
               ),
             ),
@@ -2179,6 +2343,10 @@ class _EventFormModal extends StatefulWidget {
   final List<PersonalEvent> allCombinedEvents;
   final String currentUid;
   final FirestoreService firestoreService;
+  // Вызывается перед записью и передаёт то, что будет записано. Читатель
+  // ровно один — подсветка чужой правки в карточке; появись у него
+  // читателей ноль, параметр надо удалять, как удалили `onSaved`.
+  final void Function(Map<String, String> willSave)? onWillSave;
 
   const _EventFormModal({
     required this.mode,
@@ -2192,6 +2360,7 @@ class _EventFormModal extends StatefulWidget {
     required this.allCombinedEvents,
     required this.currentUid,
     required this.firestoreService,
+    this.onWillSave,
   });
 
   @override
@@ -2365,6 +2534,17 @@ class _EventFormModalState extends State<_EventFormModal> {
   Future<void> _doSave() async {
     setState(() => _saving = true);
     try {
+      // Объявляем, что собираемся записать, ДО самой записи — иначе
+      // карточка подсветит собственную правку. Firestore отдаёт локальную
+      // запись в поток немедленно, из кеша, не дожидаясь сервера; она
+      // приходит РАНЬШЕ, чем лист успевает закрыться, поэтому вернуть эти
+      // значения результатом маршрута — уже поздно.
+      widget.onWillSave?.call(<String, String>{
+        'type': _type,
+        'date': _selectedDate.toIso8601String(),
+        'location': _location,
+        'notes': _computedNotes,
+      });
       // «Плавающее» гражданское время — НЕ приводить к UTC вместе с
       // отметками момента (N4, тот же случай, что eventDate на чате):
       // время тədbir'а привязано к месту проведения, а не к поясу
