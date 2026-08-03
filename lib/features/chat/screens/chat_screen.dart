@@ -31,6 +31,7 @@ import '../../../core/chat/chat_messages_controller.dart';
 import '../../../core/queue/message_send_controller.dart';
 import '../../../core/settings/image_quality_settings.dart';
 import '../../../core/settings/upload_limit_settings.dart';
+import '../../../core/time/az_date_format.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/presence/presence_service.dart';
 import '../../../firebase/firestore_service.dart';
@@ -907,13 +908,183 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // parties by the recipientAgreed listener in build() below (fires here on
   // this very write, and on the initiator's own screen the moment their
   // live chatMetaProvider stream picks it up) — this just makes the write.
+  // ПОДТВЕРЖДЕНИЕ И ОЖИДАНИЕ (пункт 4 плана).
+  //
+  // Было: один тап писал согласие, и человека немедленно уводило в
+  // «Müqavilələr». Две беды сразу. Первая — тап необратим: договор
+  // создаётся, а отменить его нечем. Вторая тоньше и хуже: договор создаёт
+  // Cloud Function, а не приложение, поэтому в момент ухода его ЕЩЁ НЕТ.
+  // Отработай функция с задержкой или не отработай вовсе — человек уже в
+  // списке, где ничего не появилось, и ни одного слова о причине.
+  //
+  // Стало: спрашиваем до записи, а после записи ЖДЁМ появления договора и
+  // только тогда празднуем и уходим. Не получилось — говорим об этом
+  // прямо, оставаясь на месте.
+  bool _creatingAgreement = false;
+  bool _agreementFailed = false;
+
   Future<void> _acceptJobOffer() async {
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     if (currentUid == null) return;
-    await _firestoreService.acceptJobOffer(
+    if (!await _confirmAccept()) return;
+    if (!mounted) return;
+    setState(() {
+      _creatingAgreement = true;
+      _agreementFailed = false;
+    });
+    // Два РАЗНЫХ отказа, и путать их нельзя. «Согласие не ушло» лечится
+    // повторным нажатием; «согласие ушло, договор не создался» — нет,
+    // повтор ничего не изменит, второй договор на ту же сделку не даст
+    // создать защита в onChatUpdated. Поэтому и текст, и кнопка разные.
+    final written = await _firestoreService.acceptJobOffer(
       chatId: widget.chatId,
       uid: currentUid,
     );
+    if (!mounted) return;
+    if (!written) {
+      setState(() => _creatingAgreement = false);
+      await _showAcceptNotSent();
+      return;
+    }
+    await _waitForAgreement();
+    if (mounted) setState(() => _creatingAgreement = false);
+    if (mounted && _agreementFailed) await _showAgreementFailed();
+  }
+
+  /// Ждём, пока договор действительно появится.
+  ///
+  /// Опрос, а не подписка: ожидание живёт секунды и только здесь, а
+  /// постоянный слушатель на договоры в экране чата стоил бы подписки на
+  /// всё время его жизни ради одного момента.
+  ///
+  /// Двадцать секунд — с запасом к замеру холодного старта функций (2,28 с
+  /// холодная, 0,13 с прогретая, Этап 3). Не дождались — это не «наверное
+  /// ещё идёт», а повод сказать человеку правду.
+  Future<void> _waitForAgreement() async {
+    final deadline = DateTime.now().add(const Duration(seconds: 20));
+    while (DateTime.now().isBefore(deadline)) {
+      if (!mounted) return;
+      if (await _firestoreService.agreementExistsForChat(widget.chatId)) {
+        return;
+      }
+      await Future.delayed(const Duration(milliseconds: 700));
+    }
+    if (mounted) setState(() => _agreementFailed = true);
+  }
+
+  /// Спрашиваем ДО записи: один тап создаёт договор, и отменить его нечем.
+  /// Диалог называет то, о чём договариваются, — дату, тип и место, — а не
+  /// спрашивает «вы уверены?» в пустоту.
+  Future<bool> _confirmAccept() async {
+    final meta = ref.read(chatMetaProvider(widget.chatId)).value;
+    final dateRaw = meta?['eventDate'] as String?;
+    final type = (meta?['eventType'] as String?) ?? '';
+    final place = (meta?['eventLocation'] as String?) ?? '';
+    final what = [
+      if (type.isNotEmpty) type,
+      if (dateRaw != null && fmtEventDate(dateRaw).isNotEmpty)
+        '${fmtEventDate(dateRaw)} ${fmtEventTime(dateRaw)}'.trim(),
+      if (place.isNotEmpty) place,
+    ].join(' · ');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        title: const Text('Müqavilə yaradılacaq', style: TextStyle(color: kText)),
+        content: Text(
+          what.isEmpty
+              ? 'Razılaşdıqdan sonra müqavilə yaradılacaq.'
+              : '$what\n\nRazılaşdıqdan sonra müqavilə yaradılacaq.',
+          style: const TextStyle(color: kMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Geri', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Razıyam', style: TextStyle(color: kGold)),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  /// Согласие НЕ дошло до базы — сеть оборвалась в момент нажатия.
+  ///
+  /// Отдельный текст и отдельная кнопка: здесь повтор осмыслен и нужен, в
+  /// отличие от случая «согласие ушло, договор не создался». Сказать
+  /// человеку «ваше согласие записано», когда оно не записано, значило бы
+  /// соврать ровно в том месте, где он должен решить, нажимать ли снова.
+  Future<void> _showAcceptNotSent() async {
+    final again = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        title: const Text('Razılıq göndərilmədi',
+            style: TextStyle(color: kText)),
+        content: const Text(
+          'Bağlantı yoxdur deyə razılığınız yazılmadı. '
+          'Yenidən cəhd edin.',
+          style: TextStyle(color: kMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Bağla', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Yenidən cəhd et',
+                style: TextStyle(color: kGold)),
+          ),
+        ],
+      ),
+    );
+    if (again == true && mounted) await _acceptJobOffer();
+  }
+
+  /// Договор не появился за отведённое время.
+  ///
+  /// «Yenidən yoxla», а не «повторить»: согласие УЖЕ записано, повторять
+  /// его нельзя — второй договор на ту же сделку как раз и не даёт
+  /// создать защита в onChatUpdated. Проверить заново честно: функция
+  /// могла отработать позже.
+  Future<void> _showAgreementFailed() async {
+    final again = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        title: const Text('Müqavilə hələ yaradılmayıb',
+            style: TextStyle(color: kText)),
+        content: const Text(
+          'Razılığınız yazıldı, amma müqavilə hələ görünmür. '
+          'Bir azdan yenidən yoxlayın.',
+          style: TextStyle(color: kMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Bağla', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Yenidən yoxla', style: TextStyle(color: kGold)),
+          ),
+        ],
+      ),
+    );
+    if (again == true && mounted) {
+      setState(() {
+        _creatingAgreement = true;
+        _agreementFailed = false;
+      });
+      await _waitForAgreement();
+      if (mounted) setState(() => _creatingAgreement = false);
+      if (mounted && _agreementFailed) await _showAgreementFailed();
+    }
   }
 
   void _recipientTappedAcceptTooEarly() {
@@ -1077,18 +1248,43 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                         ),
                       )
                     : ElevatedButton(
-                        onPressed: eventDate == null
-                            ? _recipientTappedAcceptTooEarly
-                            : _acceptJobOffer,
+                        // Пока договор создаётся, кнопка занята и об этом
+                        // сказано: раньше человек уходил в «Müqavilələr»
+                        // раньше, чем договор появлялся, и при неудаче
+                        // функции приходил в пустой список без объяснений.
+                        onPressed: _creatingAgreement
+                            ? null
+                            : (eventDate == null
+                                ? _recipientTappedAcceptTooEarly
+                                : _acceptJobOffer),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: eventDate == null ? kBg3 : kGold,
+                          disabledBackgroundColor: kBg3,
                         ),
-                        child: Text(
-                          '✅ Razıyam',
-                          style: TextStyle(
-                            color: eventDate == null ? kMuted : Colors.black,
-                          ),
-                        ),
+                        child: _creatingAgreement
+                            ? const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: kGold,
+                                    ),
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text('Müqavilə yaradılır…',
+                                      style: TextStyle(color: kMuted)),
+                                ],
+                              )
+                            : Text(
+                                '✅ Razıyam',
+                                style: TextStyle(
+                                  color:
+                                      eventDate == null ? kMuted : Colors.black,
+                                ),
+                              ),
                       ),
               ),
               const SizedBox(width: 8),
@@ -3987,7 +4183,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // that only fires while mounted. Agreed takes priority over a stale
     // pending-date nudge if somehow both are unseen at once (agreed is the
     // terminal state for this round).
+    // Поздравление откладывается, пока договор создаётся или не создался:
+    // праздновать нечего, пока его нет, а уводить человека в
+    // «Müqavilələr» — тем более. Признак durable-триггера при этом не
+    // трогается, отметка «просмотрено» не ставится, поэтому окно не
+    // теряется: оно покажется, как только договор появится.
     if (recipientAgreedAt != null &&
+        !_creatingAgreement &&
+        !_agreementFailed &&
         (mySeenAt == null || recipientAgreedAt.isAfter(mySeenAt)) &&
         _recipientAgreedSeenScheduledRaw != recipientAgreedAtRaw) {
       // Set synchronously, in build() itself, BEFORE the
@@ -3997,8 +4200,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // "handled" rather than re-deriving the same stale "unseen" verdict.
       _recipientAgreedSeenScheduledRaw = recipientAgreedAtRaw;
       final isInitiatorForCelebration = isInitiatorForNotify;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted || _negotiationDialogShowing) return;
+        // ДОГОВОР ДОЛЖЕН СУЩЕСТВОВАТЬ. Проверка здесь, а не только во
+        // флаге ожидания: флаг живёт в состоянии экрана и умирает вместе
+        // с ним. Человек, нажавший «Razıyam» и вышедший из чата не
+        // дождавшись, возвращается с чистым состоянием — и его
+        // поздравляли бы с уходом в «Müqavilələr» даже тогда, когда
+        // функция не отработала вовсе. Инициатора это касается тем же
+        // образом: он ничего не нажимал, флага у него нет никогда.
+        //
+        // Не показали — «просмотрено» НЕ ставим и признак планирования
+        // сбрасываем: окно durable, оно покажется на следующей
+        // перерисовке, как только договор появится.
+        final ready =
+            await _firestoreService.agreementExistsForChat(widget.chatId);
+        if (!mounted) return;
+        if (!ready) {
+          _recipientAgreedSeenScheduledRaw = null;
+          return;
+        }
+        if (_negotiationDialogShowing) return;
         _negotiationDialogShowing = true;
         final otherName = _otherUserCached?.name ?? '';
         _showCenteredAlert(

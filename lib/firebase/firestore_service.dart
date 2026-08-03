@@ -3330,7 +3330,14 @@ class FirestoreService {
   // rule requires the creator to become ownerUid — which must stay the
   // initiator, not whoever accepts. Doing this server-side with the Admin
   // SDK is what makes that possible without loosening that rule.
-  Future<void> acceptJobOffer({
+  /// Возвращает `true`, если согласие ДОШЛО до базы.
+  ///
+  /// Раньше метод глотал исключение молча, и экран не мог отличить «не
+  /// записалось» от «записалось». А это разные вещи и разные действия
+  /// человека: в первом случае нажать надо ещё раз, во втором нельзя —
+  /// второй договор на ту же сделку не даст создать защита в
+  /// `onChatUpdated`, и повтор просто ничего не изменит.
+  Future<bool> acceptJobOffer({
     required String chatId,
     required String uid,
   }) async {
@@ -3344,6 +3351,7 @@ class FirestoreService {
         // и условие срабатывания функции разом.
         'roundStep': 'agreed',
       }).timeout(_writeTimeout);
+      return true;
     } catch (e, st) {
       debugPrint('\u274c acceptJobOffer failed: $e');
       FirebaseCrashlytics.instance.recordError(
@@ -3351,6 +3359,7 @@ class FirestoreService {
         st,
         reason: 'FirestoreService: acceptJobOffer failed',
       );
+      return false;
     }
   }
 
@@ -3538,6 +3547,26 @@ class FirestoreService {
 
   Future<void> updatePersonalEvent(String eventId, Map<String, dynamic> data) {
     return _db.collection('personalEvents').doc(eventId).update(data).timeout(_writeTimeout);
+  }
+
+  /// Есть ли уже договор, созданный из этого чата.
+  ///
+  /// Нужен для ожидания после «Razıyam»: сам договор создаёт Cloud
+  /// Function (`onChatUpdated`), а не приложение, поэтому в момент записи
+  /// согласия его ещё нет. Раньше человека уводили в «Müqavilələr»
+  /// немедленно — и при неудаче функции он приходил в список, где ничего
+  /// не появилось, без единого слова о том, что пошло не так.
+  ///
+  /// Запрос по одному равенству: составной индекс для него не нужен
+  /// (правило из N15), автоматических одиночных достаточно. Читать вправе
+  /// обе стороны — получатель числится в `musicians`.
+  Future<bool> agreementExistsForChat(String chatId) async {
+    final snap = await _db
+        .collection('personalEvents')
+        .where('agreementChatId', isEqualTo: chatId)
+        .limit(1)
+        .get();
+    return snap.docs.isNotEmpty;
   }
 
   /// Удалить мероприятие — у ВСЕХ. Правила разрешают это только
