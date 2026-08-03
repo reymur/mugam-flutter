@@ -30,6 +30,7 @@ import {
   eventWallClock,
   BAKU_OFFSET_MS,
 } from "./eventNotifications";
+import { planOfferPushes } from "./jobOfferNotifications";
 import { RtcRole, RtcTokenBuilder } from "agora-token";
 import { algoliasearch } from "algoliasearch";
 import { randomUUID } from "crypto";
@@ -1389,6 +1390,13 @@ export const onChatUpdated = onDocumentUpdated(
       partnerUid: recipientUid,
       partnerName: recipientName,
       status: "agreed",
+      // Признак автора: договор родился из СОГЛАСИЯ получателя. Без него
+      // автором считался владелец-инициатор, получатель попадал в
+      // «добавленные участники» и сразу после собственного нажатия
+      // «Razıyam» получал «Tədbirə əlavə olundunuz». Обе стороны и так
+      // узнают о сделке поздравлением, а инициатор ещё и push'ем.
+      lastActionBy: recipientUid,
+      lastActionType: "agreed",
       // Отмена по согласию: четыре поля вместо прежнего одного cancelledBy.
       // Каждое отвечает на один вопрос — кто предложил, когда предложил,
       // кто подтвердил, когда отменён. Прежнее имя врало по смыслу: при
@@ -2142,6 +2150,11 @@ export const onPersonalEventCreated = onDocumentCreated(
     if (!snap) return;
     if (!(await claimNotificationOnce(event.id))) return;
     const after = toEventSnapshot(snap.data());
+    // Договор из согласованного предложения — молчим. Обе стороны уже
+    // узнали: обе видят поздравительное окно, инициатор получает
+    // «İş təklifi qəbul edildi». Уведомление «вас добавили» пришло бы
+    // получателю сразу после его же нажатия «Razıyam».
+    if (after.lastActionType === "agreed") return;
     const actor = after.lastActionBy ?? after.ownerUid;
     const actorName = await displayName(actor);
 
@@ -2311,5 +2324,81 @@ export const remindUpcomingEventsHourly = onSchedule(
           pushReminder(uid, doc.id, e, w.kind, hoursLeft)));
       }
     }
+  },
+);
+
+// Уведомления по раунду «İş təklif et» — второй стороне (пункт 5 плана).
+//
+// ОТДЕЛЬНАЯ функция, а не ветка в onChatUpdated, и это то же решение, что
+// принято в A3 при отказе сливать функции: изоляция важнее экономии
+// вызовов. Исключение в пути уведомлений не должно ронять создание
+// договора — а оно живёт в onChatUpdated и является несущим.
+//
+// Цена изоляции посчитана там же: ~340 обновлений документа чата в сутки,
+// то есть плюс столько же вызовов при бесплатном лимите 2 млн в месяц.
+export const onJobOfferRoundChanged = onDocumentUpdated(
+  { document: "chats/{chatId}", region: FUNCTIONS_REGION },
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after) return;
+
+    const members: string[] = Array.isArray(after.members)
+      ? (after.members as string[])
+      : [];
+    if (members.length === 0) return;
+
+    const args = {
+      chatId: event.params.chatId,
+      before: before as never,
+      after: after as never,
+      members,
+    };
+    // Сначала ДЁШЕВО выясняем, есть ли что слать: имя автора требует
+    // чтения документа пользователя, а этот триггер поднимается на каждое
+    // обновление горячего документа чата (A3, ~340 в сутки). Имя
+    // подставляется вторым проходом — тексты собираются уже с ним.
+    if (planOfferPushes({ ...args, actorName: "" }).length === 0) return;
+    if (!(await claimNotificationOnce(event.id))) return;
+
+    const actor =
+      (after.cancelledBy as string) ??
+      (after.jobOfferBy as string) ??
+      (before.jobOfferBy as string) ?? "";
+    const actorName = await displayName(actor);
+    const pushes = planOfferPushes({ ...args, actorName });
+
+    const nowMs = Date.now();
+    await Promise.all(pushes.map(async (p) => {
+      try {
+        const userSnap = await db.collection("users").doc(p.uid).get();
+        const userData = userSnap.data();
+        const lastSeen = userData?.lastSeen;
+        const lastSeenMs =
+          lastSeen && typeof lastSeen.toMillis === "function"
+            ? lastSeen.toMillis() : null;
+        // Подавление РОДНЫМ признаком чата: здесь вопрос «смотрит ли он в
+        // этот чат», и на него отвечает activeChatId — тот самый механизм,
+        // что глушит push о новом сообщении. Второго заводить незачем.
+        const watching = isWatchingChatDecision({
+          userData,
+          chatId: event.params.chatId,
+          activeUsers: Array.isArray(after.activeUsers)
+            ? (after.activeUsers as string[]) : [],
+          uid: p.uid,
+          lastSeenMs,
+          nowMs,
+        });
+        if (watching) {
+          logger.info("[offer-push] смотрит чат, молчим",
+            { uid: p.uid, type: p.data.type });
+          return;
+        }
+        logger.info("[offer-push] шлём", { uid: p.uid, type: p.data.type });
+        await sendPushToUid(p.uid, p.title, p.body, p.data);
+      } catch (e) {
+        logger.warn("[offer-push] отправка не удалась", { uid: p.uid, e });
+      }
+    }));
   },
 );

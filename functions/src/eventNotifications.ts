@@ -26,7 +26,10 @@ export type EventActionType =
   | "edited"
   | "replaced"
   | "deleted"
-  | "left";
+  | "left"
+  // Договор, рождённый из согласованного предложения. Уведомлений не
+  // порождает вовсе: обе стороны узнают о сделке другим путём.
+  | "agreed";
 
 /** Поля мероприятия, значимые для уведомления. */
 export interface EventSnapshot {

@@ -209,10 +209,40 @@ class _MugamAppState extends ConsumerState<MugamApp> {
     });
     PushNotificationService.instance.setupForegroundPresentation();
     CallKitService.instance.ensureListening(FirestoreService());
+    // Куда ведёт тап по уведомлению.
+    //
+    // Раньше открывался только чат и только для нового сообщения, а все
+    // прочие типы молча не делали ничего. Уведомление, которое никуда не
+    // ведёт, хуже его отсутствия: человек тапает, ничего не происходит, и
+    // он перестаёт им доверять.
+    //
+    // Мероприятия ведут в «Müqavilələr», а не в саму карточку, и это
+    // намеренно у ДВУХ типов из списка: у того, кого убрали из
+    // мероприятия, и у того, чьё мероприятие удалили, карточка больше не
+    // читается по правилам — переход вернул бы отказ. Признак приходит с
+    // сервера полем `openList`, чтобы клиент не повторял у себя правило
+    // доступа и не разошёлся с ним.
     PushNotificationService.instance.setupMessageOpenedHandler((data) {
+      final type = data['type'] ?? '';
       final chatId = data['chatId'];
-      if (data['type'] == 'new_message' && chatId != null) {
+      const chatTypes = {
+        'new_message',
+        'job_offer_created',
+        'job_offer_changed',
+        'job_offer_cancelled',
+        'job_offer_agreed',
+        'job_offer_waiting_date',
+      };
+      if (chatTypes.contains(type) && chatId != null) {
+        // Открывается чат целиком, а не какое-то состояние в нём: к
+        // моменту тапа предложение могло быть уже принято или отменено,
+        // и экран честно покажет то, что есть СЕЙЧАС — переписку и
+        // плашку по текущему состоянию, без пустого экрана и без ошибки.
         appRouter.push('/chat/$chatId');
+        return;
+      }
+      if (type.startsWith('event_')) {
+        appRouter.push('/agreements');
       }
     });
     // Eagerly instantiate the offline send retry loop at startup (not
