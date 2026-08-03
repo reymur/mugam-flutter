@@ -111,8 +111,11 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   String _mainView = 'calendar'; // 'agreements' | 'calendar' | 'tedbirler'
   String _activeTab = 'outgoing';
   String _tedbirTab = 'hamisi';
-  PersonalEvent? _selectedAgreement;
-  PersonalEvent? _tedbirDetail;
+  // Только id, а не сам объект (N23): карточка достаёт живую запись из
+  // потока сама. Хранить здесь `PersonalEvent` — значит снова заморозить
+  // снимок на всё время, пока карточка открыта.
+  String? _selectedAgreementId;
+  String? _tedbirDetailId;
   DateTime? _tedbirFilterDate;
   DateTime _currentCalendarMonth = DateTime(
     DateTime.now().year,
@@ -305,26 +308,18 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     }
 
     // If a detail screen is showing, render it on top
-    if (_selectedAgreement != null) {
+    if (_selectedAgreementId != null) {
       return _AgreementDetailScreen(
-        event: _selectedAgreement!,
+        eventId: _selectedAgreementId!,
         currentUid: uid,
-        personalEvents: personalEvents,
-        eventsAsParticipant: eventsAsParticipant,
-        allUsers: allUsers,
-        firestoreService: ref.read(firestoreServiceProvider),
-        onBack: () => setState(() => _selectedAgreement = null),
+        onBack: () => setState(() => _selectedAgreementId = null),
       );
     }
-    if (_tedbirDetail != null) {
+    if (_tedbirDetailId != null) {
       return _PersonalEventDetailScreen(
-        event: _tedbirDetail!,
+        eventId: _tedbirDetailId!,
         currentUid: uid,
-        personalEvents: personalEvents,
-        eventsAsParticipant: eventsAsParticipant,
-        allUsers: allUsers,
-        firestoreService: ref.read(firestoreServiceProvider),
-        onBack: () => setState(() => _tedbirDetail = null),
+        onBack: () => setState(() => _tedbirDetailId = null),
       );
     }
 
@@ -637,7 +632,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     return GestureDetector(
       onTap: () async {
         await _markRead(e);
-        setState(() => _selectedAgreement = e);
+        setState(() => _selectedAgreementId = e.id);
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
@@ -1156,7 +1151,6 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         allCombinedEvents: allCombined,
         currentUid: _uid,
         firestoreService: ref.read(firestoreServiceProvider),
-        onSaved: () {},
       ),
     );
   }
@@ -1236,7 +1230,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                             isOwn: t.isOwn,
                             currentUid: _uid,
                             allUsers: allUsersList,
-                            onTap: () => setState(() => _tedbirDetail = t.event),
+                            onTap: () => setState(() => _tedbirDetailId = t.event.id),
                           ),
                         );
                       },
@@ -1592,26 +1586,73 @@ class _PartyRow extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // AgreementDetail screen
 // ---------------------------------------------------------------------------
-class _AgreementDetailScreen extends StatelessWidget {
-  final PersonalEvent event;
+// Обе карточки ниже ищут своё событие так: сначала среди собственных, потом
+// среди тех, где человек участник. Дедупликация не нужна — берём первое
+// совпадение, а id уникален на всю базу.
+PersonalEvent? _findEvent(
+  String id,
+  List<PersonalEvent> own,
+  List<PersonalEvent> asParticipant,
+) {
+  for (final e in own) {
+    if (e.id == id) return e;
+  }
+  for (final e in asParticipant) {
+    if (e.id == id) return e;
+  }
+  return null;
+}
+
+// Событие исчезло, пока карточка открыта: владелец удалил его с другого
+// устройства. Отменённое сюда не попадает — у отменённого документ на
+// месте, меняется только `status`. Пустой экран с рабочей кнопкой «назад»
+// честнее, чем последний снимок: показывать нечего, а держать на экране
+// то, чего в базе уже нет, — ровно тот дефект, который здесь чинится.
+Widget _eventGoneScaffold(String title, VoidCallback onBack) {
+  return Scaffold(
+    backgroundColor: kBg,
+    appBar: AppBar(
+      backgroundColor: kBg2,
+      title: Text(title, style: GoogleFonts.nunito(color: kGold, fontSize: 18)),
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back, color: kGold),
+        onPressed: onBack,
+      ),
+    ),
+    body: const Center(
+      child: Text('Bu qeyd artıq mövcud deyil',
+          style: TextStyle(color: Colors.white70)),
+    ),
+  );
+}
+
+// Принимает **id договора, а не сам договор** — намеренно (N23). Прежняя
+// подпись брала `PersonalEvent event` копией из конструктора, и экран
+// показывал снимок, с которым его открыли: правка сохранялась в базу
+// верно, но на экране оставалось прежнее значение до выхода и повторного
+// захода. Провайдер при этом всё время был живым — не слушала его сама
+// карточка.
+//
+// Поэтому чинится не «добавить обновление после сохранения», а так, чтобы
+// копию сюда нельзя было передать вообще: договор ищется по id в потоке
+// на каждой перерисовке. Четвёртая точка входа, если появится, не сможет
+// повторить дефект — передать нечего, кроме id.
+//
+// Лишней подписки это не создаёт: `personalEventsProvider(uid)` уже
+// слушает родительский экран, а Riverpod на одинаковый аргумент семейства
+// отдаёт ту же самую.
+class _AgreementDetailScreen extends ConsumerWidget {
+  final String eventId;
   final String currentUid;
-  final List<PersonalEvent> personalEvents;
-  final List<PersonalEvent> eventsAsParticipant;
-  final List<User> allUsers;
-  final FirestoreService firestoreService;
   final VoidCallback onBack;
 
   const _AgreementDetailScreen({
-    required this.event,
+    required this.eventId,
     required this.currentUid,
-    required this.personalEvents,
-    required this.eventsAsParticipant,
-    required this.allUsers,
-    required this.firestoreService,
     required this.onBack,
   });
 
-  User? _findUser(String uid) {
+  User? _findUser(List<User> allUsers, String uid) {
     try {
       return allUsers.firstWhere((m) => m.id == uid);
     } catch (_) {
@@ -1619,8 +1660,8 @@ class _AgreementDetailScreen extends StatelessWidget {
     }
   }
 
-  void _openUserProfile(BuildContext context, String? uid) {
-    final u = uid == null ? null : _findUser(uid);
+  void _openUserProfile(BuildContext context, List<User> allUsers, String? uid) {
+    final u = uid == null ? null : _findUser(allUsers, uid);
     if (u == null) return;
     Navigator.push(
       context,
@@ -1629,7 +1670,17 @@ class _AgreementDetailScreen extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final personalEvents =
+        ref.watch(personalEventsProvider(currentUid)).asData?.value ?? [];
+    final eventsAsParticipant =
+        ref.watch(eventsAsParticipantProvider(currentUid)).asData?.value ?? [];
+    final allUsers = ref.watch(allUsersProvider).asData?.value ?? [];
+    final firestoreService = ref.read(firestoreServiceProvider);
+
+    final event = _findEvent(eventId, personalEvents, eventsAsParticipant);
+    if (event == null) return _eventGoneScaffold('Müqavilə', onBack);
+
     final isCancelled = event.status == 'cancelled';
     final isOwner = event.ownerUid == currentUid;
 
@@ -1698,7 +1749,6 @@ class _AgreementDetailScreen extends StatelessWidget {
                     allCombinedEvents: [...personalEvents, ...eventsAsParticipant],
                     currentUid: currentUid,
                     firestoreService: firestoreService,
-                    onSaved: () {},
                   ),
                 );
               },
@@ -1759,7 +1809,7 @@ class _AgreementDetailScreen extends StatelessWidget {
                         ? 'İmtina etdi'
                         : 'Göndərən (Təklif edən)',
                     highlighted: event.ownerUid == currentUid,
-                    onTap: () => _openUserProfile(context, event.ownerUid),
+                    onTap: () => _openUserProfile(context, allUsers, event.ownerUid),
                   ),
                   const Divider(color: kBorder, height: 1),
                   _PartyRow(
@@ -1768,7 +1818,7 @@ class _AgreementDetailScreen extends StatelessWidget {
                         ? 'İmtina etdi'
                         : 'Qəbul edən',
                     highlighted: event.ownerUid != currentUid,
-                    onTap: () => _openUserProfile(context, event.partnerUid),
+                    onTap: () => _openUserProfile(context, allUsers, event.partnerUid),
                   ),
                 ],
               ),
@@ -1804,26 +1854,24 @@ class _AgreementDetailScreen extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // PersonalEventDetail screen
 // ---------------------------------------------------------------------------
-class _PersonalEventDetailScreen extends StatelessWidget {
-  final PersonalEvent event;
+// По id, а не копией, — по той же причине, что и карточка договора выше
+// (N23). У этого экрана дефект был тот же и вдобавок шире: через
+// `Navigator.push` (единственная точка входа, где карточка живёт своим
+// маршрутом) в него уезжали копиями ещё и `allUsers` с обоими списками
+// событий, то есть устаревали не только поля события, но и имена
+// участников.
+class _PersonalEventDetailScreen extends ConsumerWidget {
+  final String eventId;
   final String currentUid;
-  final List<PersonalEvent> personalEvents;
-  final List<PersonalEvent> eventsAsParticipant;
-  final List<User> allUsers;
-  final FirestoreService firestoreService;
   final VoidCallback onBack;
 
   const _PersonalEventDetailScreen({
-    required this.event,
+    required this.eventId,
     required this.currentUid,
-    required this.personalEvents,
-    required this.eventsAsParticipant,
-    required this.allUsers,
-    required this.firestoreService,
     required this.onBack,
   });
 
-  User? _findUser(String uid) {
+  User? _findUser(List<User> allUsers, String uid) {
     try {
       return allUsers.firstWhere((m) => m.id == uid);
     } catch (_) {
@@ -1831,8 +1879,8 @@ class _PersonalEventDetailScreen extends StatelessWidget {
     }
   }
 
-  void _openUserProfile(BuildContext context, String? uid) {
-    final u = uid == null ? null : _findUser(uid);
+  void _openUserProfile(BuildContext context, List<User> allUsers, String? uid) {
+    final u = uid == null ? null : _findUser(allUsers, uid);
     if (u == null) return;
     Navigator.push(
       context,
@@ -1841,10 +1889,20 @@ class _PersonalEventDetailScreen extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final personalEvents =
+        ref.watch(personalEventsProvider(currentUid)).asData?.value ?? [];
+    final eventsAsParticipant =
+        ref.watch(eventsAsParticipantProvider(currentUid)).asData?.value ?? [];
+    final allUsers = ref.watch(allUsersProvider).asData?.value ?? [];
+    final firestoreService = ref.read(firestoreServiceProvider);
+
+    final event = _findEvent(eventId, personalEvents, eventsAsParticipant);
+    if (event == null) return _eventGoneScaffold('Tədbir', onBack);
+
     final isOwner = event.ownerUid == currentUid;
     final initiatorUid = isOwner ? currentUid : event.ownerUid;
-    final initiator = _findUser(initiatorUid);
+    final initiator = _findUser(allUsers, initiatorUid);
     final initiatorName = initiator?.name ?? (isOwner ? 'Siz' : event.partnerName ?? 'Naməlum');
     final initiatorInstrument = initiator?.instrument ?? '';
 
@@ -1885,7 +1943,6 @@ class _PersonalEventDetailScreen extends StatelessWidget {
                     allCombinedEvents: [...personalEvents, ...eventsAsParticipant],
                     currentUid: currentUid,
                     firestoreService: firestoreService,
-                    onSaved: () {},
                   ),
                 );
               },
@@ -1900,7 +1957,7 @@ class _PersonalEventDetailScreen extends StatelessWidget {
             // Initiator pill
             Center(
               child: GestureDetector(
-                onTap: () => _openUserProfile(context, initiatorUid),
+                onTap: () => _openUserProfile(context, allUsers, initiatorUid),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   decoration: BoxDecoration(
@@ -1952,10 +2009,10 @@ class _PersonalEventDetailScreen extends StatelessWidget {
                   border: Border.all(color: kBorder),
                 ),
                 child: _PartyRow(
-                  name: _findUser(event.ownerUid)?.name ?? event.partnerName ?? 'Naməlum',
+                  name: _findUser(allUsers, event.ownerUid)?.name ?? event.partnerName ?? 'Naməlum',
                   label: 'Təşkilatçı',
                   highlighted: false,
-                  onTap: () => _openUserProfile(context, event.ownerUid),
+                  onTap: () => _openUserProfile(context, allUsers, event.ownerUid),
                 ),
               ),
             ],
@@ -1977,10 +2034,10 @@ class _PersonalEventDetailScreen extends StatelessWidget {
                     for (int i = 0; i < event.participantUids.length; i++) ...[
                       if (i > 0) const Divider(color: kBorder, height: 1),
                       _PartyRow(
-                        name: _findUser(event.participantUids[i])?.name ?? event.participantUids[i],
-                        label: _findUser(event.participantUids[i])?.instrument ?? 'İştirakçı',
+                        name: _findUser(allUsers, event.participantUids[i])?.name ?? event.participantUids[i],
+                        label: _findUser(allUsers, event.participantUids[i])?.instrument ?? 'İştirakçı',
                         highlighted: event.participantUids[i] == currentUid,
-                        onTap: () => _openUserProfile(context, event.participantUids[i]),
+                        onTap: () => _openUserProfile(context, allUsers, event.participantUids[i]),
                       ),
                     ],
                   ],
@@ -2002,19 +2059,16 @@ class _ConflictEventScreen extends StatefulWidget {
   final PersonalEvent event;
   final String categoryTitle;
   final String currentUid;
-  final List<PersonalEvent> personalEvents;
-  final List<PersonalEvent> eventsAsParticipant;
   final List<User> allUsers;
-  final FirestoreService firestoreService;
 
+  // Списки событий и FirestoreService отсюда убраны вместе с переводом
+  // карточки на id (N23): они существовали только чтобы уехать копиями в
+  // _PersonalEventDetailScreen, а тот теперь берёт всё из потока сам.
   const _ConflictEventScreen({
     required this.event,
     required this.categoryTitle,
     required this.currentUid,
-    required this.personalEvents,
-    required this.eventsAsParticipant,
     required this.allUsers,
-    required this.firestoreService,
   });
 
   @override
@@ -2094,12 +2148,8 @@ class _ConflictEventScreenState extends State<_ConflictEventScreen> {
                   onTap: () {
                     Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => _PersonalEventDetailScreen(
-                        event: widget.event,
+                        eventId: widget.event.id,
                         currentUid: widget.currentUid,
-                        personalEvents: widget.personalEvents,
-                        eventsAsParticipant: widget.eventsAsParticipant,
-                        allUsers: widget.allUsers,
-                        firestoreService: widget.firestoreService,
                         onBack: () => Navigator.of(context).pop(),
                       ),
                     ));
@@ -2129,7 +2179,6 @@ class _EventFormModal extends StatefulWidget {
   final List<PersonalEvent> allCombinedEvents;
   final String currentUid;
   final FirestoreService firestoreService;
-  final VoidCallback onSaved;
 
   const _EventFormModal({
     required this.mode,
@@ -2143,7 +2192,6 @@ class _EventFormModal extends StatefulWidget {
     required this.allCombinedEvents,
     required this.currentUid,
     required this.firestoreService,
-    required this.onSaved,
   });
 
   @override
@@ -2256,14 +2304,7 @@ class _EventFormModalState extends State<_EventFormModal> {
           event: conflict,
           categoryTitle: categoryTitle,
           currentUid: widget.currentUid,
-          personalEvents: widget.allCombinedEvents
-              .where((e) => e.ownerUid == widget.currentUid)
-              .toList(),
-          eventsAsParticipant: widget.allCombinedEvents
-              .where((e) => e.ownerUid != widget.currentUid)
-              .toList(),
           allUsers: widget.allUsers,
-          firestoreService: widget.firestoreService,
         ),
       ));
       // User returned back — re-show conflict dialog recursively
@@ -2348,7 +2389,6 @@ class _EventFormModalState extends State<_EventFormModal> {
           participantUids: _selectedParticipantUids,
         );
       }
-      widget.onSaved();
       if (mounted) Navigator.of(context).pop();
     } catch (e, st) {
       if (mounted) {
