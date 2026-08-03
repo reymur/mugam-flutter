@@ -20,6 +20,16 @@ const base = {
   cancelledBy: null as string | null,
 };
 
+// Состояние чата ПОСЛЕ состоявшейся сделки: jobOfferBy остаётся стоять,
+// его очищает только отмена. Это и есть обычное `before` для нового
+// предложения — а вовсе не пустой документ.
+const prevRound = {
+  ...base,
+  jobOfferAt: "2026-08-03T14:05:52.629597Z",
+  eventDate: "2026-08-10T17:20:00.000",
+  recipientAgreed: true,
+};
+
 describe("переход даты", () => {
   it("другой день — видно, что день другой, а не только час", () => {
     assert.equal(
@@ -66,10 +76,13 @@ describe("переход даты", () => {
 });
 
 describe("что уходит второй стороне", () => {
-  it("предложение появилось — получателю, с предметом сделки", () => {
+  // ОБЫЧНЫЙ случай — новое предложение в чате, где раунд уже был. Живая
+  // система работает во второй и последующие разы; «первый раз за всю
+  // жизнь чата» случается однократно и проверяется отдельно ниже.
+  it("новое предложение в чате, где раунд уже был", () => {
     const p = planOfferPushes({
       chatId: "c1",
-      before: { jobOfferBy: null, jobOfferAt: null },
+      before: prevRound,
       after: base,
       members: MEMBERS,
       actorName: "Rafael",
@@ -85,7 +98,7 @@ describe("что уходит второй стороне", () => {
   it("НЕ уходит автору: инициатор своё предложение не получает", () => {
     const p = planOfferPushes({
       chatId: "c1",
-      before: { jobOfferBy: null, jobOfferAt: null },
+      before: prevRound,
       after: base,
       members: MEMBERS,
       actorName: "Rafael",
@@ -94,26 +107,18 @@ describe("что уходит второй стороне", () => {
   });
 
 
-  it("ВТОРОЕ предложение в том же чате — тоже «Yeni iş təklifi»", () => {
-    // Найдено живым прогоном 04.08. jobOfferBy между раундами НЕ
-    // очищается: после состоявшейся сделки он остаётся стоять. Прежний
-    // тест сеял `before: { jobOfferBy: null }` — то есть проверял первое
-    // в истории чата предложение, а не обычное, и дефект пропустил.
-    const prevRound = {
-      ...base,
-      jobOfferAt: "2026-08-03T14:05:52.629597Z",
-      eventDate: "2026-08-10T17:20:00.000",
-      recipientAgreed: true,
-    };
+  it("первое предложение в истории чата — тот же результат", () => {
+    // Отдельным тестом, а НЕ вместо обычного: пустое before это почти
+    // всегда «первый раз за всю жизнь», и построенный из него тест
+    // проверяет исключение, выдавая себя за правило.
     const p = planOfferPushes({
       chatId: "c1",
-      before: prevRound,
-      after: { ...base, recipientAgreed: false },
+      before: { jobOfferBy: null, jobOfferAt: null },
+      after: base,
       members: MEMBERS,
       actorName: "Rafael",
     });
     assert.equal(p.length, 1);
-    assert.equal(p[0].uid, RECIP);
     assert.equal(p[0].title, "Yeni iş təklifi");
   });
 
