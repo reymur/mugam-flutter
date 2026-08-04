@@ -2902,21 +2902,38 @@ class _EventFormModalState extends State<_EventFormModal> {
     return ok == true;
   }
 
+  // Единственная запись состава, который человек задаёт РУКАМИ. Дорог к
+  // ней две — диалог выбора и крестик на фишке, — и обе обязаны идти
+  // сюда: `_explicitlyRemoved` живёт только на клиенте, за ним нет
+  // правила на сервере, которое отвергло бы неверный ход. Такое
+  // состояние по путям не размножают (правило «клиентское состояние без
+  // сервера за спиной», AUDIT_TODO.md): крестик писал только
+  // `_selectedParticipantUids`, и перенос из конфликта возвращал
+  // человека обратно внутри того же кадра — фишка исчезала и появлялась,
+  // кнопка выглядела сломанной (N35).
+  //
+  // Третий путь дописать мимо не выйдет: сторож по исходникам
+  // (test/source_invariants_test.dart) требует, чтобы `_explicitlyRemoved`
+  // пополнялся ровно здесь.
+  void _applyParticipantSelection(List<String> uids) {
+    setState(() {
+      // Кого человек убрал руками — запоминаем: перенос из
+      // конфликтующего мероприятия не должен возвращать его обратно.
+      for (final gone in _selectedParticipantUids) {
+        if (!uids.contains(gone)) _explicitlyRemoved.add(gone);
+      }
+      _explicitlyRemoved.removeAll(uids);
+      _mergedFromConflict.removeWhere((u) => !uids.contains(u));
+      _selectedParticipantUids = uids;
+    });
+  }
+
   Future<void> _openParticipantPicker() async {
     await showDialog(
       context: context,
       builder: (_) => _ParticipantPickerDialog(
         selectedUids: _selectedParticipantUids,
-        onChanged: (uids) => setState(() {
-          // Кого человек убрал руками — запоминаем: перенос из
-          // конфликтующего мероприятия не должен возвращать его обратно.
-          for (final gone in _selectedParticipantUids) {
-            if (!uids.contains(gone)) _explicitlyRemoved.add(gone);
-          }
-          _explicitlyRemoved.removeAll(uids);
-          _mergedFromConflict.removeWhere((u) => !uids.contains(u));
-          _selectedParticipantUids = uids;
-        }),
+        onChanged: _applyParticipantSelection,
         currentUid: widget.currentUid,
       ),
     );
@@ -3116,8 +3133,13 @@ class _EventFormModalState extends State<_EventFormModal> {
                         ),
                         const SizedBox(width: 6),
                         GestureDetector(
-                          onTap: () => setState(
-                              () => _selectedParticipantUids.remove(uid)),
+                          // Второй путь к «убрать участника руками» — идёт
+                          // той же записью, что и диалог выбора (N35).
+                          onTap: () => _applyParticipantSelection(
+                            _selectedParticipantUids
+                                .where((u) => u != uid)
+                                .toList(),
+                          ),
                           child: const Text('×',
                               style: TextStyle(color: kRed, fontSize: 16)),
                         ),

@@ -12,6 +12,7 @@ import 'package:flutter_test/flutter_test.dart';
 // запроса обязана доказывать правило чтения», тот же разбор).
 
 const _service = 'lib/firebase/firestore_service.dart';
+const _eventForm = 'lib/features/agreements/screens/agreements_screen.dart';
 
 void main() {
   late List<String> lines;
@@ -68,6 +69,57 @@ void main() {
         reason: 'Вызовов chatAfterDeparture $calls, а записей его результата '
             '$membersWrites. Либо правило зовут и не используют, либо путь '
             'ухода дописан мимо него.',
+      );
+    });
+  });
+
+  group('снятие участника мероприятия идёт одной записью', () {
+    late String form;
+
+    setUpAll(() => form = File(_eventForm).readAsStringSync());
+
+    test('состав не сокращают мимо _applyParticipantSelection', () {
+      // Тот же класс, что и уход из чата: два пути к одной операции —
+      // диалог выбора и крестик на фишке. `_explicitlyRemoved` без
+      // серверного правила за спиной, поэтому путь, сокративший состав
+      // сам, не даёт некрасивого отказа — он молча даёт НЕВЕРНЫЙ исход:
+      // перенос из конфликта возвращает человека обратно (N35).
+      const forbidden = [
+        '_selectedParticipantUids.remove(',
+        '_selectedParticipantUids.removeWhere(',
+        '_selectedParticipantUids.clear(',
+      ];
+      final offenders = <String>[];
+      final formLines = form.split('\n');
+      for (var i = 0; i < formLines.length; i++) {
+        for (final f in forbidden) {
+          if (formLines[i].contains(f)) {
+            offenders.add('$_eventForm:${i + 1}: ${formLines[i].trim()}');
+          }
+        }
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason: 'Состав участников сокращают мимо _applyParticipantSelection '
+            '— путь уберёт человека, но не запомнит, что его убрали руками, '
+            'и перенос из конфликтующего мероприятия вернёт его обратно '
+            '(N35):\n${offenders.join('\n')}',
+      );
+    });
+
+    test('_explicitlyRemoved пополняется ровно в одном месте', () {
+      // Признак «убрал руками» ставит та же запись, что меняет состав.
+      // Разойдись они — появится путь, который состав сократил, а признак
+      // не поставил, и это ровно исходный N35.
+      final marks = '_explicitlyRemoved.add('.allMatches(form).length;
+      expect(
+        marks,
+        1,
+        reason: '_explicitlyRemoved пополняется $marks раз(а). Ожидается '
+            'ровно одно место — _applyParticipantSelection. Новый путь '
+            'снятия участника обязан идти через него, а не повторять '
+            'учёт у себя.',
       );
     });
   });
