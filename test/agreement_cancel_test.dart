@@ -107,16 +107,15 @@ void main() {
 
     setUpAll(() => rules = File('firestore.rules').readAsStringSync());
 
-    test('cancelWithdrawn есть в firestore.rules', () {
-      expect(rules.contains("'$kCancelWithdrawn'"), isTrue,
-          reason: 'Имя отзыва разошлось с правилами: клиент шлёт '
-              '$kCancelWithdrawn, а в firestore.rules такого нет.');
-    });
-
-    test('cancelDeclined есть в firestore.rules', () {
-      expect(rules.contains("'$kCancelDeclined'"), isTrue,
-          reason: 'Имя отказа разошлось с правилами: клиент шлёт '
-              '$kCancelDeclined, а в firestore.rules такого нет.');
+    test('все четыре имени отмены есть в firestore.rules', () {
+      // Все четыре, а не два: запрос и подтверждение тоже называют себя —
+      // без этого сервер берёт автора уведомления из прошлого действия и
+      // называет в тексте не того человека.
+      final missing = kCancelDeeds.where((d) => !rules.contains("'$d'"));
+      expect(missing, isEmpty,
+          reason: 'Имена разошлись с правилами: клиент шлёт $missing, а в '
+              'firestore.rules таких нет. Правило требует буквального '
+              'совпадения, и расхождение даст отказ по правам.');
     });
 
     test('служба шлёт ровно эти имена и ничего иного', () {
@@ -130,7 +129,7 @@ void main() {
           .toSet();
       expect(
         names,
-        {'left', kCancelWithdrawn, kCancelDeclined},
+        {'left', ...kCancelDeeds},
         reason: 'Служба пишет lastActionType значениями $names. Каждое из '
             'них обязано быть разрешено в firestore.rules — иначе запись '
             'отвергнут по правам.',

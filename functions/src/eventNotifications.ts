@@ -29,7 +29,20 @@ export type EventActionType =
   | "left"
   // Договор, рождённый из согласованного предложения. Уведомлений не
   // порождает вовсе: обе стороны узнают о сделке другим путём.
-  | "agreed";
+  | "agreed"
+  // ОТМЕНА ПО СОГЛАСИЮ — четыре хода, и каждый называет себя сам.
+  //
+  // Называться обязаны все четыре, а не только два снятия. Причина у
+  // разных ходов разная, и обе весомые:
+  //   - отзыв и отказ оставляют В ДАННЫХ ОДИН И ТОТ ЖЕ след (пустые поля
+  //     запроса), и различить их по before/after нечем в принципе;
+  //   - запрос и подтверждение различимы по полям, но имя автора для
+  //     текста берётся из `lastActionBy`, а без него оно берётся от
+  //     прошлого действия либо от владельца — и врёт.
+  | "cancelRequested"
+  | "cancelConfirmed"
+  | "cancelWithdrawn"
+  | "cancelDeclined";
 
 /** Поля мероприятия, значимые для уведомления. */
 export interface EventSnapshot {
@@ -40,6 +53,21 @@ export interface EventSnapshot {
   notes: string;
   musicians: string[];
   cancelRequestedBy?: string | null;
+  /**
+   * `cancelRequestedAt` в миллисекундах — ОТМЕТКА СОБЫТИЯ, по которой и
+   * опознаётся новый запрос.
+   *
+   * Не `Timestamp`: этот модуль намеренно не знает про Firestore, чтобы
+   * оставаться проверяемым обычным тестом. Перевод — в `toEventSnapshot`.
+   *
+   * Почему не «поле появилось из пустого» (класс N29): отзыв и отказ
+   * возвращают `cancelRequestedBy` в `null`, значит появление из пустого
+   * по одному договору происходит СКОЛЬКО УГОДНО РАЗ, и признак,
+   * построенный на переходе, отвечает на вопрос «поле сейчас заполнено»,
+   * а не на вопрос «просьба подана». Совпадать они перестанут в первый же
+   * день, когда кто-то напишет путь, не очищающий поле.
+   */
+  cancelRequestedAtMs?: number | null;
   cancelConfirmedBy?: string | null;
   status?: string;
   replacedEventId?: string | null;
@@ -361,6 +389,55 @@ export function pushCancelConfirmed(
   };
 }
 
+/**
+ * Отзыв — запросивший передумал. Идёт ВТОРОЙ СТОРОНЕ: это она сидела с
+ * вопросом «подтверждать ли отмену», и ей надо знать, что вопроса больше
+ * нет.
+ *
+ * Слова говорят и то, что стало с договором: без «qüvvədə qalır» человек
+ * знает, что просьбы нет, но не знает, чем всё кончилось.
+ */
+export function pushCancelWithdrawn(
+  uid: string,
+  eventId: string,
+  actorName: string,
+  e: EventSnapshot,
+): EventPush {
+  return {
+    uid,
+    title: "Ləğv təklifi geri götürüldü",
+    body:
+      `${actorName} müqavilənin ləğvi təklifini geri götürdü — müqavilə ` +
+      `qüvvədə qalır` +
+      `${e.date ? ` (${fmtEventWhen(e.date)})` : ""}`,
+    data: openEvent(eventId, "event_cancel_withdrawn"),
+  };
+}
+
+/**
+ * Отказ — вторая сторона не согласна. Идёт ЗАПРОСИВШЕМУ: он ждёт ответа
+ * на свою просьбу, и ответ отрицательный.
+ *
+ * Адресат берётся из `before`, а не из `after`: к этому моменту
+ * `cancelRequestedBy` уже очищен — тем самым ходом, о котором шлём.
+ */
+export function pushCancelDeclined(
+  uid: string,
+  eventId: string,
+  actorName: string,
+  e: EventSnapshot,
+): EventPush {
+  return {
+    uid,
+    title: "Ləğv təklifi qəbul edilmədi",
+    body:
+      `${actorName} müqavilənin ləğvi ilə razılaşmadı — müqavilə qüvvədə ` +
+      `qalır` +
+      `${e.date ? ` (${fmtEventWhen(e.date)})` : ""}`,
+    data: openEvent(eventId, "event_cancel_declined"),
+  };
+}
+
 export type ReminderKind = "24h" | "3h";
 
 /**
@@ -474,31 +551,86 @@ export interface PlanUpdateInput {
  * «вас добавили» и следом «дата изменилась»: он этой даты и не видел
  * раньше, для него всё мероприятие новое.
  */
+/**
+ * Сдвинулась ли отметка `cancelRequestedAt` — то есть подана ли НОВАЯ
+ * просьба, а не переписана ли старая тем же значением.
+ *
+ * Отсутствие отметки считается сдвигом: старая запись без неё существует
+ * (поле добавлено вместе с отменой), и молчать про неё хуже, чем
+ * прислать лишнее — уведомление о непонятной просьбе человек поймёт,
+ * открыв договор, а отсутствие уведомления не заметит вовсе.
+ */
+export function requestedAtMoved(
+  before: EventSnapshot,
+  after: EventSnapshot,
+): boolean {
+  const a = after.cancelRequestedAtMs ?? null;
+  if (a === null) return true;
+  return a !== (before.cancelRequestedAtMs ?? null);
+}
+
 export function planUpdatePushes(input: PlanUpdateInput): EventPush[] {
   const { eventId, before, after, actorName } = input;
   const actor = after.lastActionBy ?? null;
   const diff = diffEvents(before, after);
   const out: EventPush[] = [];
 
-  // Отмена по согласию. Поля заложены в модель заранее (пункт 2 плана), а
-  // сам сценарий отмены ещё не сделан — до тех пор эти ветки просто не
-  // срабатывают, и это нормально: писать их вторым заходом в тот же файл
-  // дороже, чем завести сейчас.
-  const cancelRequestedNow =
-    !before.cancelRequestedBy && !!after.cancelRequestedBy;
-  const cancelConfirmedNow =
-    !before.cancelConfirmedBy && !!after.cancelConfirmedBy;
-  if (cancelRequestedNow) {
-    for (const uid of recipientsOf(after, after.cancelRequestedBy ?? null)) {
-      out.push(pushCancelRequested(uid, eventId, actorName, after));
+  // ОТМЕНА ПО СОГЛАСИЮ — четыре хода, и ветвление идёт ПО ИМЕНИ ПОСТУПКА,
+  // а не по разнице before/after.
+  //
+  // Иначе нельзя: отзыв и отказ оставляют в данных ОДИН И ТОТ ЖЕ след —
+  // пустые `cancelRequestedBy`/`cancelRequestedAt`, — а извещать обязаны
+  // разных людей. Никакое сравнение before с after этих двух не различит,
+  // потому что различаются они не данными, а тем, КТО и ЗАЧЕМ их писал.
+  // Имя приходит из самой записи и подделке не поддаётся: правила дают
+  // каждое имя только тому, кто вправе совершить именно этот поступок
+  // (`firestore.rules` → `withdrawsCancelRequest`/`declinesCancelRequest`
+  // и `namesCancelDeed`). Поэтому здесь ему можно верить без проверок.
+  switch (after.lastActionType) {
+    case "cancelRequested": {
+      // Признак нового запроса — СДВИГ ОТМЕТКИ ВРЕМЕНИ, а не появление
+      // поля из пустого (класс N29). Отзыв и отказ возвращают поле в
+      // `null`, значит «появление» по одному договору случается сколько
+      // угодно раз, и признак-переход отвечал бы на вопрос «поле сейчас
+      // заполнено» вместо «просьба подана». Здесь эти вопросы пока дают
+      // один ответ; расходятся они в первый же день, когда появится путь,
+      // не очищающий поле, — и разойдутся молча.
+      if (!requestedAtMoved(before, after)) return out;
+      for (const uid of recipientsOf(after, actor)) {
+        out.push(pushCancelRequested(uid, eventId, actorName, after));
+      }
+      return out;
     }
-    return out;
-  }
-  if (cancelConfirmedNow) {
-    for (const uid of recipientsOf(after, after.cancelConfirmedBy ?? null)) {
-      out.push(pushCancelConfirmed(uid, eventId, actorName, after));
+    case "cancelConfirmed": {
+      // Адресно запросившему, а не «всем кроме автора». Сегодня это одно
+      // и то же — в договоре ровно двое, — но появись в мероприятии
+      // третий, ему нужны другие слова: «договор отменён», а не «ваш
+      // запрос подтверждён». Пусть лучше он не получит ничего, чем
+      // получит неправду.
+      const asked = before.cancelRequestedBy ?? null;
+      if (asked && asked !== actor) {
+        out.push(pushCancelConfirmed(asked, eventId, actorName, after));
+      }
+      return out;
     }
-    return out;
+    case "cancelWithdrawn": {
+      // Второй стороне: это она сидела с вопросом, подтверждать ли.
+      for (const uid of recipientsOf(after, actor)) {
+        out.push(pushCancelWithdrawn(uid, eventId, actorName, after));
+      }
+      return out;
+    }
+    case "cancelDeclined": {
+      // Запросившему, и адресат берётся из `before`: в `after` поле уже
+      // очищено — тем самым ходом, о котором и шлём.
+      const asked = before.cancelRequestedBy ?? null;
+      if (asked && asked !== actor) {
+        out.push(pushCancelDeclined(asked, eventId, actorName, after));
+      }
+      return out;
+    }
+    default:
+      break;
   }
 
   // Участник вышел сам — уведомляется владелец, и только он.

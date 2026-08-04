@@ -635,10 +635,21 @@ service cloud.firestore {
       // Ход первый: предложить отмену. Только своим uid и только когда
       // запроса ещё нет — иначе одна сторона могла бы переписать чужой
       // запрос своим и следом подтвердить его как «чужой».
+      // `lastActionBy`/`lastActionType` обязательны и здесь — не для
+      // симметрии, а потому что сервер берёт имя автора уведомления
+      // ИМЕННО из `lastActionBy`. Без них текст «{Ad} müqavilənin ləğvini
+      // təklif etdi» назвал бы автора прошлого действия либо владельца
+      // (`lastActionBy ?? ownerUid` в onPersonalEventUpdated) — то есть
+      // при просьбе не от владельца врал бы всегда. Найдено 04.08 при
+      // написании триггера, до выхода на устройства.
       function requestsCancel() {
-        return changedKeys().hasOnly(['cancelRequestedBy', 'cancelRequestedAt'])
+        return changedKeys().hasOnly(['cancelRequestedBy', 'cancelRequestedAt',
+                                      'lastActionBy', 'lastActionType'])
           && request.resource.data.cancelRequestedBy == request.auth.uid
-          && resource.data.get('cancelRequestedBy', null) == null;
+          && resource.data.get('cancelRequestedBy', null) == null
+          && resource.data.get('status', null) != 'cancelled'
+          && request.resource.data.lastActionType == 'cancelRequested'
+          && stampsSelf();
       }
 
       // Ход второй: подтвердить ЧУЖОЙ запрос. Своего подтвердить нельзя —
@@ -653,12 +664,15 @@ service cloud.firestore {
       // ЧЬЁ было решение, и переписываемой задним числом она быть не
       // может: «отменил Х» обязано значить «решение принял Х».
       function confirmsCancel() {
-        return changedKeys().hasOnly(['status', 'cancelConfirmedBy', 'cancelledAt'])
+        return changedKeys().hasOnly(['status', 'cancelConfirmedBy', 'cancelledAt',
+                                      'lastActionBy', 'lastActionType'])
           && request.resource.data.status == 'cancelled'
           && request.resource.data.cancelConfirmedBy == request.auth.uid
           && resource.data.get('cancelRequestedBy', null) != null
           && resource.data.get('cancelRequestedBy', null) != request.auth.uid
-          && resource.data.get('status', null) != 'cancelled';
+          && resource.data.get('status', null) != 'cancelled'
+          && request.resource.data.lastActionType == 'cancelConfirmed'
+          && stampsSelf();
       }
 
       // ВЫЙТИ ИЗ ЧУЖОГО МЕРОПРИЯТИЯ. Добавлено 03.08 по требованию
@@ -759,9 +773,14 @@ service cloud.firestore {
       //
       // Тот же класс, что `stampsSelf`: подделывается не действие, а
       // РАССКАЗ о нём, и снаружи подделка неотличима от правды.
+      // Перечислены ВСЕ четыре имени отмены, а не только два имени
+      // снятия: любое из них — рассказ, которому сервер верит без
+      // проверки, и поставить его мимо своей дороги нельзя ни одно.
       function namesCancelDeed() {
         return 'lastActionType' in changedKeys()
-          && (request.resource.data.lastActionType == 'cancelWithdrawn'
+          && (request.resource.data.lastActionType == 'cancelRequested'
+              || request.resource.data.lastActionType == 'cancelConfirmed'
+              || request.resource.data.lastActionType == 'cancelWithdrawn'
               || request.resource.data.lastActionType == 'cancelDeclined');
       }
 

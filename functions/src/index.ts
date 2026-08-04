@@ -2088,6 +2088,20 @@ async function claimNotificationOnce(eventKey: string): Promise<boolean> {
   }
 }
 
+/**
+ * Firestore-`Timestamp` → миллисекунды, `null` для всего остального.
+ *
+ * Проверка по наличию метода, а не `instanceof`: сюда приходят и
+ * серверные `Timestamp`, и — на непрогретых полях старых записей —
+ * `null`/`undefined`, и в тестах простые объекты.
+ */
+function tsMillis(v: unknown): number | null {
+  if (v && typeof (v as { toMillis?: unknown }).toMillis === "function") {
+    return (v as { toMillis: () => number }).toMillis();
+  }
+  return null;
+}
+
 function toEventSnapshot(d: Record<string, unknown>): EventSnapshot {
   return {
     ownerUid: (d.ownerUid as string) ?? "",
@@ -2097,6 +2111,10 @@ function toEventSnapshot(d: Record<string, unknown>): EventSnapshot {
     notes: (d.notes as string) ?? "",
     musicians: Array.isArray(d.musicians) ? (d.musicians as string[]) : [],
     cancelRequestedBy: (d.cancelRequestedBy as string) ?? null,
+    // Timestamp → миллисекунды здесь, а не в eventNotifications: тот
+    // модуль намеренно не знает про Firestore и потому проверяется
+    // обычным тестом, без эмулятора.
+    cancelRequestedAtMs: tsMillis(d.cancelRequestedAt),
     cancelConfirmedBy: (d.cancelConfirmedBy as string) ?? null,
     status: (d.status as string) ?? "agreed",
     replacedEventId: (d.replacedEventId as string) ?? null,

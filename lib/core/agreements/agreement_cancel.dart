@@ -31,8 +31,24 @@ enum CancelStage {
 /// (`withdrawsCancelRequest` / `declinesCancelRequest`), и разойтись им
 /// нельзя: правило требует буквального совпадения, а несовпадение даст
 /// отказ по правам — молчаливый, если его проглотить.
+///
+/// Называются ВСЕ ЧЕТЫРЕ хода, а не только два снятия. У запроса и
+/// подтверждения причина своя: имя автора для текста уведомления сервер
+/// берёт из `lastActionBy`, а этого поля их прежняя форма не писала — и
+/// «{Ad} müqavilənin ləğvini təklif etdi» называло владельца вместо
+/// просящего.
+const String kCancelRequested = 'cancelRequested';
+const String kCancelConfirmed = 'cancelConfirmed';
 const String kCancelWithdrawn = 'cancelWithdrawn';
 const String kCancelDeclined = 'cancelDeclined';
+
+/// Все имена отмены разом — для проходов по исходникам.
+const Set<String> kCancelDeeds = {
+  kCancelRequested,
+  kCancelConfirmed,
+  kCancelWithdrawn,
+  kCancelDeclined,
+};
 
 /// Единственное место, где решается, какая дорога открыта.
 ///

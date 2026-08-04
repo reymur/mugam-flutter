@@ -3691,6 +3691,11 @@ class FirestoreService {
   // отказ и превращается в слова.
 
   /// Ход первый: предложить отмену.
+  ///
+  /// `lastActionBy`/`lastActionType` пишутся всеми четырьмя ходами, а не
+  /// только снятием: имя автора для текста уведомления сервер берёт
+  /// именно из `lastActionBy`, и без него «{Ad} müqavilənin ləğvini təklif
+  /// etdi» назвало бы владельца вместо просящего.
   Future<void> requestAgreementCancel(String eventId, String uid) {
     return _db
         .collection('personalEvents')
@@ -3698,6 +3703,8 @@ class FirestoreService {
         .update({
           'cancelRequestedBy': uid,
           'cancelRequestedAt': FieldValue.serverTimestamp(),
+          'lastActionBy': uid,
+          'lastActionType': 'cancelRequested',
         })
         .timeout(_writeTimeout);
   }
@@ -3711,6 +3718,8 @@ class FirestoreService {
           'status': 'cancelled',
           'cancelConfirmedBy': uid,
           'cancelledAt': FieldValue.serverTimestamp(),
+          'lastActionBy': uid,
+          'lastActionType': 'cancelConfirmed',
         })
         .timeout(_writeTimeout);
   }

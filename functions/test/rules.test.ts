@@ -330,12 +330,30 @@ async function seedCancelRequest(by: string) {
   });
 }
 
+// Все четыре хода отмены называют автора и поступок. Имя нужно не для
+// порядка: текст уведомления берёт автора из `lastActionBy`, и без него
+// «{Ad} müqavilənin ləğvini təklif etdi» назвало бы владельца вместо
+// просящего.
+const request = (uid: string) => ({
+  cancelRequestedBy: uid,
+  cancelRequestedAt: new Date(),
+  lastActionBy: uid,
+  lastActionType: "cancelRequested",
+});
+
+const confirm = (uid: string) => ({
+  status: "cancelled",
+  cancelConfirmedBy: uid,
+  cancelledAt: new Date(),
+  lastActionBy: uid,
+  lastActionType: "cancelConfirmed",
+});
+
 test("отмена: вторая сторона МОЖЕТ предложить отмену своим uid", async () => {
   const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
   await assertSucceeds(
     updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
-      cancelRequestedBy: CONTACT,
-      cancelRequestedAt: new Date(),
+      ...request(CONTACT),
     }),
   );
 });
@@ -344,8 +362,7 @@ test("отмена: владелец МОЖЕТ предложить отмен�
   const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
   await assertSucceeds(
     updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
-      cancelRequestedBy: OWNER,
-      cancelRequestedAt: new Date(),
+      ...request(OWNER),
     }),
   );
 });
@@ -354,11 +371,7 @@ test("отмена: вторая сторона МОЖЕТ подтвердит�
   await seedCancelRequest(OWNER);
   const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
   await assertSucceeds(
-    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
-      status: "cancelled",
-      cancelConfirmedBy: CONTACT,
-      cancelledAt: new Date(),
-    }),
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), confirm(CONTACT)),
   );
 });
 
@@ -433,6 +446,63 @@ test("отмена: НЕЛЬЗЯ переписать чужой запрос с
       cancelRequestedAt: new Date(),
     }),
   );
+});
+
+test("отмена: запрос БЕЗ имени поступка не проходит", async () => {
+  // Без `lastActionType` сервер возьмёт автора из прошлого действия либо
+  // из владельца, и текст назовёт не того человека. Имя обязательно у
+  // всех четырёх ходов, а не только у снятия.
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      cancelRequestedBy: CONTACT,
+      cancelRequestedAt: new Date(),
+    }),
+  );
+});
+
+test("отмена: подтверждение БЕЗ имени поступка не проходит", async () => {
+  await seedCancelRequest(OWNER);
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      status: "cancelled",
+      cancelConfirmedBy: CONTACT,
+      cancelledAt: new Date(),
+    }),
+  );
+});
+
+test("отмена: запрос НЕЛЬЗЯ назвать чужим именем поступка", async () => {
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      ...request(CONTACT),
+      lastActionType: "cancelConfirmed",
+    }),
+  );
+});
+
+test("отмена: владелец НЕ может выдать обычную правку за отмену", async () => {
+  // Ветка обычной правки владельца закрыта `namesCancelDeed()` для ВСЕХ
+  // четырёх имён. Иначе владелец поставил бы `cancelConfirmed` на пустом
+  // ходу, и вторая сторона получила бы «договор отменён» при живом
+  // договоре.
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  for (const type of [
+    "cancelRequested",
+    "cancelConfirmed",
+    "cancelWithdrawn",
+    "cancelDeclined",
+  ]) {
+    await assertFails(
+      updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+        location: "Bakı",
+        lastActionBy: OWNER,
+        lastActionType: type,
+      }),
+    );
+  }
 });
 
 test("отмена: посторонний не может ни предложить, ни подтвердить", async () => {
@@ -656,11 +726,7 @@ test("одновременность: после подтверждения от
   await seedCancelRequest(OWNER);
   const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
   await assertSucceeds(
-    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
-      status: "cancelled",
-      cancelConfirmedBy: CONTACT,
-      cancelledAt: new Date(),
-    }),
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), confirm(CONTACT)),
   );
   const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
   await assertFails(
@@ -679,10 +745,7 @@ test("после отзыва можно запросить отмену ЗАН�
     updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), withdraw(OWNER)),
   );
   await assertSucceeds(
-    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
-      cancelRequestedBy: OWNER,
-      cancelRequestedAt: new Date(),
-    }),
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), request(OWNER)),
   );
 });
 

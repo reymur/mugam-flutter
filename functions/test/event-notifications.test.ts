@@ -202,11 +202,22 @@ describe("состав участников", () => {
 });
 
 describe("отмена по согласию", () => {
+  // Четыре хода, и ветвление идёт ПО ИМЕНИ ПОСТУПКА. Проверяется здесь
+  // прежде всего то, чего сравнением before/after не добиться вовсе:
+  // отзыв и отказ оставляют ОДИН И ТОТ ЖЕ след в данных, а уходят разным
+  // людям. Перепутай их — и человек получит ровно противоположную новость
+  // о судьбе своего договора.
+
   it("запрос отмены уходит второй стороне", () => {
     const pushes = planUpdatePushes({
       eventId: "e1",
       before: ev(),
-      after: ev({ cancelRequestedBy: OWNER, lastActionBy: OWNER }),
+      after: ev({
+        cancelRequestedBy: OWNER,
+        cancelRequestedAtMs: 1000,
+        lastActionBy: OWNER,
+        lastActionType: "cancelRequested",
+      }),
       actorName: "Rafael",
     });
     assert.equal(pushes.length, 1);
@@ -214,20 +225,215 @@ describe("отмена по согласию", () => {
     assert.equal(pushes[0].title, "Ləğv təklifi");
   });
 
+  it("повторная просьба БЕЗ очистки поля тоже уходит — тут признаки и расходятся (N29)", () => {
+    // Единственный случай, где «сдвиг отметки» и «появление из пустого»
+    // дают РАЗНЫЙ ответ, и потому единственный, который доказывает выбор
+    // признака. Поле непусто в обоих снимках — «появления» нет, — а
+    // просьба подана новая, и отметка это говорит.
+    //
+    // Сегодня такого пути в приложении нет: и отзыв, и отказ поле
+    // очищают. Тест защищает от дня, когда он появится, — а появится он
+    // молча, потому что признак-переход не ошибается, он просто не
+    // срабатывает.
+    const pushes = planUpdatePushes({
+      eventId: "e1",
+      before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
+      after: ev({
+        cancelRequestedBy: OWNER,
+        cancelRequestedAtMs: 5000,
+        lastActionBy: OWNER,
+        lastActionType: "cancelRequested",
+      }),
+      actorName: "Rafael",
+    });
+    assert.equal(pushes.length, 1);
+    assert.equal(pushes[0].uid, GUEST);
+    assert.equal(pushes[0].title, "Ləğv təklifi");
+  });
+
+  it("ВТОРОЙ запрос после отзыва уходит", () => {
+    // Отзыв вернул поле в null, значит «появление из пустого» по одному
+    // договору случается сколько угодно раз. Признак построен на сдвиге
+    // отметки времени и потому отвечает на вопрос «просьба подана», а не
+    // «поле сейчас заполнено».
+    const pushes = planUpdatePushes({
+      eventId: "e1",
+      before: ev({ cancelRequestedBy: null, cancelRequestedAtMs: null }),
+      after: ev({
+        cancelRequestedBy: OWNER,
+        cancelRequestedAtMs: 2000,
+        lastActionBy: OWNER,
+        lastActionType: "cancelRequested",
+      }),
+      actorName: "Rafael",
+    });
+    assert.equal(pushes.length, 1);
+    assert.equal(pushes[0].uid, GUEST);
+  });
+
+  it("переписанная тем же временем просьба второго уведомления не даёт", () => {
+    // Холостая запись — не новая просьба. Тот же довод, что и у сдвига:
+    // уведомление привязано к СОБЫТИЮ, а не к состоянию поля.
+    const pushes = planUpdatePushes({
+      eventId: "e1",
+      before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
+      after: ev({
+        cancelRequestedBy: OWNER,
+        cancelRequestedAtMs: 1000,
+        lastActionBy: OWNER,
+        lastActionType: "cancelRequested",
+      }),
+      actorName: "Rafael",
+    });
+    assert.equal(pushes.length, 0);
+  });
+
   it("подтверждение отмены уходит тому, кто просил", () => {
     const pushes = planUpdatePushes({
       eventId: "e1",
-      before: ev({ cancelRequestedBy: OWNER }),
+      before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
       after: ev({
         cancelRequestedBy: OWNER,
+        cancelRequestedAtMs: 1000,
         cancelConfirmedBy: GUEST,
         status: "cancelled",
         lastActionBy: GUEST,
+        lastActionType: "cancelConfirmed",
       }),
       actorName: "Teymur",
     });
     assert.equal(pushes.length, 1);
     assert.equal(pushes[0].uid, OWNER);
+    assert.equal(pushes[0].title, "Müqavilə ləğv edildi");
+  });
+
+  it("ОТЗЫВ уходит второй стороне — той, кого просили подтвердить", () => {
+    const pushes = planUpdatePushes({
+      eventId: "e1",
+      before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
+      after: ev({
+        cancelRequestedBy: null,
+        cancelRequestedAtMs: null,
+        lastActionBy: OWNER,
+        lastActionType: "cancelWithdrawn",
+      }),
+      actorName: "Rafael",
+    });
+    assert.equal(pushes.length, 1);
+    assert.equal(pushes[0].uid, GUEST);
+    assert.equal(pushes[0].title, "Ləğv təklifi geri götürüldü");
+  });
+
+  it("ОТКАЗ уходит запросившему — адресат берётся из before", () => {
+    // В `after` поле уже пустое: его очистил тот самый ход, о котором
+    // шлём. Возьми адресата из `after` — уведомление не уйдёт никому, и
+    // человек останется ждать ответа, которого уже не будет.
+    const pushes = planUpdatePushes({
+      eventId: "e1",
+      before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
+      after: ev({
+        cancelRequestedBy: null,
+        cancelRequestedAtMs: null,
+        lastActionBy: GUEST,
+        lastActionType: "cancelDeclined",
+      }),
+      actorName: "Teymur",
+    });
+    assert.equal(pushes.length, 1);
+    assert.equal(pushes[0].uid, OWNER);
+    assert.equal(pushes[0].title, "Ləğv təklifi qəbul edilmədi");
+  });
+
+  it("отзыв и отказ при ОДИНАКОВЫХ данных дают РАЗНЫЕ новости", () => {
+    // Главная проверка всего блока. before и after у обоих ходов
+    // совпадают до последнего поля, кроме имени поступка и автора —
+    // именно поэтому ветвиться по before/after нельзя в принципе.
+    //
+    // Проверяются и адресат, и СЛОВА, причём слова важнее. В договоре
+    // ровно двое, поэтому «все кроме автора» случайно совпадает с нужным
+    // адресатом и у отзыва, и у отказа — сверка одних лишь uid пропустила
+    // бы подмену одного хода другим. А человек получил бы про свой
+    // договор ровно противоположную новость: «передумали просить» вместо
+    // «вам отказали».
+    const before = ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 });
+    const cleared = { cancelRequestedBy: null, cancelRequestedAtMs: null };
+    const withdrawn = planUpdatePushes({
+      eventId: "e1",
+      before,
+      after: ev({
+        ...cleared,
+        lastActionBy: OWNER,
+        lastActionType: "cancelWithdrawn",
+      }),
+      actorName: "Rafael",
+    });
+    const declined = planUpdatePushes({
+      eventId: "e1",
+      before,
+      after: ev({
+        ...cleared,
+        lastActionBy: GUEST,
+        lastActionType: "cancelDeclined",
+      }),
+      actorName: "Teymur",
+    });
+    assert.notEqual(withdrawn[0].uid, declined[0].uid);
+    assert.equal(withdrawn[0].uid, GUEST);
+    assert.equal(declined[0].uid, OWNER);
+    // Слова — то, что при подмене ходов расходится по существу.
+    assert.notEqual(withdrawn[0].title, declined[0].title);
+    assert.equal(withdrawn[0].title, "Ləğv təklifi geri götürüldü");
+    assert.equal(declined[0].title, "Ləğv təklifi qəbul edilmədi");
+  });
+
+  it("автор своего же хода не получает ничего — все четыре", () => {
+    // Цена ошибки тут не «лишнее письмо»: человек получил бы новость о
+    // собственном нажатии и решил, что её прислал второй.
+    const before = ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 });
+    for (const [type, actor] of [
+      ["cancelRequested", OWNER],
+      ["cancelConfirmed", GUEST],
+      ["cancelWithdrawn", OWNER],
+      ["cancelDeclined", GUEST],
+    ] as const) {
+      const pushes = planUpdatePushes({
+        eventId: "e1",
+        before: type === "cancelRequested" ? ev() : before,
+        after: ev({
+          cancelRequestedBy: type === "cancelRequested" ? OWNER : null,
+          cancelRequestedAtMs: type === "cancelRequested" ? 2000 : null,
+          cancelConfirmedBy: type === "cancelConfirmed" ? GUEST : null,
+          status: type === "cancelConfirmed" ? "cancelled" : "agreed",
+          lastActionBy: actor,
+          lastActionType: type,
+        }),
+        actorName: "Kim",
+      });
+      for (const p of pushes) {
+        assert.notEqual(p.uid, actor, `${type} ушло собственному автору`);
+      }
+    }
+  });
+
+  it("отмена не тянет за собой уведомление о правке полей", () => {
+    // Ветка отмены обрывает разбор: иначе смена `status` на `cancelled`
+    // вместе с чем-нибудь ещё дала бы человеку две новости об одном
+    // действии — «договор отменён» и «поля изменились».
+    const pushes = planUpdatePushes({
+      eventId: "e1",
+      before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
+      after: ev({
+        cancelRequestedBy: OWNER,
+        cancelRequestedAtMs: 1000,
+        cancelConfirmedBy: GUEST,
+        status: "cancelled",
+        location: "Başqa yer",
+        lastActionBy: GUEST,
+        lastActionType: "cancelConfirmed",
+      }),
+      actorName: "Teymur",
+    });
+    assert.equal(pushes.length, 1);
     assert.equal(pushes[0].title, "Müqavilə ləğv edildi");
   });
 });
