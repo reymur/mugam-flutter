@@ -2968,12 +2968,34 @@ class FirestoreService {
   // them permanently exempt from push notifications).
   Future<void> clearActiveUserFromAllChats(String uid) async {
     try {
+      // ФОРМА ЗАПРОСА ЗАДАНА ПРАВИЛАМИ, А НЕ УДОБСТВОМ (N32). Фильтр по
+      // `activeUsers` выглядит точнее — он отбирал бы ровно те чаты, где
+      // отметка есть, — но правило чтения `chats` доказывается полем
+      // `members`, а Firestore авторизует запрос только когда его
+      // СОБСТВЕННЫЕ фильтры доказывают правило для любого возможного
+      // результата. Сервер отказывал по правам на КАЖДОМ вызове, отказ
+      // уходил в catch ниже, и уборка не срабатывала ни разу с самого
+      // появления правил. Найдено тестом форм запросов, не на устройстве.
+      //
+      // Поэтому фильтр — по участию, а наличие отметки проверяется уже на
+      // клиенте: чатов у человека десятки, не тысячи. Тот же приём и та же
+      // причина, что у `agreementExistsForRound` выше.
+      //
+      // Плата за выбор: чат, из которого человек вышел, сюда не попадёт —
+      // фильтр по `members` его не вернёт. Это не потеря: уход теперь
+      // снимает отметку тем же движением, что и членство (`leaveGroup` /
+      // `removeGroupMember` через `chatAfterDeparture`), поэтому оставить
+      // её там больше нечему.
       final snap = await _db
           .collection('chats')
-          .where('activeUsers', arrayContains: uid)
+          .where('members', arrayContains: uid)
           .get()
           .timeout(_writeTimeout);
       for (final doc in snap.docs) {
+        final active = List<String>.from(
+          doc.data()['activeUsers'] as List? ?? const [],
+        );
+        if (!active.contains(uid)) continue;
         await doc.reference
             .update({
               'activeUsers': FieldValue.arrayRemove([uid]),

@@ -124,28 +124,35 @@ test("chats: the same query WITHOUT the members filter fails — proves the filt
 // --- chats: clearActiveUserFromAllChats (firestore_service.dart:2945) ---
 // .where('activeUsers', arrayContains: uid).
 //
-// ЭТИ ДВА ТЕСТА ЗАПИСЫВАЮТ ДЕЙСТВУЮЩИЙ ДЕФЕКТ (N32), А НЕ ЖЕЛАЕМОЕ
-// ПОВЕДЕНИЕ. Правило чтения chats/{chatId} доказывается полем `members`,
-// а фильтр здесь — по `activeUsers`, поэтому сервер отказывает по правам
-// на КАЖДОМ вызове. Отказ уходит в тихий catch, и уборка activeUsers на
-// логауте не срабатывала ни разу (разбор — AUDIT_TODO.md, класс
-// «перехват без последствий делает поломку невидимой»).
+// N32 ПОЧИНЕН: клиент этой формой больше не пользуется — он фильтрует по
+// `members` и проверяет `activeUsers` уже у себя (см. сам метод). Тесты
+// ниже сторожат причину, по которой так пришлось сделать, а не сам факт
+// отказа: форма отказная и останется отказной, потому что правило чтения
+// chats/{chatId} доказывается полем `members`, а этот фильтр его не
+// доказывает.
 //
-// Когда дефект починят, ПЕРВЫЙ тест обязан быть перевёрнут в
-// assertSucceeds — он для того и оставлен красным по смыслу, чтобы
-// починку нельзя было счесть законченной, не тронув его. ВТОРОЙ тест
-// (чужой uid) переворачивать нельзя ни при какой починке.
-//
-// Осторожно с выбором починки: дизъюнкт `uid in activeUsers` в правиле
-// чтения этот тест зазеленит, но откроет чтение чата тому, кто из группы
-// ВЫШЕЛ и застрял в activeUsers (leaveGroup чистит только members/admins)
-// — проверено опытом на двух наборах правил 04.08. Второй тест ниже эту
-// утечку НЕ ловит: она в другую сторону.
-test("chats: activeUsers array-contains uid — ОТКАЗ по правам, действующий дефект N32", async () => {
+// Чинить это расширением правила НЕЛЬЗЯ, и опыт 04.08 на двух наборах
+// правил тому причиной: дизъюнкт `uid in activeUsers` зазеленил бы форму,
+// но открыл бы документ чата тому, кто из группы вышел и застрял в
+// activeUsers. Второй тест ниже ту утечку НЕ ловит — она в другую сторону,
+// поэтому запрет держится этим комментарием и разбором в реестре, а не им.
+test("chats: activeUsers array-contains uid — отказ по правам, поэтому клиент так и не спрашивает", async () => {
   const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
   await assertFails(
     getDocs(query(collection(ownerDb, "chats"), where("activeUsers", "array-contains", OWNER))),
   );
+});
+
+// Форма, которой уборка пользуется теперь. Она же уже проверена выше как
+// запрос списка чатов — здесь повторена намеренно, под своим именем:
+// сломается watchChats — станет ясно и то, что вместе с ним замолчала
+// уборка activeUsers на логауте.
+test("chats: members array-contains uid — форма, которой уборка activeUsers пользуется после N32", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  const snap = await assertSucceeds(
+    getDocs(query(collection(ownerDb, "chats"), where("members", "array-contains", OWNER))),
+  );
+  expect(snap.docs.map((d) => d.id)).toEqual(["chat1"]);
 });
 
 test("chats: activeUsers array-contains ЧУЖОГО uid — отказ, и должен остаться отказом после любой починки", async () => {
