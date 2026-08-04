@@ -49,6 +49,7 @@ const STRANGER = "strangerUid"; // not a friend at all
 const EXCEPTED = "exceptedUid"; // a real friend of OWNER, ALSO in a contactsExcept privacyList
 const ALLOWED = "allowedUid"; // in an onlyShareWith privacyList, NOT a friend at all
 const EVENT = "ev-cancel"; // договор OWNER↔CONTACT для проверок отмены по согласию
+const CHAT = "chat-n37"; // чат OWNER↔CONTACT для проверок «кто это сделал»
 
 beforeAll(async () => {
   testEnv = await initializeTestEnvironment({
@@ -99,6 +100,22 @@ beforeEach(async () => {
     });
     await setDoc(doc(d, `users/${OWNER}/statuses/s-onlyShareWith`), {
       ...base, privacyMode: "onlyShareWith", privacyList: [ALLOWED],
+    });
+
+    // Чат OWNER↔CONTACT для проверок N37: три поля «кто это сделал»
+    // стоят заполненными, чтобы проверялось не только их появление, но и
+    // ПЕРЕПИСЫВАНИЕ чужого имени поверх стоящего.
+    await setDoc(doc(d, `chats/${CHAT}`), {
+      members: [OWNER, CONTACT],
+      isGroup: false,
+      lastMessage: "salam",
+      jobOfferBy: OWNER,
+      jobOfferAt: new Date().toISOString(),
+      eventDate: "2026-09-01T19:00:00.000",
+      eventType: "Toy",
+      cancelledBy: null,
+      roundEndedBy: null,
+      roundStep: "dated",
     });
 
     // Договор для проверок отмены по согласию: владелец OWNER, вторая
@@ -519,6 +536,135 @@ test("отмена: посторонний не может ни предложи
       status: "cancelled",
       cancelConfirmedBy: STRANGER,
       cancelledAt: new Date(),
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------
+// chats — «кто это сделал» нельзя написать за другого (N37)
+//
+// Три поля переговоров заведены ради сервера: по ним он называет автора
+// уведомления, по ним же обе стороны читают историю раунда. Проверяется
+// каждое ПОРОЗНЬ — общая проверка сказала бы «где-то держится», а нужен
+// ответ про каждое поле: они закрываются одним правилом, но забыть его
+// можно у любого по отдельности.
+// ---------------------------------------------------------------------
+
+const AUTHOR_FIELDS = ["cancelledBy", "roundEndedBy", "jobOfferBy"] as const;
+
+for (const field of AUTHOR_FIELDS) {
+  test(`N37: ${field} НЕЛЬЗЯ записать чужим uid`, async () => {
+    // STRANGER, а не OWNER: он отличается и от пишущего, и от значения в
+    // посеве, поэтому запись — настоящая подмена в любом из трёх полей, а
+    // не холостой ход. На OWNER этот же тест у `jobOfferBy` прошёл бы
+    // мимо: там OWNER уже стоит, и записать его заново значит не изменить
+    // ничего (проверено — первый прогон падал именно так).
+    const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+    await assertFails(
+      updateDoc(doc(contactDb, `chats/${CHAT}`), { [field]: STRANGER }),
+    );
+  });
+
+  test(`N37: ${field} МОЖНО записать своим uid`, async () => {
+    const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+    await assertSucceeds(
+      updateDoc(doc(contactDb, `chats/${CHAT}`), { [field]: CONTACT }),
+    );
+  });
+
+  test(`N37: ${field} МОЖНО очистить — новый раунд`, async () => {
+    // Стирание никого не называет, а `setJobOffer` его делает на каждом
+    // новом предложении. Запрети — и предложить работу станет нельзя.
+    const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+    await assertSucceeds(
+      updateDoc(doc(contactDb, `chats/${CHAT}`), { [field]: null }),
+    );
+  });
+}
+
+test("N37: сам случай из находки — получатель «отменяет» от имени инициатора", async () => {
+  // Дословно то, ради чего правило написано: CONTACT закрывает раунд и
+  // записывает автором OWNER. Прошло бы — и у OWNER экран сказал бы «вы
+  // отказались», у CONTACT «он отказался». Две правды об одном договоре.
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `chats/${CHAT}`), {
+      cancelledBy: OWNER,
+      roundEndedBy: OWNER,
+      roundStep: "ended",
+    }),
+  );
+});
+
+test("N37: свой законный отказ проходит целиком", async () => {
+  // Вторая половина: правило обязано пропускать настоящий отказ той
+  // формы, какой его пишет cancelChat, — иначе оно чинит подделку ценой
+  // самой возможности отказаться.
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertSucceeds(
+    updateDoc(doc(contactDb, `chats/${CHAT}`), {
+      cancelledBy: CONTACT,
+      roundStep: "ended",
+      roundEndedBy: CONTACT,
+      roundEndedAt: new Date().toISOString(),
+      recipientAgreed: false,
+    }),
+  );
+});
+
+test("N37: новое предложение проходит целиком", async () => {
+  // Форма setJobOffer: своё имя в jobOfferBy и очистка следов прошлого
+  // раунда. Тоже вторая половина — запрети очистку, и предложить работу
+  // станет нельзя вовсе.
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertSucceeds(
+    updateDoc(doc(contactDb, `chats/${CHAT}`), {
+      jobOfferBy: CONTACT,
+      jobOfferAt: new Date().toISOString(),
+      cancelledBy: null,
+      roundEndedBy: null,
+      roundStep: "dated",
+      recipientAgreed: false,
+    }),
+  );
+});
+
+test("N37: обычная правка соседних полей НЕ сломана", async () => {
+  // Осторожность, названная до написания правила: `.update()` по одному
+  // ключу приносит остальные поля со старыми значениями, и сравнение
+  // ЗНАЧЕНИЙ их пропускает само. Построй правило на changedKeys() — и
+  // оно не только сломало бы это, но и дало бы щель на записи тем же
+  // значением (запись про changedKeys() в реестре).
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertSucceeds(
+    updateDoc(doc(contactDb, `chats/${CHAT}`), {
+      lastMessage: "yeni mesaj",
+      eventLocation: "Bakı",
+    }),
+  );
+});
+
+test("N37: холостая запись чужого uid тем же значением проходит", async () => {
+  // `jobOfferBy` уже равен OWNER. CONTACT пишет туда OWNER же — значение
+  // не меняется, лжи не появляется, и запрещать нечего. Проверяется
+  // потому, что правило на changedKeys() повело бы себя тут иначе, и
+  // разница между двумя формами правила должна быть зафиксирована, а не
+  // подразумеваться.
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertSucceeds(
+    updateDoc(doc(contactDb, `chats/${CHAT}`), { jobOfferBy: OWNER }),
+  );
+});
+
+test("N37: нельзя протащить чужой uid вместе с законной правкой", async () => {
+  // Правило стоит на КАЖДОМ обновлении документа, а не только на том,
+  // где меняется одно это поле. Иначе подделка уехала бы прицепом к
+  // обычной записи.
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `chats/${CHAT}`), {
+      lastMessage: "yeni mesaj",
+      cancelledBy: OWNER,
     }),
   );
 });

@@ -364,10 +364,55 @@ service cloud.firestore {
       // hole to close. Three carve-outs: members/admins (membership), and
       // now clearedBy (destructive cross-uid) + messageSeq (allocator
       // integrity).
+      // «КТО ЭТО СДЕЛАЛ» НЕЛЬЗЯ НАПИСАТЬ ЗА ДРУГОГО (N37).
+      //
+      // Три поля переговоров — `cancelledBy`, `roundEndedBy`, `jobOfferBy`
+      // — заведены РАДИ СЕРВЕРА: по ним он называет автора в уведомлении
+      // и по ним же обе стороны читают историю раунда
+      // (`roundEndedBy == jobOfferBy` значит «инициатор передумал», иначе
+      // «получатель отказался»). До 04.08 их мог написать любой участник
+      // с любым uid, и получатель, записав `cancelledBy` с uid
+      // инициатора, оставлял в документе неправду: у одного экран
+      // говорил «вы отказались», у другого «он отказался». Тот же вред,
+      // что у N36, — «отказался Х» переставало значить «решение принял Х».
+      //
+      // Найдено сплошным проходом по классу «подделывается не действие, а
+      // рассказ о нём»: подделывается тут не поступок, а рассказ о нём, и
+      // снаружи подделка неотличима от правды.
+      //
+      // ТРИ ДОПУСТИМЫХ ИСХОДА, и первый из них обязателен:
+      //
+      //   1. поле НЕ МЕНЯЕТСЯ. Без этого пункта правило запретило бы любую
+      //      обычную правку соседних полей — а `.update()` по нескольким
+      //      ключам приносит остальные в `request.resource.data` со
+      //      старыми значениями, и сравнение их пропускает само собой.
+      //      Сравниваются именно ЗНАЧЕНИЯ, а не `changedKeys()`: последний
+      //      не видит записи тем же значением (см. запись про
+      //      `changedKeys()` в реестре), и правило на нём давало бы щель
+      //      ровно там, где её уже находили;
+      //   2. поле очищается в `null` — начался новый раунд (`setJobOffer`).
+      //      Стирание записи о человеке ложью о нём не является: оно
+      //      никого не называет;
+      //   3. поле указывает на САМОГО пишущего — единственный способ
+      //      что-то в него записать.
+      //
+      // Тот же приём, что у `stampsSelf` в personalEvents, `onlyAddsSelfTo`
+      // в сообщениях и `writesOnlyOwnClearedBy` выше — пятое его
+      // применение в проекте.
+      function namesOnlySelf(field) {
+        let after = request.resource.data.get(field, null);
+        return after == resource.data.get(field, null)
+          || after == null
+          || after == request.auth.uid;
+      }
+
       allow update: if isMember()
         && (!changedKeys().hasAny(['members', 'admins']) || isSafeMembershipChange())
         && writesOnlyOwnClearedBy()
-        && messageSeqUnchanged();
+        && messageSeqUnchanged()
+        && namesOnlySelf('cancelledBy')
+        && namesOnlySelf('roundEndedBy')
+        && namesOnlySelf('jobOfferBy');
 
       allow delete: if false;
 
