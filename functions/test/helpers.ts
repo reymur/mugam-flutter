@@ -50,6 +50,25 @@ export async function docExists(path: string): Promise<boolean> {
   return snap.exists;
 }
 
+// Порог ожидания триггера — 15 с, и это не круглое число, а замер (N18).
+//
+// Три полных прогона 04.08: самое долгое ОДНО ожидание — 6.2 с (6201 мс и
+// 6144 мс в двух зелёных прогонах, профиль устойчив: ровно 5 ожиданий
+// дольше 3 с). Прежние 10 с давали запас всего 1.6×, и прогон, где рантайм
+// функций перезапускался 51 раз вместо обычных 23, этот запас съедал.
+//
+// 15 с — 2.4× от измеренного потолка и при этом заведомо МЕНЬШЕ потолка
+// jest (`testTimeout: 20000`, jest.config.js). Верхняя граница здесь не
+// вкусовая: перевалив за неё, ожидание убивал бы сам jest, и вместо
+// «waitFor: condition not met» в отчёте стояло бы безымянное «Exceeded
+// timeout», не называющее причину вовсе.
+//
+// Поднимать порог, не печатая фактическое ожидание, нельзя: это спрятало
+// бы настоящее замедление вместо того, чтобы его показать. Поэтому ниже
+// печатается всё, что ждало дольше 3 с, — порог ограничивает только отказ,
+// а печать держит хвост на виду.
+const DEFAULT_TIMEOUT_MS = 15000;
+
 // Cloud Functions triggers fire asynchronously in response to emulated
 // Firestore/Storage writes — there's no way to await "the trigger finished"
 // directly from the client side, so every assertion on a trigger's side
@@ -60,11 +79,19 @@ export async function waitFor(
   check: () => Promise<boolean>,
   opts: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<void> {
-  const timeoutMs = opts.timeoutMs ?? 10000;
+  const envTimeout = Number(process.env.WAITFOR_TIMEOUT_MS ?? "");
+  const timeoutMs = opts.timeoutMs ?? (envTimeout > 0 ? envTimeout : DEFAULT_TIMEOUT_MS);
   const intervalMs = opts.intervalMs ?? 250;
-  const deadline = Date.now() + timeoutMs;
+  const started = Date.now();
+  const deadline = started + timeoutMs;
   for (;;) {
-    if (await check()) return;
+    if (await check()) {
+      const waited = Date.now() - started;
+      if (waited > 3000) {
+        console.log(`[waitFor] ждал ${waited}ms (порог ${timeoutMs}ms)`);
+      }
+      return;
+    }
     if (Date.now() >= deadline) {
       throw new Error(`waitFor: condition not met within ${timeoutMs}ms`);
     }

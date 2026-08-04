@@ -129,12 +129,16 @@ beforeEach(async () => {
     });
   });
 
-  await waitFor(async () => (await visibleToUidsOf(`users/${OWNER}/statuses/s-contacts`)) !== undefined);
-  await waitFor(
-    async () => (await visibleToUidsOf(`users/${OWNER}/statuses/s-contactsExcept`)) !== undefined,
-  );
-  await waitFor(
-    async () => (await visibleToUidsOf(`users/${OWNER}/statuses/s-onlyShareWith`)) !== undefined,
+  // Три ожидания СРАЗУ, а не по очереди (N18). Они независимы, а порознь
+  // складывались — и складывались именно здесь: это единственный набор с
+  // тремя ожиданиями триггера в одном beforeEach, поэтому флаковал он, а не
+  // кто-то случайный. При измеренном потолке одного ожидания 6.2 с три
+  // подряд дают до ~18.6 с и упираются в потолок хука jest (20 с).
+  // Параллельно сумма превращается в максимум.
+  await Promise.all(
+    ["s-contacts", "s-contactsExcept", "s-onlyShareWith"].map((id) =>
+      waitFor(async () => (await visibleToUidsOf(`users/${OWNER}/statuses/${id}`)) !== undefined),
+    ),
   );
 });
 

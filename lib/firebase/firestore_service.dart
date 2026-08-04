@@ -9,6 +9,7 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/chat/chat_departure.dart';
 import '../core/models/activity_type.dart';
 import '../core/time/instant_iso.dart';
 import '../core/store/shared_stream.dart';
@@ -972,24 +973,31 @@ class FirestoreService {
     await _db.runTransaction((tx) async {
       final snap = await tx.get(chatRef);
       final data = snap.data() ?? {};
-      final members = List<String>.from(data['members'] as List? ?? const []);
-      final admins = List<String>.from(data['admins'] as List? ?? const []);
-      final wasAdmin = admins.contains(uid);
+      // Одно правило на оба пути ухода — см. chat_departure.dart. Здесь
+      // же снимается и `activeUsers`: отметка присутствия не должна
+      // переживать членство.
+      final after = chatAfterDeparture(
+        members: List<String>.from(data['members'] as List? ?? const []),
+        admins: List<String>.from(data['admins'] as List? ?? const []),
+        activeUsers: List<String>.from(
+          data['activeUsers'] as List? ?? const [],
+        ),
+        uid: uid,
+      );
 
-      final remainingMembers = members.where((m) => m != uid).toList();
-      final remainingAdmins = admins.where((a) => a != uid).toList();
-
+      final remainingAdmins = List<String>.from(after.admins);
       // WhatsApp-style guarantee: a group is never left without an admin —
       // if the sole admin leaves and members remain, randomly promote one.
-      if (wasAdmin && remainingAdmins.isEmpty && remainingMembers.isNotEmpty) {
-        final promoted =
-            remainingMembers[Random().nextInt(remainingMembers.length)];
-        remainingAdmins.add(promoted);
+      if (after.needsAdminPromotion) {
+        remainingAdmins.add(
+          after.members[Random().nextInt(after.members.length)],
+        );
       }
 
       tx.update(chatRef, {
-        'members': remainingMembers,
+        'members': after.members,
         'admins': remainingAdmins,
+        'activeUsers': after.activeUsers,
       });
     });
   }
@@ -1034,14 +1042,34 @@ class FirestoreService {
     required String adminUid,
   }) async {
     final chatRef = _db.collection('chats').doc(chatId);
-    final snap = await chatRef.get();
-    if (uid == snap.data()?['createdBy']) {
-      throw Exception('Cannot remove the group creator');
-    }
+    // Транзакция, а не чтение с последующей записью: правило ухода одно на
+    // оба пути (chat_departure.dart) и работает со списками целиком, а
+    // список, вычисленный по снимку вне транзакции, затёр бы чужую
+    // одновременную правку. Заодно проверка «создателя не удаляют»
+    // перестала опираться на снимок, устаревший к моменту записи.
+    await _db.runTransaction((tx) async {
+      final snap = await tx.get(chatRef);
+      final data = snap.data() ?? {};
+      if (uid == data['createdBy']) {
+        throw Exception('Cannot remove the group creator');
+      }
 
-    await chatRef.update({
-      'members': FieldValue.arrayRemove([uid]),
-      'admins': FieldValue.arrayRemove([uid]),
+      // Повышение администратора здесь не делается и не делалось: этот путь
+      // ведёт админ, и без администратора группа после него не остаётся.
+      final after = chatAfterDeparture(
+        members: List<String>.from(data['members'] as List? ?? const []),
+        admins: List<String>.from(data['admins'] as List? ?? const []),
+        activeUsers: List<String>.from(
+          data['activeUsers'] as List? ?? const [],
+        ),
+        uid: uid,
+      );
+
+      tx.update(chatRef, {
+        'members': after.members,
+        'admins': after.admins,
+        'activeUsers': after.activeUsers,
+      });
     });
 
     await _commitMessage(
