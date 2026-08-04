@@ -454,6 +454,239 @@ test("отмена: посторонний не может ни предложи
 });
 
 // ---------------------------------------------------------------------
+// personalEvents — СНЯТИЕ стоящего запроса отмены: отзыв и отказ
+//
+// В данных у этих двух поступков один и тот же след — пустые
+// `cancelRequestedBy`/`cancelRequestedAt`. Различает их только имя,
+// записанное в `lastActionType`, и потому проверяется здесь не столько
+// «можно ли снять», сколько НЕЛЬЗЯ ЛИ СНЯТЬ ЧУЖИМ ИМЕНЕМ: подмена имени
+// увела бы уведомление не тому человеку, и ни одна из сторон об этом бы
+// не узнала.
+//
+// Каждая дорога проверяется отдельно — правило «проверка называет
+// ДОРОГУ»: «снять запрос» это не проверка, «отозвать свой» и «отклонить
+// чужой» — две разные.
+// ---------------------------------------------------------------------
+
+// Отменённый договор: подтверждение уже прошло. Ставится в обход правил,
+// потому что проверяется как раз то, что после него ничего не проходит.
+async function seedCancelled(requestedBy: string, confirmedBy: string) {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), `personalEvents/${EVENT}`), {
+      cancelRequestedBy: requestedBy,
+      cancelRequestedAt: new Date(),
+      cancelConfirmedBy: confirmedBy,
+      cancelledAt: new Date(),
+      status: "cancelled",
+    });
+  });
+}
+
+const withdraw = (uid: string) => ({
+  cancelRequestedBy: null,
+  cancelRequestedAt: null,
+  lastActionBy: uid,
+  lastActionType: "cancelWithdrawn",
+});
+
+const decline = (uid: string) => ({
+  cancelRequestedBy: null,
+  cancelRequestedAt: null,
+  lastActionBy: uid,
+  lastActionType: "cancelDeclined",
+});
+
+// --- разрешено ровно тому, кому положено ---
+
+test("отзыв: запросивший МОЖЕТ снять свой запрос", async () => {
+  await seedCancelRequest(OWNER);
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), withdraw(OWNER)),
+  );
+});
+
+test("отказ: вторая сторона МОЖЕТ отклонить чужой запрос", async () => {
+  await seedCancelRequest(OWNER);
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertSucceeds(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), decline(CONTACT)),
+  );
+});
+
+// --- отказ всем прочим: имя поступка нельзя взять чужое ---
+
+test("отзыв: НЕ запросивший не может назвать своё снятие отзывом", async () => {
+  // Вторая сторона снимает чужой запрос под именем 'cancelWithdrawn' —
+  // след в данных тот же, но уведомление ушло бы запросившему как «он сам
+  // передумал». Это и есть подделка поступка.
+  await seedCancelRequest(OWNER);
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), withdraw(CONTACT)),
+  );
+});
+
+test("отказ: запросивший не может назвать своё снятие отказом", async () => {
+  await seedCancelRequest(OWNER);
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), decline(OWNER)),
+  );
+});
+
+test("снятие: НЕЛЬЗЯ подделать автора записи", async () => {
+  // `lastActionBy` чужой — тогда сервер, который этому полю доверяет
+  // безоговорочно, назвал бы в уведомлении не того человека.
+  await seedCancelRequest(OWNER);
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      ...withdraw(OWNER),
+      lastActionBy: CONTACT,
+    }),
+  );
+});
+
+test("снятие: НЕЛЬЗЯ снять запрос безымянно", async () => {
+  // Без имени поступка триггер не отличит отзыв от отказа — а отличить
+  // ему больше нечем: кто писал, он не видит.
+  await seedCancelRequest(OWNER);
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      cancelRequestedBy: null,
+      cancelRequestedAt: null,
+    }),
+  );
+});
+
+test("снятие: НЕЛЬЗЯ протащить этим ходом что-то ещё", async () => {
+  await seedCancelRequest(OWNER);
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      ...withdraw(OWNER),
+      location: "Bakı",
+    }),
+  );
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      ...withdraw(OWNER),
+      status: "cancelled",
+    }),
+  );
+});
+
+test("снятие: НЕЛЬЗЯ снять запрос, которого нет", async () => {
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), withdraw(OWNER)),
+  );
+});
+
+test("снятие: посторонний не может ни отозвать, ни отклонить", async () => {
+  await seedCancelRequest(OWNER);
+  const strangerDb = testEnv.authenticatedContext(STRANGER).firestore();
+  await assertFails(
+    updateDoc(doc(strangerDb, `personalEvents/${EVENT}`), withdraw(STRANGER)),
+  );
+  await assertFails(
+    updateDoc(doc(strangerDb, `personalEvents/${EVENT}`), decline(STRANGER)),
+  );
+});
+
+// --- после подтверждения не проходит ничего ---
+
+test("отзыв: после подтверждения отмены отозвать УЖЕ НЕЛЬЗЯ", async () => {
+  await seedCancelled(OWNER, CONTACT);
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), withdraw(OWNER)),
+  );
+});
+
+test("отказ: после подтверждения отмены отклонить УЖЕ НЕЛЬЗЯ", async () => {
+  await seedCancelled(OWNER, CONTACT);
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), decline(CONTACT)),
+  );
+});
+
+test("N36: повторное подтверждение после cancelled отклоняется", async () => {
+  // Щель, найденная 04.08 чтением правил: `cancelRequestedBy` при отмене
+  // не очищается, поэтому условие confirmsCancel продолжало выполняться и
+  // после неё — вторая сторона могла подтвердить ещё раз и переписать
+  // `cancelConfirmedBy` на себя. Договор и так отменён, но «отменил Х»
+  // перестало бы значить «решение принял Х».
+  await seedCancelled(OWNER, CONTACT);
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      status: "cancelled",
+      cancelConfirmedBy: CONTACT,
+      cancelledAt: new Date(),
+    }),
+  );
+});
+
+// --- одновременность решают правила, а не UI ---
+
+test("одновременность: после отзыва подтверждение отклоняется", async () => {
+  // Кто первым записал, тот и прав. Запросивший отозвал — второй стороне
+  // подтверждать больше нечего, и её ход обязан ОТКАЗАТЬ, а не пройти
+  // вхолостую: отказ здесь превращается в слова «запрос уже отозван».
+  await seedCancelRequest(OWNER);
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), withdraw(OWNER)),
+  );
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      status: "cancelled",
+      cancelConfirmedBy: CONTACT,
+      cancelledAt: new Date(),
+    }),
+  );
+});
+
+test("одновременность: после подтверждения отзыв отклоняется", async () => {
+  await seedCancelRequest(OWNER);
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertSucceeds(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      status: "cancelled",
+      cancelConfirmedBy: CONTACT,
+      cancelledAt: new Date(),
+    }),
+  );
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), withdraw(OWNER)),
+  );
+});
+
+test("после отзыва можно запросить отмену ЗАНОВО", async () => {
+  // Отзыв не запирает договор навсегда: поля очищены, значит
+  // `requestsCancel` снова проходит. Признак нового запроса сервер обязан
+  // строить по `cancelRequestedAt`, а не по появлению поля из пустого —
+  // класс «признак построен так, будто прошлого не было» (N29).
+  await seedCancelRequest(OWNER);
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), withdraw(OWNER)),
+  );
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      cancelRequestedBy: OWNER,
+      cancelRequestedAt: new Date(),
+    }),
+  );
+});
+
+// ---------------------------------------------------------------------
 // personalEvents — выход из чужого мероприятия и признак автора
 //
 // Ход заведён 03.08: «своё удаляется у всех, чужое — только у меня».

@@ -644,12 +644,21 @@ service cloud.firestore {
       // Ход второй: подтвердить ЧУЖОЙ запрос. Своего подтвердить нельзя —
       // на этом всё «по согласию» и держится: без этой строки отмена
       // делается одной стороной в два тапа.
+      //
+      // `status != 'cancelled'` закрывает N36. Без него условие продолжало
+      // выполняться и ПОСЛЕ отмены: `cancelRequestedBy` подтверждением не
+      // очищается, поэтому вторая сторона могла подтвердить ещё раз и
+      // переписать `cancelConfirmedBy` с `cancelledAt` на себя. Договор и
+      // так отменён, но `cancelConfirmedBy` — единственная запись о том,
+      // ЧЬЁ было решение, и переписываемой задним числом она быть не
+      // может: «отменил Х» обязано значить «решение принял Х».
       function confirmsCancel() {
         return changedKeys().hasOnly(['status', 'cancelConfirmedBy', 'cancelledAt'])
           && request.resource.data.status == 'cancelled'
           && request.resource.data.cancelConfirmedBy == request.auth.uid
           && resource.data.get('cancelRequestedBy', null) != null
-          && resource.data.get('cancelRequestedBy', null) != request.auth.uid;
+          && resource.data.get('cancelRequestedBy', null) != request.auth.uid
+          && resource.data.get('status', null) != 'cancelled';
       }
 
       // ВЫЙТИ ИЗ ЧУЖОГО МЕРОПРИЯТИЯ. Добавлено 03.08 по требованию
@@ -687,6 +696,75 @@ service cloud.firestore {
              resource.data.musicians.removeAll([request.auth.uid]);
       }
 
+      // СНЯТИЕ СТОЯЩЕГО ЗАПРОСА ОТМЕНЫ. Двумя ходами, а не одним, хотя в
+      // данных они оставляют ОДИН И ТОТ ЖЕ след — пустые
+      // `cancelRequestedBy`/`cancelRequestedAt`.
+      //
+      // Поступка два, и они разные:
+      //   отзыв  — запросивший передумал, извещать надо вторую сторону;
+      //   отказ  — вторая сторона не согласна, извещать надо запросившего.
+      //
+      // Триггер видит `before`/`after`, но НЕ видит, кто писал (тот же
+      // довод, что у `leavesEvent`). Значит поступок обязан называться в
+      // самой записи, иначе уведомление уйдёт не тому. Подделать название
+      // нельзя: каждая дорога требует и своего автора, и своего имени —
+      // отозвать может только запросивший, отказать только НЕ запросивший,
+      // а `stampsSelf()` привязывает запись к тому, кто её делает.
+      //
+      // `status != 'cancelled'` — после подтверждения отзыв невозможен:
+      // отменённый договор не возвращают снятием запроса. `status` этим
+      // ходом не трогается вовсе (его нет в `hasOnly`), так что и
+      // «расотменить» им нечего.
+      //
+      // Одновременность решают эти правила, а не UI: кто первым записал,
+      // тот и прав. После отзыва подтверждение отклонится
+      // (`cancelRequestedBy` стал null), после подтверждения отзыв
+      // отклонится (`status == 'cancelled'`). Отказ проигравшему глотать
+      // НЕЛЬЗЯ — он обязан стать словами «вторая сторона уже подтвердила
+      // отмену».
+      function clearsCancelFields() {
+        return changedKeys().hasOnly(['cancelRequestedBy', 'cancelRequestedAt',
+                                      'lastActionBy', 'lastActionType'])
+          && request.resource.data.cancelRequestedBy == null
+          && request.resource.data.cancelRequestedAt == null
+          && resource.data.get('cancelRequestedBy', null) != null
+          && resource.data.get('status', null) != 'cancelled'
+          && stampsSelf();
+      }
+
+      // Запросивший передумал.
+      function withdrawsCancelRequest() {
+        return clearsCancelFields()
+          && resource.data.get('cancelRequestedBy', null) == request.auth.uid
+          && request.resource.data.lastActionType == 'cancelWithdrawn';
+      }
+
+      // Вторая сторона не согласна.
+      function declinesCancelRequest() {
+        return clearsCancelFields()
+          && resource.data.get('cancelRequestedBy', null) != request.auth.uid
+          && request.resource.data.lastActionType == 'cancelDeclined';
+      }
+
+      // Имя отмены нельзя поставить мимо двух дорог выше.
+      //
+      // Найдено тестом «нельзя снять запрос, которого нет» 04.08. Дыра
+      // открывалась не там, где её ждали: запись `null` поверх уже
+      // стоящего `null` НЕ попадает в `changedKeys()` — поле не менялось,
+      // — поэтому `touchesCancel()` ложно, и такая правка уходила в ветку
+      // обычной правки владельца. Снимать там нечего, но `lastActionType`
+      // садился в документ, а серверу это поле — единственный источник
+      // знания о том, что произошло: он разослал бы «вторая сторона
+      // передумала» при том, что запроса не было вовсе.
+      //
+      // Тот же класс, что `stampsSelf`: подделывается не действие, а
+      // РАССКАЗ о нём, и снаружи подделка неотличима от правды.
+      function namesCancelDeed() {
+        return 'lastActionType' in changedKeys()
+          && (request.resource.data.lastActionType == 'cancelWithdrawn'
+              || request.resource.data.lastActionType == 'cancelDeclined');
+      }
+
       allow read: if isSignedIn() && (
         resource.data.ownerUid == request.auth.uid ||
         request.auth.uid in resource.data.get('musicians', [])
@@ -699,8 +777,12 @@ service cloud.firestore {
       allow update: if isSignedIn()
         && (!changedKeys().hasAny(['lastActionBy']) || stampsSelf())
         && (
-          (resource.data.ownerUid == request.auth.uid && !touchesCancel())
-          || (isParty() && (requestsCancel() || confirmsCancel() || leavesEvent()))
+          (resource.data.ownerUid == request.auth.uid
+             && !touchesCancel() && !namesCancelDeed())
+          || (isParty() && (
+               requestsCancel() || confirmsCancel() || leavesEvent()
+               || withdrawsCancelRequest() || declinesCancelRequest()
+             ))
         );
       allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
     }
