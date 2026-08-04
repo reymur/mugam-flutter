@@ -3676,6 +3676,80 @@ class FirestoreService {
         .timeout(_writeTimeout);
   }
 
+  // ОТМЕНА ДОГОВОРА ПО СОГЛАСИЮ — четыре хода, по одному на каждое
+  // разрешённое правилом изменение (`firestore.rules` → personalEvents).
+  //
+  // Каждый метод пишет РОВНО те ключи, что разрешает его правило, и
+  // ничего сверх: правила построены на `hasOnly`, поэтому лишнее поле
+  // здесь — не «немного больше данных», а отказ по правам целиком.
+  //
+  // Отказ НЕ ГЛОТАЕТСЯ ни одним из четырёх: `permission-denied` здесь
+  // означает, что вторая сторона успела сходить первой, и это ровно то,
+  // о чём человеку надо сказать словами. Перехват превратил бы «не
+  // получилось никогда» в «получилось» — класс «перехват без последствий
+  // делает поломку невидимой». Разбор в `agreements_screen.dart`, где
+  // отказ и превращается в слова.
+
+  /// Ход первый: предложить отмену.
+  Future<void> requestAgreementCancel(String eventId, String uid) {
+    return _db
+        .collection('personalEvents')
+        .doc(eventId)
+        .update({
+          'cancelRequestedBy': uid,
+          'cancelRequestedAt': FieldValue.serverTimestamp(),
+        })
+        .timeout(_writeTimeout);
+  }
+
+  /// Ход второй: подтвердить ЧУЖОЙ запрос. Договор становится `cancelled`.
+  Future<void> confirmAgreementCancel(String eventId, String uid) {
+    return _db
+        .collection('personalEvents')
+        .doc(eventId)
+        .update({
+          'status': 'cancelled',
+          'cancelConfirmedBy': uid,
+          'cancelledAt': FieldValue.serverTimestamp(),
+        })
+        .timeout(_writeTimeout);
+  }
+
+  /// Отзыв: запросивший передумал.
+  ///
+  /// Отзыв и отказ пишут ОДНО И ТО ЖЕ — пустые поля запроса, — и
+  /// различаются только именем поступка. Имя не косметика: сервер видит
+  /// `before`/`after`, но не видит, кто писал, и без имени уведомление
+  /// ушло бы не тому. Подделать его правила не дают — отозвать может
+  /// только сам запросивший (разбор — класс «подделывается не действие, а
+  /// рассказ о нём»).
+  Future<void> withdrawAgreementCancel(String eventId, String uid) {
+    return _db
+        .collection('personalEvents')
+        .doc(eventId)
+        .update({
+          'cancelRequestedBy': null,
+          'cancelRequestedAt': null,
+          'lastActionBy': uid,
+          'lastActionType': 'cancelWithdrawn',
+        })
+        .timeout(_writeTimeout);
+  }
+
+  /// Отказ: вторая сторона не согласна на отмену.
+  Future<void> declineAgreementCancel(String eventId, String uid) {
+    return _db
+        .collection('personalEvents')
+        .doc(eventId)
+        .update({
+          'cancelRequestedBy': null,
+          'cancelRequestedAt': null,
+          'lastActionBy': uid,
+          'lastActionType': 'cancelDeclined',
+        })
+        .timeout(_writeTimeout);
+  }
+
   Future<List<String>> loadReadAgreementIds(String uid) async {
     try {
       final doc = await _db.collection('users').doc(uid).get();

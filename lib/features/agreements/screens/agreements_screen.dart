@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import '../../../core/agreements/agreement_cancel.dart';
 import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/time/az_date_format.dart';
@@ -1741,6 +1742,312 @@ class _AgreementDetailScreen extends ConsumerStatefulWidget {
 class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> {
   final _flash = _RemoteChangeFlash();
 
+  // Идёт запись отмены — гасим кнопки, чтобы второй тап не ушёл поверх
+  // первого. Только это; само состояние договора по-прежнему берётся из
+  // потока, копии здесь нет (N23).
+  bool _cancelBusy = false;
+
+  /// Один ход отмены: выполнить и, если сервер отказал, СКАЗАТЬ ОБ ЭТОМ.
+  ///
+  /// `permission-denied` здесь не поломка, а осмысленный ответ: правила
+  /// устроены так, что при одновременности проходит тот, кто записал
+  /// первым, а второму отказывают. Кто именно опередил — известно заранее
+  /// по самому ходу, поэтому [deniedMessage] у каждого свой и говорит
+  /// правду, а не «Xəta».
+  ///
+  /// **Глотать этот отказ нельзя.** Он детерминированный: повтор даст тот
+  /// же результат, потому что состояние на сервере уже другое. Молчание
+  /// превратило бы «не сработает никогда» в «сработало» — класс «перехват
+  /// без последствий делает поломку невидимой», а человек остался бы с
+  /// кнопкой, которая на вид нажимается и ничего не меняет.
+  ///
+  /// Кнопка при отказе оживает: экран перерисуется от потока, и набор
+  /// кнопок станет тем, который соответствует НОВОМУ состоянию договора.
+  /// До этого мгновения локальный кеш успевает показать несостоявшийся
+  /// исход и откатить его — поэтому слова важнее вида кнопок.
+  Future<void> _cancelStep(
+    Future<void> Function() step, {
+    required String deniedMessage,
+  }) async {
+    if (_cancelBusy) return;
+    setState(() => _cancelBusy = true);
+    try {
+      await step();
+    } on FirebaseException catch (e, st) {
+      if (!mounted) return;
+      final denied = e.code == 'permission-denied';
+      _say(denied ? deniedMessage : 'Xəta: ${e.message ?? e.code}');
+      if (!denied) {
+        FirebaseCrashlytics.instance.recordError(
+          e,
+          st,
+          reason: 'agreements_screen: cancel step failed',
+        );
+      }
+    } catch (e, st) {
+      if (!mounted) return;
+      // Сюда попадает и таймаут записи. Он НЕ значит «не прошло»: запись
+      // могла уйти и подтвердиться позже. Поэтому слова осторожные, а не
+      // «не получилось».
+      _say('Əməliyyat tamamlanmadı, yenidən yoxlayın');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'agreements_screen: cancel step failed',
+      );
+    } finally {
+      if (mounted) setState(() => _cancelBusy = false);
+    }
+  }
+
+  void _say(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        backgroundColor: kBg3,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  /// Отмена по согласию — ОДНА дорога к каждому ходу, только отсюда.
+  ///
+  /// Однопутно намеренно. Гарантия «по согласию» держится на сервере
+  /// (`requestsCancel`/`confirmsCancel` и две дороги снятия), поэтому
+  /// вторая дорога в интерфейсе ничего бы не добавила к безопасности, а
+  /// добавила бы ещё одно место, где забудут (правило «клиентское
+  /// состояние без сервера за спиной не размножать по путям» —
+  /// применённое к его второй половине: даже при живом правиле лишняя
+  /// дорога это лишний повод разойтись в словах и в `lastActionType`).
+  ///
+  /// Отзыв и отказ РАЗЛИЧИМЫ ЗДЕСЬ, а не только в данных. Кнопка у
+  /// запросившего одна — «Geri götür», у второй стороны их две —
+  /// «Razıyam» и «Razı deyiləm». Одна кнопка на оба смысла записала бы
+  /// неверный `lastActionType`, и уведомление ушло бы не тому человеку:
+  /// поступка два, и назвать их одним словом нельзя.
+  Widget _cancelSection(
+    PersonalEvent event,
+    String currentUid,
+    FirestoreService svc,
+  ) {
+    // Само правило — в чистой функции (core/agreements/agreement_cancel.dart),
+    // здесь только применение. Так же, как у плашки конфликта: правило
+    // обязано быть проверяемо тестом, а внутри состояния виджета проверить
+    // его нечем.
+    final stage = resolveCancelStage(
+      status: event.status,
+      cancelRequestedBy: event.cancelRequestedBy,
+      currentUid: currentUid,
+    );
+    final partner = event.partnerName ?? 'Qarşı tərəf';
+
+    if (stage == CancelStage.cancelled) return const SizedBox.shrink();
+
+    if (stage == CancelStage.none) {
+      return _cancelBox(
+        children: [
+          _cancelButton(
+            label: 'Müqaviləni ləğv et',
+            color: kRed,
+            filled: false,
+            onTap: () async {
+              final ok = await _ask(
+                title: 'Müqaviləni ləğv etmək?',
+                body: 'Qarşı tərəfə ləğv təklifi göndəriləcək. Müqavilə '
+                    'yalnız o razılaşdıqdan sonra ləğv olunacaq.',
+                confirmLabel: 'Təklif göndər',
+              );
+              if (!ok) return;
+              await _cancelStep(
+                () => svc.requestAgreementCancel(event.id, currentUid),
+                deniedMessage: 'Qarşı tərəf artıq ləğv təklifi göndərib',
+              );
+            },
+          ),
+        ],
+      );
+    }
+
+    if (stage == CancelStage.requestedByMe) {
+      // Своя просьба ждёт ответа. Дорога отсюда одна — отозвать.
+      return _cancelBox(
+        note: '⏳ Ləğv təklifi göndərildi — cavab gözlənilir',
+        noteColor: kGold,
+        children: [
+          _cancelButton(
+            label: 'Geri götür',
+            color: kGold,
+            filled: false,
+            onTap: () async {
+              final ok = await _ask(
+                title: 'Təklifi geri götürmək?',
+                body: 'Müqavilə qüvvədə qalacaq.',
+                confirmLabel: 'Geri götür',
+                confirmColor: kGold,
+              );
+              if (!ok) return;
+              await _cancelStep(
+                () => svc.withdrawAgreementCancel(event.id, currentUid),
+                // Проиграл гонку — значит вторая сторона успела
+                // подтвердить. Это и есть те самые слова вместо молчания.
+                deniedMessage: 'Qarşı tərəf ləğvi artıq təsdiqlədi',
+              );
+            },
+          ),
+        ],
+      );
+    }
+
+    // Просит второй — у меня два разных ответа, и они не одно и то же.
+    return _cancelBox(
+      note: '$partner müqavilənin ləğvini təklif edir',
+      noteColor: kRed,
+      children: [
+        _cancelButton(
+          label: 'Razıyam, ləğv edilsin',
+          color: kRed,
+          filled: true,
+          onTap: () async {
+            final ok = await _ask(
+              title: 'Müqaviləni ləğv etmək?',
+              body: 'Müqavilə ləğv olunacaq. Bunu geri qaytarmaq mümkün deyil.',
+              confirmLabel: 'Ləğv et',
+            );
+            if (!ok) return;
+            await _cancelStep(
+              () => svc.confirmAgreementCancel(event.id, currentUid),
+              deniedMessage: 'Təklif artıq geri götürülüb',
+            );
+          },
+        ),
+        const SizedBox(height: 8),
+        _cancelButton(
+          label: 'Razı deyiləm',
+          color: kMuted,
+          filled: false,
+          onTap: () async {
+            final ok = await _ask(
+              title: 'Ləğvə etiraz etmək?',
+              body: 'Müqavilə qüvvədə qalacaq, qarşı tərəfə bildiriş '
+                  'göndəriləcək.',
+              confirmLabel: 'Razı deyiləm',
+              confirmColor: kGold,
+            );
+            if (!ok) return;
+            await _cancelStep(
+              () => svc.declineAgreementCancel(event.id, currentUid),
+              deniedMessage: 'Təklif artıq geri götürülüb',
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _cancelBox({
+    String? note,
+    Color noteColor = kMuted,
+    required List<Widget> children,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(top: 20),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: kBg3,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (note != null) ...[
+            Text(
+              note,
+              style: TextStyle(
+                color: noteColor,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w700,
+                height: 1.35,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+          ],
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _cancelButton({
+    required String label,
+    required Color color,
+    required bool filled,
+    required VoidCallback onTap,
+  }) {
+    final onPressed = _cancelBusy ? null : onTap;
+    if (filled) {
+      return ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+        child: Text(label,
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+      );
+    }
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: color,
+        side: BorderSide(color: color.withAlpha(140)),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+      child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+    );
+  }
+
+  /// Спросить перед необратимым. Отмена договора касается второго
+  /// человека, и о ней он узнает уведомлением — такое не делают тапом без
+  /// вопроса.
+  Future<bool> _ask({
+    required String title,
+    required String body,
+    required String confirmLabel,
+    Color confirmColor = kRed,
+  }) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        title: Text(title,
+            style: GoogleFonts.nunito(
+                color: kGold, fontSize: 17, fontWeight: FontWeight.bold)),
+        content: Text(body, style: const TextStyle(color: kText, height: 1.4)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('İmtina', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(confirmLabel, style: TextStyle(color: confirmColor)),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   // Отметка «смотрю в эту карточку» — тот же механизм присутствия, что у
   // чата, но своим полем (`activeEventId`). Пока карточка открыта, сервер
   // не шлёт уведомлений об ЭТОМ мероприятии: человек и так видит правку
@@ -1982,6 +2289,10 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
                 ),
               ),
             ),
+            // Отмена по согласию — единственная дорога к ней во всём
+            // приложении. Внизу карточки намеренно: это последнее, что
+            // человек должен встретить, прочитав договор целиком.
+            _cancelSection(event, currentUid, firestoreService),
             const SizedBox(height: 40),
           ],
         ),
