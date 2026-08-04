@@ -27,6 +27,8 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../../core/media/image_compressor.dart';
 import '../../../core/native_sound_effect.dart';
+import '../../../core/chat/chat_access.dart';
+import '../../../core/chat/chat_existence.dart';
 import '../../../core/chat/chat_messages_controller.dart';
 import '../../../core/queue/message_send_controller.dart';
 import '../../../core/settings/image_quality_settings.dart';
@@ -353,6 +355,49 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         reason: 'chat_screen: sound effect init failed',
       );
     }
+  }
+
+  // Уже уводим человека с экрана — второй раз не начинаем. Без этого
+  // build, который перестраивается постоянно, дал бы окно на каждый кадр.
+  bool _leaving = false;
+
+  /// Чат перестал быть моим — сказать словами и увести.
+  ///
+  /// Два случая РАЗЛИЧАЮТСЯ, и в этом весь смысл N34: «группу удалили» и
+  /// «меня удалили из группы» требуют разных слов, а до признака
+  /// существования отличить их было нечем — оба выглядели как чат с
+  /// пустым составом.
+  ///
+  /// Молча не уводим. Экран, схлопнувшийся сам по себе, человек прочтёт
+  /// как поломку приложения и полезет обратно — а обратно уже нельзя, и
+  /// почему, он не узнает.
+  void _checkStillMine(ChatAccess access) {
+    if (_leaving) return;
+    if (access == ChatAccess.ok || access == ChatAccess.unknown) return;
+    _leaving = true;
+    final text = access == ChatAccess.chatDeleted
+        ? 'Bu söhbət silinib'
+        : 'Siz bu qrupdan çıxarıldınız';
+    // Вне кадра отрисовки: зовётся из build.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: kBg2,
+          content: Text(text, style: const TextStyle(color: kText)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Bağla', style: TextStyle(color: kGold)),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    });
   }
 
   @override
@@ -4106,6 +4151,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final lastReadMsgId =
         chatMetaAsync.value?['lastReadMsgId'] as Map<String, dynamic>? ?? {};
     final members = (chatMetaAsync.value?['members'] as List?)?.cast<String>();
+    // ЧАТ ЕЩЁ МОЙ? Проверка живёт здесь, в build, потому что отвечать
+    // надо на ЧУЖОЕ действие: собственный уход экран переживает сам —
+    // после него человек уходит навигацией (N33).
+    //
+    // Само правило — в чистой функции (core/chat/chat_access.dart):
+    // внутри build его проверить нечем, а ошибиться можно в обе стороны,
+    // и обе дорого.
+    _checkStillMine(
+      resolveChatAccess(
+        existence: chatMetaAsync.value?['existence'] as ChatExistence? ??
+            ChatExistence.unknown,
+        fromCache: (chatMetaAsync.value?['fromCache'] as bool?) ?? true,
+        members: members,
+        currentUid: currentUid,
+      ),
+    );
     final otherUid = members?.firstWhere(
       (m) => m != currentUid,
       orElse: () => '',

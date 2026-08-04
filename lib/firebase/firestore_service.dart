@@ -10,6 +10,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/chat/chat_departure.dart';
+import '../core/chat/chat_existence.dart';
 import '../core/models/activity_type.dart';
 import '../core/time/instant_iso.dart';
 import '../core/store/shared_stream.dart';
@@ -2695,6 +2696,28 @@ class FirestoreService {
         );
       }
       return {
+        // ЕСТЬ ЛИ ДОКУМЕНТ — признак существования, а не догадка по
+        // пустоте (N34).
+        //
+        // До него отсутствующий документ отдавался как обычный чат с
+        // `members: []`, и «чата больше нет» было неотличимо от «чат
+        // есть, участников нет». Догадываться по пустоте потребитель не
+        // может в принципе: пустой снимок из кэша означает «ещё не
+        // знаю», а не «удалён», — поэтому состояний три, и называет их
+        // тип, а не bool (см. ChatExistence).
+        'existence': chatExistenceOf(
+          exists: snap.exists,
+          isFromCache: snap.metadata.isFromCache,
+        ),
+        // Отдельным ключом, потому что отвечает на ДРУГОЙ вопрос:
+        // `existence` говорит «есть ли документ», этот — «подтвердил ли
+        // сервер». Решение об исключении человека из чата требует
+        // второго: состав из кэша может отставать на сессию (N33).
+        //
+        // Лишних перестроений почти не даёт: значение меняется один раз
+        // за открытие чата, на переходе «кэш → сервер», и `.distinct`
+        // гасит всё остальное.
+        'fromCache': snap.metadata.isFromCache,
         // Lets chat_screen.dart's AppBar title resolve off this live
         // stream alone instead of also waiting on chatDataProvider's
         // separate one-time fetch just to learn isGroup — the two used to
