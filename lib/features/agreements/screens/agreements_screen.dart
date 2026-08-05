@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/agreements/agreement_cancel.dart';
+import '../../../core/agreements/event_edit.dart';
 import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/time/az_date_format.dart';
@@ -111,7 +112,17 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     1,
   );
   int? _selectedCalendarDay;
-  List<String> _readAgreementIds = [];
+  // Отметки «прочитано». Не состояние экрана, а СНИМОК ПОТОКА, положенный
+  // сюда в начале build: читателей у него четыре (`_isUnread`,
+  // `_sortedAgreements`, шапка, карточка), и протаскивать список через все
+  // четыре ради чистоты значило бы больше правок в файле, который на шаге 5
+  // разбирается на маршруты.
+  //
+  // Потоком, а не разовым чтением при открытии экрана: с N40 отметку
+  // снимает ещё и сервер, у второй стороны, когда договор правят. Экран
+  // живёт в `IndexedStack` и до конца сессии не пересоздаётся — разовое
+  // чтение показало бы снятую отметку не раньше перезапуска приложения.
+  List<String> _readAgreementIds = const [];
   bool _autoOpenedForPartner = false;
 
   static const int _kCalendarInitialPage = 1200;
@@ -129,7 +140,6 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       1,
     );
     _pageController = PageController(initialPage: _kCalendarInitialPage);
-    _loadReadIds();
     // Covers the case where this screen is being built for the very FIRST
     // time (StatefulShellRoute.indexedStack builds each branch lazily, on
     // first visit) at the exact moment chat_screen.dart's accept-listener
@@ -169,14 +179,13 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     );
   }
 
-  Future<void> _loadReadIds() async {
-    final ids = await ref.read(firestoreServiceProvider).loadReadAgreementIds(_uid);
-    if (mounted) setState(() => _readAgreementIds = ids);
-  }
-
+  // Своего слепка состояния здесь больше нет: запись немедленно возвращается
+  // тем же потоком (Firestore отдаёт локальную мутацию в снимок не дожидаясь
+  // сервера), и второй источник той же правды был бы лишним — а главное,
+  // пережил бы снятие отметки сервером и прятал бы рамку, которую тот
+  // вернул.
   Future<void> _markRead(PersonalEvent e) async {
     if (_readAgreementIds.contains(e.id)) return;
-    setState(() => _readAgreementIds = [..._readAgreementIds, e.id]);
     await ref.read(firestoreServiceProvider).saveReadAgreementId(_uid, e.id);
   }
 
@@ -237,6 +246,12 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       );
     });
     final uid = _uid;
+    // Снимок потока отметок — см. поле. Пока он не пришёл, список пуст, то
+    // есть всё выглядит непрочитанным: сомнение здесь безопаснее в эту
+    // сторону — лишняя рамка снимается открытием карточки, недостающая не
+    // замечается никем.
+    _readAgreementIds = ref.watch(readAgreementIdsProvider(uid)).value ??
+        const <String>[];
     final personalEventsAsync = ref.watch(personalEventsProvider(uid));
     final eventsAsParticipantAsync = ref.watch(eventsAsParticipantProvider(uid));
 
@@ -2858,10 +2873,20 @@ class _EventFormModalState extends State<_EventFormModal> {
   /// Передаются ВСЕ мешающие мероприятия, а не первое: при нескольких в
   /// дне диалог показывает их списком с переключателем, и «то самое»
   /// выбирает человек.
+  ///
+  /// ТОЛЬКО ПРИ СОЗДАНИИ (N39). Единственный вызывающий — `_handleSave`, и
+  /// он до сюда не доходит, когда правят существующее. Утверждение стоит
+  /// проверкой, а не комментарием: вернись сюда путь от правки, и «Əvəz
+  /// et» снова начала бы сносить постороннее мероприятие — молча, потому
+  /// что ошибки в этом нет нигде.
   Future<void> _showConflictFlow(
     List<PersonalEvent> conflicts, {
     required bool exactTime,
   }) async {
+    assert(
+      widget.existingEvent == null,
+      'окно конфликта при правке не показывается (N39)',
+    );
     if (!mounted) return;
     if (conflicts.isEmpty) return;
     final choice = await showDialog<EventConflictChoice>(
@@ -2875,18 +2900,10 @@ class _EventFormModalState extends State<_EventFormModal> {
     if (!mounted || choice == null) return;
     final dialogResult = choice.action;
     if (dialogResult == 'replace') {
-      // «Заменить» — это переписать ВЫБРАННОЕ мероприятие тем, что человек
-      // сейчас ввёл, а не завести второе рядом. Раньше кнопка называлась
-      // «Əvəz et», но ничего не заменяла: просто сохраняла новое, и их
-      // становилось два.
-      //
-      // Переписывание, а не удаление с созданием заново: документ, его
-      // участники и связь с договором остаются на месте. Удаление было бы
-      // необратимо и у второй стороны договор просто исчез бы.
-      //
-      // Заменять можно только СВОЁ — диалог не даёт нажать кнопку на
-      // чужом, и то же требуют правила (`allow update/delete` только
-      // владельцу).
+      // Главное действие. У него ДВА разных смысла, и решает их владение
+      // выбранного мероприятия — см. `_replaceEvent`. Диалог называет их
+      // разными именами («Mövcud tədbiri dəyiş» / «Təqvimimdən sil»), но
+      // ответом остаётся один: поступок совершает вызывающий, а не окно.
       await _replaceEvent(choice.event);
     } else if (dialogResult == 'new') {
       // «Yeni tədbir» — «это отдельное мероприятие, сохрани его как есть».
@@ -2958,6 +2975,18 @@ class _EventFormModalState extends State<_EventFormModal> {
   // (_submit): сначала собственный запрет человека, потом точное
   // совпадение минуты, потом занятый день. Точное совпадение спрашивается
   // раньше: оно строже и говорит больше, чем «на этот день что-то есть».
+  //
+  // ПРИ ПРАВКЕ ОКНА КОНФЛИКТА НЕТ ВОВСЕ (N39). Оно написано для создания и
+  // отвечает на вопрос «у меня занято, что делать»; при правке этого
+  // вопроса не существует — правимое мероприятие из конфликтов исключено
+  // (`_excludeEventId`), значит окно поднимали ПОСТОРОННИЕ мероприятия
+  // дня, а главным ответом в нём стояло их удаление. Человек приходил
+  // снять участника, а интерфейс подталкивал снести чужой день.
+  //
+  // Разводится это не текстом кнопок, а самим случаем: правило — в
+  // `conflictAnswers` (core/agreements/event_edit.dart), и там при правке
+  // ни один допустимый ответ не пишет в чужой документ. Здесь только
+  // применение.
   Future<void> _handleSave() async {
     if (_saving) return;
     // Прошлое — раньше всего: предупреждение о нём живое, и прокрутить к
@@ -2988,8 +3017,43 @@ class _EventFormModalState extends State<_EventFormModal> {
     }
 
     final events = widget.allCombinedEvents;
+    final editing = widget.existingEvent != null;
     final exact = exactConflictAt(_selectedDate, events,
         excludeEventId: _excludeEventId);
+
+    if (editing) {
+      final answers = conflictAnswers(
+        isEditing: true,
+        exactTime: exact != null,
+        // Владение мешающего мероприятия к правке отношения не имеет:
+        // подмена этого вопроса и давала N39. Передаётся ради полноты
+        // вызова — правило его при правке не читает.
+        targetIsMine: exact?.ownerUid == widget.currentUid,
+      );
+      // Суть варианта А одной строкой: при правке ответ единственный, а
+      // вопрос с единственным ответом это не вопрос, а задержка. Стоит
+      // проверкой, чтобы правило и его применение не разошлись молча.
+      assert(
+        !conflictAsksHuman(answers),
+        'при правке спрашивать не о чем (N39)',
+      );
+      if (answers.contains(ConflictAnswer.blockUntilMoved)) {
+        // Минута в минуту — единственное настоящее затруднение при
+        // правке: человек оказался бы в двух местах разом. Верный ответ на
+        // него не «заменить», а «сдвиньте время», и говорит это живая
+        // плашка, которую сейчас и покажем.
+        setState(() => _blockedTime = _selectedDate);
+        await _scrollToWarning();
+        return;
+      }
+      // Занят лишь день — сохраняем молча. Решение владельца 03.08:
+      // дневное мероприятие и вечерний той в одну дату это обычная жизнь,
+      // а не ошибка; предупредила о ней плашка в форме, и вопрос сверх
+      // неё был бы вопросом без ответа.
+      await _doSave();
+      return;
+    }
+
     if (exact != null) {
       await _showConflictFlow([exact], exactTime: true);
       return;
@@ -3024,17 +3088,23 @@ class _EventFormModalState extends State<_EventFormModal> {
       final dateIso = _selectedDate.toIso8601String();
       final notes = _computedNotes;
       if (widget.existingEvent != null) {
-        await widget.firestoreService.updatePersonalEvent(widget.existingEvent!.id, {
-          'date': dateIso,
-          'type': _type,
-          'location': _location,
-          'notes': notes,
-          'musicians': _selectedParticipantUids,
-          // Признак автора — от него зависит, кому уйдёт уведомление и
-          // чьё имя в нём будет. Правила не дают поставить чужой uid.
-          'lastActionBy': widget.currentUid,
-          'lastActionType': 'edited',
-        });
+        // Ровно семь ключей, и собирает их общее правило
+        // (`eventEditUpdate`), а не эта строка. Причина — не экономия:
+        // ниже, в `_replaceEvent`, та же самая запись делается второй раз,
+        // и разойдись они хоть одним полем, одна дорога начала бы стирать
+        // то, что другая бережёт. Тринадцать сохраняемых полей проверяет
+        // тест, а не внимательность.
+        await widget.firestoreService.updatePersonalEvent(
+          widget.existingEvent!.id,
+          eventEditUpdate(
+            date: dateIso,
+            type: _type,
+            location: _location,
+            notes: notes,
+            musicians: _selectedParticipantUids,
+            actorUid: widget.currentUid,
+          ),
+        );
       } else {
         await widget.firestoreService.addPersonalEvent(
           ownerUid: widget.currentUid,
@@ -3062,31 +3132,52 @@ class _EventFormModalState extends State<_EventFormModal> {
     }
   }
 
-  /// «Əvəz et» — заменить ВЫБРАННОЕ мероприятие тем, что человек ввёл
-  /// сейчас, вместо создания второго рядом.
+  /// Главное действие диалога конфликта. Два случая, и у каждого своё имя
+  /// на кнопке, потому что поступки разные.
   ///
-  /// Правило владельца 03.08: своё удаляется у всех участников, чужое —
-  /// только у себя (правила не дают участнику снести общий документ, и
-  /// это верно: в мероприятии заняты другие люди).
+  /// СВОЁ — «Mövcud tədbiri dəyiş»: тот же документ переписывается тем, что
+  /// человек ввёл. Ни удаления, ни второй записи рядом.
+  ///
+  /// Прежде здесь стояло удаление с созданием заново (N40), и слово
+  /// «замена» это скрывало: id менялся, а вместе с ним пропадало всё, что
+  /// жило в документе, — `createdAt`, `agreementChatId`, `partnerUid`,
+  /// `jobOfferAt`, поля отмены, отметка прочтения. Тяжелейшее следствие:
+  /// новый документ создавался с `isAgree: false`, и договор ИСЧЕЗАЛ из
+  /// «Müqavilələr» у обеих сторон, оставаясь обычной записью календаря.
+  /// Подтверждено данными прогона 05.08: `KvVo50W7…` исчез,
+  /// `qANeGnDVh9…` появился — другой id.
+  ///
+  /// ЧУЖОЕ — «Təqvimimdən sil»: правка невозможна по правам (`update` в
+  /// `personalEvents` разрешён только владельцу), поэтому единственное,
+  /// что тут можно, — выйти из участников. Мероприятие остаётся у
+  /// остальных и перестаёт занимать мой календарь; своё создаётся рядом,
+  /// ради него человек сюда и пришёл.
+  ///
+  /// Правки существующего здесь больше нет как случая: до этого метода
+  /// доходят только с пути создания (N39, см. `_handleSave`).
   Future<void> _replaceEvent(PersonalEvent target) async {
+    assert(
+      widget.existingEvent == null,
+      'сюда приходят только с пути создания (N39)',
+    );
     final mine = target.ownerUid == widget.currentUid;
-    // Чужое мероприятие удаляется, а не переписывается: переписать его
-    // правила не дают (update только владельцу), а удалить участнику
-    // разрешено — ради мероприятия, потерявшего силу, до владельца
-    // которого не достучаться.
-    //
-    // Подтверждение обязательно и отдельно от диалога конфликта: у второй
-    // стороны договор исчезнет без её ведома, и это не то действие, о
-    // котором человек должен догадываться по названию кнопки.
+    // Подтверждение обязательно и отдельно от диалога конфликта: выход из
+    // чужого мероприятия необратим — вернуть себя в него человек не может,
+    // это умеет только владелец.
     if (!mine) {
-      final ok = await _confirmDeleteForeign(target);
+      final ok = await _confirmLeaveForeign(target);
       if (!ok || !mounted) return;
     }
     setState(() => _saving = true);
     // Люди ЗАМЕНЯЕМОГО мероприятия доносятся здесь, а не при появлении
-    // предупреждения: до нажатия «Əvəz et» неизвестно, какое из
-    // нескольких заменяют. Когда конфликт один, они уже в форме и видны
-    // заранее — этот вызов тогда ничего не добавляет.
+    // предупреждения: до нажатия неизвестно, какое из нескольких выбрано.
+    // Когда конфликт один, они уже в форме и видны заранее — этот вызов
+    // тогда ничего не добавляет.
+    //
+    // Для своего это не украшение, а обязанность: мы переписываем
+    // `musicians` целиком, и без переноса участники заменяемого
+    // мероприятия молча выпали бы из него — то же самое молчаливое
+    // исчезновение, ради которого перенос и заводился.
     final carry = participantsToMerge(
       conflicts: [target],
       current: _selectedParticipantUids,
@@ -3102,41 +3193,32 @@ class _EventFormModalState extends State<_EventFormModal> {
         'location': _location,
         'notes': _computedNotes,
       });
-      // Правило владельца 03.08, буквально: «если инициатор я сам —
-      // мероприятие удаляется у всех участников; если мероприятие чужое —
-      // удаляется только у меня».
       if (mine) {
-        // Своё — сносим документ целиком: у всех участников оно исчезает.
-        await widget.firestoreService.deletePersonalEvent(target.id);
+        // СВОЁ — правка на месте. Второй записи не появляется вовсе,
+        // поэтому и `replacedEventId` тут писать некуда и незачем: пара
+        // «удалили — создали», ради которой он заведён, больше не
+        // возникает. Само поле снимается отдельным шагом, при
+        // переписывании экрана (решение владельца 05.08), чтобы на
+        // переходе не остаться без обоих механизмов сразу.
+        await widget.firestoreService.updatePersonalEvent(
+          target.id,
+          eventEditUpdate(
+            date: _selectedDate.toIso8601String(),
+            type: _type,
+            location: _location,
+            notes: _computedNotes,
+            musicians: _selectedParticipantUids,
+            actorUid: widget.currentUid,
+          ),
+        );
       } else {
-        // Чужое НЕ удаляется: в нём заняты другие люди, и у них оно
-        // должно остаться. Убираем из него себя — тогда оно пропадает из
-        // моего календаря и перестаёт мешать, а у остальных живёт
-        // дальше. Правило владельца 03.08: «своё удаляется у всех, чужое
-        // — только у меня».
+        // ЧУЖОЕ — выход из участников, потом создание своего.
         //
-        // Порядок именно такой: если выход откажет по правам, своё не
+        // Порядок именно такой: откажи выход по правам, своё не
         // создастся и дублей не будет. Обратный порядок оставил бы два
         // мероприятия при первом же отказе.
         await widget.firestoreService
             .leavePersonalEvent(target.id, widget.currentUid);
-      }
-      // Своё — записываем в любом случае: замена это «старого нет, новое
-      // есть». Правимое мероприятие подменить собой не может — оно
-      // исключено из конфликтов (`_excludeEventId`), поэтому удалить
-      // документ, который тут же правим, нечем.
-      if (widget.existingEvent != null) {
-        await widget.firestoreService
-            .updatePersonalEvent(widget.existingEvent!.id, {
-          'date': _selectedDate.toIso8601String(),
-          'type': _type,
-          'location': _location,
-          'notes': _computedNotes,
-          'musicians': _selectedParticipantUids,
-          'lastActionBy': widget.currentUid,
-          'lastActionType': 'replaced',
-        });
-      } else {
         await widget.firestoreService.addPersonalEvent(
           ownerUid: widget.currentUid,
           date: _selectedDate.toIso8601String(),
@@ -3144,9 +3226,6 @@ class _EventFormModalState extends State<_EventFormModal> {
           location: _location,
           notes: _computedNotes,
           participantUids: _selectedParticipantUids,
-          // Пара «удалили старое — создали новое» опознаётся сервером по
-          // этой ссылке и даёт ОДНО уведомление «tədbir əvəz edildi»
-          // вместо «silindi» + «əlavə olundunuz».
           replacedEventId: target.id,
         );
       }
@@ -3167,16 +3246,22 @@ class _EventFormModalState extends State<_EventFormModal> {
     }
   }
 
-  /// Подтверждение удаления ЧУЖОГО мероприятия.
+  /// Подтверждение ВЫХОДА из чужого мероприятия.
+  ///
+  /// Прежний заголовок этого комментария говорил «подтверждение удаления
+  /// чужого мероприятия» — и это было неправдой о собственном коде: под
+  /// ним всегда стоял `leavePersonalEvent`, то есть выход из участников.
+  /// Правится вместе с N39/N40 по тому же правилу, что и кнопки: имя
+  /// обязано называть поступок, комментарий — тоже.
   ///
   /// Отдельным вопросом, а не строчкой в диалоге конфликта: там человек
-  /// отвечает «что делать с моим временем», а здесь — соглашается стереть
-  /// чужую запись, которая у второй стороны исчезнет без её ведома. Два
-  /// разных решения, и второе тяжелее первого.
+  /// отвечает «что делать с моим временем», а здесь соглашается на
+  /// необратимое — вернуть себя в чужое мероприятие он не сможет, это
+  /// умеет только его владелец.
   ///
   /// Тот же вид, что у «Çatı təmizlə» и «İmtina» — в этом приложении так
   /// выглядят необратимые действия.
-  Future<bool> _confirmDeleteForeign(PersonalEvent target) async {
+  Future<bool> _confirmLeaveForeign(PersonalEvent target) async {
     final owner = widget.allUsers
         .where((u) => u.id == target.ownerUid)
         .map((u) => u.name)
@@ -3204,8 +3289,14 @@ class _EventFormModalState extends State<_EventFormModal> {
             child: const Text('Geri', style: TextStyle(color: kMuted)),
           ),
           TextButton(
+            // То же слово, что на кнопке диалога конфликта, с которой сюда
+            // пришли: подтверждение обязано называть тот же поступок, а не
+            // голое «Sil» — оно обещало бы удаление мероприятия целиком.
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Sil', style: TextStyle(color: kRed)),
+            child: Text(
+              conflictAnswerLabel(ConflictAnswer.leaveForeign),
+              style: const TextStyle(color: kRed),
+            ),
           ),
         ],
       ),

@@ -3782,14 +3782,42 @@ class FirestoreService {
         .timeout(_writeTimeout);
   }
 
-  Future<List<String>> loadReadAgreementIds(String uid) async {
-    try {
-      final doc = await _db.collection('users').doc(uid).get();
-      if (!doc.exists) return [];
-      return (doc.data()?['readAgreementIds'] as List?)?.cast<String>() ?? [];
-    } catch (_) {
-      return [];
-    }
+  /// Отметки «прочитано» — ПОТОКОМ, а не разовым чтением.
+  ///
+  /// Разовое чтение стояло здесь, пока отметку снимал только сам человек:
+  /// список менялся лишь его собственным тапом, и экран знал об этом без
+  /// всякой подписки.
+  ///
+  /// С N40 отметку снимает ещё и сервер — у второй стороны, когда договор
+  /// правят (`clearReadMark`, functions/src/index.ts). Разовое чтение
+  /// сделало бы это бесполезным: экран договоров живёт в `IndexedStack` и
+  /// от первого показа до конца сессии не пересоздаётся, то есть золотая
+  /// рамка «непрочитано» вернулась бы не раньше перезапуска приложения. На
+  /// iOS, где push'а нет вовсе (N20), это и есть единственный признак
+  /// правки — признак, приходящий назавтра, не признак.
+  /// `distinct` ОБЯЗАТЕЛЕН, а не оптимизация «на всякий случай».
+  ///
+  /// Документ `users/{uid}` — самый горячий в приложении: в него бьётся
+  /// сердцебиение присутствия (`setUserPresence`, раз в 30–60 с, а при
+  /// открытом чате чаще). Без отсева экран договоров — четыре тысячи строк
+  /// и три вложенных списка — перерисовывался бы целиком на каждый удар,
+  /// хотя отметки прочтения при этом не менялись ни разу.
+  ///
+  /// Найдено собственным разбором сразу после того, как поток был написан:
+  /// подписка ставилась на нужное поле, но слушала весь документ. Тот же
+  /// класс, что «одно поле на два вопроса» — здесь один документ на два
+  /// потока с несопоставимой частотой.
+  Stream<List<String>> watchReadAgreementIds(String uid) {
+    return _db
+        .collection('users')
+        .doc(uid)
+        .snapshots()
+        .map(
+          (doc) =>
+              (doc.data()?['readAgreementIds'] as List?)?.cast<String>() ??
+              const <String>[],
+        )
+        .distinct(listEquals);
   }
 
   Future<void> saveReadAgreementId(String uid, String agreementId) {
@@ -3982,6 +4010,10 @@ final eventsAsParticipantProvider =
       (ref, uid) =>
           ref.watch(firestoreServiceProvider).watchEventsAsParticipant(uid),
     );
+
+final readAgreementIdsProvider = StreamProvider.family<List<String>, String>(
+  (ref, uid) => ref.watch(firestoreServiceProvider).watchReadAgreementIds(uid),
+);
 
 final chatsProvider = StreamProvider.family<List<Chat>, String>((ref, uid) {
   return ref.watch(firestoreServiceProvider).watchChats(uid);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../core/agreements/event_edit.dart';
 import '../../core/theme/colors.dart';
 import '../../core/time/az_date_format.dart';
 import '../../firebase/models.dart';
@@ -35,8 +36,17 @@ class EventConflictChoice {
   const EventConflictChoice(this.action, this.event);
 
   /// 'view' — посмотреть мероприятие;
-  /// 'replace' — всё равно оставить выбранное время;
-  /// 'new' — вернуться и выбрать другое.
+  /// 'new' — это отдельное мероприятие, сохранить как есть;
+  /// 'replace' — главное действие, и оно РАЗНОЕ у трёх вызывающих:
+  ///   - календарь, выбрано СВОЁ мероприятие — переписать его тем, что
+  ///     сейчас в форме («Mövcud tədbiri dəyiş»); тот же документ, тот же
+  ///     id;
+  ///   - календарь, выбрано ЧУЖОЕ — выйти из него, чтобы оно перестало
+  ///     занимать мой календарь («Təqvimimdən sil»); у остальных остаётся;
+  ///   - лист «İş təklif et» (`canReplace: false`) — всё равно отправить
+  ///     предложение; замещать там пока нечего.
+  /// Имя ответа осталось одно, потому что развилка живёт у вызывающего:
+  /// диалог сообщает выбор, а не совершает поступок.
   final String action;
 
   /// Мероприятие, выбранное переключателем (при одном — оно же).
@@ -92,6 +102,27 @@ class _EventConflictDialogState extends State<EventConflictDialog> {
   /// Договор, где человек лишь участник, заканчивается не заменой, а
   /// отменой по согласию обеих сторон — это отдельный путь.
   bool get _selectedIsMine => _selected.ownerUid == widget.currentUid;
+
+  /// Имя главной кнопки — по поступку, а не одно на все случаи (N39/N40).
+  ///
+  /// «Əvəz et» стояла на трёх разных действиях сразу: правке своего, сносе
+  /// чужого и — при правке существующего — уничтожении постороннего
+  /// мероприятия. Теперь у каждого поступка своё имя, и берётся оно из
+  /// общего правила (`core/agreements/event_edit.dart`), а не пишется
+  /// здесь строкой: разойтись имени и поступку негде, если имя приходит
+  /// оттуда же, откуда решение.
+  ///
+  /// Лист «İş təklif et» (`canReplace: false`) сюда не попадает: там эта
+  /// кнопка значит «всё равно отправить предложение», замещать нечего —
+  /// мероприятия ещё не существует. Её имя оставлено прежним намеренно,
+  /// отдельной находкой: правка сегодняшнего дня — про календарь.
+  String get _mainActionLabel => widget.canReplace
+      ? conflictAnswerLabel(
+          _selectedIsMine
+              ? ConflictAnswer.editExisting
+              : ConflictAnswer.leaveForeign,
+        )
+      : 'Əvəz et';
 
   void _pop(String action) =>
       Navigator.of(context).pop(EventConflictChoice(action, _selected));
@@ -203,42 +234,49 @@ class _EventConflictDialogState extends State<EventConflictDialog> {
                 ],
               ),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () => _pop('replace'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: kGold,
-                        foregroundColor: const Color(0xFF1A0E00),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      child: const Text(
-                        'Əvəz et',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
+              // Кнопки во всю ширину, по одной в строке.
+              //
+              // Раньше две нижние стояли рядом, и это держалось на том, что
+              // «Əvəz et» — два коротких слова. Имя, называющее поступок,
+              // короткому не обязано: «Mövcud tədbiri dəyiş» в половину
+              // ширины окна не помещается и обрезалось бы многоточием —
+              // то есть ровно та часть, ради которой имя и менялось,
+              // пропала бы с экрана.
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => _pop('replace'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kGold,
+                    foregroundColor: const Color(0xFF1A0E00),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () => _pop('new'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: kBg3,
-                        foregroundColor: kMuted,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          side: const BorderSide(color: kBorder),
-                        ),
-                      ),
-                      child: const Text('Yeni tədbir'),
+                  child: Text(
+                    _mainActionLabel,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => _pop('new'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: kBg3,
+                    foregroundColor: kMuted,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      side: const BorderSide(color: kBorder),
                     ),
                   ),
-                ],
+                  child: const Text('Yeni tədbir'),
+                ),
               ),
             ],
           ),
