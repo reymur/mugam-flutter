@@ -1123,6 +1123,12 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     );
   }
 
+  /// Просьба формы СОЗДАНИЯ открыть вместо себя форму правки (N46).
+  ///
+  /// Возвращается из листа как результат, а не зовётся из него напрямую:
+  /// лист закрывается вместе со своим контекстом, и открывать следующий
+  /// экран из умирающего — способ получить исчезающие формы. Открывает
+  /// тот, кто открывал первую.
   Future<void> _openAddModal(
     BuildContext context, {
     required DateTime initialDate,
@@ -1131,6 +1137,9 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     required List<User> allUsers,
     PersonalEvent? existingEvent,
     String mode = 'time-only',
+    // Чем заполнить форму, когда её открывают по ответу «Mövcud tədbiri
+    // dəyiş»: дата из колеса, остальное из цели (`seedForEdit`).
+    EventEditSeed? seed,
     // Pre-selects a participant when creating a brand-new event (e.g. "İş
     // yazdır" from a 1:1 chat's menu, chat_screen.dart) — ignored for
     // existingEvent != null, which always shows that event's own already-
@@ -1138,7 +1147,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     List<String> initialParticipantUids = const [],
   }) async {
     final allCombined = [...personalEvents, ...eventsAsParticipant];
-    await showModalBottomSheet<void>(
+    final request = await showModalBottomSheet<_EventEditRequest>(
       // Тап по затемнённому фону не закрывает: по нему легко попасть,
       // целясь в поле формы, и терять введённое из-за промаха обидно.
       // Свайп и кнопка отмены закрывают как обычно — они делаются
@@ -1149,17 +1158,34 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       backgroundColor: Colors.transparent,
       builder: (_) => _EventFormModal(
         mode: mode,
-        initialDate: initialDate,
-        initialType: existingEvent?.type ?? '',
-        initialLocation: existingEvent?.location ?? '',
-        initialNotes: existingEvent?.notes ?? '',
-        initialParticipantUids: existingEvent?.participantUids ?? initialParticipantUids,
+        initialDate: seed?.date ?? initialDate,
+        initialType: seed?.type ?? existingEvent?.type ?? '',
+        initialLocation: seed?.location ?? existingEvent?.location ?? '',
+        initialNotes: seed?.notes ?? existingEvent?.notes ?? '',
+        initialParticipantUids: seed?.participantUids ??
+            existingEvent?.participantUids ??
+            initialParticipantUids,
         allUsers: allUsers,
         existingEvent: existingEvent,
         allCombinedEvents: allCombined,
         currentUid: _uid,
         firestoreService: ref.read(firestoreServiceProvider),
       ),
+    );
+    if (request == null || !context.mounted) return;
+    // Второй шаг ответа «Mövcud tədbiri dəyiş»: та же форма, но правкой
+    // цели — со своим заголовком, своей кнопкой и УЖЕ ЗАПОЛНЕННЫМИ
+    // полями цели. Отсюда же берётся и то, что при правке окна конфликта
+    // не бывает вовсе (N39): `existingEvent` больше не null.
+    await _openAddModal(
+      context,
+      initialDate: request.seed.date,
+      personalEvents: personalEvents,
+      eventsAsParticipant: eventsAsParticipant,
+      allUsers: allUsers,
+      existingEvent: request.target,
+      mode: mode,
+      seed: request.seed,
     );
   }
 
@@ -2714,6 +2740,21 @@ class _ConflictEventScreenState extends State<_ConflictEventScreen> {
 // ---------------------------------------------------------------------------
 // _EventFormModal
 // ---------------------------------------------------------------------------
+/// Что форма создания возвращает вызывающему, когда человек ответил
+/// «Mövcud tədbiri dəyiş» на СВОЁМ мероприятии (N46).
+///
+/// Пара «цель + чем заполнить», а не один только id: заполнение считается
+/// правилом (`seedForEdit`) в момент ответа, пока состояние формы ещё
+/// живо, и уносится из неё готовым. Считай его открывающий — пришлось бы
+/// заново узнавать, чего человек касался, а это ровно то знание, которое с
+/// закрытой формой умирает.
+class _EventEditRequest {
+  final PersonalEvent target;
+  final EventEditSeed seed;
+
+  const _EventEditRequest({required this.target, required this.seed});
+}
+
 class _EventFormModal extends StatefulWidget {
   final String mode; // 'full' | 'time-only'
   final DateTime initialDate;
@@ -2760,6 +2801,30 @@ class _EventFormModalState extends State<_EventFormModal> {
   // список пунктов, ни склейка строки здесь больше не повторяются: ту же
   // строку пишет лист предложения работы, а разбирает этот экран.
   late EventNotesValue _notes;
+
+  // ЧЕГО ЧЕЛОВЕК КОСНУЛСЯ РУКАМИ (N46).
+  //
+  // Нужны ровно для одного: когда с формы СОЗДАНИЯ человек отвечает
+  // «Mövcud tədbiri dəyiş», форма правки засевается целью, и только
+  // тронутое переносится из формы поверх. Без этих признаков умолчание
+  // «Toy» неотличимо от выбранного «Toy», а пустые заметки — от стёртых
+  // намеренно; именно на таком совпадении находка и проехала мимо глаз.
+  //
+  // Выставляются в обработчиках ввода, и только там. Подмешивание
+  // участников из конфликта их НЕ трогает: его делает форма, а не человек
+  // (см. `_mergeConflictParticipants`).
+  bool _touchedType = false;
+  bool _touchedLocation = false;
+  bool _touchedNotes = false;
+  bool _touchedParticipants = false;
+
+  EventFormTouched get _touched => EventFormTouched(
+        type: _touchedType,
+        location: _touchedLocation,
+        notes: _touchedNotes,
+        participants: _touchedParticipants,
+      );
+
   bool _saving = false;
   // Время и день, которые человек сам объявил занятыми, ответив «Yeni
   // tədbir». Два поля, а не одно: ответив так на занятый ДЕНЬ, он просит
@@ -3161,31 +3226,61 @@ class _EventFormModalState extends State<_EventFormModal> {
       'сюда приходят только с пути создания (N39)',
     );
     final mine = target.ownerUid == widget.currentUid;
+    if (mine) {
+      // СВОЁ — форма правки, а не запись втихую (N46, решение владельца
+      // 06.08, вариант А).
+      //
+      // Прежде отсюда уходила запись, собранная из формы СОЗДАНИЯ: она о
+      // цели не знает ничего, поэтому заметки договора затирались
+      // пустотой, `musicians` менял соглашение, а `type` вставал
+      // умолчанием. Ни одно из трёх на экране не видно — карточка рисует
+      // владельца отдельной плашкой, пустой `Qeyd` выглядит как «заметок
+      // не было», а тип совпал случайно.
+      //
+      // Теперь ответ означает ровно то, что говорит: «перенеси стоящее
+      // сюда» — открыть его, показать человеку, что там уже есть, и дать
+      // сохранить самому. Экран не меняет смысл под введёнными данными
+      // (это был бы класс N39/N40), а сменяется на другой, со своим
+      // заголовком и своей кнопкой.
+      Navigator.of(context).pop(
+        _EventEditRequest(
+          target: target,
+          seed: seedForEdit(
+            pickedDate: _selectedDate,
+            targetType: target.type,
+            targetLocation: target.location,
+            targetNotes: target.notes,
+            targetParticipantUids: target.participantUids,
+            formType: _type,
+            formLocation: _location,
+            formNotes: _computedNotes,
+            formParticipantUids: _selectedParticipantUids,
+            touched: _touched,
+          ),
+        ),
+      );
+      return;
+    }
     // Подтверждение обязательно и отдельно от диалога конфликта: выход из
     // чужого мероприятия необратим — вернуть себя в него человек не может,
     // это умеет только владелец.
-    if (!mine) {
-      final ok = await _confirmLeaveForeign(target);
-      if (!ok || !mounted) return;
-    }
+    final ok = await _confirmLeaveForeign(target);
+    if (!ok || !mounted) return;
     setState(() => _saving = true);
-    // Люди ЗАМЕНЯЕМОГО мероприятия доносятся здесь, а не при появлении
-    // предупреждения: до нажатия неизвестно, какое из нескольких выбрано.
-    // Когда конфликт один, они уже в форме и видны заранее — этот вызов
-    // тогда ничего не добавляет.
+    // ЧУЖОЕ — ничего оттуда не переносится (N47).
     //
-    // Для своего это не украшение, а обязанность: мы переписываем
-    // `musicians` целиком, и без переноса участники заменяемого
-    // мероприятия молча выпали бы из него — то же самое молчаливое
-    // исчезновение, ради которого перенос и заводился.
-    final carry = participantsToMerge(
-      conflicts: [target],
+    // Перенос состава выводился для замены СВОЕГО: там `musicians`
+    // переписываются целиком, и без переноса участники заменяемого выпали
+    // бы молча. Здесь заменяемого нет — человек уходит из одного
+    // мероприятия и создаёт другое. Правило, применённое к пути, для
+    // которого не выводилось, 06.08 записало в новый вечер Рафаэля
+    // владельца покинутого мероприятия и второго его участника, а
+    // `replacedEventId` указал на чужой и живой документ, отчего обоим
+    // ушло «Tədbir əvəz edildi» — рассказ о поступке, которого не было.
+    final plan = foreignLeaveCreation(
       current: _selectedParticipantUids,
-      explicitlyRemoved: _explicitlyRemoved,
-      currentUid: widget.currentUid,
-      isEditing: false,
+      mergedFromConflict: _mergedFromConflict,
     );
-    if (carry.isNotEmpty) _selectedParticipantUids.addAll(carry);
     try {
       widget.onWillSave?.call(<String, String>{
         'type': _type,
@@ -3193,42 +3288,30 @@ class _EventFormModalState extends State<_EventFormModal> {
         'location': _location,
         'notes': _computedNotes,
       });
-      if (mine) {
-        // СВОЁ — правка на месте. Второй записи не появляется вовсе,
-        // поэтому и `replacedEventId` тут писать некуда и незачем: пара
-        // «удалили — создали», ради которой он заведён, больше не
-        // возникает. Само поле снимается отдельным шагом, при
-        // переписывании экрана (решение владельца 05.08), чтобы на
-        // переходе не остаться без обоих механизмов сразу.
-        await widget.firestoreService.updatePersonalEvent(
-          target.id,
-          eventEditUpdate(
-            date: _selectedDate.toIso8601String(),
-            type: _type,
-            location: _location,
-            notes: _computedNotes,
-            musicians: _selectedParticipantUids,
-            actorUid: widget.currentUid,
-          ),
-        );
-      } else {
-        // ЧУЖОЕ — выход из участников, потом создание своего.
-        //
-        // Порядок именно такой: откажи выход по правам, своё не
-        // создастся и дублей не будет. Обратный порядок оставил бы два
-        // мероприятия при первом же отказе.
-        await widget.firestoreService
-            .leavePersonalEvent(target.id, widget.currentUid);
-        await widget.firestoreService.addPersonalEvent(
-          ownerUid: widget.currentUid,
-          date: _selectedDate.toIso8601String(),
-          type: _type,
-          location: _location,
-          notes: _computedNotes,
-          participantUids: _selectedParticipantUids,
-          replacedEventId: target.id,
-        );
-      }
+      // Выход из участников, потом создание своего.
+      //
+      // Порядок именно такой: откажи выход по правам, своё не создастся и
+      // дублей не будет. Обратный порядок оставил бы два мероприятия при
+      // первом же отказе.
+      //
+      // Уведомление о самом выходе шлёт сервер владельцу покинутого, и
+      // только ему («İştirakçı ayrıldı», `planUpdatePushes` по
+      // `lastActionType: 'left'`). Оно и есть единственное, что этот ход
+      // теперь порождает: до починки уходило три, из них два ложных.
+      await widget.firestoreService
+          .leavePersonalEvent(target.id, widget.currentUid);
+      await widget.firestoreService.addPersonalEvent(
+        ownerUid: widget.currentUid,
+        date: _selectedDate.toIso8601String(),
+        type: _type,
+        location: _location,
+        notes: _computedNotes,
+        // Состав — только выбранный человеком, без подмешанных из
+        // покинутого мероприятия; ссылки на «заменённое» нет, потому что
+        // ничего не заменялось (N47).
+        participantUids: plan.participantUids,
+        replacedEventId: plan.replacedEventId,
+      );
       if (mounted) Navigator.of(context).pop();
     } catch (e, st) {
       if (mounted) {
@@ -3319,6 +3402,10 @@ class _EventFormModalState extends State<_EventFormModal> {
   // пополнялся ровно здесь.
   void _applyParticipantSelection(List<String> uids) {
     setState(() {
+      // Состав тронут человеком — отсюда и только отсюда (N46). Оба пути
+      // выбора участников, диалог и крестик на фишке, идут через эту
+      // функцию (N35), поэтому признак ставится один раз на оба.
+      _touchedParticipants = true;
       // Кого человек убрал руками — запоминаем: перенос из
       // конфликтующего мероприятия не должен возвращать его обратно.
       for (final gone in _selectedParticipantUids) {
@@ -3401,7 +3488,10 @@ class _EventFormModalState extends State<_EventFormModal> {
                   children: _eventTypes.map((t) {
                     final sel = _type == t;
                     return GestureDetector(
-                      onTap: () => setState(() => _type = t),
+                      onTap: () => setState(() {
+                        _type = t;
+                        _touchedType = true; // N46
+                      }),
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                         decoration: BoxDecoration(
@@ -3456,6 +3546,36 @@ class _EventFormModalState extends State<_EventFormModal> {
                           d.minute != _blockedTime!.minute)) {
                     _blockedTime = null;
                   }
+                  // Сменился конфликт — сменился и подмешанный из него
+                  // состав (N38). Подмешивание живёт в `build`, а снятия не
+                  // было нигде, кроме ответа «Yeni tədbir»: человек
+                  // прокручивал дату через занятую минуту, состав того дня
+                  // налипал и оставался от даты, которую он уже не
+                  // выбирает. Правило целиком — в
+                  // `participantsAfterConflictChange`; здесь применение.
+                  final next = resolveConflictBanner(
+                    selectedDate: d,
+                    events: widget.allCombinedEvents,
+                    blockedTime: _blockedTime,
+                    excludeEventId: _excludeEventId,
+                    // Считается для НОВОЙ даты, а не через `_pastDatePicked`:
+                    // тот смотрит на `_selectedDate`, и на прошлой дате
+                    // предупреждение о занятости не поднимается вовсе —
+                    // значит и конфликтов в нём не будет.
+                    pastDate: d != _openedWithDate && d.isBefore(DateTime.now()),
+                  );
+                  final change = participantsAfterConflictChange(
+                    current: _selectedParticipantUids,
+                    merged: _mergedFromConflict,
+                    conflicts: next?.events ?? const <PersonalEvent>[],
+                    explicitlyRemoved: _explicitlyRemoved,
+                    currentUid: widget.currentUid,
+                    isEditing: widget.existingEvent != null,
+                  );
+                  _selectedParticipantUids = change.participants;
+                  _mergedFromConflict
+                    ..clear()
+                    ..addAll(change.merged);
                 });
               },
             ),
@@ -3586,6 +3706,7 @@ class _EventFormModalState extends State<_EventFormModal> {
                     controller: _locationController,
                     onChanged: (v) {
                       _location = v;
+                      _touchedLocation = true; // N46
                       if (_showLocationError && v.trim().isNotEmpty) {
                         setState(() => _showLocationError = false);
                       }
@@ -3652,7 +3773,10 @@ class _EventFormModalState extends State<_EventFormModal> {
             // есть строку пишет один экран, а разбирает другой.
             EventNotesPicker(
               value: _notes,
-              onChanged: (v) => setState(() => _notes = v),
+              onChanged: (v) => setState(() {
+                _notes = v;
+                _touchedNotes = true; // N46
+              }),
               // Свободная заметка здесь показывается только в режиме с
               // участниками — так было до выделения виджета, поведение
               // сохранено как есть.

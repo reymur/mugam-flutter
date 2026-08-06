@@ -166,6 +166,106 @@ Map<String, dynamic> eventEditUpdate({
 }
 
 // ---------------------------------------------------------------------------
+// ПРАВИЛО ПОЛУТОРНОЕ — ЧЕМ ЗАПОЛНЯЕТСЯ ФОРМА ПРАВКИ (N46)
+// ---------------------------------------------------------------------------
+// Найдено 06.08 на устройстве. Ответ «Mövcud tədbiri dəyiş» писал в цель
+// содержимым формы СОЗДАНИЯ, а она о цели не знает ничего: стартует
+// пустой. Заметки договора — «Qalstuk, Qara kostyum və ağ köynək» —
+// затёрлись пустотой, которую никто не вводил; `musicians` сменил
+// соглашение с договорного на календарное; `type` встал умолчанием «Toy»
+// и совпал случайно, потому что цель тоже была «Toy».
+//
+// Чинится не заплатой на записи, а устройством: ответ больше не пишет
+// молча — он ОТКРЫВАЕТ ФОРМУ ПРАВКИ, засеянную целью (решение владельца
+// 06.08, вариант А). Человек видит на экране всё, что правит, и сохраняет
+// сам. Отсюда единственный вопрос, на который отвечает это правило: чем
+// заполнить форму в момент открытия.
+
+/// Чего человек в форме коснулся РУКАМИ.
+///
+/// Признак явный, а не выведенный сравнением с умолчанием, и это главное в
+/// нём. «Toy» по умолчанию неотличим от «Toy», выбранного человеком; пустое
+/// место неотличимо от места, стёртого намеренно. Выводить «тронул» из
+/// значения — значит написать проверку, которая не может провалиться на
+/// совпадении (I9), а сегодняшняя находка ровно на таком совпадении и
+/// проехала мимо глаз.
+///
+/// Заполняется в обработчиках ввода — там, где человек действительно
+/// действует. Подмешивание участников из конфликта [participants] НЕ
+/// выставляет: его делает не человек, а форма.
+class EventFormTouched {
+  final bool type;
+  final bool location;
+  final bool notes;
+  final bool participants;
+
+  const EventFormTouched({
+    this.type = false,
+    this.location = false,
+    this.notes = false,
+    this.participants = false,
+  });
+
+  static const none = EventFormTouched();
+}
+
+/// Чем открывается форма правки цели.
+class EventEditSeed {
+  final DateTime date;
+  final String type;
+  final String location;
+  final String notes;
+  final List<String> participantUids;
+
+  const EventEditSeed({
+    required this.date,
+    required this.type,
+    required this.location,
+    required this.notes,
+    required this.participantUids,
+  });
+}
+
+/// Засев формы правки: **дата — из колеса, остальное — из цели, и только
+/// тронутое руками — из формы.**
+///
+/// ПОЧЕМУ НА ДАТУ ПРАВИЛО «ТРОНУЛ» НЕ РАСПРОСТРАНЯЕТСЯ ВОВСЕ.
+/// Дата — не одно из полей формы, а сам повод для хода. Человек попал в
+/// этот ответ ровно потому, что выбрал занятое время: «Mövcud tədbiri
+/// dəyiş» означает «перенеси стоящее СЮДА», где «сюда» и есть показание
+/// колеса. Спрашивать про неё «а трогал ли он колесо» бессмысленно с обеих
+/// сторон: не трогал — значит подтвердил умолчание формы и всё равно
+/// выбрал именно этот момент; трогал — тем более. Возьми мы дату из цели,
+/// ход перестал бы что-либо делать: перенос на то же время не перенос.
+///
+/// [targetType] и соседние — значения цели, [formType] и соседние — то,
+/// что сейчас в форме создания.
+EventEditSeed seedForEdit({
+  required DateTime pickedDate,
+  required String targetType,
+  required String targetLocation,
+  required String targetNotes,
+  required List<String> targetParticipantUids,
+  required String formType,
+  required String formLocation,
+  required String formNotes,
+  required List<String> formParticipantUids,
+  required EventFormTouched touched,
+}) {
+  return EventEditSeed(
+    date: pickedDate,
+    type: touched.type ? formType : targetType,
+    location: touched.location ? formLocation : targetLocation,
+    notes: touched.notes ? formNotes : targetNotes,
+    // Копия, а не ссылка: список принадлежит состоянию формы, которая
+    // сейчас закроется, и жить дальше он обязан своей жизнью.
+    participantUids: List<String>.from(
+      touched.participants ? formParticipantUids : targetParticipantUids,
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
 // ПРАВИЛО ВТОРОЕ — О ЧЁМ СПРАШИВАТЬ ПРИ ЗАНЯТОМ ВРЕМЕНИ (N39)
 // ---------------------------------------------------------------------------
 

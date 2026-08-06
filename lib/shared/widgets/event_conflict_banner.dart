@@ -138,6 +138,115 @@ List<String> participantsAfterUnmerge({
 }) =>
     [for (final uid in current) if (!merged.contains(uid)) uid];
 
+/// Состав после СМЕНЫ НАБОРА КОНФЛИКТОВ — то есть после того, как человек
+/// покрутил колесо (N38).
+///
+/// Прежде подмешанные снимались ровно из одной точки — ответа «Yeni
+/// tədbir», — а смену даты не отслеживало ничто. Наблюдалось дважды, 04.08
+/// и 06.08: человек прокрутил дату через день, где мероприятие стоит
+/// минута в минуту, состав того мероприятия подмешался, человек вернул дату
+/// обратно — подмешанные остались от дня, который он уже не выбирает. Люди
+/// при этом стоят в списке ровно так же, как поставленные руками, и
+/// сохраняются в мероприятие вместе с ним.
+///
+/// Правило целиком, а не «снять и пусть build подмешает заново»: снятие и
+/// подмешивание — две половины одного хода, и проверять их надо вместе.
+/// Иначе тест на возврат покрывает половину, а вторая живёт в `build`, где
+/// её нечем взять.
+///
+/// [conflicts] — мешающие мероприятия УЖЕ ДЛЯ НОВОЙ даты.
+ConflictParticipantsChange participantsAfterConflictChange({
+  required List<String> current,
+  required Set<String> merged,
+  required List<PersonalEvent> conflicts,
+  required Set<String> explicitlyRemoved,
+  required String currentUid,
+  required bool isEditing,
+}) {
+  // Сначала снимаем подмешанное прежним конфликтом — целиком, потому что
+  // прежнего конфликта больше нет ни в каком виде. Выбранное руками
+  // остаётся: `participantsAfterUnmerge` трогает ровно подмешанных.
+  final base = participantsAfterUnmerge(current: current, merged: merged);
+  // Затем подмешиваем состав НОВОГО конфликта — тем же правилом, что и при
+  // первом появлении предупреждения. Второго правила здесь нет: разойдись
+  // они, состав после смены даты отличался бы от состава при том же
+  // конфликте, выбранном сразу.
+  final add = participantsToMerge(
+    conflicts: conflicts,
+    current: base,
+    explicitlyRemoved: explicitlyRemoved,
+    currentUid: currentUid,
+    isEditing: isEditing,
+  );
+  return ConflictParticipantsChange(
+    participants: [...base, ...add],
+    merged: add.toSet(),
+  );
+}
+
+/// Состав и отметка «кто из них подмешан» — возвращаются парой.
+///
+/// Пара, а не один список: забыть обновить `merged` значит оставить в нём
+/// людей прошлого конфликта, и следующее снятие промахнётся мимо них — тот
+/// же дефект, только на ход позже.
+class ConflictParticipantsChange {
+  final List<String> participants;
+  final Set<String> merged;
+
+  const ConflictParticipantsChange({
+    required this.participants,
+    required this.merged,
+  });
+}
+
+/// Что создаётся, когда человек ответил «Təqvimimdən sil» на ЧУЖОМ
+/// мероприятии (N47).
+///
+/// Правило переноса состава выводилось для замены СВОЕГО: там мы
+/// переписываем `musicians` целиком, и без переноса участники заменяемого
+/// молча выпали бы. На чужом пути этого довода нет и быть не может —
+/// заменяемого не существует: человек уходит из одного мероприятия и
+/// создаёт другое, своё. Наблюдалось 06.08 на устройстве: в новое
+/// мероприятие попали владелец покинутого и второй его участник, а
+/// `replacedEventId` указал на чужой и ЖИВОЙ документ, отчего сервер
+/// разослал обоим «Tədbir əvəz edildi» — рассказ о поступке, которого не
+/// было.
+///
+/// Поэтому здесь три отрицания сразу, и каждое проверяется отдельно:
+/// состав — только выбранный человеком; `replacedEventId` — пусто;
+/// `lastActionType` — `created`, а не `replaced`.
+///
+/// Живёт рядом с правилом переноса, а не в `event_edit.dart`, потому что
+/// читает `participantsAfterUnmerge`: правило и его отмена должны лежать в
+/// одном файле, иначе отмену однажды напишут заново и по-другому.
+ForeignLeaveCreation foreignLeaveCreation({
+  required List<String> current,
+  required Set<String> mergedFromConflict,
+}) =>
+    ForeignLeaveCreation(
+      participantUids:
+          participantsAfterUnmerge(current: current, merged: mergedFromConflict),
+      replacedEventId: null,
+      // `addPersonalEvent` выводит имя поступка из `replacedEventId`
+      // (пусто → `created`). Названо здесь вслух, чтобы проверялось само
+      // имя, а не только пустая ссылка: вернись одно без другого — и
+      // участники снова услышат про замену.
+      lastActionType: 'created',
+    );
+
+/// Что записывается при выходе из чужого мероприятия.
+class ForeignLeaveCreation {
+  final List<String> participantUids;
+  final String? replacedEventId;
+  final String lastActionType;
+
+  const ForeignLeaveCreation({
+    required this.participantUids,
+    required this.replacedEventId,
+    required this.lastActionType,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // ЛОГИКА КОНФЛИКТА — тоже общая, а не только вид
 // ---------------------------------------------------------------------------
