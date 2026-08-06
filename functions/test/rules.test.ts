@@ -49,6 +49,14 @@ const STRANGER = "strangerUid"; // not a friend at all
 const EXCEPTED = "exceptedUid"; // a real friend of OWNER, ALSO in a contactsExcept privacyList
 const ALLOWED = "allowedUid"; // in an onlyShareWith privacyList, NOT a friend at all
 const EVENT = "ev-cancel"; // договор OWNER↔CONTACT для проверок отмены по согласию
+// Второй договор ТОЙ ЖЕ пары, но владельца в `musicians` НЕТ — форма, в
+// которой в проде лежат 11 договоров из 26 (перепись 06.08): так их
+// создавал mugam-v2, и так же испортил один из них старый «Əvəz et» (N46).
+//
+// Заведён потому, что весь набор проверок отмены сеял владельца ВНУТРИ
+// состава — то есть проверял случай, в котором дефекта нет, и провалиться
+// на N49 не мог ни один из них (I9).
+const EVENT_NO_OWNER = "ev-cancel-legacy";
 const CHAT = "chat-n37"; // чат OWNER↔CONTACT для проверок «кто это сделал»
 
 beforeAll(async () => {
@@ -125,6 +133,25 @@ beforeEach(async () => {
       musicians: [OWNER, CONTACT],
       partnerUid: CONTACT,
       date: "2026-09-01T19:00:00.000",
+      type: "Toy",
+      location: "",
+      notes: "",
+      isAgree: true,
+      status: "agreed",
+      cancelRequestedBy: null,
+      cancelRequestedAt: null,
+      cancelConfirmedBy: null,
+      cancelledAt: null,
+    });
+
+    // Тот же договор, но по старому соглашению: в `musicians` только
+    // вторая сторона. Владелец — человек мероприятия, и правило обязано
+    // видеть это по `ownerUid`, а не по составу (N49).
+    await setDoc(doc(d, `personalEvents/${EVENT_NO_OWNER}`), {
+      ownerUid: OWNER,
+      musicians: [CONTACT],
+      partnerUid: CONTACT,
+      date: "2026-09-02T19:00:00.000",
       type: "Toy",
       location: "",
       notes: "",
@@ -390,6 +417,72 @@ test("отмена: вторая сторона МОЖЕТ подтвердит�
   await assertSucceeds(
     updateDoc(doc(contactDb, `personalEvents/${EVENT}`), confirm(CONTACT)),
   );
+});
+
+// ---------------------------------------------------------------------
+// N49 — ВЛАДЕЛЕЦ ВНЕ `musicians`. Те же ходы, тот же договор по смыслу,
+// но состав по старому соглашению: только вторая сторона.
+//
+// Проверки нарочно повторяют соседние, а не «дополняют» их: правило
+// одно, а данные два, и разница именно в данных. Каждая из них ПАДАЕТ на
+// прежнем `isParty()` — тем и отличается от набора выше, который на нём
+// проходил целиком.
+// ---------------------------------------------------------------------
+
+// Ставит чужой запрос в обход правил на договор БЕЗ владельца в составе.
+async function seedCancelRequestNoOwner(by: string) {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), `personalEvents/${EVENT_NO_OWNER}`), {
+      cancelRequestedBy: by,
+      cancelRequestedAt: new Date(),
+    });
+  });
+}
+
+test("N49: владелец вне musicians МОЖЕТ предложить отмену", async () => {
+  // Главный случай: 11 договоров прода из 26 лежат ровно так, и на
+  // прежнем правиле владелец не мог отменить собственный договор.
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT_NO_OWNER}`), {
+      ...request(OWNER),
+    }),
+  );
+});
+
+test("N49: владелец вне musicians МОЖЕТ подтвердить чужой запрос", async () => {
+  await seedCancelRequestNoOwner(CONTACT);
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT_NO_OWNER}`), confirm(OWNER)),
+  );
+});
+
+test("N49: владелец вне musicians МОЖЕТ отозвать свой запрос", async () => {
+  await seedCancelRequestNoOwner(OWNER);
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT_NO_OWNER}`), withdraw(OWNER)),
+  );
+});
+
+test("N49: владелец вне musicians МОЖЕТ читать свой договор", async () => {
+  // Чтение и ходы отмены теперь спрашивают одно и то же правило. Тест
+  // держит их вместе: разойдись они снова — упадёт этот.
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(getDoc(doc(ownerDb, `personalEvents/${EVENT_NO_OWNER}`)));
+});
+
+test("N49: посторонний по-прежнему не может ничего", async () => {
+  // Расширение «люди мероприятия» не должно расширить круг: владелец
+  // добавлен по `ownerUid`, а не тем, что правило стало мягче.
+  const strangerDb = testEnv.authenticatedContext(STRANGER).firestore();
+  await assertFails(
+    updateDoc(doc(strangerDb, `personalEvents/${EVENT_NO_OWNER}`), {
+      ...request(STRANGER),
+    }),
+  );
+  await assertFails(getDoc(doc(strangerDb, `personalEvents/${EVENT_NO_OWNER}`)));
 });
 
 test("обычная правка договора владельцем не сломана", async () => {

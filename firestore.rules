@@ -661,8 +661,31 @@ service cloud.firestore {
     // personalEvents/{eventId}  (mugam-flutter's calendar/agreements)
     // ---------------------------------------------------------------
     match /personalEvents/{eventId} {
+      // ЛЮДИ МЕРОПРИЯТИЯ = ВЛАДЕЛЕЦ ∪ `musicians`. Одно место на весь
+      // файл, и ниже оно же читается правилом чтения (N49).
+      //
+      // Прежде здесь стояло только `uid in musicians`, и это тот самый
+      // класс N30: поле значит РАЗНОЕ у двух писателей. Договор из
+      // согласованного предложения (`onChatUpdated`) кладёт туда владельца
+      // И вторую сторону; запись из календаря (`addPersonalEvent`) — только
+      // выбранных, без владельца; mugam-v2 — только вторую сторону.
+      //
+      // Канон «владелец ∪ участники» к тому дню был вынесен уже дважды —
+      // `eventPeople` на клиенте и `recipientsOf` на сервере, — а правила
+      // остались ТРЕТЬИМ читателем, который о нём не знает. Импортировать
+      // сюда нечего: правило пишется заново, и потому вынос канона в две
+      // точки из трёх защиты не даёт вовсе.
+      //
+      // Цена промаха, посчитанная на данных прода 06.08: договоров 26,
+      // владелец вне `musicians` у ОДИННАДЦАТИ. На них владелец не мог бы
+      // отменить собственный договор — все четыре хода отмены доступны
+      // только `isParty()`, а владельческая ветка их не пропускает вовсе
+      // (`!touchesCancel()`). Вторая сторона при этом отменять могла бы.
       function isParty() {
-        return isSignedIn() && request.auth.uid in resource.data.get('musicians', []);
+        return isSignedIn() && (
+          resource.data.ownerUid == request.auth.uid
+          || request.auth.uid in resource.data.get('musicians', [])
+        );
       }
 
       // ОТМЕНА ПО СОГЛАСИЮ. Поля отмены изъяты из обычной правки договора
@@ -829,10 +852,11 @@ service cloud.firestore {
               || request.resource.data.lastActionType == 'cancelDeclined');
       }
 
-      allow read: if isSignedIn() && (
-        resource.data.ownerUid == request.auth.uid ||
-        request.auth.uid in resource.data.get('musicians', [])
-      );
+      // Тем же правилом, что и ходы отмены: «люди мероприятия» — понятие
+      // одно, и записано оно теперь ровно в одном месте (N49). Прежде тут
+      // стоял канон, а в `isParty()` его половина — и разошлись они молча,
+      // потому что читались в разных строках и в разное время.
+      allow read: if isParty();
       allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
       // Признак автора нельзя подделать НИКОМУ, включая владельца: если
       // `lastActionBy` в записи меняется, он обязан быть самим просящим.
