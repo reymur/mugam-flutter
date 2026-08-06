@@ -32,8 +32,8 @@ void main() {
     test('отменённое мероприятие времени не занимает', () {
       final events = [_ev('a', '2026-08-08T19:00:00', status: 'cancelled')];
       expect(
-        exactConflictAt(DateTime(2026, 8, 8, 19, 0), events),
-        isNull,
+        exactConflictsAt(DateTime(2026, 8, 8, 19, 0), events),
+        isEmpty,
       );
       expect(
         conflictEventsOnDay(DateTime(2026, 8, 8, 12, 0), events),
@@ -44,13 +44,13 @@ void main() {
     test('правимое мероприятие не конфликтует само с собой', () {
       final events = [_ev('a', '2026-08-08T19:00:00')];
       expect(
-        exactConflictAt(DateTime(2026, 8, 8, 19, 0), events,
+        exactConflictsAt(DateTime(2026, 8, 8, 19, 0), events,
             excludeEventId: 'a'),
-        isNull,
+        isEmpty,
       );
       // Без исключения — конфликт находится.
       expect(
-        exactConflictAt(DateTime(2026, 8, 8, 19, 0), events)?.id,
+        exactConflictsAt(DateTime(2026, 8, 8, 19, 0), events).single.id,
         'a',
       );
     });
@@ -101,7 +101,7 @@ void main() {
     test('битая дата не роняет разбор и не считается конфликтом', () {
       final events = [_ev('bad', 'не дата'), _ev('empty', '')];
       expect(conflictEventsOnDay(DateTime(2026, 8, 8, 19, 0), events), isEmpty);
-      expect(exactConflictAt(DateTime(2026, 8, 8, 19, 0), events), isNull);
+      expect(exactConflictsAt(DateTime(2026, 8, 8, 19, 0), events), isEmpty);
     });
   });
 

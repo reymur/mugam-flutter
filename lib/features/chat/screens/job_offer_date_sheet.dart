@@ -219,8 +219,13 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
   List<PersonalEvent> _eventsOnDay(DateTime when, List<PersonalEvent> events) =>
       conflictEventsOnDay(when, events);
 
-  PersonalEvent? _conflictAt(DateTime when, List<PersonalEvent> events) =>
-      exactConflictAt(when, events);
+  /// ВСЕ, кто занял эту минуту, а не первый из них (N51). Лист ничего не
+  /// переписывает и не удаляет, поэтому пересчёта после разбора здесь нет
+  /// — но показать человеку обязан всё: наблюдалось 07.08, что на одну
+  /// минуту встают своё мероприятие и чужое, где он участник, а окно
+  /// называло одно.
+  List<PersonalEvent> _conflictsAt(DateTime when, List<PersonalEvent> events) =>
+      exactConflictsAt(when, events);
 
   /// Ровно тот же круг, что в календаре (`_showConflictFlow`): посмотреть
   /// мероприятие → вернуться и снова спросить; заменить → отправить как
@@ -322,9 +327,9 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
     final events = _myEvents;
     // Точное совпадение спрашивается первым: оно строже и говорит человеку
     // больше, чем «на этот день что-то есть».
-    final exact = _conflictAt(_selectedDate, events);
-    if (exact != null) {
-      await _showConflictFlow([exact], exactTime: true);
+    final exact = _conflictsAt(_selectedDate, events);
+    if (exact.isNotEmpty) {
+      await _showConflictFlow(exact, exactTime: true);
       return;
     }
     final sameDay = _eventsOnDay(_selectedDate, events);

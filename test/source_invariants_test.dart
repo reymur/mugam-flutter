@@ -180,31 +180,49 @@ void main() {
       );
     });
 
-    test('выход идёт ПЕРЕД созданием своего', () {
-      // Порядок — не стиль: откажи выход по правам, своё не создастся и
-      // дублей не будет. Обратный порядок оставил бы два мероприятия при
-      // первом же отказе.
-      //
-      // Смотрим ВНУТРИ метода, а не по всему файлу: `addPersonalEvent`
-      // зовётся и обычным сохранением, и оно стоит выше. Проверка «первый
-      // add в файле идёт после leave» говорила бы о другом месте — и
-      // падала бы, ничего не найдя в этом.
+    test('выход из чужого больше НЕ создаёт мероприятие сам', () {
+      // Перестройка N51: создание ушло из этой ветки в общий путь
+      // сохранения, потому что до пересчёта неизвестно, свободна ли
+      // минута. Вернись `addPersonalEvent` сюда — человек снова получит
+      // своё мероприятие на минуте, где у него уже стоит другое.
       final start = form.indexOf('Future<void> _replaceEvent(');
-      expect(start, greaterThan(-1), reason: '_replaceEvent не найден');
       final end = form.indexOf('\n  /// Подтверждение ВЫХОДА', start);
-      expect(end, greaterThan(start), reason: 'конец _replaceEvent не найден');
       final body = form.substring(start, end);
-
-      final leave = body.indexOf('leavePersonalEvent(');
-      final add = body.indexOf('addPersonalEvent(');
-      expect(leave, greaterThan(-1), reason: 'выход из чужого пропал');
-      expect(add, greaterThan(-1), reason: 'создание своего пропало');
       expect(
-        leave,
-        lessThan(add),
-        reason: 'Создание своего стоит раньше выхода из чужого. При отказе '
-            'по правам человек получит два мероприятия вместо нуля.',
+        body.contains('addPersonalEvent('),
+        isFalse,
+        reason: '_replaceEvent снова создаёт мероприятие сам. Создание '
+            'обязано идти общим путём сохранения, ПОСЛЕ пересчёта '
+            'оставшихся конфликтов минуты (N51).',
       );
+      expect(
+        body.contains('leavePersonalEvent('),
+        isTrue,
+        reason: 'выход из чужого пропал вместе с созданием',
+      );
+    });
+
+    test('сигнатуры «одно совпадение по минуте» не существует', () {
+      // N51 целиком: `exactConflictAt` возвращал `PersonalEvent?`, то есть
+      // одно мероприятие ПО ТИПУ, и вызывающему нечего было решать. Имя
+      // убрано, чтобы третий вызывающий не появился мимо списка (I11).
+      final banner =
+          File('lib/shared/widgets/event_conflict_banner.dart').readAsStringSync();
+      final sheet =
+          File('lib/features/chat/screens/job_offer_date_sheet.dart').readAsStringSync();
+      for (final entry in {
+        'event_conflict_banner.dart': banner,
+        'agreements_screen.dart': form,
+        'job_offer_date_sheet.dart': sheet,
+      }.entries) {
+        expect(
+          RegExp(r'exactConflictAt\s*\(').hasMatch(entry.value),
+          isFalse,
+          reason: '${entry.key}: вернулась функция, отдающая ОДНО '
+              'совпадение по минуте. На минуту может встать сколько угодно '
+              'мероприятий, и спрятанным окажется чужое (N51).',
+        );
+      }
     });
 
     test('replacedEventId в форме не пишется руками, а берётся из правила', () {

@@ -311,22 +311,48 @@ List<PersonalEvent> conflictEventsOnDay(
   return out.map((x) => x.event).toList();
 }
 
-/// Совпадение с точностью до минуты.
-PersonalEvent? exactConflictAt(
+/// Совпадение с точностью до минуты — ВСЕ, а не первое (N51).
+///
+/// Прежняя редакция возвращала `PersonalEvent?`, то есть одно мероприятие
+/// **по сигнатуре**. Вызывающему нечего было решать: он получал
+/// единственное и заворачивал его в список из одного элемента прямо в
+/// строке вызова. Наблюдалось 07.08 на устройстве: на 18:00 стояли своё
+/// мероприятие и чужое, где человек участник, — окно назвало одно и
+/// промолчало про второе.
+///
+/// **Скрывалось систематически ЧУЖОЕ.** Порядок задаёт сортировка по
+/// времени, а при равном времени Dart стабильность не обещает; на
+/// практике выигрывает тот, кто раньше в исходном перечне, а перечень
+/// собирается как `[...свои, ...где я участник]`. То есть пряталось
+/// ровно то мероприятие, где человека ждёт кто-то другой, — худший из
+/// возможных выборов, и не случайный.
+///
+/// Тот же класс уже был найден и починен рядом — в дневной ветке, где
+/// диалогу передавался `.first` (см. шапку `EventConflictDialog`). Здесь
+/// он пережил починку, потому что прятался за типом: `PersonalEvent?` не
+/// выглядит как `.first`, хотя значит то же самое (правило I11).
+///
+/// [resolvedIds] — мероприятия, с которыми человек уже разобрался в этом
+/// же заходе (вышел из чужого). Список данных о них ещё не знает: он
+/// снят при открытии формы и живёт в ней до закрытия.
+List<PersonalEvent> exactConflictsAt(
   DateTime when,
   List<PersonalEvent> events, {
   String? excludeEventId,
+  Set<String> resolvedIds = const <String>{},
 }) {
+  final out = <PersonalEvent>[];
   for (final e in conflictEventsOnDay(when, events,
       excludeEventId: excludeEventId)) {
+    if (resolvedIds.contains(e.id)) continue;
     try {
       final d = DateTime.parse(e.date);
-      if (d.hour == when.hour && d.minute == when.minute) return e;
+      if (d.hour == when.hour && d.minute == when.minute) out.add(e);
     } catch (_) {
       continue;
     }
   }
-  return null;
+  return out;
 }
 
 /// Что показать при текущем выборе — или `null`, если показывать нечего.
@@ -356,6 +382,9 @@ ConflictBannerSpec? resolveConflictBanner({
   DateTime? blockedTime,
   String? excludeEventId,
   bool pastDate = false,
+  // Разобранные в этом же заходе — плашка обязана перестать про них
+  // говорить сразу, не дожидаясь, пока список данных обновится (N51).
+  Set<String> resolvedIds = const <String>{},
 }) {
   // Прошлая дата — раньше всех остальных случаев: при ней нельзя ни
   // сохранить, ни отправить, и говорить в этот момент про занятость
@@ -373,9 +402,11 @@ ConflictBannerSpec? resolveConflictBanner({
   }
 
   final onDay = conflictEventsOnDay(selectedDate, events,
-      excludeEventId: excludeEventId);
-  final exact = exactConflictAt(selectedDate, events,
-      excludeEventId: excludeEventId);
+          excludeEventId: excludeEventId)
+      .where((e) => !resolvedIds.contains(e.id))
+      .toList();
+  final exact = exactConflictsAt(selectedDate, events,
+      excludeEventId: excludeEventId, resolvedIds: resolvedIds);
 
   if (isConflictTimeBlocked(selectedDate, blockedTime)) {
     return ConflictBannerSpec(
@@ -383,14 +414,19 @@ ConflictBannerSpec? resolveConflictBanner({
           '${blockedTime!.hour.toString().padLeft(2, '0')}:'
           '${blockedTime.minute.toString().padLeft(2, '0')} artıq məşğuldur',
       detail: 'Zəhmət olmasa başqa vaxt seçin',
-      events: exact != null ? [exact] : const <PersonalEvent>[],
+      events: exact,
     );
   }
-  if (exact != null) {
+  if (exact.isNotEmpty) {
+    // Число называется так же, как у занятого дня. Прежде минутная ветка
+    // не говорила о количестве вовсе, и человек уходил с экрана уверенным,
+    // что на этой минуте у него одно дело (N51).
     return ConflictBannerSpec(
-      title: 'Bu vaxtda sizin tədbiriniz var',
+      title: exact.length == 1
+          ? 'Bu vaxtda sizin tədbiriniz var'
+          : 'Bu vaxtda sizin ${exact.length} tədbiriniz var',
       detail: '',
-      events: [exact],
+      events: exact,
     );
   }
   if (onDay.isNotEmpty) {

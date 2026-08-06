@@ -2857,6 +2857,12 @@ class _EventFormModalState extends State<_EventFormModal> {
   final Set<String> _explicitlyRemoved = <String>{};
   final Set<String> _mergedFromConflict = <String>{};
 
+  // Мероприятия, с которыми человек разобрался в этом же заходе — вышел из
+  // чужого (N51). Список `allCombinedEvents` снят при открытии формы и до
+  // её закрытия не обновляется, поэтому пересчёт конфликтов без этой
+  // памяти снова спросил бы про уже покинутое.
+  final Set<String> _resolvedConflictIds = <String>{};
+
   void _mergeConflictParticipants(List<PersonalEvent> conflicts) {
     // Само правило — в общей чистой функции (event_conflict_banner.dart),
     // здесь только применение: правило должно быть проверяемо тестом, а
@@ -2970,6 +2976,27 @@ class _EventFormModalState extends State<_EventFormModal> {
       // разными именами («Mövcud tədbiri dəyiş» / «Təqvimimdən sil»), но
       // ответом остаётся один: поступок совершает вызывающий, а не окно.
       await _replaceEvent(choice.event);
+      // РАЗБОР ОДНОГО НЕ ОСВОБОЖДАЕТ МИНУТУ (N51). На минуте могло стоять
+      // несколько: ушёл из чужого — своё на том же времени осталось, и
+      // сохранить сейчас значило бы поставить человека в два места разом,
+      // ровно то, ради чего запрет и заведён. Пока форма жива, спрашиваем
+      // заново с тем, что осталось; раньше этот случай был недостижим,
+      // потому что в диалог уходило одно мероприятие.
+      if (!mounted) return;
+      final left = exactConflictsAt(
+        _selectedDate,
+        widget.allCombinedEvents,
+        excludeEventId: _excludeEventId,
+        resolvedIds: _resolvedConflictIds,
+      );
+      if (left.isNotEmpty) {
+        await _showConflictFlow(left, exactTime: true);
+        return;
+      }
+      // Минута освободилась — сохраняем то, ради чего человек сюда и
+      // пришёл. Своё мероприятие создаётся здесь, а не в момент выхода из
+      // чужого: до этой строки было неизвестно, свободна ли минута.
+      await _doSave();
     } else if (dialogResult == 'new') {
       // «Yeni tədbir» — «это отдельное мероприятие, сохрани его как есть».
       //
@@ -3083,17 +3110,19 @@ class _EventFormModalState extends State<_EventFormModal> {
 
     final events = widget.allCombinedEvents;
     final editing = widget.existingEvent != null;
-    final exact = exactConflictAt(_selectedDate, events,
-        excludeEventId: _excludeEventId);
+    final exact = exactConflictsAt(_selectedDate, events,
+        excludeEventId: _excludeEventId, resolvedIds: _resolvedConflictIds);
 
     if (editing) {
       final answers = conflictAnswers(
         isEditing: true,
-        exactTime: exact != null,
+        exactTime: exact.isNotEmpty,
         // Владение мешающего мероприятия к правке отношения не имеет:
         // подмена этого вопроса и давала N39. Передаётся ради полноты
-        // вызова — правило его при правке не читает.
-        targetIsMine: exact?.ownerUid == widget.currentUid,
+        // вызова — правило его при правке не читает. Берём первое из
+        // занявших минуту: при правке ответ от этого не зависит вовсе.
+        targetIsMine: exact.isNotEmpty &&
+            exact.first.ownerUid == widget.currentUid,
       );
       // Суть варианта А одной строкой: при правке ответ единственный, а
       // вопрос с единственным ответом это не вопрос, а задержка. Стоит
@@ -3119,12 +3148,17 @@ class _EventFormModalState extends State<_EventFormModal> {
       return;
     }
 
-    if (exact != null) {
-      await _showConflictFlow([exact], exactTime: true);
+    if (exact.isNotEmpty) {
+      // ВСЕ, кто занял эту минуту, а не первый из них (N51). Их может быть
+      // сколько угодно: своё и чужое, где человек участник, встают на одно
+      // время свободно.
+      await _showConflictFlow(exact, exactTime: true);
       return;
     }
     final sameDay = conflictEventsOnDay(_selectedDate, events,
-        excludeEventId: _excludeEventId);
+            excludeEventId: _excludeEventId)
+        .where((e) => !_resolvedConflictIds.contains(e.id))
+        .toList();
     if (sameDay.isNotEmpty) {
       await _showConflictFlow(sameDay, exactTime: false);
       return;
@@ -3282,37 +3316,33 @@ class _EventFormModalState extends State<_EventFormModal> {
       mergedFromConflict: _mergedFromConflict,
     );
     try {
-      widget.onWillSave?.call(<String, String>{
-        'type': _type,
-        'date': _selectedDate.toIso8601String(),
-        'location': _location,
-        'notes': _computedNotes,
-      });
-      // Выход из участников, потом создание своего.
+      // ТОЛЬКО ВЫХОД, без создания своего (N51).
       //
-      // Порядок именно такой: откажи выход по правам, своё не создастся и
-      // дублей не будет. Обратный порядок оставил бы два мероприятия при
-      // первом же отказе.
+      // Прежде здесь же создавалось и своё мероприятие — и это было верно,
+      // пока минуту мог занимать ровно один конфликт. Их может быть
+      // несколько: ушёл из чужого, а своё на том же времени осталось, и
+      // созданное тут же поставило бы человека в два места разом — ровно
+      // то, ради чего запрет на совпадение минуты и заведён. Создание
+      // ушло в общий путь сохранения, который вызывающий позовёт, когда
+      // минута действительно освободится.
       //
-      // Уведомление о самом выходе шлёт сервер владельцу покинутого, и
-      // только ему («İştirakçı ayrıldı», `planUpdatePushes` по
+      // Уведомление о выходе шлёт сервер владельцу покинутого, и только
+      // ему («İştirakçı ayrıldı», `planUpdatePushes` по
       // `lastActionType: 'left'`). Оно и есть единственное, что этот ход
-      // теперь порождает: до починки уходило три, из них два ложных.
+      // порождает: до починки N47 уходило три, из них два ложных.
       await widget.firestoreService
           .leavePersonalEvent(target.id, widget.currentUid);
-      await widget.firestoreService.addPersonalEvent(
-        ownerUid: widget.currentUid,
-        date: _selectedDate.toIso8601String(),
-        type: _type,
-        location: _location,
-        notes: _computedNotes,
-        // Состав — только выбранный человеком, без подмешанных из
-        // покинутого мероприятия; ссылки на «заменённое» нет, потому что
-        // ничего не заменялось (N47).
-        participantUids: plan.participantUids,
-        replacedEventId: plan.replacedEventId,
-      );
-      if (mounted) Navigator.of(context).pop();
+      if (!mounted) return;
+      setState(() {
+        // Состав — только выбранный человеком: подмешанные пришли из того
+        // самого мероприятия, из которого человек только что вышел (N47).
+        _selectedParticipantUids = plan.participantUids;
+        _mergedFromConflict.clear();
+        // Это мероприятие разобрано. Список данных о выходе ещё не знает —
+        // он снят при открытии формы, — поэтому помним сами, иначе
+        // следующий же пересчёт снова спросит про него.
+        _resolvedConflictIds.add(target.id);
+      });
     } catch (e, st) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3445,6 +3475,7 @@ class _EventFormModalState extends State<_EventFormModal> {
       blockedTime: _blockedTime,
       excludeEventId: _excludeEventId,
       pastDate: _pastDatePicked,
+      resolvedIds: _resolvedConflictIds,
     );
     // Состав конфликтующих мероприятий подмешивается в форму СРАЗУ, как
     // только появилось предупреждение: требование «виден до нажатия и
@@ -3563,6 +3594,7 @@ class _EventFormModalState extends State<_EventFormModal> {
                     // предупреждение о занятости не поднимается вовсе —
                     // значит и конфликтов в нём не будет.
                     pastDate: d != _openedWithDate && d.isBefore(DateTime.now()),
+                    resolvedIds: _resolvedConflictIds,
                   );
                   final change = participantsAfterConflictChange(
                     current: _selectedParticipantUids,
