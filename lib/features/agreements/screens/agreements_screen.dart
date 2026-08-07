@@ -595,6 +595,21 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     );
   }
 
+  /// Имя второй стороны договора — по её uid.
+  ///
+  /// `partnerName` из документа значит «вторая сторона глазами
+  /// ВЛАДЕЛЬЦА»: на входящем договоре это имя самого смотрящего (N53).
+  /// Оставлено только запасным путём и только там, где называют именно
+  /// `partnerUid`.
+  String _nameOfParty(PersonalEvent e) {
+    final otherUid = e.ownerUid == _uid ? e.partnerUid : e.ownerUid;
+    final users = ref.read(allUsersProvider).asData?.value ?? const <User>[];
+    for (final u in users) {
+      if (u.id == otherUid && u.name.isNotEmpty) return u.name;
+    }
+    return otherUid == e.partnerUid ? (e.partnerName ?? 'Naməlum') : 'Naməlum';
+  }
+
   Widget _buildAgreementCard(PersonalEvent e) {
     final unread = _isUnread(e);
     final cancelled = e.status == 'cancelled';
@@ -690,7 +705,11 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    e.partnerName ?? 'Naməlum',
+                    // Имя ВТОРОЙ СТОРОНЫ по её uid, а не `partnerName`
+                    // (N53): на входящем договоре это поле означает имя
+                    // самого смотрящего, и список показывал бы человеку
+                    // его собственное имя вместо имени напарника.
+                    _nameOfParty(e),
                     style: GoogleFonts.nunito(
                       fontSize: 15,
                       fontWeight: FontWeight.bold,
@@ -1401,7 +1420,10 @@ class _EventCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final initiatorUid = isOwn ? currentUid : event.ownerUid;
     final initiator = _findUser(initiatorUid);
-    final initiatorName = initiator?.name ?? (isOwn ? 'Siz' : event.partnerName ?? 'Naməlum');
+    // Запасное имя — только «Naməlum»: `partnerName` тут значит имя
+    // смотрящего, и на входящем договоре назвало бы его самого
+    // инициатором (N53).
+    final initiatorName = initiator?.name ?? (isOwn ? 'Siz' : 'Naməlum');
     final initiatorInstrument = initiator?.instrument ?? '';
 
     return GestureDetector(
@@ -2418,8 +2440,14 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
                 border: Border.all(color: kBorder),
               ),
               child: Text(
-                'Bu müqavilə ${event.ownerUid == currentUid ? 'Siz' : (event.partnerName ?? 'Naməlum')} '
-                'və ${event.ownerUid != currentUid ? 'Siz' : (event.partnerName ?? 'Naməlum')} '
+                // СЕДЬМОЕ место того же корня, найдено 07.08 снимком со
+                // ВТОРОГО телефона, а не чтением кода (N53). Предыдущий
+                // проход искал строки сторон и тексты про отмену — обычное
+                // предложение под ними мимо него и прошло. У получателя
+                // здесь стояло его собственное имя дважды: «Bu müqavilə
+                // Teymur Orucov və Siz arasında…».
+                'Bu müqavilə ${nameOf(event.ownerUid)} '
+                'və ${nameOf(event.partnerUid)} '
                 'arasında qarşılıqlı razılıq əsasında bağlanmışdır.',
                 style: const TextStyle(
                   fontSize: 13,
@@ -2529,7 +2557,8 @@ class _PersonalEventDetailScreenState
     final isOwner = event.ownerUid == currentUid;
     final initiatorUid = isOwner ? currentUid : event.ownerUid;
     final initiator = _findUser(allUsers, initiatorUid);
-    final initiatorName = initiator?.name ?? (isOwner ? 'Siz' : event.partnerName ?? 'Naməlum');
+    // То же правило, что и в карточке списка (N53).
+    final initiatorName = initiator?.name ?? (isOwner ? 'Siz' : 'Naməlum');
     final initiatorInstrument = initiator?.instrument ?? '';
 
     return Scaffold(
