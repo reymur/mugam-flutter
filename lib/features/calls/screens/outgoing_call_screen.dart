@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../../navigation/app_tabs.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
@@ -110,7 +111,7 @@ class _OutgoingCallScreenState extends ConsumerState<OutgoingCallScreen> {
     if (context.canPop()) {
       context.pop();
     } else {
-      context.go('/home');
+      context.go(kStartPath);
     }
   }
 

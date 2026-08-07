@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'app_tabs.dart';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -29,7 +30,7 @@ class _AuthGateScreenState extends State<AuthGateScreen> {
     _sub = FirebaseAuth.instance.authStateChanges().listen((user) {
       _sub?.cancel();
       if (!mounted) return;
-      context.go(user != null ? '/home' : '/login');
+      context.go(user != null ? kStartPath : '/login');
     });
   }
 

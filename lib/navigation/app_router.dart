@@ -17,6 +17,7 @@ import '../features/home/screens/home_screen.dart';
 import '../features/market/screens/market_screen.dart';
 import '../features/profile/screens/profile_screen.dart';
 import '../features/search/screens/search_screen.dart';
+import '../features/soon/screens/soon_screen.dart';
 import '../features/starred/screens/starred_messages_screen.dart';
 import '../features/stories/screens/stories_screen.dart';
 import '../features/video/screens/video_screen.dart';
@@ -30,16 +31,12 @@ import 'main_shell.dart';
 /// Полнота карты проверяется тестом (`test/app_tabs_test.dart`): вкладка
 /// без экрана — красный тест, а не пустая ветка.
 const Map<String, Widget Function()> _screensByTabId = {
-  'home': HomeScreen.new,
   'agreements': AgreementsScreen.new,
+  'home': HomeScreen.new,
   'search': SearchScreen.new,
-  'board': BoardScreen.new,
-  'gigs': GigsScreen.new,
-  'market': MarketScreen.new,
-  'stories': StoriesScreen.new,
-  'video': VideoScreen.new,
   'chats': ChatsScreen.new,
   'profile': ProfileScreen.new,
+  'soon': SoonScreen.new,
 };
 
 Widget screenForTab(String id) {
@@ -96,6 +93,26 @@ final appRouter = GoRouter(
       path: '/call/active/:callId',
       builder: (c, s) => ActiveCallScreen(callId: s.pathParameters['callId']!),
     ),
+    // ПЯТЬ ЭКРАНОВ, УБРАННЫХ ИЗ ПАНЕЛИ 07.08 — но не из приложения.
+    //
+    // Проверено перед правкой: на эти пути не ссылалось НИЧТО, кроме
+    // самого списка вкладок. Убери их оттуда и не оставь здесь — экраны
+    // стали бы недостижимы вовсе, то есть «спрятаны» превратилось бы в
+    // «выброшены», и через месяц их вычистили бы как мёртвый код.
+    //
+    // Верхним уровнем, а НЕ скрытой веткой оболочки: ветки строятся из
+    // списка вкладок, и скрытая ветка вернула бы расхождение «панель ≠
+    // ветки», ради устранения которого список и сводили (N58). Цена
+    // выбора названа: экран открывается без нижней панели.
+    //
+    // Готов экран — строка переезжает в `kAppTabs`, и отсюда уходит.
+    // Адрес работы по каждому — в реестре (N60), не в комментарии:
+    // комментарий защищает строку, а не класс.
+    GoRoute(path: '/board', builder: (c, s) => const BoardScreen()),
+    GoRoute(path: '/gigs', builder: (c, s) => const GigsScreen()),
+    GoRoute(path: '/market', builder: (c, s) => const MarketScreen()),
+    GoRoute(path: '/stories', builder: (c, s) => const StoriesScreen()),
+    GoRoute(path: '/video', builder: (c, s) => const VideoScreen()),
     // ВЕТКИ СТРОЯТСЯ ИЗ ТОГО ЖЕ СПИСКА, что и панель (`app_tabs.dart`).
     //
     // Прежде порядок был записан здесь и в `custom_tab_bar.dart` двумя

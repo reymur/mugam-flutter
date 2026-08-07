@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../../navigation/app_tabs.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
@@ -61,7 +62,7 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
       context.pop();
     } else {
       debugPrint('[CALL_NAV] calling context.go("/home") — canPop was false');
-      context.go('/home');
+      context.go(kStartPath);
     }
   }
 

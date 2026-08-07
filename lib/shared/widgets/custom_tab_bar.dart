@@ -29,34 +29,36 @@ class CustomTabBar extends StatelessWidget {
         top: false,
         child: SizedBox(
           height: kNavH,
-          // Scrollable with a fixed per-tab width, replacing the old
-          // Row(Expanded...) that squeezed all 10 tabs to fit the screen
-          // — matches the reference design, which shows the row
-          // horizontally scrollable with trailing tabs (e.g. "PROFİL")
-          // visibly cut off at the edge until swiped into view.
-          child: ListView.builder(
-            scrollDirection: Axis.horizontal,
-            itemCount: kAppTabs.length,
-            itemBuilder: (context, i) {
-              final tab = kAppTabs[i];
-              final isActive = i == currentIndex;
-              return GestureDetector(
-                onTap: () => onTap(i),
-                behavior: HitTestBehavior.opaque,
-                child: SizedBox(
-                  width: 64,
-                  child: _TabItem(
-                    emoji: tab.emoji,
-                    label: tab.label,
-                    isActive: isActive,
-                    // По ИМЕНИ вкладки, а не по её номеру: номер меняется
-                    // при первой же перестановке, и подмену нечем
-                    // заметить, пока счётчик не показывается (N57).
-                    badge: tab.id == kUnreadBadgeTabId ? unreadCount : 0,
+          // ПАНЕЛЬ БОЛЬШЕ НЕ ЛИСТАЕТСЯ (решение владельца 07.08). Прежде
+          // тут был горизонтальный список с шириной 64 на вкладку: при
+          // десяти вкладках они не помещались, и «PROFİL» уезжал за край
+          // до свайпа. Вкладок шесть — помещаются на самом узком экране
+          // (320 pt даёт по 53 pt на вкладку), и прятать от человека
+          // половину панели больше незачем.
+          //
+          // `Expanded` вместо жёсткой ширины: вкладки делят экран поровну,
+          // какой бы он ни был. Подпись при нехватке места ужимается сама
+          // (`FittedBox` внутри `_TabItem`), а не обрезается многоточием.
+          child: Row(
+            children: [
+              for (final (i, tab) in kAppTabs.indexed)
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => onTap(i),
+                    behavior: HitTestBehavior.opaque,
+                    child: _TabItem(
+                      emoji: tab.emoji,
+                      label: tab.label,
+                      isActive: i == currentIndex,
+                      // По ИМЕНИ вкладки, а не по её номеру: номер
+                      // меняется при первой же перестановке, и подмену
+                      // нечем заметить, пока счётчик не показывается
+                      // (N57).
+                      badge: tab.id == kUnreadBadgeTabId ? unreadCount : 0,
+                    ),
                   ),
                 ),
-              );
-            },
+            ],
           ),
         ),
       ),
@@ -119,13 +121,24 @@ class _TabItem extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 3),
-        Text(
-          label,
-          style: GoogleFonts.nunito(
-            fontSize: 9,
-            fontWeight: FontWeight.w800,
-            color: isActive ? kGold : kMuted,
-            letterSpacing: 0.5,
+        // Подпись ужимается, а не обрезается: на узком экране «TEZLİKLƏ»
+        // длиннее своей доли, и многоточие превратило бы её в «TEZLİK…».
+        // Панель больше не листается, поэтому уехать подписи некуда —
+        // остаётся ужать.
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label,
+              maxLines: 1,
+              style: GoogleFonts.nunito(
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                color: isActive ? kGold : kMuted,
+                letterSpacing: 0.5,
+              ),
+            ),
           ),
         ),
       ],

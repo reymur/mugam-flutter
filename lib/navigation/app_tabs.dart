@@ -33,18 +33,28 @@ class AppTab {
 }
 
 /// Порядок панели. Менять состав — здесь, и больше нигде.
+///
+/// ШЕСТЬ ВКЛАДОК вместо десяти (решение владельца 07.08). Пять экранов —
+/// Elanlar, Sifariş, Bazar, Hekayə, Video — из панели убраны, но НЕ
+/// удалены: они остаются маршрутами верхнего уровня (`app_router.dart`) и
+/// открываются по прямому пути. Готовый экран переезжает в панель одной
+/// строкой здесь — и тем же движением уходит из «Tezliklə».
+///
+/// «Kalendar» первой намеренно: она же стартовая ([kStartPath]).
 const List<AppTab> kAppTabs = [
-  AppTab(id: 'home', emoji: '🏠', label: 'KLUB', path: '/home'),
   AppTab(id: 'agreements', emoji: '📅', label: 'KALENDAR', path: '/agreements'),
+  AppTab(id: 'home', emoji: '🏠', label: 'KLUB', path: '/home'),
   AppTab(id: 'search', emoji: '🔍', label: 'AXTAR', path: '/search'),
-  AppTab(id: 'board', emoji: '📢', label: 'ELANLAR', path: '/board'),
-  AppTab(id: 'gigs', emoji: '🎼', label: 'SİFARİŞ', path: '/gigs'),
-  AppTab(id: 'market', emoji: '🛍', label: 'BAZAR', path: '/market'),
-  AppTab(id: 'stories', emoji: '😄', label: 'HEKAYƏ', path: '/stories'),
-  AppTab(id: 'video', emoji: '🎬', label: 'VİDEO', path: '/video'),
   AppTab(id: 'chats', emoji: '💬', label: 'MESAJ', path: '/chats'),
   AppTab(id: 'profile', emoji: '👤', label: 'PROFİL', path: '/profile'),
+  AppTab(id: 'soon', emoji: '✨', label: 'TEZLİKLƏ', path: '/soon'),
 ];
+
+/// Куда попадает человек после входа и куда возвращается из звонка.
+///
+/// Берётся из списка, а не пишется строкой: перестановка первой вкладки
+/// иначе разошлась бы со стартовым экраном молча — тот же класс, что N58.
+final String kStartPath = kAppTabs.first.path;
 
 /// Вкладка, на которой висит счётчик непрочитанных сообщений.
 ///
@@ -54,3 +64,62 @@ const List<AppTab> kAppTabs = [
 /// Перестановка вкладок увела бы это число на «PROFİL», и заметить
 /// подмену было бы нечем — ломаться было нечему (N57).
 const String kUnreadBadgeTabId = 'chats';
+
+/// Экран, который вот-вот появится в приложении: строка «Tezliklə».
+class SoonFeature {
+  final String emoji;
+  final String title;
+
+  /// Одной фразой: что человек сможет здесь делать. Не «раздел такой-то»,
+  /// а его дело — иначе список читается как оглавление к пустоте.
+  final String note;
+
+  /// Путь, по которому экран уже открывается. Он живёт и работает, просто
+  /// не показан в панели: `null` — если экрана ещё нет вовсе.
+  final String? path;
+
+  const SoonFeature({
+    required this.emoji,
+    required this.title,
+    required this.note,
+    this.path,
+  });
+}
+
+/// Пять убранных из панели — и ровно то, чего каждый ждёт.
+///
+/// Список ЖИВОЙ, а не подпись к экрану: экран переехал в панель — строка
+/// уходит отсюда. Тест держит, что путь каждой строки существует в
+/// роутере, иначе «Tezliklə» однажды пообещает то, чего нет.
+const List<SoonFeature> kSoonFeatures = [
+  SoonFeature(
+    emoji: '📢',
+    title: 'Elanlar',
+    note: 'Elanlar lenti: kim musiqiçi axtarır, kim işə hazırdır.',
+    path: '/board',
+  ),
+  SoonFeature(
+    emoji: '🎼',
+    title: 'Sifariş',
+    note: 'Tədbirə kollektiv sifarişi — bir yerdə, danışıqsız.',
+    path: '/gigs',
+  ),
+  SoonFeature(
+    emoji: '🛍',
+    title: 'Bazar',
+    note: 'Alət və avadanlıq: al, sat, kirayə ver.',
+    path: '/market',
+  ),
+  SoonFeature(
+    emoji: '😄',
+    title: 'Hekayə',
+    note: '24 saatlıq hekayələr — tədbirdən birbaşa.',
+    path: '/stories',
+  ),
+  SoonFeature(
+    emoji: '🎬',
+    title: 'Video',
+    note: 'Çıxış videoları: özünü göstər, başqasını tap.',
+    path: '/video',
+  ),
+];
