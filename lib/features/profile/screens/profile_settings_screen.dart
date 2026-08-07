@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../../core/settings/start_tab_settings.dart';
 import '../../../core/store/local_message_store.dart';
+import '../../../navigation/app_tabs.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/auth_service.dart';
 import '../../../firebase/firestore_service.dart';
@@ -28,6 +30,13 @@ class ProfileSettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final incomingAsync = ref.watch(incomingFriendRequestsProvider(currentUid));
+    final startTabId = ref.watch(startTabProvider);
+    final startTabLabel = kAppTabs
+        .firstWhere(
+          (t) => t.id == startTabId,
+          orElse: () => kAppTabs.first,
+        )
+        .label;
     // Same rollback-safety contract as before this moved: an AsyncError
     // here (e.g. firestore.rules for friendRequests rolled back while this
     // build is still installed) hides the Dost sorğuları row entirely
@@ -162,6 +171,72 @@ class ProfileSettingsScreen extends ConsumerWidget {
             ),
             trailing: const Icon(Icons.chevron_right, color: kMuted),
             onTap: () => context.push('/starred'),
+          ),
+          const Divider(color: kBorder, height: 1),
+          // «Tətbiq açılır…» — с какой вкладки открывается приложение.
+          // Список строится ИЗ kAppTabs, а не отдельным перечнем: два
+          // списка одного и того же расходятся молча, и ровно из этого
+          // вышла N58.
+          ListTile(
+            leading: const Icon(Icons.play_circle_outline, color: kGold),
+            title: const Text('Tətbiq açılır', style: TextStyle(color: kText)),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  startTabLabel,
+                  style: const TextStyle(color: kMuted, fontSize: 14),
+                ),
+                const SizedBox(width: 6),
+                const Icon(Icons.chevron_right, color: kMuted),
+              ],
+            ),
+            onTap: () => showModalBottomSheet<void>(
+              context: context,
+              backgroundColor: kBg2,
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+              ),
+              builder: (sheetContext) => SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(20, 18, 20, 10),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Tətbiq açılır',
+                          style: TextStyle(
+                            color: kGold,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                    for (final tab in kAppTabs)
+                      ListTile(
+                        leading: Text(
+                          tab.emoji,
+                          style: const TextStyle(fontSize: 20),
+                        ),
+                        title: Text(
+                          tab.label,
+                          style: const TextStyle(color: kText),
+                        ),
+                        trailing: tab.id == startTabId
+                            ? const Icon(Icons.check, color: kGold)
+                            : null,
+                        onTap: () {
+                          ref.read(startTabProvider.notifier).setTab(tab.id);
+                          Navigator.pop(sheetContext);
+                        },
+                      ),
+                  ],
+                ),
+              ),
+            ),
           ),
           const Divider(color: kBorder, height: 1),
           ListTile(
