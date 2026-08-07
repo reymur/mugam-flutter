@@ -1852,7 +1852,7 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
   /// `permission-denied` здесь не поломка, а осмысленный ответ: правила
   /// устроены так, что при одновременности проходит тот, кто записал
   /// первым, а второму отказывают. Кто именно опередил — известно заранее
-  /// по самому ходу, поэтому [deniedMessage] у каждого свой и говорит
+  /// по самому ходу, поэтому [raceMessage] у каждого свой и говорит
   /// правду, а не «Xəta».
   ///
   /// **Глотать этот отказ нельзя.** Он детерминированный: повтор даст тот
@@ -1867,23 +1867,62 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
   /// исход и откатить его — поэтому слова важнее вида кнопок.
   Future<void> _cancelStep(
     Future<void> Function() step, {
-    required String deniedMessage,
+    // Ход, который совершается: по нему разбирается отказ (N45).
+    required String deed,
+    required String eventId,
+    // Что сказать, если состояние отказ ОБЪЯСНЯЕТ, — то есть при гонке.
+    required String raceMessage,
   }) async {
     if (_cancelBusy) return;
     setState(() => _cancelBusy = true);
     try {
       await step();
     } on FirebaseException catch (e, st) {
-      if (!mounted) return;
-      final denied = e.code == 'permission-denied';
-      _say(denied ? deniedMessage : 'Xəta: ${e.message ?? e.code}');
-      if (!denied) {
+      if (e.code != 'permission-denied') {
+        if (mounted) _say('Xəta: ${e.message ?? e.code}');
         FirebaseCrashlytics.instance.recordError(
           e,
           st,
           reason: 'agreements_screen: cancel step failed',
         );
+        return;
       }
+      // ОТКАЗ ПО ПРАВАМ — причин ДВЕ, и сама ошибка их не различает
+      // (N45). Спрашиваем состояние С СЕРВЕРА и разбираем правилом:
+      // объясняет ли оно отказ. Из кэша спрашивать бессмысленно — там
+      // лежит картина, из которой мы решили, что ход законен.
+      final fresh = await ref
+          .read(firestoreServiceProvider)
+          .fetchPersonalEventFromServer(eventId);
+      final verdict = fresh == null
+          // Прочитать не удалось — сказать нечего. Считаем причину
+          // неизвестной: додумывать её здесь значит вернуть тот самый
+          // дефект, ради которого правило заведено.
+          ? CancelDenial.unknown
+          : explainCancelDenial(
+              deed: deed,
+              status: fresh.status,
+              cancelRequestedBy: fresh.cancelRequestedBy,
+              currentUid: widget.currentUid,
+            );
+      if (!mounted) return;
+      if (verdict == CancelDenial.race) {
+        // Законный исход: вторая сторона успела раньше. В Crashlytics не
+        // сообщаем — это не поломка, а жизнь.
+        _say(raceMessage);
+        return;
+      }
+      // Состояние отказ НЕ объясняет: правила не выложены, разошлись
+      // имена поступков, испорчены данные — что угодно, кроме гонки.
+      // Осторожные слова вместо выдуманной причины, и обязательно в
+      // Crashlytics: сегодня этот случай не виден нигде.
+      _say('Əməliyyat alınmadı, yenidən yoxlayın');
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'agreements_screen: отказ по правам, состояние его не '
+            'объясняет (ход $deed, статус ${fresh?.status ?? 'не прочитан'})',
+      );
     } catch (e, st) {
       if (!mounted) return;
       // Сюда попадает и таймаут записи. Он НЕ значит «не прошло»: запись
@@ -1969,7 +2008,9 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
               if (!ok) return;
               await _cancelStep(
                 () => svc.requestAgreementCancel(event.id, currentUid),
-                deniedMessage: 'Qarşı tərəf artıq ləğv təklifi göndərib',
+                deed: kCancelRequested,
+                eventId: event.id,
+                raceMessage: 'Qarşı tərəf artıq ləğv təklifi göndərib',
               );
             },
           ),
@@ -1997,9 +2038,11 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
               if (!ok) return;
               await _cancelStep(
                 () => svc.withdrawAgreementCancel(event.id, currentUid),
+                deed: kCancelWithdrawn,
+                eventId: event.id,
                 // Проиграл гонку — значит вторая сторона успела
                 // подтвердить. Это и есть те самые слова вместо молчания.
-                deniedMessage: 'Qarşı tərəf ləğvi artıq təsdiqlədi',
+                raceMessage: 'Qarşı tərəf ləğvi artıq təsdiqlədi',
               );
             },
           ),
@@ -2025,7 +2068,9 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
             if (!ok) return;
             await _cancelStep(
               () => svc.confirmAgreementCancel(event.id, currentUid),
-              deniedMessage: 'Təklif artıq geri götürülüb',
+              deed: kCancelConfirmed,
+              eventId: event.id,
+              raceMessage: 'Təklif artıq geri götürülüb',
             );
           },
         ),
@@ -2045,7 +2090,9 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
             if (!ok) return;
             await _cancelStep(
               () => svc.declineAgreementCancel(event.id, currentUid),
-              deniedMessage: 'Təklif artıq geri götürülüb',
+              deed: kCancelDeclined,
+              eventId: event.id,
+              raceMessage: 'Təklif artıq geri götürülüb',
             );
           },
         ),

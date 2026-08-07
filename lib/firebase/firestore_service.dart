@@ -3713,6 +3713,31 @@ class FirestoreService {
   // делает поломку невидимой». Разбор в `agreements_screen.dart`, где
   // отказ и превращается в слова.
 
+  /// Прочитать мероприятие С СЕРВЕРА, минуя кэш (N45).
+  ///
+  /// Нужно ровно для одного: после отказа по правам спросить, объясняет
+  /// ли состояние документа этот отказ. Из кэша ответ бесполезен — там
+  /// лежит ровно та картина, из которой мы и решили, что ход законен, и
+  /// она подтвердит нашу же ошибку.
+  ///
+  /// Возвращает `null`, когда прочитать не удалось (сети нет, документ
+  /// исчез): тогда сказать нечего, и вызывающий обязан считать причину
+  /// неизвестной, а не додумывать.
+  Future<PersonalEvent?> fetchPersonalEventFromServer(String eventId) async {
+    try {
+      final snap = await _db
+          .collection('personalEvents')
+          .doc(eventId)
+          .get(const GetOptions(source: Source.server))
+          .timeout(_writeTimeout);
+      final data = snap.data();
+      if (!snap.exists || data == null) return null;
+      return PersonalEvent.fromFirestore(snap.id, data);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Ход первый: предложить отмену.
   ///
   /// `lastActionBy`/`lastActionType` пишутся всеми четырьмя ходами, а не
