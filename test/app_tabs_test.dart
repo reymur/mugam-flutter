@@ -84,7 +84,13 @@ void main() {
       isFalse,
       reason: 'вкладка снова опознаётся номером (N57)',
     );
-    expect(bar.contains('kUnreadBadgeTabId'), isTrue);
+    // Не `contains('kUnreadBadgeTabId')`: имя есть в файле и от одного
+    // импорта. Проверяется СРАВНЕНИЕ — то, ради чего константа заведена.
+    expect(
+      RegExp(r'==\s*kUnreadBadgeTabId').hasMatch(bar),
+      isTrue,
+      reason: 'бейдж больше не сверяется с вкладкой по имени константы',
+    );
     expect(
       kAppTabs.any((t) => t.id == kUnreadBadgeTabId),
       isTrue,

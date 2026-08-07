@@ -152,8 +152,10 @@ void main() {
       // Проверка текстовая, поэтому смотрит на КОД без комментариев (I12):
       // разбор рядом цитирует то, что проверяется.
       final gate = _codeOf('lib/navigation/auth_gate_screen.dart');
+      // Не `contains('resolveStartPath')`: имя публичное, и одного
+      // упоминания хватило бы. Проверяется ВЫЗОВ — со скобкой.
       expect(
-        gate.contains('resolveStartPath'),
+        gate.contains('resolveStartPath('),
         isTrue,
         reason: 'экран запуска снова уводит на жёсткий kStartPath — '
             'настройка сохраняется и не делает ничего',

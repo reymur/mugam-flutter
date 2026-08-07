@@ -192,8 +192,12 @@ void main() {
         reason: 'MainShell перестал передавать счётчик в панель — бейдж '
             'снова не показывается никогда (N57)',
       );
+      // Не `contains('chatsProvider')`: в файле стоит
+      // `import … show chatsProvider`, и одного этого хватило бы, чтобы
+      // сторож остался зелёным после снятия самой подписки. Проверяется
+      // ПОДПИСКА.
       expect(
-        shell.contains('chatsProvider'),
+        RegExp(r'watch\(\s*chatsProvider\(').hasMatch(shell),
         isTrue,
         reason: 'число берётся не из потока чатов — значит либо считается '
             'заново, либо пришло из воздуха',
