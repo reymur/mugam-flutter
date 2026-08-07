@@ -1224,6 +1224,16 @@ class PersonalEvent {
   final String? lastActionBy;
   final String? lastActionType;
 
+  /// Когда было ОТПРАВЛЕНО предложение, из которого вырос договор.
+  ///
+  /// Не то же самое, что `createdAt`: договор создаётся в миг согласия
+  /// второй стороны, а предложение ушло раньше — иногда на минуту, иногда
+  /// на дни. Для человека «пришло» — это про предложение.
+  ///
+  /// Пишется с 04.08 (починка N29). У 25 договоров из 26 в проде его нет,
+  /// поэтому у читателя обязан быть запасной путь.
+  final String? jobOfferAt;
+
   const PersonalEvent({
     required this.id,
     required this.ownerUid,
@@ -1244,6 +1254,7 @@ class PersonalEvent {
     this.createdAt,
     this.lastActionBy,
     this.lastActionType,
+    this.jobOfferAt,
   });
 
   factory PersonalEvent.fromFirestore(String id, Map<String, dynamic> data) {
@@ -1267,6 +1278,7 @@ class PersonalEvent {
       createdAt: data['createdAt'],
       lastActionBy: data['lastActionBy'] as String?,
       lastActionType: data['lastActionType'] as String?,
+      jobOfferAt: data['jobOfferAt'] as String?,
     );
   }
 }

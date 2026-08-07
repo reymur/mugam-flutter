@@ -33,6 +33,23 @@ AgreementCardState state({
       lastActionType: lastType,
     );
 
+extension _WithOffer on PersonalEvent {
+  PersonalEvent copyWithOffer(String at) => PersonalEvent(
+        id: id,
+        ownerUid: ownerUid,
+        date: date,
+        type: type,
+        location: location,
+        notes: notes,
+        participantUids: participantUids,
+        isAgree: isAgree,
+        status: status,
+        createdAt: createdAt,
+        cancelledAt: cancelledAt,
+        jobOfferAt: at,
+      );
+}
+
 void main() {
   group('исход: договор в силе', () {
     test('обычный договор — ни следов, ни имён', () {
@@ -219,6 +236,32 @@ void main() {
           cancelledAt: cancelled == null ? null : Timestamp.fromDate(cancelled),
         );
 
+    test('дата прихода — jobOfferAt, а не дата сделки', () {
+      // Главное в N55: предложение уходит РАНЬШЕ согласия. Строка на
+      // карточке говорит «Sizə göndərildi», значит и дата обязана быть
+      // про отправку, а не про закрытие сделки.
+      final e = ev('x', created: DateTime(2026, 8, 5, 12, 0))
+          .copyWithOffer('2026-08-01T09:00:00.000');
+      expect(agreementStampValue(e), DateTime(2026, 8, 1, 9, 0));
+    });
+
+    test('без jobOfferAt берётся createdAt — 25 договоров прода из 26', () {
+      final e = ev('x', created: DateTime(2026, 8, 5, 12, 0));
+      expect(agreementStampValue(e), DateTime(2026, 8, 5, 12, 0));
+    });
+
+    test('порядок идёт по приходу, а не по дате сделки', () {
+      // Договор, предложенный раньше, но согласованный позже, обязан
+      // стоять НИЖЕ: человек ищет по тому, когда ему пришло.
+      final list = [
+        ev('пришёл раньше', created: DateTime(2026, 8, 6))
+            .copyWithOffer('2026-08-01T09:00:00.000'),
+        ev('пришёл позже', created: DateTime(2026, 8, 2))
+            .copyWithOffer('2026-08-05T09:00:00.000'),
+      ]..sort(compareAgreementsByStamp);
+      expect(list.first.id, 'пришёл позже');
+    });
+
     test('действующие идут по дате заключения, новое первым', () {
       final list = [
         ev('старый', created: DateTime(2026, 8, 1)),
@@ -252,11 +295,11 @@ void main() {
           created: DateTime(2026, 7, 1),
           cancelled: DateTime(2026, 8, 6));
       expect(agreementStamp(cancelledEv.status), AgreementStamp.cancelled);
-      expect(agreementStampValue(cancelledEv), cancelledEv.cancelledAt);
+      expect(agreementStampValue(cancelledEv), DateTime(2026, 8, 6));
 
       final liveEv = ev('a', created: DateTime(2026, 8, 1));
       expect(agreementStamp(liveEv.status), AgreementStamp.created);
-      expect(agreementStampValue(liveEv), liveEv.createdAt);
+      expect(agreementStampValue(liveEv), DateTime(2026, 8, 1));
     });
 
     test('карточка без отметки уходит вниз, а не наверх', () {

@@ -58,10 +58,43 @@ AgreementStamp agreementStamp(String status) =>
     status == 'cancelled' ? AgreementStamp.cancelled : AgreementStamp.created;
 
 /// Само значение отметки — то, что показывается и по чему сортируется.
-dynamic agreementStampValue(PersonalEvent e) =>
-    agreementStamp(e.status) == AgreementStamp.cancelled
-        ? e.cancelledAt
-        : e.createdAt;
+///
+/// У действующего договора это **когда он ПРИШЁЛ человеку**, то есть когда
+/// было отправлено предложение (`jobOfferAt`), а не когда сделка
+/// состоялась (`createdAt`). Разница не косметическая: предложение уходит
+/// раньше согласия — иногда на минуту, иногда на дни, — а строка над датой
+/// говорит «Sizə göndərildi» / «Siz göndərdiniz», то есть про отправку.
+/// Показывать под ней дату закрытия сделки значит подписать одно другим.
+///
+/// `jobOfferAt` пишется с 04.08 (починка N29), и у 25 договоров прода из
+/// 26 его нет — поэтому запасной путь `createdAt` обязателен и будет
+/// работать ещё долго.
+///
+/// У отменённого показывается и сортируется время отмены: в разделе
+/// «Ləğv edilən» человек ищет по нему.
+DateTime? agreementStampValue(PersonalEvent e) {
+  if (agreementStamp(e.status) == AgreementStamp.cancelled) {
+    return _asDate(e.cancelledAt);
+  }
+  return _asDate(e.jobOfferAt) ?? _asDate(e.createdAt);
+}
+
+/// Отметки времени в этой коллекции лежат в двух видах: `createdAt` и
+/// `cancelledAt` — `Timestamp` сервера, `jobOfferAt` — строка ISO
+/// (плавающее гражданское время, N4). Приводим к одному, а не выбираем
+/// сравнение по типу в каждом месте.
+DateTime? _asDate(dynamic v) {
+  if (v is Timestamp) return v.toDate();
+  if (v is DateTime) return v;
+  if (v is String && v.isNotEmpty) {
+    try {
+      return DateTime.parse(v);
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+}
 
 /// Порядок в списке договоров: новое сверху, и НИЧЕГО кроме.
 ///
@@ -77,12 +110,12 @@ dynamic agreementStampValue(PersonalEvent e) =>
 int compareAgreementsByStamp(PersonalEvent a, PersonalEvent b) {
   final av = agreementStampValue(a);
   final bv = agreementStampValue(b);
-  if (av is Timestamp && bv is Timestamp) {
+  if (av != null && bv != null) {
     final cmp = bv.compareTo(av);
     if (cmp != 0) return cmp;
-  } else if (av is Timestamp) {
+  } else if (av != null) {
     return -1;
-  } else if (bv is Timestamp) {
+  } else if (bv != null) {
     return 1;
   }
   // Устойчивый доводчик: без него две несравнимые карточки меняются

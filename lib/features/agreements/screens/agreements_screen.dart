@@ -600,6 +600,21 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     return otherUid == e.partnerUid ? (e.partnerName ?? 'Naməlum') : 'Naməlum';
   }
 
+  /// Дата под именем: когда пришло (или ушло), а у отменённых — когда
+  /// отменено. Подписана словом — без подписи её читают как дату
+  /// мероприятия (N55).
+  String _stampLine(PersonalEvent e) {
+    final at = agreementStampValue(e);
+    if (at == null) return '';
+    final when = DateFormat('d MMMM yyyy HH:mm', 'az').format(at);
+    if (agreementStamp(e.status) == AgreementStamp.cancelled) {
+      return '$when — ləğv edildi';
+    }
+    // Своё «пришло» у каждой стороны: получателю прислали, отправитель
+    // отправил. Те же слова, что строкой выше.
+    return e.ownerUid == _uid ? '$when — göndərildi' : '$when — gəldi';
+  }
+
   Widget _buildAgreementCard(PersonalEvent e) {
     final unread = _isUnread(e);
     final cancelled = e.status == 'cancelled';
@@ -713,13 +728,12 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    // То же поле, по которому список отсортирован, и с
-                    // подписью — как на карточке договора. Без подписи
-                    // дата читается как что угодно: дата мероприятия,
-                    // дата отмены, что-нибудь ещё (N55).
-                    agreementStamp(e.status) == AgreementStamp.cancelled
-                        ? '${_fmtCreatedAt(e.cancelledAt)} — ləğv edildi'
-                        : '${_fmtCreatedAt(e.createdAt)} — bağlandı',
+                    // ДАТА ПРИХОДА — когда предложение отправлено, а не
+                    // когда сделка состоялась (N55). Строка над ней
+                    // говорит «Sizə göndərildi» / «Siz göndərdiniz», и
+                    // дата обязана быть про то же событие. То же поле, по
+                    // которому отсортирован список.
+                    _stampLine(e),
                     style: const TextStyle(fontSize: 11, color: kMuted),
                   ),
                   if (eventLine != null) ...[
