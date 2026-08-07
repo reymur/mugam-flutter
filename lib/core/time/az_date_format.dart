@@ -43,3 +43,30 @@ String fmtEventTime(String iso) {
     return '';
   }
 }
+
+// Дни недели по-азербайджански. Нужны дневному экрану: он открывается
+// строкой «5 avqust, çərşənbə» — дата словами, а не числом, потому что
+// человек читает её в первую секунду и не должен переводить.
+//
+// Порядок совпадает с DateTime.weekday: 1 — понедельник, 7 —
+// воскресенье. Индексируется `weekday - 1`.
+const azWeekdays = [
+  'bazar ertəsi',
+  'çərşənbə axşamı',
+  'çərşənbə',
+  'cümə axşamı',
+  'cümə',
+  'şənbə',
+  'bazar',
+];
+
+String azWeekday(int weekday) => azWeekdays[weekday - 1];
+
+/// `2026-08-05` → `5 avqust, çərşənbə`. Строка-шапка дневного экрана.
+String fmtDayHeader(DateTime day) =>
+    '${day.day} ${azMonthFull(day.month).toLowerCase()}, ${azWeekday(day.weekday)}';
+
+/// `2026-08-08` → `8 avqust`. Строка недельного списка: год не нужен —
+/// все семь дней в пределах недели от сегодня.
+String fmtWeekRowDate(DateTime day) =>
+    '${day.day} ${azMonthFull(day.month).toLowerCase()}';

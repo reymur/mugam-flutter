@@ -25,20 +25,48 @@ class DayBuckets {
   /// Завтрашних.
   final List<PersonalEvent> tomorrow;
 
-  /// Следующие семь дней после завтра — то есть окно «что впереди».
+  /// Следующие семь дней после завтра — РОВНО СЕМЬ СТРОК, включая те, в
+  /// которых ничего нет.
   ///
   /// **Семь дней вперёд, а НЕ до конца календарной недели** (решение
   /// владельца 07.08): «до субботы» означает, что в воскресенье экран
   /// пустеет при полном календаре. Музыканту нужно «что впереди», а не
   /// «что до выходных».
-  final List<PersonalEvent> week;
+  ///
+  /// **Список ДНЕЙ, а не мероприятий** — по макету
+  /// (`docs/design/mugam-1-esas.html`): в нём есть строка «10 avqust —
+  /// boş». Пустой день в списке мероприятий выразить нельзя вовсе: он
+  /// там отсутствие элемента, а не элемент. Поэтому неделя — семь
+  /// `DayRow`, и пустой день среди них такой же полноправный, как
+  /// занятый.
+  final List<DayRow> week;
 
   /// Ближайшее мероприятие ЗА пределами всех трёх окон — чтобы пустой
   /// экран мог сказать «следующее 9 сентября», а не просто «пусто».
   final PersonalEvent? next;
 
+  /// В неделе нет НИ ОДНОГО мероприятия — состояние, названное отдельно.
+  ///
+  /// **Не собирается из семи пустых дней на месте применения** (решение
+  /// владельца 07.08). Разница не косметическая: «этот день свободен» —
+  /// сведение об одном дне, «впереди неделя пустая» — сведение о всей
+  /// неделе, и отвечает экран на них по-разному. Семь строк «boş» подряд
+  /// — это не ответ, а семикратно повторённое молчание.
+  bool get weekHasNothing => week.every((d) => d.events.isEmpty);
+
   bool get isEmpty =>
-      today.isEmpty && tomorrow.isEmpty && week.isEmpty && next == null;
+      today.isEmpty && tomorrow.isEmpty && weekHasNothing && next == null;
+}
+
+/// Один день недельного списка. Пустой день — такой же элемент, как
+/// занятый: без этого его нечем показать.
+class DayRow {
+  const DayRow({required this.day, required this.events});
+
+  final DateTime day;
+  final List<PersonalEvent> events;
+
+  bool get isEmpty => events.isEmpty;
 }
 
 /// Собирает раскладку из двух потоков — своих мероприятий и тех, где
@@ -76,8 +104,13 @@ DayBuckets buildDayBuckets({
 
   final inToday = <PersonalEvent>[];
   final inTomorrow = <PersonalEvent>[];
-  final inWeek = <PersonalEvent>[];
   final later = <PersonalEvent>[];
+  // Семь дней заводятся ЗАРАНЕЕ и пустыми, а не по мере находок: день без
+  // мероприятий обязан оказаться в списке, а «добавить при первой
+  // находке» его туда никогда не добавит.
+  final weekDays = <DateTime, List<PersonalEvent>>{
+    for (var i = 1; i <= 7; i++) tomorrow.add(Duration(days: i)): [],
+  };
 
   for (final e in byId.values) {
     final day = eventDay(e.date)!;
@@ -87,7 +120,7 @@ DayBuckets buildDayBuckets({
     } else if (day == tomorrow) {
       inTomorrow.add(e);
     } else if (!day.isAfter(weekEnd)) {
-      inWeek.add(e);
+      weekDays[day]!.add(e);
     } else {
       later.add(e);
     }
@@ -98,13 +131,20 @@ DayBuckets buildDayBuckets({
 
   inToday.sort(byTime);
   inTomorrow.sort(byTime);
-  inWeek.sort(byTime);
   later.sort(byTime);
+  for (final list in weekDays.values) {
+    list.sort(byTime);
+  }
+
+  final week = [
+    for (final entry in weekDays.entries)
+      DayRow(day: entry.key, events: entry.value),
+  ]..sort((a, b) => a.day.compareTo(b.day));
 
   return DayBuckets(
     today: inToday,
     tomorrow: inTomorrow,
-    week: inWeek,
+    week: week,
     next: later.isEmpty ? null : later.first,
   );
 }
@@ -134,6 +174,6 @@ enum EmptyDayAnswer {
 EmptyDayAnswer emptyDayAnswer(DayBuckets b) {
   if (b.today.isNotEmpty) return EmptyDayAnswer.hasEventsToday;
   if (b.tomorrow.isNotEmpty) return EmptyDayAnswer.freeToday;
-  if (b.week.isNotEmpty || b.next != null) return EmptyDayAnswer.freeBothDays;
+  if (!b.weekHasNothing || b.next != null) return EmptyDayAnswer.freeBothDays;
   return EmptyDayAnswer.calendarEmpty;
 }

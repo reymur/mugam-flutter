@@ -12,6 +12,24 @@ const Color kRed = Color(0xFFC0392B);
 const Color kGreen = Color(0xFF27AE60);
 const Color kText = Color(0xFFF5EAD8);
 const Color kMuted = Color(0xFF8A7A60);
+
+// ТРИ ВРЕМЕННЫХ ЗАМЕСТИТЕЛЯ, заведены 07.08 для дневного экрана.
+//
+// Макет (`docs/design/mugam-1-esas.html`) строит текст на ЧЕТЫРЁХ
+// уровнях, а в палитре их два — `kText` и `kMuted`. Не хватало не
+// одного уровня, а двух: вторичного и приглушённого.
+//
+// Взяты ТЁПЛЫМИ эквивалентами макетных `#A8A8A2`, `#8A8A85`, `#3A3A38`,
+// а не самими макетными: нейтральный серый рядом с коричневым `kMuted`
+// даёт не иерархию, а грязь — разная температура при одинаковой
+// светлоте.
+//
+// **В работе 6б они ЗАМЕНЯЮТСЯ на макетные, а не встают рядом с ними.**
+// Иначе здесь окажется шесть уровней вместо четырёх, и через месяц никто
+// не вспомнит, почему их шесть.
+const Color kTextSecondary = Color(0xFFBFB093);
+const Color kTextDim = Color(0xFF5F564A);
+const Color kBarOff = Color(0xFF3A322A);
 // Darker and clearly distinct from kMuted — used for the voice message
 // "not read yet" cursor/wave state, which needs to stay visible against
 // the light gold outgoing-bubble background (kMuted is too close to gold

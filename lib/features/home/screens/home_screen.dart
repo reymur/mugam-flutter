@@ -24,18 +24,26 @@ class HomeScreen extends ConsumerWidget {
       body: SafeArea(
         child: Column(
           children: [
-            Topbar(
-              notificationCount: 3,
-              onNotificationTap: () {},
-              onLanguageTap: () {},
-            ),
+            // Бейдж уведомлений снят СОВСЕМ, а не обнулён (решение
+            // владельца 07.08): здесь стояло вшитое `notificationCount: 3`
+            // — у человека постоянно висела тройка вне всякой связи с
+            // тем, сколько у него уведомлений, а нажатие не делало ничего
+            // (N64). Ноль на месте числа читался бы как поломка; вернём
+            // с настоящим числом, когда появятся настоящие уведомления.
+            const Topbar(onLanguageTap: null),
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: const [
-                    _HeroBanner(),
+                    // Баннер «RƏSMİ KLUB» снят 07.08 вместе с двумя
+                    // кнопками, ни одна из которых не делала ничего —
+                    // «Musiqiçi Tap» и «Elan Ver» (N65). Нажатие без
+                    // ответа человек читает как поломку, а не как
+                    // незаконченность. Обещания вернутся кнопками, когда
+                    // за ними будет что открыть: поиск уже есть на
+                    // «Axtar», объявления — работа по N60.
                     _MusiciansSection(),
                     // Секции «Tədbirlər» и «Otaqlar» сняты 07.08 вместе с
                     // вшитыми в код майскими концертами: в проде коллекции
@@ -50,145 +58,6 @@ class HomeScreen extends ConsumerWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _HeroBanner extends StatelessWidget {
-  const _HeroBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: const Color(0xFF1C1408),
-        border: Border.all(color: kBorder),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Stack(
-        children: [
-          // Large faded instrument silhouette watermark, replacing the
-          // small corner-blur circle this card used to have — no bundled
-          // image asset exists for a real tar silhouette in this project,
-          // so a big low-opacity emoji glyph stands in for one; same
-          // visual intent (a decorative shape behind the text, not meant
-          // to read as sharp branded artwork) without a new asset.
-          Positioned(
-            right: 15,
-            bottom: 20,
-            child: Opacity(
-              opacity: 0.12,
-              child: Text('🎻', style: TextStyle(fontSize: 180)),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: kGold.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('🎼', style: TextStyle(fontSize: 12)),
-                      const SizedBox(width: 6),
-                      Text(
-                        'RƏSMİ KLUB',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: kGold,
-                          letterSpacing: 1.2,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Azərbaycan\nMusiqiçilərinin Evi',
-                  style: GoogleFonts.nunito(
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold,
-                    color: kText,
-                    height: 32 / 26,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Müğənni, ifaçı, prodüser — hamı burada. Toy, konsert, '
-                  'layihə üçün musiqiçi tap.',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: kMuted,
-                    height: 20 / 13,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    ElevatedButton(
-                      onPressed: () {},
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: kGold,
-                        foregroundColor: const Color(0xFF1A0E00),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 18, vertical: 10),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        elevation: 0,
-                      ),
-                      child: const Text(
-                        'Musiqiçi Tap',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    OutlinedButton(
-                      onPressed: () {},
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: kBorder),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 18, vertical: 10),
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        foregroundColor: kText,
-                      ),
-                      child: const Text(
-                        'Elan Ver',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: kText,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -449,29 +318,9 @@ class _MusicianCard extends ConsumerWidget {
                   ),
                 ),
                 const Spacer(),
-                Container(
-                  margin: const EdgeInsets.only(top: 2),
-                  child: OutlinedButton(
-                    onPressed: () {},
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: kGold),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 7),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: const Text(
-                      'Dəvət et',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: kGold,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
+                // Кнопка «Dəvət et» снята 07.08: она не делала ничего
+                // (N65). Пригласить музыканта можно с его страницы —
+                // карточка по нажатию её и открывает.
               ],
             ),
           ),

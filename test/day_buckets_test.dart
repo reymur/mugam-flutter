@@ -40,7 +40,11 @@ void main() {
       );
       expect(b.today.map((e) => e.id), ['t1']);
       expect(b.tomorrow.map((e) => e.id), ['t2']);
-      expect(b.week.map((e) => e.id), ['t3']);
+      expect(b.week.length, 7, reason: 'неделя — всегда семь строк');
+      expect(
+        b.week.expand((d) => d.events).map((e) => e.id),
+        ['t3'],
+      );
       expect(b.next, isNull);
     });
 
@@ -79,7 +83,7 @@ void main() {
         now: now,
       );
       expect(b.today, isEmpty);
-      expect(b.week, isEmpty);
+      expect(b.weekHasNothing, isTrue);
       expect(b.next, isNull);
     });
 
@@ -95,7 +99,10 @@ void main() {
         asParticipant: const [],
         now: now,
       );
-      expect(b.week.map((e) => e.id), ['через неделю', 'на границе']);
+      expect(
+        b.week.expand((d) => d.events).map((e) => e.id),
+        ['через неделю', 'на границе'],
+      );
       expect(b.next?.id, 'за границей');
     });
 
@@ -188,6 +195,85 @@ void main() {
       final day = eventDay(iso)!;
       final time = eventLocalDateTime(iso)!;
       expect(day, DateTime(time.year, time.month, time.day));
+    });
+  });
+
+  group('пустой день внутри недели и пустая неделя — РАЗНЫЕ состояния', () {
+    // Требование владельца 07.08: второе не должно собираться из семи
+    // первых. «Этот день свободен» — сведение об одном дне; «впереди
+    // неделя пустая» — сведение обо всей неделе, и экран отвечает на них
+    // по-разному. Семь строк «boş» подряд — не ответ, а семикратно
+    // повторённое молчание. Тест на каждое ПОРОЗНЬ.
+
+    test('пустой день ВНУТРИ занятой недели — строка есть и она пустая', () {
+      final b = buildDayBuckets(
+        own: [
+          ev('в понедельник', '2026-08-10T19:00:00.000'),
+          ev('в среду', '2026-08-12T19:00:00.000'),
+        ],
+        asParticipant: const [],
+        now: now,
+      );
+      expect(b.week.length, 7);
+      expect(b.weekHasNothing, isFalse, reason: 'неделя не пуста');
+
+      final tuesday =
+          b.week.firstWhere((d) => d.day == DateTime(2026, 8, 11));
+      expect(tuesday.isEmpty, isTrue,
+          reason: '11 августа свободно — строка обязана быть и быть пустой');
+
+      // И ровно один пустой день не делает неделю пустой.
+      expect(b.week.where((d) => d.isEmpty).length, 5);
+    });
+
+    test('ПУСТАЯ НЕДЕЛЯ — своё состояние, а не семь пустых дней', () {
+      final b = buildDayBuckets(
+        own: [ev('сегодня', '2026-08-07T20:00:00.000')],
+        asParticipant: const [],
+        now: now,
+      );
+      expect(b.weekHasNothing, isTrue);
+      // Строки при этом НЕ исчезают: правило отдаёт факт, а решение
+      // рисовать ли семь «boş» — за экраном.
+      expect(b.week.length, 7);
+      expect(b.week.every((d) => d.isEmpty), isTrue);
+    });
+
+    test('одно мероприятие в неделе — уже не пустая неделя', () {
+      // Граница между двумя состояниями: она проходит по ОДНОМУ
+      // мероприятию, а не по большинству дней.
+      final b = buildDayBuckets(
+        own: [ev('единственное', '2026-08-14T19:00:00.000')],
+        asParticipant: const [],
+        now: now,
+      );
+      expect(b.weekHasNothing, isFalse);
+      expect(b.week.where((d) => d.isEmpty).length, 6);
+    });
+
+    test('дни идут подряд и по порядку, без пропусков', () {
+      final b = buildDayBuckets(own: const [], asParticipant: const [], now: now);
+      final days = b.week.map((d) => d.day).toList();
+      expect(days.first, DateTime(2026, 8, 9), reason: 'первый день — послезавтра');
+      expect(days.last, DateTime(2026, 8, 15));
+      for (var i = 1; i < days.length; i++) {
+        expect(days[i].difference(days[i - 1]).inDays, 1,
+            reason: 'в списке пропущен день — человеку пришлось бы считать '
+                'даты в уме');
+      }
+    });
+
+    test('несколько мероприятий в одном дне — все в его строке, по времени', () {
+      final b = buildDayBuckets(
+        own: [
+          ev('вечер', '2026-08-09T20:00:00.000'),
+          ev('утро', '2026-08-09T09:00:00.000'),
+        ],
+        asParticipant: const [],
+        now: now,
+      );
+      final day = b.week.firstWhere((d) => d.day == DateTime(2026, 8, 9));
+      expect(day.events.map((e) => e.id), ['утро', 'вечер']);
     });
   });
 
