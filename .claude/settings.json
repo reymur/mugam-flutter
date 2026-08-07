@@ -9,6 +9,12 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-destructive-git.sh\"",
             "timeout": 10,
             "statusMessage": "Проверка на разрушающие git-команды (I10)"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-swallowed-exit.sh\"",
+            "timeout": 10,
+            "statusMessage": "Проверка не решает судьбу коммита через конвейер"
           }
         ]
       }

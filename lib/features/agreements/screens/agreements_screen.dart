@@ -13,6 +13,7 @@ import '../../../core/agreements/agreement_card.dart';
 import '../../../core/agreements/event_edit.dart';
 import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
+import '../../day/screens/day_screen.dart';
 import '../../../core/time/az_date_format.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
@@ -98,7 +99,17 @@ class AgreementsScreen extends ConsumerStatefulWidget {
 }
 
 class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
-  String _mainView = 'calendar'; // 'agreements' | 'calendar' | 'tedbirler'
+  // ДЕНЬ — вид по умолчанию с 07.08 (работа 6, вариант «А»).
+  //
+  // Врезка, а не разбор: `agreements_screen` разбирается на маршруты
+  // работой 8, и трогать его устройство сейчас значило бы делать её
+  // наполовину. Здесь добавлены ровно две вещи — закладка и ветка вида.
+  //
+  // Почему день живёт ЗДЕСЬ, а не отдельной вкладкой: день и календарь
+  // месяца — один вопрос «когда я занят», заданный на разном расстоянии.
+  // Разведи их по вкладкам панели — и человек будет прыгать между ними,
+  // чтобы сверить вечер с месяцем.
+  String _mainView = 'day'; // 'day' | 'agreements' | 'calendar' | 'tedbirler'
   String _activeTab = 'outgoing';
   String _tedbirTab = 'hamisi';
   // Только id, а не сам объект (N23): карточка достаёт живую запись из
@@ -148,7 +159,9 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     // — build()'s own ref.listen below only reacts to CHANGES from here on,
     // so a value already sitting in the provider before this widget's first
     // build would otherwise be silently missed (confirmed on-device: landed
-    // on the default Calendar tab instead of Müqavilələr→Gələnlər).
+    // on the default tab instead of Müqavilələr→Gələnlər; тогда видом по
+    // умолчанию был «Təqvim», с 07.08 — «Bu gün», и на разбор это не
+    // влияет: важно, что не тот, который просили).
     final pending = ref.read(agreementsTabRequestProvider);
     if (pending != null) {
       _mainView = 'agreements';
@@ -324,11 +337,13 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           children: [
             _buildTopHeader(agreeEvents, hasUnread),
             Expanded(
-              child: _mainView == 'agreements'
-                  ? _buildAgreementsTab(agreeEvents)
-                  : _mainView == 'calendar'
-                      ? _buildCalendarTab(personalEvents, eventsAsParticipant, allUsers)
-                      : _buildTedbirlerTab(personalEvents, eventsAsParticipant, allUsers),
+              child: _mainView == 'day'
+                  ? const DayScreen()
+                  : _mainView == 'agreements'
+                      ? _buildAgreementsTab(agreeEvents)
+                      : _mainView == 'calendar'
+                          ? _buildCalendarTab(personalEvents, eventsAsParticipant, allUsers)
+                          : _buildTedbirlerTab(personalEvents, eventsAsParticipant, allUsers),
             ),
           ],
         ),
@@ -402,6 +417,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
               icon: const Icon(Icons.arrow_back, color: kGold),
               onPressed: () => Navigator.of(context).pop(),
             ),
+          _buildHeaderTab(label: '🌅 Bu gün', view: 'day'),
           _buildHeaderTab(
             label: '📋 Müqavilələr',
             view: 'agreements',

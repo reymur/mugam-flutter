@@ -86,8 +86,17 @@ class _LoginScreenState extends State<LoginScreen> {
               _buildLabel('ŞİFRƏ'),
               const SizedBox(height: 8),
               _buildPasswordField(),
-              const SizedBox(height: 12),
-              _buildForgotPassword(),
+              // Ссылка «Şifrəni unutdum?» СНЯТА 07.08 (решение владельца),
+              // и снята как ТУПИК, а не как незаконченность: она вела
+              // `onTap: () {}` — человек, который не может войти, жал
+              // единственную дорогу, отведённую ровно для его случая, и
+              // не происходило ничего. Он решал, что сломалось
+              // приложение (N65).
+              //
+              // Отсутствие двери честнее нарисованной. Дверь вернётся
+              // ВМЕСТЕ со сбросом пароля — работа записана в плане
+              // строкой, и там же сказано, что ссылку надо вернуть:
+              // иначе сброс появится, а входа в него не будет.
               const SizedBox(height: 28),
               _buildLoginButton(),
               const SizedBox(height: 24),
@@ -198,23 +207,6 @@ class _LoginScreenState extends State<LoginScreen> {
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: const BorderSide(color: kGold, width: 1.5),
-      ),
-    );
-  }
-
-  Widget _buildForgotPassword() {
-    return Align(
-      alignment: Alignment.centerRight,
-      child: GestureDetector(
-        onTap: () {},
-        child: const Text(
-          'Şifrəni unutdum?',
-          style: TextStyle(
-            color: kGold,
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
       ),
     );
   }

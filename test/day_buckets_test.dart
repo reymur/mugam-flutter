@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/agreements/day_buckets.dart';
 import 'package:mugam_flutter/core/time/event_local_time.dart';
@@ -23,6 +26,48 @@ PersonalEvent ev(String id, String date, {String status = 'agreed'}) {
 }
 
 void main() {
+  group('дневной экран подключён и открывается первым (работа 6, вариант А)', () {
+    // Наблюдаемого поведения тут проверить нечем без Firebase, поэтому
+    // сторож текстовый — но он держит ровно то, что можно потерять
+    // молча: экран, написанный и никуда не подключённый, выглядит
+    // сделанной работой ровно так же, как подключённый (N57).
+    //
+    // Смотрит на КОД без комментариев (I12): разбор рядом цитирует то,
+    // что проверяется.
+    String codeOf(String path) => (const LineSplitter())
+        .convert(File(path).readAsStringSync())
+        .where((l) => !l.trimLeft().startsWith('//'))
+        .join('\n');
+
+    test('DayScreen подключён к «Kalendar» и стоит видом по умолчанию', () {
+      final screen =
+          codeOf('lib/features/agreements/screens/agreements_screen.dart');
+      expect(
+        screen.contains('const DayScreen()'),
+        isTrue,
+        reason: 'дневной экран отключён — он написан, но человек его не '
+            'видит, а отличить это от «сделано» нечем',
+      );
+      expect(
+        RegExp(r"_mainView\s*=\s*'day'").hasMatch(screen),
+        isTrue,
+        reason: 'вид по умолчанию больше не день: открыл — и не увидел '
+            'свой вечер, ради чего экран и делался',
+      );
+      expect(
+        screen.contains("view: 'day'"),
+        isTrue,
+        reason: 'закладки «Bu gün» нет в шапке — на день нельзя вернуться, '
+            'уйдя на «Təqvim»',
+      );
+    });
+
+    test('файл дневного экрана на месте', () {
+      expect(File('lib/features/day/screens/day_screen.dart').existsSync(),
+          isTrue);
+    });
+  });
+
   // Полдень намеренно: раскладка не должна зависеть от того, в какой час
   // суток человек открыл приложение.
   final now = DateTime(2026, 8, 7, 12, 0);
