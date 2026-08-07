@@ -2159,8 +2159,10 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
     if (card.outcome != AgreementOutcome.cancelledByAgreement || uid == null) {
       return base;
     }
-    if (uid == card.proposedByUid) return 'Ləğvi təklif etdi';
-    if (uid == card.confirmedByUid) return 'Ləğvə razılaşdı';
+    // Причастия, как у соседних «Göndərən» и «Qəbul edən»: ярлык —
+    // подпись под именем, и лица в нём нет ни у кого.
+    if (uid == card.proposedByUid) return 'Ləğvi təklif edən';
+    if (uid == card.confirmedByUid) return 'Ləğvə razılaşan';
     return base;
   }
 
@@ -2226,6 +2228,12 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
       // вовсе, поэтому здесь честнее «Naməlum», чем чужое имя.
       return uid == event.partnerUid ? (event.partnerName ?? 'Naməlum') : 'Naməlum';
     }
+
+    // «кто» + глагол в нужном лице. Слова — в правиле
+    // (`deedText`), здесь только сборка: «Siz təklif etdi» верно ровно
+    // наполовину, и неверная половина — про самого смотрящего.
+    String deed(String? uid, AgreementDeed what) =>
+        '${nameOf(uid)} ${deedText(what, byViewer: uid == currentUid)}';
 
     Widget statusBadge;
     if (isCancelled) {
@@ -2334,8 +2342,8 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
               const SizedBox(height: 6),
               Center(
                 child: Text(
-                  '${nameOf(card.proposedByUid)} təklif etdi · '
-                  '${nameOf(card.confirmedByUid)} razılaşdı',
+                  '${deed(card.proposedByUid, AgreementDeed.proposedCancel)} · '
+                  '${deed(card.confirmedByUid, AgreementDeed.agreedToCancel)}',
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 12, color: kMuted),
                 ),
@@ -2351,9 +2359,12 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
               const SizedBox(height: 10),
               Center(
                 child: Text(
-                  card.outcome == AgreementOutcome.requestWithdrawn
-                      ? '${nameOf(card.actedByUid)} ləğv təklifini geri götürdü'
-                      : '${nameOf(card.actedByUid)} ləğvə razı olmadı',
+                  deed(
+                    card.actedByUid,
+                    card.outcome == AgreementOutcome.requestWithdrawn
+                        ? AgreementDeed.withdrewRequest
+                        : AgreementDeed.refusedCancel,
+                  ),
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 12, color: kMuted),
                 ),

@@ -156,4 +156,43 @@ void main() {
       expect(s.outcome, AgreementOutcome.cancelledByAgreement);
     });
   });
+
+  group('слова поступка — глагол в нужном лице', () {
+    // «Siz təklif etdi» по-азербайджански неверно: с «Siz» глагол во
+    // втором лице. Наполовину строка была правильной всегда — и неверной
+    // оказывалась ровно та половина, которую человек читает про себя.
+    test('про себя — второе лицо, все четыре поступка', () {
+      expect(deedText(AgreementDeed.proposedCancel, byViewer: true),
+          'təklif etdiniz');
+      expect(deedText(AgreementDeed.agreedToCancel, byViewer: true),
+          'razılaşdınız');
+      expect(deedText(AgreementDeed.withdrewRequest, byViewer: true),
+          'ləğv təklifini geri götürdünüz');
+      expect(deedText(AgreementDeed.refusedCancel, byViewer: true),
+          'ləğvə razı olmadınız');
+    });
+
+    test('про другого — третье лицо, все четыре', () {
+      expect(deedText(AgreementDeed.proposedCancel, byViewer: false),
+          'təklif etdi');
+      expect(deedText(AgreementDeed.agreedToCancel, byViewer: false),
+          'razılaşdı');
+      expect(deedText(AgreementDeed.withdrewRequest, byViewer: false),
+          'ləğv təklifini geri götürdü');
+      expect(deedText(AgreementDeed.refusedCancel, byViewer: false),
+          'ləğvə razı olmadı');
+    });
+
+    test('лица РАЗНЫЕ у каждого поступка, а не совпали случайно', () {
+      // Без этого «правило», возвращающее одну и ту же строку обоим,
+      // прошло бы оба теста выше, если бы формы совпали.
+      for (final d in AgreementDeed.values) {
+        expect(
+          deedText(d, byViewer: true),
+          isNot(deedText(d, byViewer: false)),
+          reason: 'у поступка $d форма для себя и для другого совпала',
+        );
+      }
+    });
+  });
 }

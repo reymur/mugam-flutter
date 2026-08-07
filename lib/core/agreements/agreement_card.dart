@@ -128,3 +128,49 @@ AgreementCardState agreementCardState({
     stamp: AgreementStamp.created,
   );
 }
+
+// ---------------------------------------------------------------------------
+// СЛОВА ПОСТУПКА — с глаголом в нужном лице
+// ---------------------------------------------------------------------------
+// Найдено на устройстве 07.08, сразу после починки имён: строка выходила
+// «Siz ləğv təklifini geri götürdü». По-азербайджански с «Siz» глагол
+// обязан стоять во ВТОРОМ лице («götürdünüz»), с именем — в третьем
+// («götürdü»). Подстановка имени в строку с одним фиксированным окончанием
+// даёт верно ровно в половине случаев, а вторая половина — про самого
+// смотрящего, то есть та, которую он читает чаще всего.
+//
+// Слова живут здесь, а не в экране, чтобы их можно было проверить тестом:
+// у обоих лиц по четыре поступка, и глазами эту таблицу не удержать.
+
+/// Поступок, о котором говорит карточка.
+enum AgreementDeed {
+  /// Предложил отмену.
+  proposedCancel,
+
+  /// Согласился на отмену.
+  agreedToCancel,
+
+  /// Забрал свой запрос обратно.
+  withdrewRequest,
+
+  /// Не согласился на отмену.
+  refusedCancel,
+}
+
+/// Глагольная часть строки. Имя (или «Siz») подставляет экран.
+///
+/// [byViewer] — поступок совершил тот, кто смотрит.
+String deedText(AgreementDeed deed, {required bool byViewer}) {
+  switch (deed) {
+    case AgreementDeed.proposedCancel:
+      return byViewer ? 'təklif etdiniz' : 'təklif etdi';
+    case AgreementDeed.agreedToCancel:
+      return byViewer ? 'razılaşdınız' : 'razılaşdı';
+    case AgreementDeed.withdrewRequest:
+      return byViewer
+          ? 'ləğv təklifini geri götürdünüz'
+          : 'ləğv təklifini geri götürdü';
+    case AgreementDeed.refusedCancel:
+      return byViewer ? 'ləğvə razı olmadınız' : 'ləğvə razı olmadı';
+  }
+}
