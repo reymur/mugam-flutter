@@ -69,6 +69,47 @@ class DayRow {
   bool get isEmpty => events.isEmpty;
 }
 
+/// ЖИВЫЕ МЕРОПРИЯТИЯ — одно правило на все экраны.
+///
+/// Три решения, и все три раньше жили только внутри `buildDayBuckets`:
+/// отменённое не считается (человек на него не идёт), повторы склеиваются
+/// по `id` (одно мероприятие лежит и в «моих», и в «где я участник»),
+/// нечитаемая дата снимается.
+///
+/// **Вынесено 07.08 по N74.** Сетка месяца считала своё — брала оба списка
+/// подряд и мерила длину, — и на 9 avqust показала «4» при трёх настоящих.
+/// Оба ответа стояли на одном экране: кружок на числе и три строки под ним.
+/// Это N49 в третий раз: канон вынесен в одно место, а второй читатель
+/// написал свою половину заново. Поэтому правило теперь ЗДЕСЬ, а экраны
+/// его зовут.
+List<PersonalEvent> liveEvents({
+  required List<PersonalEvent> own,
+  required List<PersonalEvent> asParticipant,
+}) {
+  final byId = <String, PersonalEvent>{};
+  for (final e in [...own, ...asParticipant]) {
+    if (e.status == 'cancelled') continue;
+    if (eventDay(e.date) == null) continue;
+    byId[e.id] = e;
+  }
+  return byId.values.toList();
+}
+
+/// Мероприятия одного дня — то же правило плюс сверка даты.
+///
+/// Этим считает кружок на сетке месяца. Раньше он считал сам, и потому
+/// умел разойтись с ответом, который открывается по нажатию на то же число.
+List<PersonalEvent> eventsOfDay({
+  required List<PersonalEvent> own,
+  required List<PersonalEvent> asParticipant,
+  required DateTime day,
+}) {
+  final target = DateTime(day.year, day.month, day.day);
+  return liveEvents(own: own, asParticipant: asParticipant)
+      .where((e) => eventDay(e.date) == target)
+      .toList();
+}
+
 /// Собирает раскладку из двух потоков — своих мероприятий и тех, где
 /// человек участник.
 ///
@@ -85,17 +126,18 @@ class DayRow {
 /// «сегодня».** Иначе испорченная строка притворилась бы сегодняшним
 /// вечером — то есть неправдой ровно на том экране, ради правдивости
 /// которого всё это и делается.
+///
+/// Правила «без отменённых, без повторов, без нечитаемых дат» живут не
+/// здесь, а в `liveEvents` — их зовёт и сетка месяца (N74).
 DayBuckets buildDayBuckets({
   required List<PersonalEvent> own,
   required List<PersonalEvent> asParticipant,
   required DateTime now,
 }) {
-  final byId = <String, PersonalEvent>{};
-  for (final e in [...own, ...asParticipant]) {
-    if (e.status == 'cancelled') continue;
-    if (eventDay(e.date) == null) continue;
-    byId[e.id] = e;
-  }
+  final byId = {
+    for (final e in liveEvents(own: own, asParticipant: asParticipant))
+      e.id: e,
+  };
 
   final today = DateTime(now.year, now.month, now.day);
   final tomorrow = today.add(const Duration(days: 1));

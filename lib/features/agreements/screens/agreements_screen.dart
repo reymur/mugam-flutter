@@ -1170,7 +1170,6 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     required List<PersonalEvent> eventsAsParticipant,
     required List<User> allUsers,
   }) {
-    final allEvents = [...personalEvents, ...eventsAsParticipant];
     final year = month.year;
     final monthNum = month.month;
     final firstWeekday = DateTime(year, monthNum, 1).weekday; // 1=Mon
@@ -1184,15 +1183,15 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     }
     for (int day = 1; day <= daysInMonth; day++) {
       final dayDate = DateTime(year, monthNum, day);
-      final dayEvents = allEvents.where((e) {
-        if (e.date.isEmpty) return false;
-        try {
-          final d = DateTime.parse(e.date);
-          return d.year == year && d.month == monthNum && d.day == day;
-        } catch (_) {
-          return false;
-        }
-      }).toList();
+      // N74: кружок на числе и ответ, который открывается по нажатию на это
+      // же число, обязаны считать ОДНИМ правилом. Здесь стоял свой счёт —
+      // оба списка подряд, фильтр по дате, `.length`, — и он не знал ни про
+      // отменённые, ни про повторы. На 9 avqust это дало «4» при трёх.
+      final dayEvents = eventsOfDay(
+        own: personalEvents,
+        asParticipant: eventsAsParticipant,
+        day: dayDate,
+      );
       final isSelected = _selectedCalendarDay == day &&
           _currentCalendarMonth.year == year &&
           _currentCalendarMonth.month == monthNum;
