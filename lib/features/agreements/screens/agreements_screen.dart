@@ -612,8 +612,9 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         ? agreementCancelledValue(e)
         : agreementSignedValue(e);
     if (at == null) return '';
-    final when = DateFormat('d MMMM yyyy HH:mm', 'az').format(at);
-    return cancelled ? '$when — ləğv edildi' : '$when — bağlandı';
+    // Без слов: владелец 07.08 — «убери тексты». Что за дата, читается
+    // из места: под мероприятием соглашение, внизу справа приход.
+    return DateFormat('d MMMM yyyy HH:mm', 'az').format(at);
   }
 
   /// Дата ПРИХОДА — отдельной строкой внизу справа, мелко (решение
@@ -622,9 +623,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   String _arrivalLine(PersonalEvent e) {
     final at = agreementArrivalValue(e);
     if (at == null) return '';
-    final when = DateFormat('d MMM yyyy HH:mm', 'az').format(at);
-    // Своё слово у каждой стороны, как и в строке роли выше.
-    return e.ownerUid == _uid ? '$when göndərildi' : '$when gəldi';
+    return DateFormat('d MMM yyyy HH:mm', 'az').format(at);
   }
 
   Widget _buildAgreementCard(PersonalEvent e) {
@@ -738,16 +737,6 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                     roleText,
                     style: TextStyle(fontSize: 12, color: roleColor),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    // ДАТА ПРИХОДА — когда предложение отправлено, а не
-                    // когда сделка состоялась (N55). Строка над ней
-                    // говорит «Sizə göndərildi» / «Siz göndərdiniz», и
-                    // дата обязана быть про то же событие. То же поле, по
-                    // которому отсортирован список.
-                    _stampLine(e),
-                    style: const TextStyle(fontSize: 11, color: kMuted),
-                  ),
                   if (eventLine != null) ...[
                     const SizedBox(height: 4),
                     Text(
@@ -755,6 +744,14 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                       style: const TextStyle(fontSize: 12, color: kGold),
                     ),
                   ],
+                  // ДАТА СОГЛАШЕНИЯ — строкой СРАЗУ ПОД мероприятием
+                  // (решение владельца 07.08). У отменённого здесь дата
+                  // отмены: когда договора уже нет, она важнее.
+                  const SizedBox(height: 2),
+                  Text(
+                    _stampLine(e),
+                    style: const TextStyle(fontSize: 11, color: kMuted),
+                  ),
                   // Дата ПРИХОДА — внизу справа, мельче остального
                   // (решение владельца 07.08). Наверху у имени стоит дата
                   // договора, здесь — когда он появился у человека; это
