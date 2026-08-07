@@ -59,9 +59,9 @@ AgreementStamp agreementStamp(String status) =>
 
 /// Само значение отметки — то, что показывается и по чему сортируется.
 ///
-/// У действующего договора это **когда он ПРИШЁЛ человеку**, то есть когда
-/// было отправлено предложение (`jobOfferAt`), а не когда сделка
-/// состоялась (`createdAt`). Разница не косметическая: предложение уходит
+/// ПОРЯДОК в списке — по приходу (решение владельца 07.08): человек ищет
+/// карточку по тому, когда она у него появилась. `jobOfferAt` — когда
+/// отправлено предложение; где его нет, берётся дата создания. Разница не косметическая: предложение уходит
 /// раньше согласия — иногда на минуту, иногда на дни, — а строка над датой
 /// говорит «Sizə göndərildi» / «Siz göndərdiniz», то есть про отправку.
 /// Показывать под ней дату закрытия сделки значит подписать одно другим.
@@ -72,12 +72,23 @@ AgreementStamp agreementStamp(String status) =>
 ///
 /// У отменённого показывается и сортируется время отмены: в разделе
 /// «Ləğv edilən» человек ищет по нему.
-DateTime? agreementStampValue(PersonalEvent e) {
-  if (agreementStamp(e.status) == AgreementStamp.cancelled) {
-    return _asDate(e.cancelledAt);
-  }
-  return _asDate(e.jobOfferAt) ?? _asDate(e.createdAt);
-}
+DateTime? agreementStampValue(PersonalEvent e) =>
+    _asDate(e.jobOfferAt) ?? _asDate(e.createdAt);
+
+/// Дата ПРИХОДА отдельной строкой — только настоящая.
+///
+/// Возвращает `null`, когда предложение не датировано (`jobOfferAt`
+/// пишется с 04.08, у 25 договоров прода из 26 его нет). Строка тогда не
+/// показывается вовсе: подставить туда дату сделки значило бы выдать одно
+/// событие за другое — ровно то, из-за чего заведены N53 и N54.
+DateTime? agreementArrivalValue(PersonalEvent e) => _asDate(e.jobOfferAt);
+
+/// Дата ДОГОВОРА — главная на карточке действующего: когда соглашение
+/// состоялось.
+DateTime? agreementSignedValue(PersonalEvent e) => _asDate(e.createdAt);
+
+/// Дата ОТМЕНЫ — главная на карточке отменённого.
+DateTime? agreementCancelledValue(PersonalEvent e) => _asDate(e.cancelledAt);
 
 /// Отметки времени в этой коллекции лежат в двух видах: `createdAt` и
 /// `cancelledAt` — `Timestamp` сервера, `jobOfferAt` — строка ISO

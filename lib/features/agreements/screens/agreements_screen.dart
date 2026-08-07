@@ -604,15 +604,27 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   /// отменено. Подписана словом — без подписи её читают как дату
   /// мероприятия (N55).
   String _stampLine(PersonalEvent e) {
-    final at = agreementStampValue(e);
+    // Главная дата: у действующего — когда договор состоялся, у
+    // отменённого — когда отменён (решение владельца 07.08). Дата прихода
+    // к ней не подмешивается, она живёт своей строкой внизу справа.
+    final cancelled = agreementStamp(e.status) == AgreementStamp.cancelled;
+    final at = cancelled
+        ? agreementCancelledValue(e)
+        : agreementSignedValue(e);
     if (at == null) return '';
     final when = DateFormat('d MMMM yyyy HH:mm', 'az').format(at);
-    if (agreementStamp(e.status) == AgreementStamp.cancelled) {
-      return '$when — ləğv edildi';
-    }
-    // Своё «пришло» у каждой стороны: получателю прислали, отправитель
-    // отправил. Те же слова, что строкой выше.
-    return e.ownerUid == _uid ? '$when — göndərildi' : '$when — gəldi';
+    return cancelled ? '$when — ləğv edildi' : '$when — bağlandı';
+  }
+
+  /// Дата ПРИХОДА — отдельной строкой внизу справа, мелко (решение
+  /// владельца 07.08). Пусто, если предложение не датировано: подставить
+  /// сюда дату сделки значило бы выдать одно событие за другое.
+  String _arrivalLine(PersonalEvent e) {
+    final at = agreementArrivalValue(e);
+    if (at == null) return '';
+    final when = DateFormat('d MMM yyyy HH:mm', 'az').format(at);
+    // Своё слово у каждой стороны, как и в строке роли выше.
+    return e.ownerUid == _uid ? '$when göndərildi' : '$when gəldi';
   }
 
   Widget _buildAgreementCard(PersonalEvent e) {
@@ -741,6 +753,20 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                     Text(
                       eventLine,
                       style: const TextStyle(fontSize: 12, color: kGold),
+                    ),
+                  ],
+                  // Дата ПРИХОДА — внизу справа, мельче остального
+                  // (решение владельца 07.08). Наверху у имени стоит дата
+                  // договора, здесь — когда он появился у человека; это
+                  // разные события, и на одной строке их не свести.
+                  if (_arrivalLine(e).isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        _arrivalLine(e),
+                        style: const TextStyle(fontSize: 10, color: kMuted),
+                      ),
                     ),
                   ],
                 ],

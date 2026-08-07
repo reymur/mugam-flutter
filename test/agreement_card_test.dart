@@ -270,21 +270,37 @@ void main() {
       expect(list.first.id, 'новый');
     });
 
-    test('отменённый сортируется по дате ОТМЕНЫ, а не заключения', () {
-      // Договор заключён давно, отменён только что — в разделе
-      // «Ləğv edilən» он обязан стоять первым. Иначе список отсортирован
-      // по одному полю, а показывает другое.
+    test('отменённые идут по приходу, как и все (решение владельца)', () {
+      // Порядок один на весь список, включая «Ləğv edilən»: человек
+      // ищет карточку по тому, когда она у него появилась.
       final list = [
-        ev('свежая отмена',
+        ev('пришёл раньше',
             status: 'cancelled',
             created: DateTime(2026, 7, 1),
             cancelled: DateTime(2026, 8, 6)),
-        ev('старая отмена',
+        ev('пришёл позже',
             status: 'cancelled',
             created: DateTime(2026, 8, 5),
             cancelled: DateTime(2026, 8, 2)),
       ]..sort(compareAgreementsByStamp);
-      expect(list.first.id, 'свежая отмена');
+      expect(list.first.id, 'пришёл позже');
+    });
+
+    test('две даты — разные поля и не подменяют друг друга', () {
+      // Главная на карточке — дата договора, отдельной строкой внизу —
+      // дата прихода. Смешать их нельзя: это разные события.
+      final e = ev('x', created: DateTime(2026, 8, 5, 12, 0))
+          .copyWithOffer('2026-08-01T09:00:00.000');
+      expect(agreementSignedValue(e), DateTime(2026, 8, 5, 12, 0));
+      expect(agreementArrivalValue(e), DateTime(2026, 8, 1, 9, 0));
+    });
+
+    test('нет jobOfferAt — строки прихода нет вовсе, а не подмена', () {
+      // 25 договоров прода из 26. Подставить туда дату сделки значило бы
+      // выдать одно событие за другое (N53/N54 ровно про это).
+      final e = ev('x', created: DateTime(2026, 8, 5));
+      expect(agreementArrivalValue(e), isNull);
+      expect(agreementSignedValue(e), DateTime(2026, 8, 5));
     });
 
     test('отметка, которую показывают, и есть отметка сортировки', () {
@@ -295,7 +311,7 @@ void main() {
           created: DateTime(2026, 7, 1),
           cancelled: DateTime(2026, 8, 6));
       expect(agreementStamp(cancelledEv.status), AgreementStamp.cancelled);
-      expect(agreementStampValue(cancelledEv), DateTime(2026, 8, 6));
+      expect(agreementStampValue(cancelledEv), DateTime(2026, 7, 1));
 
       final liveEv = ev('a', created: DateTime(2026, 8, 1));
       expect(agreementStamp(liveEv.status), AgreementStamp.created);
