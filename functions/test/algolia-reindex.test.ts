@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import {
   shouldReindexUser,
+  reindexReason,
   ALGOLIA_LAST_SEEN_THROTTLE_MS,
 } from "../src/algoliaShared";
 
@@ -189,5 +190,72 @@ describe("N44 — множитель триггеров на документ ч
         "≈22 000 обновлений документа чата в сутки. Четвёртый триггер " +
         "опускает запас до ≈16 000 — пересчитай вслух и обнови число здесь.",
     );
+  });
+});
+
+// ПРИЧИНА В ЖУРНАЛЕ ПРОВЕРЯЕТСЯ ОТДЕЛЬНО ОТ ОТВЕТА «ДА/НЕТ».
+//
+// Строка `logger.info("algolia reindex", { uid, reason })` — единственный
+// способ измерить экономию N43 (I15: счёт по вызовам показал бы «экономии
+// нет», потому что срабатываний одинаково до и после). Но журнал, который
+// называет НЕВЕРНУЮ причину, хуже отсутствия строки: по нему сделают вывод
+// о том, что порог экономит не то, и полезут править работающее.
+describe("причина переиндексации названа верно", () => {
+  const base = { name: "Ali", online: false, lastSeen: ts(0) };
+
+  it("сердцебиение внутри отрезка — причины нет вовсе", () => {
+    const r = reindexReason(
+      { ...base, lastSeen: ts(60_000) },
+      { ...base, lastSeen: ts(120_000) },
+    );
+    assert.strictEqual(r, null);
+  });
+
+  it("перевёрнутый online назван полем, а не отрезком", () => {
+    // Важно не спутать: `online` — индексируемое поле, и меняется оно
+    // мгновенно; `lastSeen` идёт отдельным правилом с шагом в 10 минут.
+    const r = reindexReason(
+      { ...base, online: false, lastSeen: ts(60_000) },
+      { ...base, online: true, lastSeen: ts(120_000) },
+    );
+    assert.strictEqual(r, "изменилось поле online");
+  });
+
+  it("смена имени названа своим полем", () => {
+    const r = reindexReason(base, { ...base, name: "Vəli" });
+    assert.strictEqual(r, "изменилось поле name");
+  });
+
+  it("переход через десятиминутный отрезок назван отрезком", () => {
+    const step = ALGOLIA_LAST_SEEN_THROTTLE_MS;
+    const r = reindexReason(
+      { ...base, lastSeen: ts(step - 1000) },
+      { ...base, lastSeen: ts(step + 1000) },
+    );
+    assert.strictEqual(r, "lastSeen перешагнул десятиминутный отрезок");
+  });
+
+  it("появление и исчезновение документа названы прямо", () => {
+    assert.strictEqual(reindexReason(undefined, base), "документ появился");
+    assert.strictEqual(reindexReason(base, undefined), "документ исчез");
+  });
+
+  it("ответ «да/нет» и причина не расходятся", () => {
+    // Два способа спросить одно и то же обязаны сходиться, иначе журнал
+    // будет писать строки там, где переиндексации не было, — или молчать
+    // там, где она была.
+    const cases: [unknown, unknown][] = [
+      [base, { ...base, lastSeen: ts(60_000) }],
+      [base, { ...base, name: "Vəli" }],
+      [base, { ...base, online: true }],
+      [undefined, base],
+      [base, undefined],
+    ];
+    for (const [b, a] of cases) {
+      assert.strictEqual(
+        shouldReindexUser(b as never, a as never),
+        reindexReason(b as never, a as never) !== null,
+      );
+    }
   });
 });

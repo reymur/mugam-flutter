@@ -38,7 +38,7 @@ import {
   ALGOLIA_APP_ID,
   ALGOLIA_USERS_INDEX,
   toAlgoliaUserRecord,
-  shouldReindexUser,
+  reindexReason,
 } from "./algoliaShared";
 
 initializeApp();
@@ -1740,12 +1740,24 @@ export const onUserWritten = onDocumentWritten(
     // Сердцебиение присутствия — не изменение того, что ищут (N43).
     // Правило вынесено чистой функцией в ./algoliaShared и проверено
     // тестами там же; здесь только выход до создания клиента Algolia.
-    if (!shouldReindexUser(
+    // Одна строка в журнале НА КАЖДУЮ реальную переиндексацию — и ни одной
+    // на отказ. Так измеряется экономия N43: до правки таких строк ≈60 в
+    // час на человека с открытым приложением, после ≈6.
+    //
+    // Пишется на пути «да», а не «нет», намеренно: строк на отказе было бы
+    // ≈54 в час на человека, то есть журнал платил бы ровно за то, что
+    // правка перестала платить.
+    //
+    // Причина называется словами, поэтому журнал отвечает и на «правильно
+    // ли выбраны причины»: если там одни «изменилось поле online» и ни
+    // одного «перешагнул отрезок», значит присутствие переворачивает флаг
+    // чаще, чем мы думали, и порог экономит не то.
+    const reason = reindexReason(
       before?.exists ? before.data() : undefined,
       after?.exists ? after.data() : undefined,
-    )) {
-      return;
-    }
+    );
+    if (reason === null) return;
+    logger.info("algolia reindex", { uid, reason });
 
     const client = algoliasearch(ALGOLIA_APP_ID, algoliaAdminKey.value());
 

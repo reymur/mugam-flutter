@@ -134,21 +134,46 @@ function sameValue(a: unknown, b: unknown): boolean {
 // Поэтому шаг считается по общей шкале: индекс переписывается на первом
 // сердцебиении каждого десятиминутного отрезка. Состояния это не требует,
 // сравниваются номера отрезков, а не разность.
-export function shouldReindexUser(
+// ПРИЧИНА, А НЕ ТОЛЬКО ОТВЕТ «ДА/НЕТ» — заведено 08.08 перед выкладкой.
+//
+// Экономию N43 нечем было измерить: `onUserWritten` срабатывает на каждое
+// сердцебиение и ДО правки, и ПОСЛЕ — экономится не вызов, а обращение к
+// Algolia, а путь отказа не оставлял в журнале ничего. Счёт по вызовам
+// показал бы «экономии нет» там, где она есть, и выяснилось бы это уже на
+// живых данных (I15).
+//
+// Причина возвращается словами, а не флагом, чтобы журнал отвечал на два
+// вопроса сразу: СКОЛЬКО переиндексаций и ПОЧЕМУ именно эти. Второе важнее
+// первого: если в журнале одни «online», а «изменилось поле» не появляется
+// никогда — значит порог работает, но выбор причин надо смотреть заново.
+export function reindexReason(
   before: FirebaseFirestore.DocumentData | undefined,
   after: FirebaseFirestore.DocumentData | undefined,
-): boolean {
+): string | null {
   // Появление и исчезновение документа — всегда: иначе новый человек не
   // попадёт в поиск, а удалённый останется там навсегда.
-  if (!before || !after) return true;
+  if (!before) return "документ появился";
+  if (!after) return "документ исчез";
 
   for (const f of INDEXED_FIELDS) {
-    if (!sameValue(before[f], after[f])) return true;
+    if (!sameValue(before[f], after[f])) return `изменилось поле ${f}`;
   }
 
   const beforeSeen = toMillis(before.lastSeen);
   const afterSeen = toMillis(after.lastSeen);
-  if (beforeSeen === null || afterSeen === null) return beforeSeen !== afterSeen;
+  if (beforeSeen === null || afterSeen === null) {
+    return beforeSeen === afterSeen ? null : "lastSeen появился или исчез";
+  }
   const step = ALGOLIA_LAST_SEEN_THROTTLE_MS;
-  return Math.floor(beforeSeen / step) !== Math.floor(afterSeen / step);
+  if (Math.floor(beforeSeen / step) !== Math.floor(afterSeen / step)) {
+    return "lastSeen перешагнул десятиминутный отрезок";
+  }
+  return null;
+}
+
+export function shouldReindexUser(
+  before: FirebaseFirestore.DocumentData | undefined,
+  after: FirebaseFirestore.DocumentData | undefined,
+): boolean {
+  return reindexReason(before, after) !== null;
 }
