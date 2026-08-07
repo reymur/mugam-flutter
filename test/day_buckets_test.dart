@@ -45,22 +45,91 @@ void main() {
       final screen =
           codeOf('lib/features/agreements/screens/agreements_screen.dart');
       expect(
-        screen.contains('const DayScreen()'),
+        // Класс, а не форма записи: первая редакция искала точную строку
+        // `const DayScreen()` и упала на верной работе, когда экран
+        // обернули в `Expanded`. Сторож, знающий один способ написать то
+        // же самое, — это N67 у меня же.
+        RegExp(r'\bDayScreen\s*\(').hasMatch(screen),
         isTrue,
         reason: 'дневной экран отключён — он написан, но человек его не '
             'видит, а отличить это от «сделано» нечем',
       );
+      // Вид по умолчанию проверяется ПАРОЙ: закладка «Təqvim» открывается
+      // первой в шапке, а внутри неё режим — день. Порознь каждая
+      // половина ничего не значит: правильная закладка с сеткой месяца и
+      // правильный режим на непоказанной закладке одинаково оставляют
+      // человека без его вечера.
       expect(
-        RegExp(r"_mainView\s*=\s*'day'").hasMatch(screen),
+        RegExp(r"_mainView\s*=\s*'calendar'").hasMatch(screen),
         isTrue,
-        reason: 'вид по умолчанию больше не день: открыл — и не увидел '
-            'свой вечер, ради чего экран и делался',
+        reason: 'вкладка открывается не календарём',
       );
       expect(
-        screen.contains("view: 'day'"),
+        RegExp(r"_calendarMode\s*=\s*'gun'").hasMatch(screen),
         isTrue,
-        reason: 'закладки «Bu gün» нет в шапке — на день нельзя вернуться, '
-            'уйдя на «Təqvim»',
+        reason: 'внутри календаря вид по умолчанию больше не день: открыл '
+            '— и не увидел свой вечер, ради чего экран и делался',
+      );
+    });
+
+    test('день и месяц — ОДНА закладка, переключателем (не четвёртой)', () {
+      final screen =
+          codeOf('lib/features/agreements/screens/agreements_screen.dart');
+      expect(
+        screen.contains("view: 'day'"),
+        isFalse,
+        reason: 'день снова стал четвёртой закладкой в шапке. На трубке '
+            'четыре подписи теснятся и разъезжаются по высоте, а день и '
+            'месяц — один вопрос на разном расстоянии, им место в одном '
+            'переключателе',
+      );
+      expect(
+        RegExp(r"_calendarMode\s*=\s*'gun'").hasMatch(screen),
+        isTrue,
+        reason: 'закладка «Təqvim» больше не открывается днём — человек '
+            'снова попадает на сетку месяца вместо своего вечера',
+      );
+    });
+
+    test('нажатие на день отвечает ПОД СЕТКОЙ, а не уводит на «Tədbirlər»', () {
+      // N68: молчание неотличимо от промаха. Проверяются обе половины —
+      // что ответ есть и что он не уносит человека с сетки: в разговоре
+      // спрашивают про несколько дат подряд.
+      final screen =
+          codeOf('lib/features/agreements/screens/agreements_screen.dart');
+      // СЧИТАЕТСЯ ВЫЗОВ, А НЕ ОБЪЯВЛЕНИЕ. Первая редакция проверяла
+      // `contains('_buildSelectedDayAnswer(')` — и не упала, когда я снял
+      // сам вызов из сборки экрана: имя осталось в объявлении метода.
+      // Сторож доказывал, что метод НАПИСАН, а нужно — что он ЗОВЁТСЯ.
+      // Это ровно тот дефект, ради которого сторож на подключение
+      // дневного экрана и заводился, только теперь у меня самого.
+      expect(
+        '_buildSelectedDayAnswer('.allMatches(screen).length,
+        greaterThanOrEqualTo(2),
+        reason: 'ответ на выбранный день не вызывается (объявление без '
+            'вызова) — пустой день снова молчит',
+      );
+      final tap = screen.substring(
+        screen.indexOf('void _onDayTap('),
+        screen.indexOf('void _onDayLongPress('),
+      );
+      expect(
+        tap.contains("_mainView = 'tedbirler'"),
+        isFalse,
+        reason: 'нажатие на день снова уводит на другую закладку — сетка '
+            'уходит с экрана, и следующий вопрос «а 10-го?» начинается '
+            'заново',
+      );
+    });
+
+    test('набора числа с клавиатуры нет — прыжок через список месяцев', () {
+      final screen =
+          codeOf('lib/features/agreements/screens/agreements_screen.dart');
+      expect(
+        '_openMonthJump'.allMatches(screen).length,
+        greaterThanOrEqualTo(2),
+        reason: 'прыжок по месяцам объявлен, но не подключён к заголовку — '
+            'до далёкой даты снова только листанием',
       );
     });
 

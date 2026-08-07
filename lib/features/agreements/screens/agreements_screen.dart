@@ -13,8 +13,9 @@ import '../../../core/agreements/agreement_card.dart';
 import '../../../core/agreements/event_edit.dart';
 import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
-import '../../day/screens/day_screen.dart';
+import '../../../core/agreements/day_buckets.dart';
 import '../../../core/time/az_date_format.dart';
+import '../../day/screens/day_screen.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
@@ -109,7 +110,17 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   // месяца — один вопрос «когда я занят», заданный на разном расстоянии.
   // Разведи их по вкладкам панели — и человек будет прыгать между ними,
   // чтобы сверить вечер с месяцем.
-  String _mainView = 'day'; // 'day' | 'agreements' | 'calendar' | 'tedbirler'
+  String _mainView = 'calendar'; // 'agreements' | 'calendar' | 'tedbirler'
+
+  /// ДЕНЬ И МЕСЯЦ — ОДНА ЗАКЛАДКА, а не две.
+  ///
+  /// Первая редакция 07.08 поставила день ЧЕТВЁРТОЙ закладкой в шапке —
+  /// и на трубке сразу стало видно, что четыре подписи в строке теснятся
+  /// и разъезжаются по высоте. Довод против четвёртой был у меня же и
+  /// раньше: день и календарь месяца — **один вопрос «когда я занят»,
+  /// заданный на разном расстоянии**. Значит им место не рядом, а внутри
+  /// одного места, переключателем.
+  String _calendarMode = 'gun'; // 'gun' | 'ay'
   String _activeTab = 'outgoing';
   String _tedbirTab = 'hamisi';
   // Только id, а не сам объект (N23): карточка достаёт живую запись из
@@ -337,13 +348,11 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           children: [
             _buildTopHeader(agreeEvents, hasUnread),
             Expanded(
-              child: _mainView == 'day'
-                  ? const DayScreen()
-                  : _mainView == 'agreements'
-                      ? _buildAgreementsTab(agreeEvents)
-                      : _mainView == 'calendar'
-                          ? _buildCalendarTab(personalEvents, eventsAsParticipant, allUsers)
-                          : _buildTedbirlerTab(personalEvents, eventsAsParticipant, allUsers),
+              child: _mainView == 'agreements'
+                  ? _buildAgreementsTab(agreeEvents)
+                  : _mainView == 'calendar'
+                      ? _buildCalendarTab(personalEvents, eventsAsParticipant, allUsers)
+                      : _buildTedbirlerTab(personalEvents, eventsAsParticipant, allUsers),
             ),
           ],
         ),
@@ -352,7 +361,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       // see agreements_screen.dart's own "Təqvim" restyle) rather than the
       // default circular FloatingActionButton — same onPressed/behavior,
       // just a custom shape/decoration wrapped around a GestureDetector.
-      floatingActionButton: _mainView == 'calendar'
+      floatingActionButton: _mainView == 'calendar' && _calendarMode == 'ay'
           ? GestureDetector(
               onTap: () => _openAddModal(
                 context,
@@ -417,7 +426,6 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
               icon: const Icon(Icons.arrow_back, color: kGold),
               onPressed: () => Navigator.of(context).pop(),
             ),
-          _buildHeaderTab(label: '🌅 Bu gün', view: 'day'),
           _buildHeaderTab(
             label: '📋 Müqavilələr',
             view: 'agreements',
@@ -808,16 +816,186 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     List<PersonalEvent> eventsAsParticipant,
     List<User> allUsers,
   ) {
+    if (_calendarMode == 'gun') {
+      return Column(
+        children: [
+          _buildCalendarModeSwitch(),
+          const Expanded(child: DayScreen()),
+        ],
+      );
+    }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
+          _buildCalendarModeSwitch(),
+          const SizedBox(height: 12),
           _buildMonthHeader(),
           const SizedBox(height: 16),
           _buildDayOfWeekRow(),
           const SizedBox(height: 8),
           _buildCalendarPageView(personalEvents, eventsAsParticipant, allUsers),
+          // Содержимое выбранного дня — ПОД СЕТКОЙ, а не на другой
+          // закладке. Сетка остаётся на экране: в разговоре спрашивают
+          // про несколько дат подряд, и каждая следующая — одно касание,
+          // а не новый заход.
+          _buildSelectedDayAnswer(personalEvents, eventsAsParticipant),
           const SizedBox(height: 80),
+        ],
+      ),
+    );
+  }
+
+  /// Переключатель «Gün | Ay» — день и месяц в одном месте.
+  /// Список месяцев — прыжок к далёкой дате.
+  ///
+  /// Двенадцать месяцев вперёд от текущего: этого хватает на вопрос
+  /// «свободен в сентябре?», а дальше года вперёд договоров не заключают.
+  /// Считаем касания честно: заголовок — месяц — день, **три** внутри
+  /// «Ay»; если начинать с «Gün», то четыре, потому что первое уходит на
+  /// сам переключатель.
+  void _openMonthJump() {
+    final base = DateTime(DateTime.now().year, DateTime.now().month, 1);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: kBg2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          children: [
+            for (var i = 0; i < 12; i++)
+              Builder(builder: (_) {
+                final m = DateTime(base.year, base.month + i, 1);
+                final active = m.year == _currentCalendarMonth.year &&
+                    m.month == _currentCalendarMonth.month;
+                return ListTile(
+                  title: Text(
+                    '${_azMonth(m.month)} ${m.year}',
+                    style: TextStyle(color: active ? kGold : kText),
+                  ),
+                  trailing: active
+                      ? const Icon(Icons.check, color: kGold, size: 20)
+                      : null,
+                  onTap: () {
+                    setState(() {
+                      _currentCalendarMonth = m;
+                      _selectedCalendarDay = null;
+                    });
+                    _pageController.jumpToPage(_pageForMonth(m));
+                    Navigator.pop(sheetContext);
+                  },
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCalendarModeSwitch() {
+    Widget seg(String mode, String label) {
+      final active = _calendarMode == mode;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() => _calendarMode = mode),
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            decoration: BoxDecoration(
+              color: active ? kGoldDim : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: active ? kGold : Colors.transparent),
+            ),
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: active ? kGold : kMuted,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      child: Row(children: [seg('gun', 'Gün'), const SizedBox(width: 8), seg('ay', 'Ay')]),
+    );
+  }
+
+  /// Ответ на выбранный день — прямо под сеткой.
+  ///
+  /// **Пустой день отвечает СЛОВАМИ.** Прежде нажатие на день без
+  /// мероприятий не делало ничего видимого, и это был не «пустой
+  /// результат», а молчание: человек не знал, ответило ему приложение или
+  /// он промахнулся мимо клетки (N68). А спрашивают чаще всего именно
+  /// про свободен — «свободен 9-го?» по телефону.
+  Widget _buildSelectedDayAnswer(
+    List<PersonalEvent> personalEvents,
+    List<PersonalEvent> eventsAsParticipant,
+  ) {
+    final day = _selectedCalendarDay;
+    if (day == null) return const SizedBox.shrink();
+    final date = DateTime(
+      _currentCalendarMonth.year,
+      _currentCalendarMonth.month,
+      day,
+    );
+    final buckets = buildDayBuckets(
+      own: personalEvents,
+      asParticipant: eventsAsParticipant,
+      now: date,
+    );
+    // Раскладка считает от «сегодня» переданной даты — значит её `today`
+    // и есть выбранный день. Правило одно и то же с дневным экраном: два
+    // разбора одной даты разошлись бы молча (N58).
+    final events = buckets.today;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            fmtDayHeader(date),
+            style: const TextStyle(fontSize: 13, letterSpacing: 1.2, color: kMuted),
+          ),
+          const SizedBox(height: 10),
+          if (events.isEmpty)
+            const Text(
+              'Boşsunuz',
+              style: TextStyle(fontSize: 19, color: kTextSecondary),
+            )
+          else
+            for (final e in events)
+              Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
+                decoration: const BoxDecoration(
+                  border: Border(left: BorderSide(color: kGold, width: 4)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      fmtEventTime(e.date),
+                      style: const TextStyle(fontSize: 21, color: kText),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      [e.type, if (e.location.isNotEmpty) e.location].join(' · '),
+                      style: const TextStyle(fontSize: 16, color: kTextSecondary),
+                    ),
+                  ],
+                ),
+              ),
         ],
       ),
     );
@@ -844,14 +1022,32 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
             curve: Curves.easeInOut,
           );
         }),
-        Text(
-          '$monthName ${_currentCalendarMonth.year}',
-          style: GoogleFonts.nunito(
-            fontSize: 24,
-            fontWeight: FontWeight.w800,
-            color: kGold2,
-            shadows: [
-              Shadow(color: kGold2.withAlpha(170), blurRadius: 12),
+        // Заголовок — дорога к далёкой дате БЕЗ ЛИСТАНИЯ МЕСЯЦЕВ.
+        //
+        // Набора числа с клавиатуры здесь нет и не будет (решение
+        // владельца 07.08): второй путь к той же операции — это ровно то
+        // место, где правило потом оказывается применено к одному из
+        // двух. Список месяцев закрывает далёкие даты, и клавиатура для
+        // этого не нужна ни разу.
+        GestureDetector(
+          onTap: _openMonthJump,
+          behavior: HitTestBehavior.opaque,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '$monthName ${_currentCalendarMonth.year}',
+                style: GoogleFonts.nunito(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  color: kGold2,
+                  shadows: [
+                    Shadow(color: kGold2.withAlpha(170), blurRadius: 12),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(Icons.expand_more, color: kGold2, size: 22),
             ],
           ),
         ),
@@ -1156,24 +1352,16 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       setState(() => _selectedCalendarDay = null);
       return;
     }
+    // Ответ показывается ПОД СЕТКОЙ (`_buildSelectedDayAnswer`), а сетка
+    // остаётся на экране.
+    //
+    // Прежде нажатие на день с мероприятиями уводило на закладку
+    // «Tədbirlər» с фильтром по дате, а нажатие на ПУСТОЙ день не делало
+    // ничего видимого. Оба поведения мешали одному и тому же — вопросу
+    // «свободен 9-го?», заданному по телефону: первое уносило с сетки,
+    // так что следующий вопрос «а 10-го?» начинался заново, второе
+    // молчало ровно в том случае, ради которого спрашивают (N68).
     setState(() => _selectedCalendarDay = day);
-    if (dayEvents.isNotEmpty) {
-      final ownEvents = dayEvents.where((e) => e.ownerUid == _uid).toList();
-      final invitedEvents = dayEvents.where((e) => e.ownerUid != _uid).toList();
-      String newTedbirTab;
-      if (ownEvents.isNotEmpty && invitedEvents.isNotEmpty) {
-        newTedbirTab = 'hamisi';
-      } else if (ownEvents.isNotEmpty) {
-        newTedbirTab = 'sexsi';
-      } else {
-        newTedbirTab = 'dəvətli';
-      }
-      setState(() {
-        _tedbirTab = newTedbirTab;
-        _tedbirFilterDate = dayDate;
-        _mainView = 'tedbirler';
-      });
-    }
   }
 
   void _onDayLongPress(
