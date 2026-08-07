@@ -20,9 +20,20 @@
 # оно ничего не уничтожает, git сам откажется при конфликте.
 c=$(jq -r '.tool_input.command // empty')
 
-kill='git[[:space:]]+(checkout|restore)[[:space:]]+[^|;&]*((lib|test|functions)/|\.dart|--[[:space:]])|git[[:space:]]+(checkout|restore)[[:space:]]+\.([[:space:]]|$)|git[[:space:]]+reset[[:space:]][^|;&]*--hard|git[[:space:]]+stash([[:space:]]|$)|git[[:space:]]+clean[[:space:]][^|;&]*-[a-zA-Z]*f'
-safe='git[[:space:]]+stash[[:space:]]+(list|show)'
+# ВЫЗОВ, А НЕ УПОМИНАНИЕ. Первая редакция искала запрещённые слова во всей
+# строке команды — и первым же делом отказала в записи файла, где эти
+# слова ОБЪЯСНЯЮТСЯ. Тот же класс, что у сторожей по исходникам: текст
+# запрета и текст его объяснения неизбежно совпадают, потому что
+# объяснение цитирует запрещаемое.
+#
+# Поэтому строка режется по разделителям оболочки, и проверяется НАЧАЛО
+# каждого куска: настоящий вызов там и стоит, а цитата внутри кавычек или
+# heredoc начинается с чего-то другого.
+segments=$(printf '%s' "$c" | tr '\n;|&' '\n\n\n\n' | sed -E 's/^[[:space:]]+//')
 
-if printf '%s' "$c" | grep -qE "$kill" && ! printf '%s' "$c" | grep -qE "$safe"; then
+kill='^git[[:space:]]+(checkout|restore)[[:space:]]+[^|;&]*((lib|test|functions)/|\.dart|--[[:space:]])|^git[[:space:]]+(checkout|restore)[[:space:]]+\.([[:space:]]|$)|^git[[:space:]]+reset[[:space:]][^|;&]*--hard|^git[[:space:]]+stash([[:space:]]|$)|^git[[:space:]]+clean[[:space:]][^|;&]*-[a-zA-Z]*f'
+safe='^git[[:space:]]+stash[[:space:]]+(list|show)'
+
+if printf '%s' "$segments" | grep -qE "$kill" && ! printf '%s' "$segments" | grep -qE "$safe"; then
   printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"ЗАПРЕЩЕНО ПРАВИЛОМ ПРОЕКТА I10 — читать CLAUDE.md, раздел «Возврат при проверке». Команда уничтожает НЕСОХРАНЁННОЕ, а проверка возвратом всегда делается по несохранённому: инструмент проверки уничтожает проверяемое. Так уже дважды пропала готовая работа, второй раз — у автора самого правила. Вместо этого: испортить строку правкой на месте (Edit), прогнать тест, вернуть строку обратно такой же правкой. Если возврат нужен по-настоящему — попросить человека сделать его руками."}}'
 fi
