@@ -20,6 +20,9 @@
 /// правило непроверяемым без него. Кто как называется — дело экрана.
 library;
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import '../../firebase/models.dart';
 import 'agreement_cancel.dart';
 
 /// Чем кончилась история договора — то, что карточка обязана назвать.
@@ -45,6 +48,47 @@ enum AgreementOutcome {
 /// она читалась верно («договор заключён тогда-то»), а под красным
 /// превращалась в неправду о времени отмены.
 enum AgreementStamp { created, cancelled }
+
+/// Какую отметку времени показывать и по какой сортировать.
+///
+/// Одно правило на список и на карточку: если написанное на карточке и
+/// то, по чему список отсортирован, — разные поля, список читается как
+/// перепутанный, и человек ищет карточку там, где видел её минуту назад.
+AgreementStamp agreementStamp(String status) =>
+    status == 'cancelled' ? AgreementStamp.cancelled : AgreementStamp.created;
+
+/// Само значение отметки — то, что показывается и по чему сортируется.
+dynamic agreementStampValue(PersonalEvent e) =>
+    agreementStamp(e.status) == AgreementStamp.cancelled
+        ? e.cancelledAt
+        : e.createdAt;
+
+/// Порядок в списке договоров: новое сверху, и НИЧЕГО кроме.
+///
+/// Прежде список шёл в два этажа — сначала непрочитанные, потом
+/// прочитанные, и внутри каждого по свежести. Значит карточка новее могла
+/// стоять ниже старой, а прочтение переставляло её на глазах: человек
+/// возвращался и не находил её там, где видел (решение владельца 07.08 —
+/// оставить один порядок; непрочитанность и так показана рамкой и точкой).
+///
+/// Отсутствующая отметка уходит вниз, а не наверх: у только что созданного
+/// договора `serverTimestamp()` возвращается из кэша `null` и появляется
+/// через миг — с обратным правилом он прыгал бы сверху вниз на глазах.
+int compareAgreementsByStamp(PersonalEvent a, PersonalEvent b) {
+  final av = agreementStampValue(a);
+  final bv = agreementStampValue(b);
+  if (av is Timestamp && bv is Timestamp) {
+    final cmp = bv.compareTo(av);
+    if (cmp != 0) return cmp;
+  } else if (av is Timestamp) {
+    return -1;
+  } else if (bv is Timestamp) {
+    return 1;
+  }
+  // Устойчивый доводчик: без него две несравнимые карточки меняются
+  // местами на каждой перерисовке без единого изменения в данных.
+  return a.id.compareTo(b.id);
+}
 
 /// Что карточка говорит о судьбе договора.
 class AgreementCardState {
@@ -103,7 +147,7 @@ AgreementCardState agreementCardState({
       outcome: AgreementOutcome.cancelledByAgreement,
       proposedByUid: cancelRequestedBy,
       confirmedByUid: cancelConfirmedBy,
-      stamp: AgreementStamp.cancelled,
+      stamp: agreementStamp(status),
     );
   }
   if (lastActionType == kCancelWithdrawn) {

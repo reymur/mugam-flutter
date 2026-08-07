@@ -207,27 +207,17 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
 
   bool _isUnread(PersonalEvent e) => !_readAgreementIds.contains(e.id);
 
-  List<PersonalEvent> _sortedAgreements(List<PersonalEvent> list) {
-    final unread = list.where(_isUnread).toList()..sort(_compareEvents);
-    final read = list.where((e) => !_isUnread(e)).toList()..sort(_compareEvents);
-    return [...unread, ...read];
-  }
+  /// Один порядок: новое сверху, и ничего кроме (решение владельца 07.08).
+  ///
+  /// Прежде список шёл в два этажа — непрочитанные, потом прочитанные, —
+  /// то есть менял порядок сам по себе: стоило открыть карточку, и она
+  /// уезжала вниз, а человек искал её там, где видел. Правило нигде не
+  /// было ни объяснено, ни закреплено тестом, и владелец принял его за
+  /// поломку — что и есть цена необъяснённого решения (N55).
+  List<PersonalEvent> _sortedAgreements(List<PersonalEvent> list) =>
+      list.toList()..sort(compareAgreementsByStamp);
 
-  // Stable tiebreaker (doc id) when createdAt isn't comparable on one or
-  // both sides yet (e.g. a just-created event whose serverTimestamp()
-  // hasn't round-tripped back from the server) — returning 0 there let the
-  // same pair of not-yet-comparable events swap places on every rebuild for
-  // no actual change, same class of bug as getOrCreateDirectChat's own
-  // legacy-chat sort (see firestore_service.dart).
-  int _compareEvents(PersonalEvent a, PersonalEvent b) {
-    final aTs = a.createdAt;
-    final bTs = b.createdAt;
-    if (aTs is Timestamp && bTs is Timestamp) {
-      final cmp = bTs.compareTo(aTs);
-      if (cmp != 0) return cmp;
-    }
-    return a.id.compareTo(b.id);
-  }
+
 
   // -------------------------------------------------------------------------
   // Build
@@ -723,7 +713,13 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    _fmtCreatedAt(e.createdAt),
+                    // То же поле, по которому список отсортирован, и с
+                    // подписью — как на карточке договора. Без подписи
+                    // дата читается как что угодно: дата мероприятия,
+                    // дата отмены, что-нибудь ещё (N55).
+                    agreementStamp(e.status) == AgreementStamp.cancelled
+                        ? '${_fmtCreatedAt(e.cancelledAt)} — ləğv edildi'
+                        : '${_fmtCreatedAt(e.createdAt)} — bağlandı',
                     style: const TextStyle(fontSize: 11, color: kMuted),
                   ),
                   if (eventLine != null) ...[

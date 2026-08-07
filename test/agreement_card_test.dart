@@ -1,6 +1,8 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/agreements/agreement_card.dart';
 import 'package:mugam_flutter/core/agreements/agreement_cancel.dart';
+import 'package:mugam_flutter/firebase/models.dart';
 
 // N53/N54 — что карточка договора говорит о его судьбе.
 //
@@ -193,6 +195,89 @@ void main() {
           reason: 'у поступка $d форма для себя и для другого совпала',
         );
       }
+    });
+  });
+
+  group('порядок в списке — новое сверху, и ничего кроме (N55)', () {
+    PersonalEvent ev(
+      String id, {
+      String status = 'agreed',
+      DateTime? created,
+      DateTime? cancelled,
+    }) =>
+        PersonalEvent(
+          id: id,
+          ownerUid: owner,
+          date: '2026-09-01T19:00:00.000',
+          type: 'Toy',
+          location: '',
+          notes: '',
+          participantUids: const [],
+          isAgree: true,
+          status: status,
+          createdAt: created == null ? null : Timestamp.fromDate(created),
+          cancelledAt: cancelled == null ? null : Timestamp.fromDate(cancelled),
+        );
+
+    test('действующие идут по дате заключения, новое первым', () {
+      final list = [
+        ev('старый', created: DateTime(2026, 8, 1)),
+        ev('новый', created: DateTime(2026, 8, 5)),
+      ]..sort(compareAgreementsByStamp);
+      expect(list.first.id, 'новый');
+    });
+
+    test('отменённый сортируется по дате ОТМЕНЫ, а не заключения', () {
+      // Договор заключён давно, отменён только что — в разделе
+      // «Ləğv edilən» он обязан стоять первым. Иначе список отсортирован
+      // по одному полю, а показывает другое.
+      final list = [
+        ev('свежая отмена',
+            status: 'cancelled',
+            created: DateTime(2026, 7, 1),
+            cancelled: DateTime(2026, 8, 6)),
+        ev('старая отмена',
+            status: 'cancelled',
+            created: DateTime(2026, 8, 5),
+            cancelled: DateTime(2026, 8, 2)),
+      ]..sort(compareAgreementsByStamp);
+      expect(list.first.id, 'свежая отмена');
+    });
+
+    test('отметка, которую показывают, и есть отметка сортировки', () {
+      // Связь правила показа с правилом порядка — то, ради чего оба
+      // вынесены в одно место.
+      final cancelledEv = ev('c',
+          status: 'cancelled',
+          created: DateTime(2026, 7, 1),
+          cancelled: DateTime(2026, 8, 6));
+      expect(agreementStamp(cancelledEv.status), AgreementStamp.cancelled);
+      expect(agreementStampValue(cancelledEv), cancelledEv.cancelledAt);
+
+      final liveEv = ev('a', created: DateTime(2026, 8, 1));
+      expect(agreementStamp(liveEv.status), AgreementStamp.created);
+      expect(agreementStampValue(liveEv), liveEv.createdAt);
+    });
+
+    test('карточка без отметки уходит вниз, а не наверх', () {
+      // serverTimestamp() возвращается из кэша пустым и появляется через
+      // миг: с обратным правилом только что созданный договор прыгал бы
+      // сверху вниз на глазах.
+      final list = [
+        ev('без даты'),
+        ev('с датой', created: DateTime(2026, 8, 1)),
+      ]..sort(compareAgreementsByStamp);
+      expect(list.first.id, 'с датой');
+    });
+
+    test('порядок не зависит ни от чего, кроме отметки', () {
+      // Прежде список делился на два этажа по «прочитано», и карточка
+      // переезжала от того, что человек её открыл. Здесь этого входа нет
+      // вовсе: у правила ровно один аргумент — сама пара договоров.
+      final a = ev('a', created: DateTime(2026, 8, 5));
+      final b = ev('b', created: DateTime(2026, 8, 1));
+      expect(compareAgreementsByStamp(a, b), lessThan(0));
+      expect(compareAgreementsByStamp(b, a), greaterThan(0));
     });
   });
 }
