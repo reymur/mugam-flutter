@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'auth_gate_screen.dart';
 import '../features/agreements/screens/agreements_screen.dart';
@@ -19,7 +20,35 @@ import '../features/search/screens/search_screen.dart';
 import '../features/starred/screens/starred_messages_screen.dart';
 import '../features/stories/screens/stories_screen.dart';
 import '../features/video/screens/video_screen.dart';
+import 'app_tabs.dart';
 import 'main_shell.dart';
+
+/// Экран вкладки — по её имени, а не по номеру.
+///
+/// Отдельной картой, а не полем в `AppTab`: список вкладок описывает
+/// ПОРЯДОК и не должен тянуть за собой импорты всех экранов приложения.
+/// Полнота карты проверяется тестом (`test/app_tabs_test.dart`): вкладка
+/// без экрана — красный тест, а не пустая ветка.
+const Map<String, Widget Function()> _screensByTabId = {
+  'home': HomeScreen.new,
+  'agreements': AgreementsScreen.new,
+  'search': SearchScreen.new,
+  'board': BoardScreen.new,
+  'gigs': GigsScreen.new,
+  'market': MarketScreen.new,
+  'stories': StoriesScreen.new,
+  'video': VideoScreen.new,
+  'chats': ChatsScreen.new,
+  'profile': ProfileScreen.new,
+};
+
+Widget screenForTab(String id) {
+  final build = _screensByTabId[id];
+  // Пустой ветки не бывает: вкладка без экрана — ошибка сборки списка, а
+  // не молчаливый чёрный экран.
+  assert(build != null, 'у вкладки "$id" нет экрана в _screensByTabId');
+  return build == null ? const SizedBox.shrink() : build();
+}
 
 final appRouter = GoRouter(
   initialLocation: '/',
@@ -67,42 +96,30 @@ final appRouter = GoRouter(
       path: '/call/active/:callId',
       builder: (c, s) => ActiveCallScreen(callId: s.pathParameters['callId']!),
     ),
+    // ВЕТКИ СТРОЯТСЯ ИЗ ТОГО ЖЕ СПИСКА, что и панель (`app_tabs.dart`).
+    //
+    // Прежде порядок был записан здесь и в `custom_tab_bar.dart` двумя
+    // копиями, а связаны они были ничем: панель отдаёт
+    // `navigationShell.currentIndex` в подсветку, тап отдаёт индекс
+    // обратно в `goBranch(index)`, и обе стороны верны, только пока
+    // порядки совпадают. Перестановка вкладки в одном месте уводила бы
+    // человека не на тот экран — молча, потому что оба списка выглядят
+    // правильными по отдельности (N58).
+    //
+    // Теперь разойтись им негде: порядок один, а экран для вкладки
+    // берётся по её имени. Отсутствующее имя не соберётся — тест на
+    // полноту `_screensByTabId` держит это отдельно.
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) =>
           MainShell(navigationShell: navigationShell),
       branches: [
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/home', builder: (c, s) => const HomeScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(
-              path: '/agreements',
-              builder: (c, s) => const AgreementsScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/search', builder: (c, s) => const SearchScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/board', builder: (c, s) => const BoardScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/gigs', builder: (c, s) => const GigsScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/market', builder: (c, s) => const MarketScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/stories', builder: (c, s) => const StoriesScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/video', builder: (c, s) => const VideoScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/chats', builder: (c, s) => const ChatsScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/profile', builder: (c, s) => const ProfileScreen()),
-        ]),
+        for (final tab in kAppTabs)
+          StatefulShellBranch(routes: [
+            GoRoute(
+              path: tab.path,
+              builder: (c, s) => screenForTab(tab.id),
+            ),
+          ]),
       ],
     ),
   ],

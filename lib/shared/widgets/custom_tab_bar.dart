@@ -1,21 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/theme/colors.dart';
+import '../../navigation/app_tabs.dart';
 
-const _kTabs = [
-  ('🏠', 'KLUB'),
-  ('📅', 'KALENDAR'),
-  ('🔍', 'AXTAR'),
-  ('📢', 'ELANLAR'),
-  ('🎼', 'SİFARİŞ'),
-  ('🛍', 'BAZAR'),
-  ('😄', 'HEKAYƏ'),
-  ('🎬', 'VİDEO'),
-  ('💬', 'MESAJ'),
-  ('👤', 'PROFİL'),
-];
-
-const _kChatsIndex = 8;
+// Состав и порядок панели живут в `navigation/app_tabs.dart` — там же, где
+// их берёт роутер. Здесь только вид (N58).
 
 class CustomTabBar extends StatelessWidget {
   const CustomTabBar({
@@ -47,9 +36,9 @@ class CustomTabBar extends StatelessWidget {
           // visibly cut off at the edge until swiped into view.
           child: ListView.builder(
             scrollDirection: Axis.horizontal,
-            itemCount: _kTabs.length,
+            itemCount: kAppTabs.length,
             itemBuilder: (context, i) {
-              final (emoji, label) = _kTabs[i];
+              final tab = kAppTabs[i];
               final isActive = i == currentIndex;
               return GestureDetector(
                 onTap: () => onTap(i),
@@ -57,10 +46,13 @@ class CustomTabBar extends StatelessWidget {
                 child: SizedBox(
                   width: 64,
                   child: _TabItem(
-                    emoji: emoji,
-                    label: label,
+                    emoji: tab.emoji,
+                    label: tab.label,
                     isActive: isActive,
-                    badge: i == _kChatsIndex ? unreadCount : 0,
+                    // По ИМЕНИ вкладки, а не по её номеру: номер меняется
+                    // при первой же перестановке, и подмену нечем
+                    // заметить, пока счётчик не показывается (N57).
+                    badge: tab.id == kUnreadBadgeTabId ? unreadCount : 0,
                   ),
                 ),
               );
