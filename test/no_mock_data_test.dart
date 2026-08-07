@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/source_text.dart';
+
 // Вшитые в код данные, показанные живым людям (уборка 07.08).
 //
 // На главном экране стояли два списка-заглушки: `_fallbackEvents` (четыре
@@ -56,7 +58,7 @@ void main() {
     expect(rules.contains('match /rooms/'), isFalse);
 
     final service =
-        File('lib/firebase/firestore_service.dart').readAsStringSync();
+        readCode('lib/firebase/firestore_service.dart');
     expect(service.contains('fetchEvents()'), isFalse);
     expect(service.contains('fetchRooms()'), isFalse);
     expect(service.contains("collection('events')"), isFalse);

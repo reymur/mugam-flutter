@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/navigation/app_tabs.dart';
 import 'package:mugam_flutter/shared/widgets/custom_tab_bar.dart';
 
+import 'support/source_text.dart';
+
 // N60 — пять экранов ушли из панели, но не из приложения.
 //
 // Опасность у этой правки одна и названа владельцем заранее: **через
@@ -25,7 +27,7 @@ void main() {
     late String router;
 
     setUpAll(() {
-      router = File('lib/navigation/app_router.dart').readAsStringSync();
+      router = readCode('lib/navigation/app_router.dart');
     });
 
     test('файл каждого экрана на месте', () {

@@ -1,6 +1,6 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
+
+import 'support/source_text.dart';
 
 // Проход по исходникам — третье средство из разбора «комментарий защищает
 // строку, а не класс» (AUDIT_TODO.md). Оно ловит ровно то, чего не ловят
@@ -19,7 +19,7 @@ void main() {
   late String source;
 
   setUpAll(() {
-    source = File(_service).readAsStringSync();
+    source = readCode(_service);
     lines = source.split('\n');
   });
 
@@ -76,7 +76,7 @@ void main() {
   group('снятие участника мероприятия идёт одной записью', () {
     late String form;
 
-    setUpAll(() => form = File(_eventForm).readAsStringSync());
+    setUpAll(() => form = readCode(_eventForm));
 
     test('состав не сокращают мимо _applyParticipantSelection', () {
       // Тот же класс, что и уход из чата: два пути к одной операции —
@@ -136,7 +136,7 @@ void main() {
       // Защита — вот она: второй вызов не пройдёт мимо, и тот, кто его
       // добавит, прочтёт этот текст.
       final screen =
-          File('lib/features/chat/screens/chat_screen.dart').readAsStringSync();
+          readCode('lib/features/chat/screens/chat_screen.dart');
       final calls = 'saveChatEventDate('.allMatches(screen).length;
       expect(
         calls,
@@ -166,7 +166,7 @@ void main() {
     late String form;
 
     setUpAll(() {
-      form = File(_eventForm).readAsStringSync();
+      form = readCode(_eventForm);
     });
 
     test('вызов leavePersonalEvent из формы не потерян', () {
@@ -185,8 +185,18 @@ void main() {
       // сохранения, потому что до пересчёта неизвестно, свободна ли
       // минута. Вернись `addPersonalEvent` сюда — человек снова получит
       // своё мероприятие на минуте, где у него уже стоит другое.
+      // Границы куска — по КОДУ, а не по комментарию. Прежде концом
+      // служил заголовок соседнего doc-комментария, и 07.08, когда
+      // текстовые сторожа перешли на чтение без комментариев, этот
+      // якорь исчез вместе с ними: сторож упал на чистом дереве. Тот же
+      // класс, что «комментарий защищает строку»: комментарий и границей
+      // быть не может — он живёт по своим законам, а не по законам кода.
       final start = form.indexOf('Future<void> _replaceEvent(');
-      final end = form.indexOf('\n  /// Подтверждение ВЫХОДА', start);
+      expect(start, isNot(-1), reason: '_replaceEvent исчез вовсе');
+      final end = form.indexOf('Future<bool> _confirmLeaveForeign(', start);
+      expect(end, isNot(-1),
+          reason: 'сосед _confirmLeaveForeign исчез — границу куска взять '
+              'неоткуда, и сторож замолчал бы, а не упал');
       final body = form.substring(start, end);
       expect(
         body.contains('addPersonalEvent('),
@@ -207,9 +217,9 @@ void main() {
       // одно мероприятие ПО ТИПУ, и вызывающему нечего было решать. Имя
       // убрано, чтобы третий вызывающий не появился мимо списка (I11).
       final banner =
-          File('lib/shared/widgets/event_conflict_banner.dart').readAsStringSync();
+          readCode('lib/shared/widgets/event_conflict_banner.dart');
       final sheet =
-          File('lib/features/chat/screens/job_offer_date_sheet.dart').readAsStringSync();
+          readCode('lib/features/chat/screens/job_offer_date_sheet.dart');
       for (final entry in {
         'event_conflict_banner.dart': banner,
         'agreements_screen.dart': form,
@@ -244,7 +254,7 @@ void main() {
   group('карточка договора называет людей по uid, а не по partnerName (N53)', () {
     late String form;
 
-    setUpAll(() => form = File(_eventForm).readAsStringSync());
+    setUpAll(() => form = readCode(_eventForm));
 
     test('строки сторон берут имя через nameOf, а не из документа', () {
       // `partnerName` — имя второй стороны ГЛАЗАМИ ВЛАДЕЛЬЦА. На экране

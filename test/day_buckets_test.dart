@@ -6,6 +6,8 @@ import 'package:mugam_flutter/core/agreements/day_buckets.dart';
 import 'package:mugam_flutter/core/time/event_local_time.dart';
 import 'package:mugam_flutter/firebase/models.dart';
 
+import 'support/source_text.dart';
+
 // Главный экран как ДЕНЬ (работа 6 плана).
 //
 // Проверяется правило раскладки, а не экран: порченое правило внутри

@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/agreements/agreement_cancel.dart';
 
+import 'support/source_text.dart';
+
 // Правило «какая дорога отмены открыта». Проверяется отдельно от экрана
 // потому, что от него зависит не вид кнопки, а ИМЯ ПОСТУПКА: отзыв и
 // отказ оставляют в данных одинаковый след, и различает их только имя. С
@@ -105,7 +107,7 @@ void main() {
     // вместе с кодом и ничего бы не поймала.
     late String rules;
 
-    setUpAll(() => rules = File('firestore.rules').readAsStringSync());
+    setUpAll(() => rules = readCode('firestore.rules'));
 
     test('все четыре имени отмены есть в firestore.rules', () {
       // Все четыре, а не два: запрос и подтверждение тоже называют себя —
@@ -122,7 +124,7 @@ void main() {
       // Проход по исходникам: новый вызов с придуманным именем поступка
       // сюда не пролезет. Средство сильнее комментария — тот защищает
       // строку, а не класс.
-      final svc = File('lib/firebase/firestore_service.dart').readAsStringSync();
+      final svc = readCode('lib/firebase/firestore_service.dart');
       final names = RegExp(r"'lastActionType': '([^']+)'")
           .allMatches(svc)
           .map((m) => m.group(1))

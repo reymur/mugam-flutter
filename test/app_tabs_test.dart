@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/navigation/app_tabs.dart';
 
+import 'support/source_text.dart';
+
 // N57/N58 — состав и порядок нижней панели.
 //
 // Порядок был записан ДВАЖДЫ: списком в `custom_tab_bar.dart` и порядком
@@ -20,13 +22,29 @@ void main() {
   test('порядок вкладок описан ровно в одном месте', () {
     // Проверяется не значение, а отсутствие второго списка: копия,
     // сделанная «чтобы не тянуть импорт», и есть исходный дефект.
-    final bar = File('lib/shared/widgets/custom_tab_bar.dart').readAsStringSync();
-    final router = File('lib/navigation/app_router.dart').readAsStringSync();
+    final bar = readCode('lib/shared/widgets/custom_tab_bar.dart');
+    final router = readCode('lib/navigation/app_router.dart');
 
+    // ПРОВЕРЯЕТСЯ ОБХОД СПИСКА, А НЕ УПОМИНАНИЕ ЕГО ИМЕНИ.
+    //
+    // Прежде здесь стояло `bar.contains('kAppTabs')`, и обход сторожей
+    // 07.08 показал, что этого мало: панель, построенная по
+    // `[kAppTabs[1], kAppTabs[0]]`, — то есть с переставленными руками
+    // вкладками — упоминание списка сохраняет и проходит насквозь.
+    // Сторож ловил ИСХОДНУЮ ФОРМУ дефекта (второй литеральный список) и
+    // не ловил его КЛАСС (порядок, собранный где-то ещё).
     expect(
-      bar.contains('kAppTabs'),
+      RegExp(r'for \(final [^)]*\) in kAppTabs(\.indexed)?\)').hasMatch(bar),
       isTrue,
-      reason: 'панель перестала брать состав из app_tabs.dart',
+      reason: 'панель перестала обходить kAppTabs целиком и по порядку — '
+          'значит порядок снова собирается где-то ещё (N58)',
+    );
+    expect(
+      bar.contains('kAppTabs['),
+      isFalse,
+      reason: 'панель лезет в список по НОМЕРУ. Любая выборка или '
+          'перестановка руками — это второй порядок, только записанный '
+          'через первый: расходиться им ничто не мешает',
     );
     expect(
       RegExp(r"\('[^']+',\s*'[A-ZƏİÜÖ]+'\)").hasMatch(bar),
@@ -43,7 +61,7 @@ void main() {
   test('у каждой вкладки есть экран, и лишних экранов нет', () {
     // Ветка без экрана — чёрный экран вместо вкладки; экран без вкладки —
     // мёртвый код, до которого не дойти.
-    final router = File('lib/navigation/app_router.dart').readAsStringSync();
+    final router = readCode('lib/navigation/app_router.dart');
     final mapped = RegExp(r"^\s*'([a-z]+)':\s*\w+\.new,", multiLine: true)
         .allMatches(router)
         .map((m) => m.group(1)!)
@@ -60,7 +78,7 @@ void main() {
     // передавал счётчик вовсе, бейдж не рисовался, и подмена вкладки
     // ничем бы себя не выдала. Код, у которого нет наблюдаемого
     // поведения, не может выдать свою поломку.
-    final bar = File('lib/shared/widgets/custom_tab_bar.dart').readAsStringSync();
+    final bar = readCode('lib/shared/widgets/custom_tab_bar.dart');
     expect(
       RegExp(r'_k\w*Index\s*=\s*\d').hasMatch(bar),
       isFalse,

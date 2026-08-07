@@ -11,6 +11,8 @@ import 'package:mugam_flutter/core/settings/start_tab_settings.dart';
 import 'package:mugam_flutter/navigation/app_tabs.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/source_text.dart';
+
 // «Tətbiq açılır…» — с какой вкладки открывается приложение.
 //
 // Настройка про устройство, а не про человека, поэтому живёт в
