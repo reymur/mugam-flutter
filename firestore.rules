@@ -982,8 +982,11 @@ service cloud.firestore {
     match /market/{id} { allow read, write: if isSignedIn(); }
     match /stories/{id} { allow read, write: if isSignedIn(); }
     match /videos/{id} { allow read, write: if isSignedIn(); }
-    match /events/{id} { allow read, write: if isSignedIn(); }
-    match /rooms/{id} { allow read, write: if isSignedIn(); }
+    // events и rooms сняты 07.08 вместе с показом вшитых концертов на
+    // главном экране. В проде обе коллекции были пусты (0 документов), а
+    // коллекция в Firestore существует ровно пока в ней есть документы —
+    // значит удалять было нечего, снимается только доступ. Понадобится
+    // Klub — имя свободно, но правило пишется уже не заглушкой.
     match /musicians/{id} { allow read, write: if isSignedIn(); }
     match /notifications/{id} { allow read, write: if isSignedIn(); }
     match /locations/{cityId} {

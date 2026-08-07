@@ -34,7 +34,12 @@ import { planOfferPushes } from "./jobOfferNotifications";
 import { RtcRole, RtcTokenBuilder } from "agora-token";
 import { algoliasearch } from "algoliasearch";
 import { randomUUID } from "crypto";
-import { ALGOLIA_APP_ID, ALGOLIA_USERS_INDEX, toAlgoliaUserRecord } from "./algoliaShared";
+import {
+  ALGOLIA_APP_ID,
+  ALGOLIA_USERS_INDEX,
+  toAlgoliaUserRecord,
+  shouldReindexUser,
+} from "./algoliaShared";
 
 initializeApp();
 const db = getFirestore();
@@ -1694,8 +1699,20 @@ export const onUserWritten = onDocumentWritten(
   { document: "users/{uid}", region: FUNCTIONS_REGION, secrets: [algoliaAdminKey] },
   async (event) => {
     const { uid } = event.params;
-    const client = algoliasearch(ALGOLIA_APP_ID, algoliaAdminKey.value());
+    const before = event.data?.before;
     const after = event.data?.after;
+
+    // Сердцебиение присутствия — не изменение того, что ищут (N43).
+    // Правило вынесено чистой функцией в ./algoliaShared и проверено
+    // тестами там же; здесь только выход до создания клиента Algolia.
+    if (!shouldReindexUser(
+      before?.exists ? before.data() : undefined,
+      after?.exists ? after.data() : undefined,
+    )) {
+      return;
+    }
+
+    const client = algoliasearch(ALGOLIA_APP_ID, algoliaAdminKey.value());
 
     try {
       if (!after?.exists) {

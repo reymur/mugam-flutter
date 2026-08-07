@@ -266,12 +266,25 @@ class User {
   // каждого своё окно» в таком запросе не выражается — арифметики по
   // записи там нет.
   //
-  // Значение равно окну сборки, бьющейся раз в 30 с, то есть совпадает с
-  // тем, что показывает зелёная точка у всех, кто сегодня в ходу. Для
-  // сборки, не объявляющей интервал, точка держится дольше (120 с), чем
-  // живёт её место в выдаче, — расхождение в безопасную сторону:
-  // человека скорее не покажут, чем покажут отсутствующего.
-  static const Duration onlineQueryWindow = Duration(seconds: 60);
+  // ОКНО ПРИВЯЗАНО К ПОРОГУ ПЕРЕИНДЕКСАЦИИ (N43, 07.08). Прежде здесь
+  // стояли 60 с — ровно окно сборки, бьющейся раз в 30 с. С этого дня
+  // Algolia переписывается не на каждое сердцебиение, а когда lastSeen
+  // уехал больше чем на 10 минут (ALGOLIA_LAST_SEEN_THROTTLE_MS,
+  // functions/src/algoliaShared.ts). Значит в индексе lastSeen СТАРШЕ
+  // настоящего на срок до порога, и окно в 60 с не находило бы вообще
+  // никого: фильтр молча возвращал бы пустоту при полном зале онлайна.
+  //
+  // 11 минут — порог плюс минута на доставку записи. Цена названа и
+  // принята владельцем: «Onlayn indi» в ПОИСКЕ означает теперь «был в
+  // сети за последние ~11 минут», и в выдаче может оказаться человек,
+  // закрывший приложение десять минут назад. Расхождение ушло в
+  // небезопасную сторону сознательно — это плата за то, что счёт больше
+  // не платится за сердцебиение.
+  //
+  // Зелёной точки это не касается: она считается по живому документу
+  // Firestore (isPresenceFresh), а не по индексу, и осталась двухминутной.
+  // В строках выдачи точки нет вовсе — проверено 07.08.
+  static const Duration onlineQueryWindow = Duration(minutes: 11);
 
   Duration get presenceFreshness {
     final declared = presenceIntervalMs;
@@ -1111,73 +1124,6 @@ class StarredMessage {
       fileName: data['fileName'] as String?,
       timestamp: data['timestamp'] as Timestamp?,
       starredAt: data['starredAt'] as Timestamp?,
-    );
-  }
-}
-
-class Event {
-  final String id;
-  final String day;
-  final String month;
-  final String title;
-  final String location;
-  final List<String> tags;
-  final List<String> tagColors;
-  final String? spots;
-
-  const Event({
-    required this.id,
-    required this.day,
-    required this.month,
-    required this.title,
-    required this.location,
-    required this.tags,
-    required this.tagColors,
-    this.spots,
-  });
-
-  factory Event.fromFirestore(String id, Map<String, dynamic> data) {
-    return Event(
-      id: id,
-      day: (data['day'] ?? '') as String,
-      month: (data['month'] ?? '') as String,
-      title: (data['title'] ?? '') as String,
-      location: (data['location'] ?? '') as String,
-      tags: List<String>.from(data['tags'] as List? ?? const []),
-      tagColors: List<String>.from(data['tagColors'] as List? ?? const []),
-      spots: data['spots'] as String?,
-    );
-  }
-}
-
-class Room {
-  final String id;
-  final String emoji;
-  final String name;
-  final String members;
-  final String preview;
-  final bool live;
-  final int avatarCount;
-
-  const Room({
-    required this.id,
-    required this.emoji,
-    required this.name,
-    required this.members,
-    required this.preview,
-    required this.live,
-    required this.avatarCount,
-  });
-
-  factory Room.fromFirestore(String id, Map<String, dynamic> data) {
-    return Room(
-      id: id,
-      emoji: (data['emoji'] ?? '🏛️') as String,
-      name: (data['name'] ?? '') as String,
-      members: (data['members'] ?? '') as String,
-      preview: (data['preview'] ?? '') as String,
-      live: (data['live'] ?? false) as bool,
-      avatarCount: (data['avatarCount'] ?? 0) as int,
     );
   }
 }

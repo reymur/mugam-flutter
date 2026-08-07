@@ -3522,20 +3522,6 @@ class FirestoreService {
         .distinct(_deepEquals);
   }
 
-  Future<List<Event>> fetchEvents() async {
-    final snap = await _db.collection('events').limit(10).get();
-    return snap.docs
-        .map((doc) => Event.fromFirestore(doc.id, doc.data()))
-        .toList();
-  }
-
-  Future<List<Room>> fetchRooms() async {
-    final snap = await _db.collection('rooms').limit(10).get();
-    return snap.docs
-        .map((doc) => Room.fromFirestore(doc.id, doc.data()))
-        .toList();
-  }
-
   Stream<List<PersonalEvent>> watchPersonalEvents(String uid) {
     return _db
         .collection('personalEvents')
@@ -4015,14 +4001,6 @@ final messageByIdProvider = FutureProvider.autoDispose
           .watch(firestoreServiceProvider)
           .fetchMessageById(chatId: args.chatId, messageId: args.messageId);
     });
-
-final eventsProvider = FutureProvider<List<Event>>(
-  (ref) => ref.watch(firestoreServiceProvider).fetchEvents(),
-);
-
-final roomsProvider = FutureProvider<List<Room>>(
-  (ref) => ref.watch(firestoreServiceProvider).fetchRooms(),
-);
 
 final personalEventsProvider =
     StreamProvider.family<List<PersonalEvent>, String>(

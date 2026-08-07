@@ -67,3 +67,88 @@ export function toAlgoliaUserRecord(uid: string, data: FirebaseFirestore.Documen
     mostRecentStatusCreatedAt: mostRecentStatusCreatedAt ? mostRecentStatusCreatedAt.toMillis() : null,
   };
 }
+
+// Поля, ради которых индекс вообще переписывается. Ровно те, что уходят в
+// запись выше, МИНУС lastSeen: он тоже индексируется, но меняется сам по
+// себе раз в 60 с у каждого, кто держит приложение открытым, и потому
+// решать по нему «запись изменилась» — значит переписывать индекс на
+// каждое сердцебиение.
+const INDEXED_FIELDS = [
+  "name",
+  "displayName",
+  "city",
+  "activityInstruments",
+  "instrument",
+  "rating",
+  "available",
+  "online",
+  "photoURL",
+  "emoji",
+  "mostRecentStatusExpiresAt",
+  "mostRecentStatusCreatedAt",
+] as const;
+
+// Шаг, с которым отметка присутствия доезжает до индекса. Решение
+// владельца 07.08 — 10 минут, и цена названа вслух: «сейчас в сети» В
+// ПОИСКЕ отстаёт на этот срок. Поэтому окно запроса «Onlayn indi»
+// (User.onlineQueryWindow, lib/firebase/models.dart) обязано быть ШИРЕ
+// шага — иначе фильтр перестанет находить кого бы то ни было, и починка
+// триггера тихо сломает слой над ним (N57). Связь держится тестом.
+//
+// Зелёной точки в приложении это не касается вовсе: она считается по
+// живому документу Firestore (User.isPresenceFresh), а не по индексу.
+export const ALGOLIA_LAST_SEEN_THROTTLE_MS = 10 * 60 * 1000;
+
+function toMillis(v: unknown): number | null {
+  if (v == null) return null;
+  const t = v as { toMillis?: () => number };
+  return typeof t.toMillis === "function" ? t.toMillis() : null;
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  }
+  const am = toMillis(a);
+  const bm = toMillis(b);
+  if (am !== null || bm !== null) return am === bm;
+  return (a ?? null) === (b ?? null);
+}
+
+// ПОЧЕМУ ЭТО ЗДЕСЬ, А НЕ ВНУТРИ ТРИГГЕРА (N43).
+//
+// `onUserWritten` слал запись в Algolia на КАЖДУЮ запись в users/{uid}, а
+// присутствие пишет туда `online` + `lastSeen` + `activeChatId` раз в 60 с
+// на каждого, у кого открыто приложение. То есть счёт за поиск платился за
+// сердцебиение, а не за изменение того, что ищут.
+//
+// Наивная починка «сравнить индексируемые поля» не сработала бы: `online`
+// и `lastSeen` — сами индексируемые, и присутствие пишет ровно их.
+//
+// СЧИТАТЬ РАЗНОСТЬ before/after ТОЖЕ НЕЛЬЗЯ, и это стоило одной правки:
+// триггер видит не «последнее, что дошло до индекса», а предыдущую запись
+// в документ. Между двумя соседними сердцебиениями всегда 60 с, то есть
+// «уехал больше чем на 10 минут» не наступило бы НИКОГДА, и отметка в
+// индексе застыла бы навсегда — дефект хуже исходного.
+//
+// Поэтому шаг считается по общей шкале: индекс переписывается на первом
+// сердцебиении каждого десятиминутного отрезка. Состояния это не требует,
+// сравниваются номера отрезков, а не разность.
+export function shouldReindexUser(
+  before: FirebaseFirestore.DocumentData | undefined,
+  after: FirebaseFirestore.DocumentData | undefined,
+): boolean {
+  // Появление и исчезновение документа — всегда: иначе новый человек не
+  // попадёт в поиск, а удалённый останется там навсегда.
+  if (!before || !after) return true;
+
+  for (const f of INDEXED_FIELDS) {
+    if (!sameValue(before[f], after[f])) return true;
+  }
+
+  const beforeSeen = toMillis(before.lastSeen);
+  const afterSeen = toMillis(after.lastSeen);
+  if (beforeSeen === null || afterSeen === null) return beforeSeen !== afterSeen;
+  const step = ALGOLIA_LAST_SEEN_THROTTLE_MS;
+  return Math.floor(beforeSeen / step) !== Math.floor(afterSeen / step);
+}
