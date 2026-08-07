@@ -4,6 +4,7 @@ import 'auth_gate_screen.dart';
 import '../features/agreements/screens/agreements_screen.dart';
 import '../features/auth/screens/login_screen.dart';
 import '../features/auth/screens/register_screen.dart';
+import '../features/auth/screens/password_reset_screen.dart';
 import '../features/board/screens/board_screen.dart';
 import '../features/calls/screens/active_call_screen.dart';
 import '../features/calls/screens/incoming_call_screen.dart';
@@ -61,6 +62,15 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/register',
       builder: (c, s) => const RegisterScreen(),
+    ),
+    // Сброс пароля — ВНЕ `AuthGate` и рядом с `/login`: человек не вошёл
+    // и войти не может, ему туда нельзя (работа 5а).
+    //
+    // Почта приходит через `extra`, а не через путь: адрес в адресной
+    // строке — это адрес в истории, в логах и в чужих руках.
+    GoRoute(
+      path: '/reset',
+      builder: (c, s) => PasswordResetScreen(initialEmail: s.extra as String?),
     ),
     GoRoute(
       path: '/chat/:chatId',
