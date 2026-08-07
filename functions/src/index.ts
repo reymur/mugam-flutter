@@ -248,6 +248,69 @@ function previewText(type: string, text: string, fileName?: string): string {
   }
 }
 
+// N76 — ПОЛЯ КАРТОЧКИ ПИШУТСЯ ОДНОЙ ФУНКЦИЕЙ, А НЕ ПЯТЬЮ МЕСТАМИ.
+//
+// Их пять: новое сообщение, две замены превью после удаления и два
+// «нечего показывать» рядом с ними. Пока полей было четыре, забыть одно
+// место стоило неверного превью — заметно. С добавлением автора цена
+// растёт: строка группы молча покажет чужое имя или ничьё, и увидят это
+// не в тесте, а на трубке.
+//
+// Довод тот же, что записан выше про `previewText`: две копии одного
+// правила расходятся в тот день, когда трогают любую из них.
+//
+// `lastMessageBy` — UID, не имя. Имя стоило бы чтения `users/{uid}` на
+// КАЖДОЕ сообщение, причём сейчас оно добывается ниже по коду и только
+// когда есть кому слать push; поднимать это чтение выше транзакции значит
+// платить за него всегда. UID уже лежит в самом сообщении.
+//
+// `lastMessageIsSystem` — отдельный флаг, а НЕ проверка «имя пустое».
+// У системных записей отправитель настоящий: группу создал `creatorUid`,
+// вышел — `uid` вышедшего, добавил/удалил/назначил админом — `adminUid`.
+// Без флага строка показала бы «Rafael Dagli: Rafael Dagli qrupdan çıxdı».
+type ChatPreviewFields = {
+  lastMessage: string;
+  lastMessageTime: unknown;
+  lastMessageSeq: number;
+  lastMessageDeletedFor: string[];
+  lastMessageBy: string | null;
+  lastMessageIsSystem: boolean;
+};
+
+function previewFieldsFrom(data: {
+  type?: string;
+  text?: string;
+  fileName?: string;
+  senderId?: string;
+  isSystem?: boolean;
+  timestamp?: unknown;
+  seq?: number;
+  deletedFor?: string[];
+}): ChatPreviewFields {
+  return {
+    lastMessage: previewText(data.type ?? "", data.text ?? "", data.fileName),
+    lastMessageTime: data.timestamp ?? null,
+    lastMessageSeq: data.seq ?? 0,
+    lastMessageDeletedFor: data.deletedFor ?? [],
+    lastMessageBy: data.senderId ?? null,
+    lastMessageIsSystem: data.isSystem === true,
+  };
+}
+
+// Показывать нечего: последнее видимое сообщение удалено, замены нет.
+// Автора здесь тоже надо СНЯТЬ, а не оставить прежнего — иначе карточка
+// станет пустой, но с именем, и «Ali:» повиснет над пустотой.
+function emptyPreviewFields(): ChatPreviewFields {
+  return {
+    lastMessage: "",
+    lastMessageTime: null,
+    lastMessageSeq: 0,
+    lastMessageDeletedFor: [],
+    lastMessageBy: null,
+    lastMessageIsSystem: false,
+  };
+}
+
 // Поиск замены для превью, когда удалено сообщение, которое карточка
 // чата сейчас показывает.
 //
@@ -332,23 +395,13 @@ async function recomputeChatPreviewAfterRemoval(
         chatId,
       );
       if (!replacement) {
-        tx.update(chatRef, {
-          lastMessage: "",
-          lastMessageTime: null,
-          lastMessageSeq: 0,
-          lastMessageDeletedFor: [],
-        });
+        tx.update(chatRef, emptyPreviewFields());
         return;
       }
-      const data = replacement.data();
-      tx.update(chatRef, {
-        lastMessage: previewText(data.type, data.text, data.fileName),
-        lastMessageTime: data.timestamp ?? null,
-        lastMessageSeq: data.seq ?? 0,
-        // Carries over whoever had already hidden the newly-promoted
-        // message for themselves, rather than resurrecting it for them.
-        lastMessageDeletedFor: data.deletedFor ?? [],
-      });
+      // Перенос `deletedFor` — намеренный: он несёт тех, кто уже скрыл
+      // продвигаемое сообщение у себя, вместо того чтобы воскрешать его
+      // для них. Автор продвигаемого сообщения переезжает вместе с ним.
+      tx.update(chatRef, previewFieldsFrom(replacement.data()));
     });
   } catch (e) {
     logger.warn("recomputeChatPreviewAfterRemoval failed", { chatId, e });
@@ -432,14 +485,7 @@ export const onNewMessage = onDocumentCreated(
         const storedSeq: number = fresh.data()?.lastMessageSeq ?? 0;
         const thisSeq: number = message.seq ?? 0;
         if (thisSeq >= storedSeq) {
-          update.lastMessage = previewText(
-            message.type,
-            message.text,
-            message.fileName,
-          );
-          update.lastMessageTime = message.timestamp ?? null;
-          update.lastMessageSeq = thisSeq;
-          update.lastMessageDeletedFor = [];
+          Object.assign(update, previewFieldsFrom(message));
         }
         tx.update(chatRef, update);
       });
@@ -667,21 +713,10 @@ export const refreshChatPreview = onCall(
     if (trueSeq === storedSeq) return { updated: false };
 
     if (!replacement) {
-      await chatRef.update({
-        lastMessage: "",
-        lastMessageTime: null,
-        lastMessageSeq: 0,
-        lastMessageDeletedFor: [],
-      });
+      await chatRef.update(emptyPreviewFields());
       return { updated: true };
     }
-    const data = replacement.data();
-    await chatRef.update({
-      lastMessage: previewText(data.type, data.text, data.fileName),
-      lastMessageTime: data.timestamp ?? null,
-      lastMessageSeq: trueSeq,
-      lastMessageDeletedFor: data.deletedFor ?? [],
-    });
+    await chatRef.update(previewFieldsFrom(replacement.data()));
     return { updated: true };
   },
 );

@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
+
+import '../../../core/chat/chat_preview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -738,11 +740,36 @@ class _ChatListItem extends ConsumerWidget {
     // the clear having silently failed. A message arriving after the clear
     // is newer than the cutoff and brings the card straight back, with no
     // extra bookkeeping.
-    final clearedAt = chat.clearedBy[currentUid];
-    final isClearedForViewer =
-        clearedAt != null &&
-        (chat.lastMessageTime == null ||
-            !chat.lastMessageTime!.isAfter(clearedAt));
+    // N76 — кто написал последнее сообщение в ГРУППЕ.
+    //
+    // Имя берётся из `allUsersProvider` — он уже живой, его смотрит
+    // вкладка, с которой приложение открывается, так что новых подписок
+    // это не заводит. Отвергнут `currentUserProvider(uid)`: семейство без
+    // `autoDispose`, слушатель на каждого человека, и он не закрывается
+    // при уходе с экрана.
+    //
+    // Смотрим ТОЛЬКО когда имя правда нужно: иначе каждая строка личного
+    // чата начала бы перестраиваться от любого изменения в любом профиле.
+    final lastBy = chat.lastMessageBy;
+    String? senderName;
+    if (chat.isGroup &&
+        !chat.lastMessageIsSystem &&
+        lastBy != null &&
+        lastBy.isNotEmpty &&
+        lastBy != currentUid) {
+      final users = ref.watch(allUsersProvider).asData?.value ?? const <User>[];
+      for (final u in users) {
+        if (u.id == lastBy) {
+          senderName = u.name;
+          break;
+        }
+      }
+    }
+    final preview = chatPreview(
+      chat: chat,
+      currentUid: currentUid,
+      senderName: senderName,
+    );
     final hasActiveStatus = !chat.isGroup && other?.hasActiveStatus == true;
     final viewerUser = hasActiveStatus
         ? ref.watch(currentUserProvider(currentUid)).value
@@ -858,7 +885,7 @@ class _ChatListItem extends ConsumerWidget {
                             ),
                           ),
                           Text(
-                            isClearedForViewer
+                            preview.cleared
                                 ? ''
                                 : _formatTime(chat.lastMessageTime),
                             style: const TextStyle(fontSize: 13.2, color: kMuted),
@@ -869,24 +896,29 @@ class _ChatListItem extends ConsumerWidget {
                       Row(
                         children: [
                           Expanded(
-                            child: Text(
-                              isClearedForViewer
-                                  ? ''
-                                  : chat.lastMessageDeletedFor.contains(
-                                          currentUid,
-                                        )
-                                      ? '🚫 Bu mesajı sildiniz'
-                                      : chat.lastMessage,
+                            // Что здесь стоит — решает `chatPreview`
+                            // целиком: и префикс, и текст, и наклон.
+                            // Ветвлений тут больше нет намеренно — правило
+                            // внутри build() не проверить возвратом.
+                            child: Text.rich(
+                              TextSpan(
+                                children: [
+                                  if (preview.prefix != null)
+                                    TextSpan(
+                                      text: '${preview.prefix}: ',
+                                      // Приглушённее текста: глаз отделяет
+                                      // имя от сообщения сам, без разделителей.
+                                      style: const TextStyle(color: kTextDim),
+                                    ),
+                                  TextSpan(text: preview.text),
+                                ],
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 15.6,
                                 color: kMuted,
-                                fontStyle:
-                                    !isClearedForViewer &&
-                                        chat.lastMessageDeletedFor.contains(
-                                          currentUid,
-                                        )
+                                fontStyle: preview.italic
                                     ? FontStyle.italic
                                     : FontStyle.normal,
                               ),

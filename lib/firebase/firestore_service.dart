@@ -858,7 +858,7 @@ class FirestoreService {
     await _db.collection('chats').doc(detId).set({
       'isGroup': false,
       'members': [myUid, otherUid],
-      'preview': '',
+      // `preview` снято вместе с N76 — его не читал никто.
       'lastMessageAt': now,
       'lastMessageTime': now,
       'createdAt': now,
@@ -901,7 +901,10 @@ class FirestoreService {
       'members': members,
       'admins': [creatorUid],
       'createdBy': creatorUid,
-      'preview': '$creatorName qrupu yaratdı',
+      // Поле `preview` здесь было и не читалось НИКЕМ (обход по `lib/` и
+      // `functions/` 08.08 — ноль чтений): карточку рисует `lastMessage`,
+      // который пишет сервер триггером на системном сообщении ниже.
+      // Снято вместе с N76, чтобы не выглядело источником превью.
       'lastMessageAt': now,
       'lastMessageTime': now,
       'createdAt': now,

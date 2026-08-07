@@ -351,6 +351,25 @@ class Chat {
   // itself changes to a different message (see firestore_service.dart's
   // send*/​_refreshLastMessagePreview).
   final List<String> lastMessageDeletedFor;
+
+  /// Кто написал сообщение, которое сейчас показывает карточка. UID, не
+  /// имя (N76).
+  ///
+  /// **Имя не хранится намеренно.** Оно стоило бы чтения `users/{uid}` на
+  /// каждое сообщение: сервер добывает его ниже по коду и только когда
+  /// есть кому слать push, а поднять это чтение выше значит платить за
+  /// него всегда. UID уже лежит в самом сообщении и достаётся даром.
+  final String? lastMessageBy;
+
+  /// Последнее сообщение — системная запись («создал группу», «вышел»).
+  ///
+  /// **Отдельный флаг, а не проверка «`lastMessageBy` пустой».** У
+  /// системных записей отправитель НАСТОЯЩИЙ: группу создал `creatorUid`,
+  /// вышел — `uid` вышедшего, добавил и назначил админом — `adminUid`.
+  /// Проверка на пустоту не сработала бы, и строка показала бы
+  /// «Rafael Dagli: Rafael Dagli qrupdan çıxdı».
+  final bool lastMessageIsSystem;
+
   final int unreadCount;
   final List<String> members;
   final bool isGroup;
@@ -446,6 +465,8 @@ class Chat {
     required this.lastMessage,
     this.lastMessageTime,
     this.lastMessageDeletedFor = const [],
+    this.lastMessageBy,
+    this.lastMessageIsSystem = false,
     required this.unreadCount,
     required this.members,
     required this.isGroup,
@@ -483,6 +504,8 @@ class Chat {
       lastMessageDeletedFor: List<String>.from(
         data['lastMessageDeletedFor'] as List? ?? const [],
       ),
+      lastMessageBy: data['lastMessageBy'] as String?,
+      lastMessageIsSystem: data['lastMessageIsSystem'] == true,
       unreadCount: () {
         final raw = data['unreadCount'];
         if (raw is int) return raw;
