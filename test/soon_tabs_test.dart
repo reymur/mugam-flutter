@@ -139,4 +139,85 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  group('счётчик непрочитанного виден — то самое наблюдаемое поведение (N57)', () {
+    // Отсутствие этой проверки и породило находку: бейдж висел на номере
+    // вкладки, а число в панель не передавалось вовсе, поэтому подмену
+    // вкладки было нечем заметить. Проверяется не «переменная передана»,
+    // а то, что человек ВИДИТ: есть число при непрочитанном и нет ничего
+    // при нуле.
+    Future<void> pumpBar(WidgetTester tester, int unread) async {
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          bottomNavigationBar: CustomTabBar(
+            currentIndex: 0,
+            onTap: (_) {},
+            unreadCount: unread,
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('при ненулевом числе бейдж есть', (tester) async {
+      await pumpBar(tester, 3);
+      expect(find.text('3'), findsOneWidget);
+    });
+
+    testWidgets('при нуле бейджа нет вовсе', (tester) async {
+      await pumpBar(tester, 0);
+      expect(find.text('0'), findsNothing);
+    });
+
+    test('оболочка ДЕЙСТВИТЕЛЬНО передаёт число в панель', () {
+      // Найдено проверкой возвратом в день написания: убрал передачу из
+      // `MainShell` — ни один тест не упал, потому что все они дёргают
+      // панель напрямую. Это ровно N57 на шаг выше: панель умеет
+      // показывать бейдж, а получить число ей неоткуда, и заметить это
+      // нечем.
+      //
+      // Проверка текстовая, поэтому смотрит на КОД без комментариев
+      // (I12): разбор дефекта рядом цитирует то, что проверяется.
+      final shell = File('lib/navigation/main_shell.dart')
+          .readAsStringSync()
+          .split('\n')
+          .where((l) => !l.trimLeft().startsWith('//') && !l.trimLeft().startsWith('///'))
+          .join('\n');
+
+      expect(
+        RegExp(r'unreadCount:\s*\w+').hasMatch(shell),
+        isTrue,
+        reason: 'MainShell перестал передавать счётчик в панель — бейдж '
+            'снова не показывается никогда (N57)',
+      );
+      expect(
+        shell.contains('chatsProvider'),
+        isTrue,
+        reason: 'число берётся не из потока чатов — значит либо считается '
+            'заново, либо пришло из воздуха',
+      );
+      expect(
+        shell.contains('unreadCount > 0'),
+        isTrue,
+        reason: 'считаются не ЧАТЫ с непрочитанным: «29 сообщений» вместо '
+            '«3 разговора» — разные вещи, решение владельца 07.08',
+      );
+    });
+
+    testWidgets('бейдж стоит на вкладке MESAJ, а не на первой попавшейся',
+        (tester) async {
+      await pumpBar(tester, 5);
+      final badge = find.text('5');
+      expect(badge, findsOneWidget);
+      // Ищем подпись вкладки, внутри которой нарисован бейдж: имя, а не
+      // номер (N57). Перестановка вкладок этот тест не сломает — он
+      // спрашивает про «MESAJ», а не про шестую позицию.
+      final tab = kAppTabs.firstWhere((t) => t.id == kUnreadBadgeTabId);
+      final column = find.ancestor(
+        of: badge,
+        matching: find.ancestor(of: find.text(tab.label), matching: find.byType(Column)),
+      );
+      expect(column, findsWidgets);
+    });
+  });
 }
