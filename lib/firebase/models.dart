@@ -1215,6 +1215,15 @@ class PersonalEvent {
   final dynamic cancelledAt;
   final dynamic createdAt;
 
+  /// Кто и ЧТО сделал последним. Пишут все четыре хода отмены, правка и
+  /// выход из участников; сервер берёт отсюда автора для текста
+  /// уведомления, а карточка — след двух исходов, которые в остальных
+  /// полях не отличаются ничем (N53): отзыв запроса и отказ в отмене
+  /// очищают `cancelRequestedBy`/`cancelRequestedAt` и оставляют
+  /// `status: 'agreed'`, то есть по документу неразличимы.
+  final String? lastActionBy;
+  final String? lastActionType;
+
   const PersonalEvent({
     required this.id,
     required this.ownerUid,
@@ -1233,6 +1242,8 @@ class PersonalEvent {
     this.cancelConfirmedBy,
     this.cancelledAt,
     this.createdAt,
+    this.lastActionBy,
+    this.lastActionType,
   });
 
   factory PersonalEvent.fromFirestore(String id, Map<String, dynamic> data) {
@@ -1254,6 +1265,8 @@ class PersonalEvent {
       cancelConfirmedBy: data['cancelConfirmedBy'] as String?,
       cancelledAt: data['cancelledAt'],
       createdAt: data['createdAt'],
+      lastActionBy: data['lastActionBy'] as String?,
+      lastActionType: data['lastActionType'] as String?,
     );
   }
 }

@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/agreements/agreement_cancel.dart';
+import '../../../core/agreements/agreement_card.dart';
 import '../../../core/agreements/event_edit.dart';
 import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
@@ -616,12 +617,15 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
 
     String roleText;
     if (cancelled) {
-      // Названа сторона, ПРЕДЛОЖИВШАЯ отмену: отменяют по согласию двое, и
-      // «кто отменил» вопрос без единственного ответа. Тексты остались
-      // прежними — их пересмотр идёт Этапом II вместе со всей карточкой.
-      roleText = e.cancelRequestedBy == _uid
-          ? 'Siz imtina etdiniz'
-          : '${e.partnerName ?? ''} imtina etdi';
+      // «Отменён по согласию», а не «{кто-то} отказался» (N54). Прежний
+      // текст был неверен дважды: отказа как исхода не существует
+      // (`declinesCancelRequest` оставляет договор в силе), а имя бралось
+      // из `partnerName` — на экране получателя это его собственное имя
+      // (N53). Комментарий, стоявший здесь, честно называл первую половину
+      // («кто отменил» — вопрос без единственного ответа) и откладывал её
+      // до Этапа II; второй половины — что само слово ложное — он не
+      // увидел. Комментарий защищает строку, а не класс.
+      roleText = 'Razılıqla ləğv edildi';
     } else {
       roleText = e.ownerUid == _uid ? 'Siz göndərdiniz' : 'Sizə göndərildi';
     }
@@ -1870,6 +1874,10 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
     PersonalEvent event,
     String currentUid,
     FirestoreService svc,
+    // Имя называет вызывающий: правило имён не знает, а взять их из
+    // документа нельзя — там лежит одно, и на экране получателя оно
+    // превращается в его собственное (N53).
+    String Function(String? uid) nameOf,
   ) {
     // Само правило — в чистой функции (core/agreements/agreement_cancel.dart),
     // здесь только применение. Так же, как у плашки конфликта: правило
@@ -1880,7 +1888,12 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
       cancelRequestedBy: event.cancelRequestedBy,
       currentUid: currentUid,
     );
-    final partner = event.partnerName ?? 'Qarşı tərəf';
+    // Кто ИМЕННО просит отмену — по `cancelRequestedBy`, а не «вторая
+    // сторона» из документа. Прежде здесь стоял `partnerName`, и на
+    // экране получателя строка называла его самого: «Teymur Orucov
+    // müqavilənin ləğvini təklif edir» — Теймуру (N53, снято 07.08 на
+    // двух устройствах одновременно).
+    final requester = nameOf(event.cancelRequestedBy);
 
     if (stage == CancelStage.cancelled) return const SizedBox.shrink();
 
@@ -1941,7 +1954,7 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
 
     // Просит второй — у меня два разных ответа, и они не одно и то же.
     return _cancelBox(
-      note: '$partner müqavilənin ləğvini təklif edir',
+      note: '$requester müqavilənin ləğvini təklif edir',
       noteColor: kRed,
       children: [
         _cancelButton(
@@ -2111,6 +2124,24 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
     super.dispose();
   }
 
+  /// Ярлык стороны на отменённом договоре: кто предложил, кто согласился.
+  ///
+  /// Прежде у обоих стояло «İmtina etdi» — то есть отказавшимся называли и
+  /// того, кто СОГЛАСИЛСЯ (N54). Отказ и согласие противоположны, одним
+  /// словом их не назвать.
+  String _partyLabel(
+    AgreementCardState card, {
+    required String? uid,
+    required String base,
+  }) {
+    if (card.outcome != AgreementOutcome.cancelledByAgreement || uid == null) {
+      return base;
+    }
+    if (uid == card.proposedByUid) return 'Ləğvi təklif etdi';
+    if (uid == card.confirmedByUid) return 'Ləğvə razılaşdı';
+    return base;
+  }
+
   User? _findUser(List<User> allUsers, String uid) {
     try {
       return allUsers.firstWhere((m) => m.id == uid);
@@ -2149,11 +2180,33 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
     final isCancelled = event.status == 'cancelled';
     final isOwner = event.ownerUid == currentUid;
 
+    // Что карточка говорит о судьбе договора — одно правило на все исходы
+    // (`core/agreements/agreement_card.dart`, N53/N54). Здесь только
+    // подстановка имён: правило имён не знает и знать не должно.
+    final card = agreementCardState(
+      status: event.status,
+      cancelRequestedBy: event.cancelRequestedBy,
+      cancelConfirmedBy: event.cancelConfirmedBy,
+      lastActionBy: event.lastActionBy,
+      lastActionType: event.lastActionType,
+    );
+    // Имя ЛЮБОЙ стороны берётся по uid из списка пользователей, а не из
+    // `partnerName` документа: то поле означает «вторая сторона глазами
+    // владельца», и на экране получателя превращалось в его собственное
+    // имя. Список на экране уже есть — рядом по нему открываются профили.
+    String nameOf(String? uid) {
+      if (uid == null) return 'Naməlum';
+      if (uid == currentUid) return 'Siz';
+      final u = _findUser(allUsers, uid);
+      if (u != null && u.name.isNotEmpty) return u.name;
+      // Запасной путь ровно для одного случая: человека нет в списке
+      // (удалён, ещё не загрузился). Имя владельца в документе не лежит
+      // вовсе, поэтому здесь честнее «Naməlum», чем чужое имя.
+      return uid == event.partnerUid ? (event.partnerName ?? 'Naməlum') : 'Naməlum';
+    }
+
     Widget statusBadge;
     if (isCancelled) {
-      final who = event.cancelRequestedBy == currentUid
-          ? 'Siz imtina etdiniz'
-          : '${event.partnerName ?? ''} imtina etdi';
       statusBadge = Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
@@ -2161,8 +2214,13 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: kRed.withAlpha(100)),
         ),
-        child: Text('✖ $who',
-            style: const TextStyle(color: kRed, fontWeight: FontWeight.w600)),
+        // «Müqavilə ləğv edildi», а не «{кто-то} imtina etdi»: отказа как
+        // ИСХОДА не существует вовсе — `declinesCancelRequest` очищает
+        // поля запроса и оставляет договор в силе. Слово «imtina»
+        // переехало сюда из чатового раунда, где отказ действительно
+        // исход, и здесь называло согласие отказом (N54).
+        child: const Text('✖ Müqavilə ləğv edildi',
+            style: TextStyle(color: kRed, fontWeight: FontWeight.w600)),
       );
     } else {
       statusBadge = Container(
@@ -2236,7 +2294,45 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
               const SizedBox(height: 8),
               Center(
                 child: Text(
-                  _fmtCreatedAt(event.createdAt),
+                  // Под красным бейджем — когда ОТМЕНЁН, под зелёным —
+                  // когда заключён. Прежде под обоими стояла дата
+                  // создания, и под красным она читалась как время
+                  // отмены (N53).
+                  card.stamp == AgreementStamp.cancelled
+                      ? '${_fmtCreatedAt(event.cancelledAt)} — ləğv edildi'
+                      : '${_fmtCreatedAt(event.createdAt)} — bağlandı',
+                  style: const TextStyle(fontSize: 12, color: kMuted),
+                ),
+              ),
+            ],
+            // Отмена по согласию — поступок ДВОИХ, и названы оба. Одного
+            // имени у этого исхода не бывает: один предложил, второй
+            // согласился, и без второго строка врёт умолчанием.
+            if (card.outcome == AgreementOutcome.cancelledByAgreement) ...[
+              const SizedBox(height: 6),
+              Center(
+                child: Text(
+                  '${nameOf(card.proposedByUid)} təklif etdi · '
+                  '${nameOf(card.confirmedByUid)} razılaşdı',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12, color: kMuted),
+                ),
+              ),
+            ],
+            // СЛЕД ЖИВЫХ ИСХОДОВ (N53, пункт 4). Отзыв и отказ не меняют
+            // ничего, кроме имени поступка: договор остаётся в силе, поля
+            // запроса очищены. До 07.08 экран об этом молчал вовсе, а push
+            // на iOS не работает (N25-push) — то есть человек не узнавал
+            // исход НИКАК. Строка нейтральная, не красная: договор жив.
+            if (card.outcome == AgreementOutcome.requestWithdrawn ||
+                card.outcome == AgreementOutcome.requestDeclined) ...[
+              const SizedBox(height: 10),
+              Center(
+                child: Text(
+                  card.outcome == AgreementOutcome.requestWithdrawn
+                      ? '${nameOf(card.actedByUid)} ləğv təklifini geri götürdü'
+                      : '${nameOf(card.actedByUid)} ləğvə razı olmadı',
+                  textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 12, color: kMuted),
                 ),
               ),
@@ -2290,20 +2386,22 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
               ),
               child: Column(
                 children: [
+                  // Имя каждой стороны — по её uid. Прежде вторая строка
+                  // брала `partnerName`, и на экране получателя первая
+                  // строка называла его самого отправителем договора
+                  // (N53): имени владельца в документе нет вовсе.
                   _PartyRow(
-                    name: event.ownerUid == currentUid ? 'Siz' : (event.partnerName ?? 'Naməlum'),
-                    label: isCancelled && event.cancelRequestedBy == event.ownerUid
-                        ? 'İmtina etdi'
-                        : 'Göndərən (Təklif edən)',
+                    name: nameOf(event.ownerUid),
+                    label: _partyLabel(card,
+                        uid: event.ownerUid, base: 'Göndərən (Təklif edən)'),
                     highlighted: event.ownerUid == currentUid,
                     onTap: () => _openUserProfile(context, allUsers, event.ownerUid),
                   ),
                   const Divider(color: kBorder, height: 1),
                   _PartyRow(
-                    name: event.ownerUid != currentUid ? 'Siz' : (event.partnerName ?? 'Naməlum'),
-                    label: isCancelled && event.cancelRequestedBy == event.partnerUid
-                        ? 'İmtina etdi'
-                        : 'Qəbul edən',
+                    name: nameOf(event.partnerUid),
+                    label: _partyLabel(card,
+                        uid: event.partnerUid, base: 'Qəbul edən'),
                     highlighted: event.ownerUid != currentUid,
                     onTap: () => _openUserProfile(context, allUsers, event.partnerUid),
                   ),
@@ -2333,7 +2431,7 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
             // Отмена по согласию — единственная дорога к ней во всём
             // приложении. Внизу карточки намеренно: это последнее, что
             // человек должен встретить, прочитав договор целиком.
-            _cancelSection(event, currentUid, firestoreService),
+            _cancelSection(event, currentUid, firestoreService, nameOf),
             const SizedBox(height: 40),
           ],
         ),
@@ -2559,7 +2657,10 @@ class _PersonalEventDetailScreenState
                   border: Border.all(color: kBorder),
                 ),
                 child: _PartyRow(
-                  name: _findUser(allUsers, event.ownerUid)?.name ?? event.partnerName ?? 'Naməlum',
+                  // Запасным именем владельца НЕ может быть `partnerName`:
+                  // это имя второй стороны, и на её же экране оно назвало
+                  // бы её саму хозяином чужого мероприятия (N53).
+                  name: _findUser(allUsers, event.ownerUid)?.name ?? 'Naməlum',
                   label: 'Təşkilatçı',
                   highlighted: false,
                   onTap: () => _openUserProfile(context, allUsers, event.ownerUid),
