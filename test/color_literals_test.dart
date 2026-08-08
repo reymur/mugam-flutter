@@ -51,7 +51,6 @@ const _known = <String, int>{
   'features/profile/screens/profile_screen.dart|Color(0xFFB0A080)': 1,
   'features/status/screens/create_status_screen.dart|Color(0xFF2196F3)': 1,
   'features/user/screens/user_profile_screen.dart|Color(0xFF15100A)': 1,
-  'shared/widgets/custom_tab_bar.dart|Color(0xF70C0A06)': 1,
   'shared/widgets/event_conflict_dialog.dart|Color(0xCC000000)': 1,
   'shared/widgets/topbar.dart|Color(0xFF8B5A00)': 1,
   'shared/widgets/wheel_date_time_picker.dart|Color(0xFF161210)': 1,

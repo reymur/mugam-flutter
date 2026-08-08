@@ -21,8 +21,9 @@ class CustomTabBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: const BoxDecoration(
-        color: Color(0xF70C0A06),
+      decoration: BoxDecoration(
+        // Это kBg с прозрачностью 0xF7 — не новый цвет (N83).
+        color: kBg.withAlpha(0xF7),
         border: Border(top: BorderSide(color: kBorder)),
       ),
       child: SafeArea(
