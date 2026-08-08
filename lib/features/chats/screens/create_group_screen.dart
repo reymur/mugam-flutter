@@ -371,7 +371,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                                 '${_filters.activeCount}',
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
-                                  color: Colors.white,
+                                  color: kOnRed,
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold,
                                 ),

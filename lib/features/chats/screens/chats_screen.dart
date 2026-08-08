@@ -480,7 +480,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                                           '${_filters.activeCount}',
                                           textAlign: TextAlign.center,
                                           style: const TextStyle(
-                                            color: Colors.white,
+                                            color: kOnRed,
                                             fontSize: 10,
                                             fontWeight: FontWeight.bold,
                                           ),
@@ -937,7 +937,7 @@ class _ChatListItem extends ConsumerWidget {
                                 chat.unreadCount.toString(),
                                 style: const TextStyle(
                                   fontSize: 11,
-                                  color: Colors.white,
+                                  color: kOnRed,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),

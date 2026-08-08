@@ -289,7 +289,7 @@ class _SearchScreenState extends State<SearchScreen> with WidgetsBindingObserver
                                   '$activeFilterCount',
                                   textAlign: TextAlign.center,
                                   style: const TextStyle(
-                                    color: Colors.white,
+                                    color: kOnRed,
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,
                                   ),
