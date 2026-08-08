@@ -33,8 +33,6 @@ import 'package:flutter_test/flutter_test.dart';
 /// разрешение (урок из `guards_are_guards_test`).
 const _known = <String, int>{
   'features/agreements/screens/agreements_screen.dart|Color(0xFFFF3B30)': 1,
-  'features/auth/screens/login_screen.dart|Color(0xFF2A1E08)': 1,
-  'features/auth/screens/register_screen.dart|Color(0xFF2A1E08)': 1,
   'features/chat/screens/about_contact_screen.dart|Color(0xFF4CAF50)': 1,
   'features/chat/screens/chat_screen.dart|Color(0xFF2196F3)': 2,
   'features/chat/screens/chat_screen.dart|Color(0xFF43A047)': 1,
@@ -47,13 +45,9 @@ const _known = <String, int>{
   'features/chat/screens/location_message_widgets.dart|Color(0xFF33CCFF)': 1,
   'features/chat/screens/location_message_widgets.dart|Color(0xFFEA4335)': 2,
   'features/profile/screens/profile_screen.dart|Color(0x99000000)': 1,
-  'features/profile/screens/profile_screen.dart|Color(0xFF15100A)': 3,
-  'features/profile/screens/profile_screen.dart|Color(0xFFB0A080)': 1,
   'features/status/screens/create_status_screen.dart|Color(0xFF2196F3)': 1,
-  'features/user/screens/user_profile_screen.dart|Color(0xFF15100A)': 1,
   'shared/widgets/event_conflict_dialog.dart|Color(0xCC000000)': 1,
   'shared/widgets/topbar.dart|Color(0xFF8B5A00)': 1,
-  'shared/widgets/wheel_date_time_picker.dart|Color(0xFF161210)': 1,
 };
 
 Map<String, int> _found() {

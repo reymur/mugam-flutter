@@ -302,7 +302,7 @@ class _Logo extends StatelessWidget {
           width: 80,
           height: 80,
           decoration: BoxDecoration(
-            color: const Color(0xFF2A1E08),
+            color: kLogoTile,
             borderRadius: BorderRadius.circular(24),
             border: Border.all(color: kGold, width: 2),
           ),

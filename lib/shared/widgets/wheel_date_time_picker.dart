@@ -79,7 +79,7 @@ class _WheelDateTimePickerState extends State<WheelDateTimePicker> {
     return Container(
       height: _itemExtent * 3,
       decoration: BoxDecoration(
-        color: const Color(0xFF161210),
+        color: kCard,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white.withAlpha(15)),
       ),

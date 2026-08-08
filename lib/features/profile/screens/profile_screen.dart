@@ -193,7 +193,7 @@ class _ProfileHeader extends ConsumerWidget {
         ref.watch(hasUnreadFriendRequestsProvider(user.id));
     return Container(
       clipBehavior: Clip.hardEdge,
-      decoration: const BoxDecoration(color: Color(0xFF15100A)),
+      decoration: const BoxDecoration(color: kHeroBg),
       child: Stack(
         children: [
           Positioned(
@@ -258,8 +258,11 @@ class _ProfileHeader extends ConsumerWidget {
                                 decoration: BoxDecoration(
                                   color: kGold,
                                   shape: BoxShape.circle,
+                                  // Повторяет фон шапки: кружок
+                                  // должен казаться вырезанным из
+                                  // подложки (I22).
                                   border: Border.all(
-                                    color: const Color(0xFF15100A),
+                                    color: kHeroBg,
                                     width: 2,
                                   ),
                                 ),
@@ -321,7 +324,7 @@ class _ProfileHeader extends ConsumerWidget {
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 13,
-                      color: Color(0xFFB0A080),
+                      color: kTextSecondary,
                       height: 20 / 13,
                     ),
                   ),
@@ -447,7 +450,8 @@ class _HeaderIconButton extends StatelessWidget {
               decoration: BoxDecoration(
                 color: kRed,
                 shape: BoxShape.circle,
-                border: Border.all(color: const Color(0xFF15100A), width: 1.5),
+                // Повторяет фон шапки — вырез, а не рамка (I22).
+                border: Border.all(color: kHeroBg, width: 1.5),
               ),
             ),
           ),

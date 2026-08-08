@@ -11,7 +11,6 @@ import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../status/screens/status_viewer_screen.dart';
 
-const Color _kHeroBg = Color(0xFF15100A);
 
 class UserProfileScreen extends ConsumerWidget {
   final User user;
@@ -117,7 +116,7 @@ class UserProfileScreen extends ConsumerWidget {
         );
 
     return Container(
-      color: _kHeroBg,
+      color: kHeroBg,
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -181,7 +180,7 @@ class UserProfileScreen extends ConsumerWidget {
                     decoration: BoxDecoration(
                       color: liveUser.isActuallyOnline ? kGreen : kMuted,
                       shape: BoxShape.circle,
-                      border: Border.all(color: _kHeroBg, width: 3),
+                      border: Border.all(color: kHeroBg, width: 3),
                     ),
                   ),
                 ),
