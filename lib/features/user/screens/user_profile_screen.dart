@@ -3,12 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../../../core/chat/direct_chat_lookup.dart';
 import '../../../core/models/activity_type.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
+import '../../job_offer/job_offer_entry.dart';
 import '../../status/screens/status_viewer_screen.dart';
 
 
@@ -330,6 +332,38 @@ class UserProfileScreen extends ConsumerWidget {
                   child: _MessageButton(currentUid: currentUid, otherUid: user.id),
                 ),
               ],
+            ),
+            const SizedBox(height: 12),
+            // ВХОД В ПРЕДЛОЖЕНИЕ РАБОТЫ ИЗ КАРТОЧКИ ЧЕЛОВЕКА (пункт 6,
+            // `docs/plan.md`). Карточка знает ровно одно — кого человек
+            // видит перед собой, — и передаёт только это. Ни чата, ни
+            // записи здесь нет и быть не должно: всё остальное принадлежит
+            // общей точке (`features/job_offer/job_offer_entry.dart`).
+            //
+            // Кнопка стоит ОТДЕЛЬНОЙ строкой, а не третьей в ряду с
+            // «Razılaşma» и «Mesaj»: три кнопки в ряд на узкой трубке
+            // оставляют по трети ширины, и азербайджанская подпись в них
+            // не помещается целиком. Ряд говорит «одно из трёх», а это
+            // действие другого веса — оно начинает переговор.
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () =>
+                    proposeJobOffer(context, ref, toUid: user.id),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: kGold),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(28),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                child: const Text(
+                  '📅 İş təklif et',
+                  style: TextStyle(color: kGold, fontWeight: FontWeight.bold),
+                ),
+              ),
             ),
             const SizedBox(height: 12),
             SizedBox(
@@ -824,16 +858,16 @@ class _MessageButtonState extends ConsumerState<_MessageButton> {
       // own broader reconciliation query only runs as a fallback, for a
       // genuinely first-ever message to this person or before the list has
       // loaded yet.
+      //
+      // Сам ОТБОР переехал в `core/chat/direct_chat_lookup.dart` и здесь
+      // остался вызов: с пунктом 6 у правила появился второй читатель —
+      // общая точка вызова предложения работы, которой чат нужен, чтобы
+      // было куда писать. Два места, отбирающие чат по-своему, разошлись
+      // бы молча, и предложение уехало бы в один чат, а переписка про
+      // него пошла бы в другом (I23).
       final cachedChats = ref.read(chatsProvider(widget.currentUid)).asData?.value;
-      Chat? cachedMatch;
-      if (cachedChats != null) {
-        for (final c in cachedChats) {
-          if (!c.isGroup && c.members.contains(widget.otherUid)) {
-            cachedMatch = c;
-            break;
-          }
-        }
-      }
+      final cachedMatch =
+          cachedChats == null ? null : directChatIn(cachedChats, widget.otherUid);
       final chatId = cachedMatch?.id ??
           await ref.read(firestoreServiceProvider).getOrCreateDirectChat(
                 myUid: widget.currentUid,
