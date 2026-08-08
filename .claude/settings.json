@@ -15,6 +15,12 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-swallowed-exit.sh\"",
             "timeout": 10,
             "statusMessage": "Проверка не решает судьбу коммита через конвейер"
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/verify-bundle-before-install.sh\"",
+            "timeout": 30,
+            "statusMessage": "Подпись бундла сходится с содержимым (N89)"
           }
         ]
       }
