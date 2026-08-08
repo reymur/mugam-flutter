@@ -3106,13 +3106,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // isMe==false (incoming, dark kBg3 bubble — already reads fine there);
   // for isMe==true (outgoing, gold bubble) kMuted is too light against
   // gold, so this reuses _timeCheckmarkRow's own established dark-on-gold
-  // metadata color (Color(0xFF1A0E00).withAlpha(150)) instead of
+  // metadata color (kOnGold.withAlpha(150)) instead of
   // inventing a new one. >= 5 gets a distinct "many times" icon/label,
   // matching WhatsApp's own double-arrow treatment for a long forward
   // chain.
   Widget _forwardedLabel(int forwardCount, bool isMe) {
     final manyTimes = forwardCount >= 5;
-    final color = isMe ? const Color(0xFF1A0E00).withAlpha(150) : kMuted;
+    final color = isMe ? kOnGold.withAlpha(150) : kMuted;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4, right: 10),
       child: Row(
@@ -3209,7 +3209,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       case MessageDeliveryStatus.queued:
       case MessageDeliveryStatus.uploading:
         checkIconData = Icons.access_time;
-        checkColor = const Color(0xFF1A0E00);
+        checkColor = kOnGold;
         overlayCheckColor = Colors.white70;
       case MessageDeliveryStatus.failed:
         checkIconData = Icons.error_outline;
@@ -3221,12 +3221,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         // checkmark at all, matching the previous fallback exactly.
         if (isMe && otherUids.isNotEmpty) {
           checkIconData = Icons.done;
-          checkColor = const Color(0xFF1A0E00).withAlpha(128);
+          checkColor = kOnGold.withAlpha(128);
           overlayCheckColor = Colors.white70;
         }
       case MessageDeliveryStatus.delivered:
         checkIconData = Icons.done_all;
-        checkColor = const Color(0xFF1A0E00).withAlpha(128);
+        checkColor = kOnGold.withAlpha(128);
         overlayCheckColor = Colors.white70;
       case MessageDeliveryStatus.read:
         checkIconData = Icons.done_all;
@@ -3382,7 +3382,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                               children: [
                                 Container(
                                   width: 4,
-                                  color: isMe ? const Color(0xFF1A0E00) : kGold,
+                                  color: isMe ? kOnGold : kGold,
                                 ),
                                 Expanded(
                                   child: Padding(
@@ -3415,7 +3415,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                           style: TextStyle(
                                             fontSize: 13,
                                             color: isMe
-                                                ? const Color(0xFF1A0E00)
+                                                ? kOnGold
                                                 : kGold,
                                             fontWeight: FontWeight.bold,
                                           ),
@@ -3430,9 +3430,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                           style: TextStyle(
                                             fontSize: 13,
                                             color: isMe
-                                                ? const Color(
-                                                    0xFF1A0E00,
-                                                  ).withAlpha(180)
+                                                ? kOnGold.withAlpha(180)
                                                 : kMuted,
                                           ),
                                         ),
@@ -3562,7 +3560,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                               text: msg.text,
                               style: TextStyle(
                                 color: isMe
-                                    ? const Color(0xFF1A0E00)
+                                    ? kOnGold
                                     : kText,
                                 fontSize: 14,
                               ),
@@ -3839,7 +3837,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             style: TextStyle(
               color:
                   textColor ??
-                  (isMe ? const Color(0xFF1A0E00).withAlpha(150) : kMuted),
+                  (isMe ? kOnGold.withAlpha(150) : kMuted),
               fontSize: 10,
             ),
           ),
@@ -3910,7 +3908,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 ),
               ),
               child: selected
-                  ? const Icon(Icons.check, size: 14, color: Color(0xFF1A0E00))
+                  ? const Icon(Icons.check, size: 14, color: kOnGold)
                   : null,
             ),
           ),
@@ -5135,12 +5133,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                 height: 20,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Color(0xFF1A0E00),
+                                  color: kOnGold,
                                 ),
                               )
                             : const Icon(
                                 Icons.send,
-                                color: Color(0xFF1A0E00),
+                                color: kOnGold,
                                 size: 20,
                               ),
                       ),
@@ -5161,12 +5159,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                 height: 20,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Color(0xFF1A0E00),
+                                  color: kOnGold,
                                 ),
                               )
                             : const Icon(
                                 Icons.send,
-                                color: Color(0xFF1A0E00),
+                                color: kOnGold,
                                 size: 20,
                               ),
                       ),
@@ -5640,8 +5638,8 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
 
   @override
   Widget build(BuildContext context) {
-    final labelColor = widget.isMe ? const Color(0xFF1A0E00) : kText;
-    final accentColor = widget.isMe ? const Color(0xFF1A0E00) : kGold;
+    final labelColor = widget.isMe ? kOnGold : kText;
+    final accentColor = widget.isMe ? kOnGold : kGold;
     final total = _duration.inMilliseconds > 0
         ? _duration.inMilliseconds.toDouble()
         : 1.0;

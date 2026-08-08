@@ -203,13 +203,13 @@ class _PasswordResetScreenState extends State<PasswordResetScreen> {
                   height: 22,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.5,
-                    color: Color(0xFF1A0E00),
+                    color: kOnGold,
                   ),
                 )
               : const Text(
                   'Bərpa linki göndər',
                   style: TextStyle(
-                    color: Color(0xFF1A0E00),
+                    color: kOnGold,
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 0.3,

@@ -934,13 +934,13 @@ class _EditGroupInfoSheetState extends ConsumerState<_EditGroupInfoSheet> {
                         height: 18,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: Color(0xFF1A0E00),
+                          color: kOnGold,
                         ),
                       )
                     : const Text(
                         'Yadda saxla',
                         style: TextStyle(
-                          color: Color(0xFF1A0E00),
+                          color: kOnGold,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -1151,7 +1151,7 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
                             child: Icon(
                               Icons.tune_rounded,
                               color: _filters.activeCount > 0
-                                  ? const Color(0xFF1A0E00)
+                                  ? kOnGold
                                   : kMuted,
                             ),
                           ),
@@ -1338,7 +1338,7 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
                               ? const Icon(
                                   Icons.check,
                                   size: 14,
-                                  color: Color(0xFF1A0E00),
+                                  color: kOnGold,
                                 )
                               : null,
                         ),

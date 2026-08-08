@@ -11,7 +11,6 @@ import '../../../shared/widgets/avatar_ring.dart';
 import '../../user/screens/user_profile_screen.dart';
 import 'filter_sheet.dart';
 
-const Color _kOnGold = Color(0xFF1A0E00);
 const double _kSearchRowHeight = 46;
 
 // Server-side search via Algolia (AlgoliaSearchService) — name text search
@@ -269,7 +268,7 @@ class _SearchScreenState extends State<SearchScreen> with WidgetsBindingObserver
                           Center(
                             child: Icon(
                               Icons.tune_rounded,
-                              color: activeFilterCount > 0 ? _kOnGold : kMuted,
+                              color: activeFilterCount > 0 ? kOnGold : kMuted,
                             ),
                           ),
                           if (activeFilterCount > 0)

@@ -463,7 +463,7 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
                           child: Text(
                             t,
                             style: TextStyle(
-                              color: sel ? const Color(0xFF1A0E00) : kMuted,
+                              color: sel ? kOnGold : kMuted,
                               fontWeight: FontWeight.w600,
                             ),
                           ),

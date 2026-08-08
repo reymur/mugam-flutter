@@ -274,7 +274,7 @@ class LocationMessageBubble extends StatelessWidget {
                         caption,
                         style: TextStyle(
                           color: isMe
-                              ? const Color(0xFF1A0E00)
+                              ? kOnGold
                               : kText,
                           fontSize: 14,
                         ),

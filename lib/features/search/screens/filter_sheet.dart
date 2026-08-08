@@ -7,7 +7,6 @@ import '../../../firebase/models.dart';
 import '../../../shared/widgets/activity_type_screen.dart';
 import '../../../shared/widgets/city_picker_sheet.dart';
 
-const Color _kOnGold = Color(0xFF1A0E00);
 
 // Search-screen filter state — all optional/AND-combined by whoever reads
 // this (SearchScreen._matches). minRating uses the sheet's fixed steps
@@ -297,7 +296,7 @@ class _FilterSheetState extends State<FilterSheet> {
                           selectedColor: kGold,
                           backgroundColor: kCard,
                           labelStyle: TextStyle(
-                            color: selected ? _kOnGold : kText,
+                            color: selected ? kOnGold : kText,
                             fontWeight: FontWeight.w600,
                           ),
                           side: BorderSide(color: selected ? kGold : kBorder),
@@ -334,7 +333,7 @@ class _FilterSheetState extends State<FilterSheet> {
                   onPressed: () => Navigator.of(context).pop(_filters),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: kGold,
-                    foregroundColor: _kOnGold,
+                    foregroundColor: kOnGold,
                     padding: const EdgeInsets.symmetric(vertical: 15),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     elevation: 0,

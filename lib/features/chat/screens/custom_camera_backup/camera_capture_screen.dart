@@ -686,7 +686,7 @@ class _RoundIconButton extends StatelessWidget {
           icon,
           color: onTap == null
               ? Colors.white30
-              : (filled ? const Color(0xFF1A0E00) : Colors.white),
+              : (filled ? kOnGold : Colors.white),
           size: 22,
         ),
       ),

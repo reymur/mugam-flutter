@@ -22,7 +22,6 @@ import '../../status/screens/status_viewer_screen.dart';
 import '../widgets/status_feed_bar.dart';
 import 'create_group_screen.dart';
 
-const Color _kOnGold = Color(0xFF1A0E00);
 const double _kSearchRowHeight = 46;
 const double _kSearchCollapsedRowHeight = 16;
 
@@ -460,7 +459,7 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                                   Center(
                                     child: Icon(
                                       Icons.tune_rounded,
-                                      color: _filters.activeCount > 0 ? _kOnGold : kMuted,
+                                      color: _filters.activeCount > 0 ? kOnGold : kMuted,
                                     ),
                                   ),
                                   if (_filters.activeCount > 0)

@@ -533,7 +533,7 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
           border: Border.all(color: selected ? kGold : kBorder, width: 2),
         ),
         child: selected
-            ? const Icon(Icons.check, size: 14, color: Color(0xFF1A0E00))
+            ? const Icon(Icons.check, size: 14, color: kOnGold)
             : null,
       ),
     );
@@ -635,7 +635,7 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
                               child: Icon(
                                 Icons.tune_rounded,
                                 color: _filters.activeCount > 0
-                                    ? const Color(0xFF1A0E00)
+                                    ? kOnGold
                                     : kMuted,
                               ),
                             ),
@@ -707,7 +707,7 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
                         ? const Icon(
                             Icons.check,
                             size: 14,
-                            color: Color(0xFF1A0E00),
+                            color: kOnGold,
                           )
                         : null,
                   ),

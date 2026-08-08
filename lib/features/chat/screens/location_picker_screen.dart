@@ -290,7 +290,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: kGold,
-                foregroundColor: const Color(0xFF1A0E00),
+                foregroundColor: kOnGold,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -303,7 +303,7 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                       height: 20,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Color(0xFF1A0E00),
+                        color: kOnGold,
                       ),
                     )
                   : Text(

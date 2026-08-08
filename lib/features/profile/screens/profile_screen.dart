@@ -265,7 +265,7 @@ class _ProfileHeader extends ConsumerWidget {
                                   '✓',
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: Color(0xFF1A0E00),
+                                    color: kOnGold,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),

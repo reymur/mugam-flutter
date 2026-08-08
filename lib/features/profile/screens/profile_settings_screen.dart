@@ -150,7 +150,7 @@ class ProfileSettingsScreen extends ConsumerWidget {
                       child: Text(
                         '$incomingCount',
                         style: const TextStyle(
-                          color: Color(0xFF1A0E00),
+                          color: kOnGold,
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
                         ),

@@ -295,7 +295,7 @@ class UserProfileScreen extends ConsumerWidget {
                           onPressed: () => context.go('/agreements'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: kGold,
-                            foregroundColor: const Color(0xFF1A0E00),
+                            foregroundColor: kOnGold,
                             elevation: 0,
                             minimumSize: Size.zero,
                             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -516,7 +516,7 @@ class UserProfileScreen extends ConsumerWidget {
         onPressed: onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: kGold,
-          foregroundColor: const Color(0xFF1A0E00),
+          foregroundColor: kOnGold,
           elevation: 0,
           minimumSize: Size.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -560,7 +560,7 @@ class UserProfileScreen extends ConsumerWidget {
         onPressed: onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: kGold,
-          foregroundColor: const Color(0xFF1A0E00),
+          foregroundColor: kOnGold,
           elevation: 0,
           minimumSize: const Size(100, 44),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,

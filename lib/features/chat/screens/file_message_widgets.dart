@@ -281,9 +281,9 @@ class _FileMessageBubbleState extends State<FileMessageBubble> {
 
   @override
   Widget build(BuildContext context) {
-    final labelColor = widget.isMe ? const Color(0xFF1A0E00) : kText;
+    final labelColor = widget.isMe ? kOnGold : kText;
     final subColor = widget.isMe
-        ? const Color(0xFF1A0E00).withAlpha(160)
+        ? kOnGold.withAlpha(160)
         : kMuted;
     final (icon, iconColor) = _iconFor(widget.fileName);
     final isUploading =

@@ -546,7 +546,7 @@ class _MediaStatusComposerState extends State<_MediaStatusComposer> {
                       ),
                       child: const Icon(
                         Icons.arrow_forward,
-                        color: Color(0xFF1A0E00),
+                        color: kOnGold,
                       ),
                     ),
                   ),
@@ -1107,7 +1107,7 @@ class _FriendPickerTile extends ConsumerWidget {
           border: Border.all(color: selected ? kGold : kBorder, width: 2),
         ),
         child: selected
-            ? const Icon(Icons.check, size: 14, color: Color(0xFF1A0E00))
+            ? const Icon(Icons.check, size: 14, color: kOnGold)
             : null,
       ),
     );

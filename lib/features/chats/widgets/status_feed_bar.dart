@@ -167,7 +167,7 @@ class _MyStatusItem extends ConsumerWidget {
                       child: const Icon(
                         Icons.add,
                         size: 12,
-                        color: Color(0xFF1A0E00),
+                        color: kOnGold,
                       ),
                     ),
                   ),

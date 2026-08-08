@@ -457,13 +457,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   height: 22,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.5,
-                    color: Color(0xFF1A0E00),
+                    color: kOnGold,
                   ),
                 )
               : const Text(
                   '🎵 Qeydiyyatdan keç',
                   style: TextStyle(
-                    color: Color(0xFF1A0E00),
+                    color: kOnGold,
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 0.3,

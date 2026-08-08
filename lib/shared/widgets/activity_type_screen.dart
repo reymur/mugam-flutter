@@ -6,7 +6,6 @@ import '../../core/models/activity_type.dart';
 import '../../core/theme/colors.dart';
 import 'activity_type_icons.dart';
 
-const Color _kOnGold = Color(0xFF1A0E00);
 
 // Full-screen "Fəaliyyət növü" picker — a single top-level category (radio)
 // with its own checkbox-level sub-structure, some nested a level further
@@ -578,19 +577,19 @@ class _ActivityTypeScreenState extends State<ActivityTypeScreen> {
             ),
             child: Row(
               children: [
-                const Icon(Icons.auto_awesome_rounded, size: 18, color: _kOnGold),
+                const Icon(Icons.auto_awesome_rounded, size: 18, color: kOnGold),
                 const SizedBox(width: 10),
                 const Expanded(
                   child: Text(
                     'Təsdiqlə',
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _kOnGold),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: kOnGold),
                   ),
                 ),
                 Container(
                   width: 38,
                   height: 38,
-                  decoration: const BoxDecoration(color: _kOnGold, shape: BoxShape.circle),
+                  decoration: const BoxDecoration(color: kOnGold, shape: BoxShape.circle),
                   alignment: Alignment.center,
                   child: const Icon(Icons.arrow_forward_rounded, color: kGold, size: 18),
                 ),
@@ -792,7 +791,7 @@ class _ActivityTypeScreenState extends State<ActivityTypeScreen> {
                 height: 18,
                 decoration: const BoxDecoration(color: kGold, shape: BoxShape.circle),
                 alignment: Alignment.center,
-                child: const Icon(Icons.check_rounded, size: 12, color: _kOnGold),
+                child: const Icon(Icons.check_rounded, size: 12, color: kOnGold),
               ),
             ),
         ],
@@ -1027,7 +1026,7 @@ class _ActivityTypeScreenState extends State<ActivityTypeScreen> {
                 Icons.check_rounded,
                 key: ValueKey('checked'),
                 size: 13,
-                color: _kOnGold,
+                color: kOnGold,
               )
             : const SizedBox.shrink(key: ValueKey('unchecked')),
       ),

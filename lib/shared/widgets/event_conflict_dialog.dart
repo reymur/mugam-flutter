@@ -248,7 +248,7 @@ class _EventConflictDialogState extends State<EventConflictDialog> {
                   onPressed: () => _pop('replace'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: kGold,
-                    foregroundColor: const Color(0xFF1A0E00),
+                    foregroundColor: kOnGold,
                     elevation: 0,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),

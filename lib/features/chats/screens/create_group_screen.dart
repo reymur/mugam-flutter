@@ -349,7 +349,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                           child: Icon(
                             Icons.tune_rounded,
                             color: _filters.activeCount > 0
-                                ? const Color(0xFF1A0E00)
+                                ? kOnGold
                                 : kMuted,
                           ),
                         ),
@@ -546,7 +546,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                           ),
                         ),
                         child: selected
-                            ? const Icon(Icons.check, size: 14, color: Color(0xFF1A0E00))
+                            ? const Icon(Icons.check, size: 14, color: kOnGold)
                             : null,
                       ),
                     );

@@ -399,7 +399,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                     ),
                   ],
                 ),
-                child: const Icon(Icons.add, color: Color(0xFF1A0E00), size: 28),
+                child: const Icon(Icons.add, color: kOnGold, size: 28),
               ),
             )
           : null,
@@ -552,8 +552,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       ),
       child: Row(
         children: [
-          _subTab('Göndərilən ($outCount)', 'outgoing', kGold, const Color(0xFF1A0E00)),
-          _subTab('Gələnlər ($inCount)', 'incoming', kGold, const Color(0xFF1A0E00)),
+          _subTab('Göndərilən ($outCount)', 'outgoing', kGold, kOnGold),
+          _subTab('Gələnlər ($inCount)', 'incoming', kGold, kOnGold),
           _subTab('Ləğv edilən ($canCount)', 'cancelled', kRed, Colors.white),
         ],
       ),
@@ -1255,7 +1255,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
 
     if (isSelected) {
       bgColor = kGold;
-      textColor = const Color(0xFF1A0E00);
+      textColor = kOnGold;
     } else if (hasEvents) {
       bgColor = kGold.withAlpha(28);
       textColor = kGold2;
@@ -1329,7 +1329,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                         '$eventCount',
                         style: const TextStyle(
                           fontSize: 10,
-                          color: Color(0xFF1A0E00),
+                          color: kOnGold,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -1569,7 +1569,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: active ? const Color(0xFF1A0E00) : kMuted,
+              color: active ? kOnGold : kMuted,
             ),
           ),
         ),
@@ -3960,7 +3960,7 @@ class _EventFormModalState extends State<_EventFormModal> {
                         child: Text(
                           t,
                           style: TextStyle(
-                            color: sel ? const Color(0xFF1A0E00) : kMuted,
+                            color: sel ? kOnGold : kMuted,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -4283,13 +4283,13 @@ class _EventFormModalState extends State<_EventFormModal> {
                             height: 20,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Color(0xFF1A0E00),
+                              color: kOnGold,
                             ),
                           )
                         : const Text(
                             'Saxla',
                             style: TextStyle(
-                              color: Color(0xFF1A0E00),
+                              color: kOnGold,
                               fontWeight: FontWeight.bold,
                               fontSize: 15,
                             ),
@@ -4448,7 +4448,7 @@ class _ParticipantPickerDialogState
                               Icons.tune_rounded,
                               size: 20,
                               color: _filters.activeCount > 0
-                                  ? const Color(0xFF1A0E00)
+                                  ? kOnGold
                                   : kMuted,
                             ),
                           ),
@@ -4633,7 +4633,7 @@ class _ParticipantPickerDialogState
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: kGold,
-                  foregroundColor: const Color(0xFF1A0E00),
+                  foregroundColor: kOnGold,
                   minimumSize: const Size.fromHeight(44),
                   elevation: 0,
                   shape: RoundedRectangleBorder(
