@@ -994,7 +994,22 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
             )
           else
             for (final e in events)
-              Container(
+              // ТАП ОТКРЫВАЕТ КАРТОЧКУ — через ту же дверь, что и дневной
+              // экран (N90/N93). До этого строка выбранного дня молчала:
+              // человек видел своё мероприятие, нажимал и не получал
+              // ответа.
+              //
+              // Это ВТОРОЕ немое место, найденное в тот же день, что и
+              // первое, — и здесь оно дороже: в календаре видно ПРОШЛОЕ,
+              // а дневной экран показывает только сегодня и вперёд.
+              // Значит до этой правки к прошедшему мероприятию не вело
+              // ни одной дороги, кроме списка «Tədbirlər».
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => Navigator.of(context).push(
+                  eventDetailRoute(eventId: e.id, currentUid: _uid),
+                ),
+                child: Container(
                 margin: const EdgeInsets.only(bottom: 12),
                 padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
                 decoration: const BoxDecoration(
@@ -1014,6 +1029,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                     ),
                   ],
                 ),
+              ),
               ),
           // ВХОД В ПРЕДЛОЖЕНИЕ РАБОТЫ ИЗ ДНЯ КАЛЕНДАРЯ (пункт 6,
           // `docs/plan.md`). Календарь знает ровно одно — какой день
