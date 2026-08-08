@@ -8,6 +8,7 @@ import '../../../core/time/az_date_format.dart';
 import '../../../core/time/event_local_time.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../agreements/screens/agreements_screen.dart';
 import '../../job_offer/job_offer_entry.dart';
 import '../../job_offer/screens/job_offer_date_sheet.dart';
 
@@ -211,7 +212,29 @@ class _EventBar extends ConsumerWidget {
     final time = eventLocalDateTime(event.date);
     final names = _participantNames(ref, event);
 
-    return Container(
+    // ТАП ОТКРЫВАЕТ КАРТОЧКУ (N90). До этого он не делал НИЧЕГО:
+    // обработчика не было вовсе, а карточка с полоской, временем и
+    // именами читается как кнопка — и молчащий тап человек читает как
+    // поломку, а не как «здесь ничего нет». Тот же довод, по которому
+    // 07.08 сняли баннер с двумя мёртвыми кнопками (N65).
+    //
+    // Дверь общая (`eventDetailRoute`): она сама решает по документу,
+    // договор это или мероприятие, и показывает нужную карточку. Экран
+    // дня знает только id и себя — как и все входы этого захода.
+    //
+    // «Назад» ничего не требует: маршрут ПУШИТСЯ, и `Navigator.pop`
+    // внутри карточки возвращает сюда же, на дневной экран. Возврат
+    // сбросом поля состояния родителя остаётся только у той дороги, что
+    // живёт внутри экрана договоров.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => Navigator.of(context).push(
+        eventDetailRoute(
+          eventId: event.id,
+          currentUid: FirebaseAuth.instance.currentUser?.uid ?? '',
+        ),
+      ),
+      child: Container(
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
       decoration: BoxDecoration(
@@ -252,6 +275,7 @@ class _EventBar extends ConsumerWidget {
             ),
           ],
         ],
+      ),
       ),
     );
   }

@@ -14,6 +14,7 @@ import '../../../core/agreements/event_edit.dart';
 import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/agreements/day_buckets.dart';
+import '../../../core/agreements/event_lookup.dart';
 import '../../../core/time/az_date_format.dart';
 import '../../day/screens/day_screen.dart';
 import '../../../firebase/firestore_service.dart';
@@ -2022,19 +2023,16 @@ class _RemoteChangeFlash {
 // Обе карточки ниже ищут своё событие так: сначала среди собственных, потом
 // среди тех, где человек участник. Дедупликация не нужна — берём первое
 // совпадение, а id уникален на всю базу.
+// Поиск переехал в `core/agreements/event_lookup.dart` — здесь остался
+// вызов. С публичной дверью по `eventId` у правила «искать в своих и в
+// тех, где я участник» появился ТРЕТИЙ читатель, а три места, ищущие
+// по-своему, разойдутся молча (I23).
 PersonalEvent? _findEvent(
   String id,
   List<PersonalEvent> own,
   List<PersonalEvent> asParticipant,
-) {
-  for (final e in own) {
-    if (e.id == id) return e;
-  }
-  for (final e in asParticipant) {
-    if (e.id == id) return e;
-  }
-  return null;
-}
+) =>
+    findEventById(id, own, asParticipant);
 
 // Событие исчезло, пока карточка открыта: владелец удалил его с другого
 // устройства. Отменённое сюда не попадает — у отменённого документ на
@@ -3088,6 +3086,92 @@ class _PersonalEventDetailScreenState
 // (`_EventCard`) и экран подробностей (`_PersonalEventDetailScreen`), и
 // вытаскивать их наружу ради одного вызова значило бы разобрать половину
 // этого файла. Наружу отдан только маршрут.
+// ---------------------------------------------------------------------------
+// ПУБЛИЧНЫЙ ВХОД В КАРТОЧКУ ПО `eventId` (N90)
+// ---------------------------------------------------------------------------
+// Дверь к карточке мероприятия или договора, открываемая ОТКУДА УГОДНО.
+// До неё карточку можно было показать только изнутри этого экрана: обе
+// приватны, а в главном потоке даже не пушатся — `build()` возвращает их
+// вместо собственного тела по полю состояния.
+//
+// ПОЧЕМУ ФУНКЦИЯ ЖИВЁТ ЗДЕСЬ, а не в своём файле: обе карточки —
+// приватные классы этого файла, и назвать их снаружи нельзя правилом
+// языка, а не по договорённости. Сделать их публичными и вынести из
+// четырёхтысячного файла — это пункт 14 (`docs/plan.md`), и начинать его
+// под видом обёртки значило бы подменить работу. Прецедент рядом:
+// `agreementConflictEventRoute` живёт тут же и зовётся из другой фичи.
+//
+// ТРИ СОСТОЯНИЯ, А НЕ ДВА, и это главное в этой двери (N92). Обе карточки
+// ищут своё событие в списках, взятых как `asData?.value ?? []`, и на
+// ненайденное отвечают «Bu qeyd artıq mövcud deyil». Пока карточку
+// открывали изнутри экрана, данные всегда были уже на руках, и «пусто»
+// означало «удалено». Дверь снаружи открывает её там, где потоки могут
+// ещё грузиться, — и то же «пусто» означает «ещё не пришло». Поэтому
+// здесь: грузится → ждём; пришло и нет → «удалено»; пришло и есть →
+// карточка.
+//
+// ЧЕГО ЭТА ДВЕРЬ НЕ ЗАКРЫВАЕТ: путь роутера `/event/:id` и чтение
+// `eventId` в `main.dart` (N59). Уведомлению нужен путь, а не функция:
+// у него на руках нет `BuildContext` экрана. Таблица трёх поводов в N90
+// закрывается этой работой на ОДНУ строку из трёх.
+Route<void> eventDetailRoute({
+  required String eventId,
+  required String currentUid,
+}) =>
+    MaterialPageRoute(
+      builder: (_) => _EventDetailById(eventId: eventId, currentUid: currentUid),
+    );
+
+class _EventDetailById extends ConsumerWidget {
+  const _EventDetailById({required this.eventId, required this.currentUid});
+
+  final String eventId;
+  final String currentUid;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final own = ref.watch(personalEventsProvider(currentUid));
+    final asParticipant = ref.watch(eventsAsParticipantProvider(currentUid));
+
+    // ЖДЁМ, ПОКА ОБА ПОТОКА ОТВЕТЯТ. Ждать обоих обязательно: документ
+    // договора приходит владельцу одним потоком, второй стороне — другим,
+    // и решить «такого нет» по одному пришедшему значит соврать половине
+    // людей.
+    //
+    // `allUsers` сюда НЕ входит намеренно: от него зависят только имена, и
+    // ждать ради подписи под временем незачем — карточка дорисует их сама.
+    if (own.asData == null || asParticipant.asData == null) {
+      return const Scaffold(
+        backgroundColor: kBg,
+        body: Center(child: CircularProgressIndicator(color: kGold)),
+      );
+    }
+
+    final event = findEventById(
+      eventId,
+      own.asData!.value,
+      asParticipant.asData!.value,
+    );
+    void back() => Navigator.of(context).pop();
+    // Заголовок у «этого больше нет» нейтральный: чем документ БЫЛ,
+    // сказать уже нечем — его нет.
+    if (event == null) return _eventGoneScaffold('Tədbir', back);
+
+    return switch (eventCardKindOf(event)) {
+      EventCardKind.agreement => _AgreementDetailScreen(
+          eventId: eventId,
+          currentUid: currentUid,
+          onBack: back,
+        ),
+      EventCardKind.personalEvent => _PersonalEventDetailScreen(
+          eventId: eventId,
+          currentUid: currentUid,
+          onBack: back,
+        ),
+    };
+  }
+}
+
 Route<void> agreementConflictEventRoute({
   required PersonalEvent event,
   required String currentUid,
@@ -3193,15 +3277,17 @@ class _ConflictEventScreenState extends State<_ConflictEventScreen> {
                   isOwn: widget.event.ownerUid == widget.currentUid,
                   currentUid: widget.currentUid,
                   allUsers: widget.allUsers,
-                  onTap: () {
-                    Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => _PersonalEventDetailScreen(
-                        eventId: widget.event.id,
-                        currentUid: widget.currentUid,
-                        onBack: () => Navigator.of(context).pop(),
-                      ),
-                    ));
-                  },
+                  // ТА ЖЕ ДВЕРЬ, что у дневного экрана (N90). Прежде здесь
+                  // строилась карточка МЕРОПРИЯТИЯ, и строилась всегда —
+                  // даже когда мешающее событие оказывалось договором.
+                  // Человек видел не ту карточку, и заметить это было
+                  // нечем: обе показывают время и место.
+                  onTap: () => Navigator.of(context).push(
+                    eventDetailRoute(
+                      eventId: widget.event.id,
+                      currentUid: widget.currentUid,
+                    ),
+                  ),
                 ),
               ),
             ),
