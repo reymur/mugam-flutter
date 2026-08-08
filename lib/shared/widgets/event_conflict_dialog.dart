@@ -8,7 +8,7 @@ import '../../firebase/models.dart';
 
 // Диалог «на это время у вас уже есть мероприятие» — один на календарь
 // (agreements_screen.dart → _EventFormModal) и на лист предложения работы
-// (chat/screens/job_offer_date_sheet.dart).
+// (job_offer/screens/job_offer_date_sheet.dart).
 //
 // Вынесен из agreements_screen.dart, когда проверку конфликта завели в
 // предложении работы. Второй такой диалог не изобретался намеренно:

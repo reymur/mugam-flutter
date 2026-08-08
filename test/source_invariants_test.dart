@@ -243,7 +243,7 @@ void main() {
       final banner =
           readCode('lib/shared/widgets/event_conflict_banner.dart');
       final sheet =
-          readCode('lib/features/chat/screens/job_offer_date_sheet.dart');
+          readCode('lib/features/job_offer/screens/job_offer_date_sheet.dart');
       for (final entry in {
         'event_conflict_banner.dart': banner,
         'agreements_screen.dart': form,

@@ -5,7 +5,8 @@ import '../../core/time/az_date_format.dart';
 import '../../firebase/models.dart';
 
 // Предупреждение о занятом времени — ОДИН виджет на оба места, где оно
-// показывается: лист «İş təklif et» (job_offer_date_sheet.dart) и окно
+// показывается: лист «İş təklif et»
+// (job_offer/screens/job_offer_date_sheet.dart) и окно
 // создания/правки мероприятия в календаре (agreements_screen.dart).
 //
 // Почему общий, а не по копии на экран. Это третий общий кусок между
