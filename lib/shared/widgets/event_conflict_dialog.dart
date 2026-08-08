@@ -5,7 +5,6 @@ import '../../core/agreements/event_edit.dart';
 import '../../core/theme/colors.dart';
 import '../../core/time/az_date_format.dart';
 import '../../firebase/models.dart';
-import 'event_conflict_banner.dart';
 
 // Диалог «на это время у вас уже есть мероприятие» — один на календарь
 // (agreements_screen.dart → _EventFormModal) и на лист предложения работы

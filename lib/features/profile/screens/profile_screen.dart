@@ -163,7 +163,7 @@ class _SkillTag extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: kGoldDim, // 0x14D4A03C ≈ 8% gold tint
-        border: Border.all(color: const Color(0x40D4A03C)), // 25% gold tint
+        border: Border.all(color: kGold.withAlpha(0x40)),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
@@ -202,8 +202,11 @@ class _ProfileHeader extends ConsumerWidget {
             child: Container(
               width: 200,
               height: 200,
-              decoration: const BoxDecoration(
-                color: Color(0x33D4A03C),
+              // `const` снят: `withAlpha` — вызов, а константой быть не
+              // может. Цена — виджет строится в рантайме; связь с `kGold`
+              // дороже (правило про производные, `colors.dart`).
+              decoration: BoxDecoration(
+                color: kGold.withAlpha(0x33),
                 shape: BoxShape.circle,
               ),
             ),
@@ -295,18 +298,18 @@ class _ProfileHeader extends ConsumerWidget {
                     runSpacing: 6,
                     children: [
                       if (isMusician)
-                        const _Badge(
+                        _Badge(
                           label: '🎵 Musiqiçi',
                           textColor: kGold,
-                          bgColor: Color(0x26D4A03C),
-                          borderColor: Color(0x4DD4A03C),
+                          bgColor: kBorder,
+                          borderColor: kGold.withAlpha(0x4D),
                         ),
                       if (user.verified)
-                        const _Badge(
+                        _Badge(
                           label: '✅ Təsdiqlənmiş',
                           textColor: kGreen,
-                          bgColor: Color(0x2627AE60),
-                          borderColor: Color(0x4D27AE60),
+                          bgColor: kGreen.withAlpha(0x26),
+                          borderColor: kGreen.withAlpha(0x4D),
                         ),
                     ],
                   ),
