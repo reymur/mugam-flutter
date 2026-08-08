@@ -107,6 +107,9 @@ class LocationMessageBubble extends StatelessWidget {
         'Apple Maps',
         Uri.parse('https://maps.apple.com/?ll=$lat,$lng&q=$label'),
         Icons.map,
+        // Системный синий iOS — цвет ПЛАТФОРМЫ, не наш. По нему Apple
+        // Maps и узнаётся; поставь сюда kGold — кнопка перестанет
+        // читаться как «открыть в картах».
         const Color(0xFF007AFF),
       ));
       if (await canLaunchUrl(Uri.parse('comgooglemaps://'))) {
@@ -142,6 +145,8 @@ class LocationMessageBubble extends StatelessWidget {
         'Waze',
         Uri.parse('waze://?ll=$lat,$lng&navigate=yes'),
         Icons.navigation,
+        // Фирменный голубой Waze — ЧУЖОЙ БРЕНД. Палитре не подчиняется
+        // по той же причине, что и логотип.
         const Color(0xFF33CCFF),
       ));
     }

@@ -2759,6 +2759,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             children: [
               _AttachOption(
                 icon: Icons.photo_library,
+                // Цвета Material для ТИПА вложения — фото, файл, локация. Чужие: по
+                // ним значок узнают, не читая подпись, и палитре они не подчиняются
+                // (тот же класс, что цвета форматов в file_message_widgets.dart).
                 color: const Color(0xFF2196F3),
                 label: 'Qalereya',
                 onTap: () {

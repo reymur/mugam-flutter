@@ -240,6 +240,15 @@ class _FileMessageBubbleState extends State<FileMessageBubble> {
     }
   }
 
+  // ЦВЕТА ТИПОВ ФАЙЛОВ — ЧУЖИЕ, И ПАЛИТРЕ НЕ ПОДЧИНЯЮТСЯ.
+  //
+  // Красный PDF, синий Word, зелёный Excel, оранжевый PowerPoint — это
+  // цвета Material и самих форматов, по которым значок узнают, не читая
+  // подпись. Свести их в `kGold`/`kRed` значит отнять единственный
+  // признак, по которому файл различается с одного взгляда.
+  //
+  // Тот же класс, что системный синий Apple Maps и голубой Waze в
+  // `location_message_widgets.dart`: имя цвета принадлежит не нам.
   (IconData, Color) _iconFor(String? fileName) {
     final ext = (fileName != null && fileName.contains('.'))
         ? fileName.split('.').last.toLowerCase()
