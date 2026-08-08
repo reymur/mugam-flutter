@@ -486,9 +486,22 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                     ),
                     child: Text(
                       '$badge',
-                      style: const TextStyle(
+                      // ЗОЛОТОЕ состояние получило kOnGold 08.08.
+                      //
+                      // Заливка тут МЕНЯЕТСЯ: красная, когда есть
+                      // непрочитанные договоры, золотая — когда все
+                      // прочитаны. Текст же был белым в обоих, и на
+                      // золоте это спорило с правилом того же файла:
+                      // на соседней кнопке отправки стоит kOnGold.
+                      // Две правды рядом хуже, чем чуть иной оттенок.
+                      //
+                      // Красное состояние НЕ тронуто намеренно: оно
+                      // уходит в работу 7б вместе со сведением трёх
+                      // красных (N82) — там заливка и текст решаются
+                      // парой, а не порознь.
+                      style: TextStyle(
                         fontSize: 10,
-                        color: Colors.white,
+                        color: badgeRed ? Colors.white : kOnGold,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
