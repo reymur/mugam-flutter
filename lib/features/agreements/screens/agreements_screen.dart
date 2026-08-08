@@ -567,7 +567,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         children: [
           _subTab('Göndərilən ($outCount)', 'outgoing', kGold, kOnGold),
           _subTab('Gələnlər ($inCount)', 'incoming', kGold, kOnGold),
-          _subTab('Ləğv edilən ($canCount)', 'cancelled', kRed, Colors.white),
+          _subTab('Ləğv edilən ($canCount)', 'cancelled', kRed, kOnRed),
         ],
       ),
     );
@@ -2019,7 +2019,7 @@ Widget _eventGoneScaffold(String title, VoidCallback onBack) {
     ),
     body: const Center(
       child: Text('Bu qeyd artıq mövcud deyil',
-          style: TextStyle(color: Colors.white70)),
+          style: TextStyle(color: kMuted)),
     ),
   );
 }

@@ -183,7 +183,7 @@ class _WheelDateTimePickerState extends State<WheelDateTimePicker> {
             child: Text(
               labelBuilder(index),
               style: TextStyle(
-                color: selected ? Colors.white : kMuted,
+                color: selected ? kText : kMuted,
                 fontSize: selected ? 20 : 15,
                 fontWeight: selected ? FontWeight.bold : FontWeight.normal,
               ),

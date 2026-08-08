@@ -108,8 +108,11 @@ class _TabItem extends StatelessWidget {
                           ),
                           child: Text(
                             badge > 9 ? '9+' : '$badge',
+                            // Бейдж залит kRed — значит kOnRed. Проход
+                            // 08.08 искал BoxShape.circle, а тут
+                            // скругление 10, и место не нашлось.
                             style: const TextStyle(
-                              color: Colors.white,
+                              color: kOnRed,
                               fontSize: 9,
                               fontWeight: FontWeight.bold,
                             ),

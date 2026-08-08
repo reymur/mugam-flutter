@@ -101,7 +101,9 @@ class Topbar extends StatelessWidget {
                           notificationCount > 9 ? '9+' : '$notificationCount',
                           style: const TextStyle(
                             fontSize: 9,
-                            color: Colors.white,
+                            // kRed со скруглением, а не круг — тот же
+                            // пропуск, что в custom_tab_bar.
+                            color: kOnRed,
                             fontWeight: FontWeight.bold,
                             height: 1,
                           ),

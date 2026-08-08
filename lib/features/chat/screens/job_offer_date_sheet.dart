@@ -579,7 +579,12 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
                       child: Text(
                         widget.submitLabel,
                         style: const TextStyle(
-                          color: Colors.black,
+                          // Кнопка залита kGold — значит kOnGold, как и
+                          // все остальные золотые кнопки. Стоял чистый
+                          // чёрный: проход 08.08 его пропустил, потому
+                          // что заливка выше по коду и не попала в окно
+                          // поиска.
+                          color: kOnGold,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
