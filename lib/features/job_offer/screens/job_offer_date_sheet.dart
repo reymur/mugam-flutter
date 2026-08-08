@@ -81,6 +81,44 @@ import '../../agreements/screens/agreements_screen.dart';
 // на момент открытия листа устарела бы ровно так же, как устаревала
 // карточка договора до N23, а тут цена ошибки выше — пропущенный конфликт
 // это два мероприятия на одно время.
+// ---------------------------------------------------------------------------
+// ЧАС ПО УМОЛЧАНИЮ — ОДНО ИМЯ НА ДВА ВЫЗОВА
+// ---------------------------------------------------------------------------
+// Лист, открытый без даты, ставит «завтра в 19:00». Вход из календаря даёт
+// ДЕНЬ и не даёт часа — час ему надо откуда-то взять.
+//
+// Взять его «тоже 19:00» в общей точке вызова значило бы записать одно
+// решение двумя числами. Они совпадают сегодня и разойдутся в тот день,
+// когда умолчание листа поправят: календарь продолжит слать 19:00, и никто
+// не заметит — оба значения останутся законными числами. Это I22 дословно
+// (связанные значения получают ОДНО имя) и родня N74, где два места
+// считали одно и то же по-своему.
+//
+// Поэтому час объявлен здесь, рядом с листом, чьё это умолчание, а
+// календарь зовёт `jobOfferDateOnDay` и своего числа не имеет вовсе.
+const int kJobOfferDefaultHour = 19;
+const int kJobOfferDefaultMinute = 0;
+
+/// Умолчание листа, открытого без даты: завтра в тот самый час.
+DateTime jobOfferDefaultDate(DateTime now) => DateTime(
+      now.year,
+      now.month,
+      now.day + 1,
+      kJobOfferDefaultHour,
+      kJobOfferDefaultMinute,
+    );
+
+/// Тот же час, но на дне, который назвал вход (вкладка «Təqvim» или
+/// дневной экран). Дата приходит целиком, время из неё не берётся: у дня
+/// в календаре часа нет, а полночь означала бы «мероприятие в 00:00».
+DateTime jobOfferDateOnDay(DateTime day) => DateTime(
+      day.year,
+      day.month,
+      day.day,
+      kJobOfferDefaultHour,
+      kJobOfferDefaultMinute,
+    );
+
 class JobOfferDateSheet extends ConsumerStatefulWidget {
   final DateTime? initialDate;
   final String? initialType;
@@ -157,9 +195,7 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
   void initState() {
     super.initState();
     final now = DateTime.now();
-    _selectedDate =
-        widget.initialDate ??
-        DateTime(now.year, now.month, now.day + 1, 19, 0);
+    _selectedDate = widget.initialDate ?? jobOfferDefaultDate(now);
     _selectedType = widget.initialType ?? _eventTypes.first;
     _notes = EventNotesValue.parse(widget.initialNotes ?? '');
     _locationController = TextEditingController(

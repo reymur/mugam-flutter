@@ -41,6 +41,8 @@ import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../agreements/screens/agreements_screen.dart' show agreementsTabRequestProvider;
+import '../../../core/chat/job_offer_round.dart';
+import '../../job_offer/job_offer_entry.dart';
 import '../../job_offer/screens/job_offer_date_sheet.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import 'about_contact_screen.dart';
@@ -674,6 +676,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   Future<void> _showChatMenu(
     BuildContext context, {
     required bool hasActiveJobOffer,
+    // Собеседник. Меню существует только в чате один на один (см. его
+    // единственную точку вызова), поэтому здесь он не `String?`: чат —
+    // это ВХОД, и всё, что он знает про предложение работы, — вот этот
+    // человек.
+    required String otherUid,
   }) async {
     final button = _moreMenuButtonKey.currentContext?.findRenderObject() as RenderBox?;
     final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
@@ -759,7 +766,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         if (!hasActiveJobOffer)
           PopupMenuItem<void>(
             padding: EdgeInsets.zero,
-            onTap: _proposeJobOffer,
+            // Чат — такой же ВХОД, как карточка музыканта или день в
+            // календаре, и зовёт ту же точку (пункт 6, `docs/plan.md`).
+            // Он знает человека и не знает дня, поэтому передаёт только
+            // `toUid`. Ни `chatId`, ни `setJobOffer` здесь больше нет — и
+            // это не стиль, а проверяемое правило: на него стоит сторож в
+            // `test/source_invariants_test.dart`.
+            onTap: () => proposeJobOffer(context, ref, toUid: otherUid),
             child: glassItem(
               const Row(
                 mainAxisSize: MainAxisSize.min,
@@ -795,32 +808,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
-  // Тап по «İş təklif et» больше НИЧЕГО не пишет — он открывает лист
-  // (пункт 3 плана). Запись уходит только по «Təklifi göndər», и уходит
-  // сразу содержательной: дата, тип, место, заметки одной операцией.
+  // ПРЕЖДЕ ЗДЕСЬ ЖИЛ `_proposeJobOffer` — создание предложения из чата.
+  // Он снят целиком, а не оставлен обёрткой: его работа переехала в общую
+  // точку вызова (`features/job_offer/job_offer_entry.dart`), и обёртка
+  // была бы вторым именем одной дороги — ровно тем, из-за чего пункт 6 и
+  // существует.
   //
-  // Отсюда два следствия, каждое закрывает строку из карты опыта:
-  // пустого предложения больше не бывает, и сам тап по пункту меню стал
-  // обратимым — до отправки закрыть лист значит не создать ничего.
-  void _proposeJobOffer() {
-    final currentUid = FirebaseAuth.instance.currentUser?.uid;
-    if (currentUid == null) return;
-    _openJobOfferDateSheet(
-      title: 'İş təklifi',
-      submitLabel: 'Təklifi göndər',
-      onSubmit: (date, type, location, notes) {
-        _firestoreService.setJobOffer(
-          chatId: widget.chatId,
-          uid: currentUid,
-          eventDate: date,
-          eventType: type,
-          eventLocation: location,
-          eventNotes: notes,
-        );
-        _showCopySnackBar('📅 İş təklifi göndərildi');
-      },
-    );
-  }
+  // Что он говорил и что осталось верным: тап по «İş təklif et» ничего не
+  // пишет, он открывает лист (пункт 3 плана, `docs/plan.md`). Запись
+  // уходит только по «Təklifi göndər» и сразу содержательной — дата, тип,
+  // место, заметки одной операцией. Отсюда пустого предложения не бывает,
+  // а сам тап по пункту меню обратим: до отправки закрыть лист значит не
+  // создать ничего.
+  //
+  // `_openJobOfferDateSheet` ниже ОСТАЛСЯ и обслуживает только ПРАВКУ
+  // («Tarix dəyiş»). Сводить её с созданием нельзя: сервер выводит автора
+  // правки из того, что дорога к ней одна.
 
   // "Çatı təmizlə" — per-user only (FirestoreService.clearChatForUser):
   // hides every message up to now for THIS uid alone, never touching the
@@ -4322,11 +4325,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // открытого раунда всегда есть инициатор, обе половины пишутся одной
     // операцией. Инвариант нужен и по смыслу, и потому, что плашка без
     // инициатора нарисоваться не может — ей некого называть.
+    //
+    // САМО ПРАВИЛО ПЕРЕЕХАЛО В `core/chat/job_offer_round.dart`, здесь
+    // остался вызов. Причина — пункт 6: у правила появился второй
+    // читатель, общая точка вызова предложения, и по нему она отказывает
+    // входу сбоку. Два места, считающие одно правило по-своему, расходятся
+    // молча (N74, N76), поэтому оно вынесено ДО появления второго
+    // читателя, а не после того, как они разойдутся.
     final roundStep = chatMetaAsync.value?['roundStep'] as String?;
-    final jobOfferRoundOpen = jobOfferBy != null &&
-        (roundStep != null
-            ? (roundStep == 'proposed' || roundStep == 'dated')
-            : !recipientAgreedNow);
+    final roundOpen = jobOfferRoundOpen(
+      jobOfferBy: jobOfferBy,
+      roundStep: roundStep,
+      recipientAgreed: recipientAgreedNow,
+    );
     final recipientAgreedAtRaw =
         chatMetaAsync.value?['recipientAgreedAt'] as String?;
     final recipientAgreedAt = recipientAgreedAtRaw != null
@@ -4450,7 +4461,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // firestore_service.dart for the on-device cost of getting this wrong.
     // Read by the composer's typing-throttle listener (initState) outside
     // build()'s own scope — a plain field write, not setState.
-    _jobOfferActive = jobOfferRoundOpen;
+    _jobOfferActive = roundOpen;
     // mugam-v2 writes a 1:1 chat's `name` field from the initiator's
     // perspective at creation time (the other participant's name) and never
     // updates it — the recipient reading it back sees their OWN name
@@ -4671,7 +4682,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               icon: const Icon(Icons.more_vert, color: kGold),
               onPressed: () => _showChatMenu(
                 context,
-                hasActiveJobOffer: jobOfferRoundOpen,
+                hasActiveJobOffer: roundOpen,
+                otherUid: otherUidResolved,
               ),
             ),
           ],
@@ -4685,9 +4697,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       backgroundColor: kBg,
       body: Column(
         children: [
+          // `jobOfferBy != null` стоит здесь ЯВНО, хотя оно же спрятано
+          // внутри `roundOpen`. Пока правило было написано выражением на
+          // этом же экране, оно заодно СУЖАЛО ТИП: анализатор видел
+          // проверку и пускал `jobOfferBy` в плашку, которая требует
+          // непустой строки. Вынос правила в функцию это сужение снял —
+          // компилятор не смотрит внутрь вызова, — и условие пришлось
+          // назвать словами.
+          //
+          // Это не лишняя проверка и не дубль правила: инвариант «у
+          // открытого раунда всегда есть инициатор» живёт в
+          // `jobOfferRoundOpen`, а здесь стоит то, чего тип требует от
+          // самой плашки — ей некого называть без инициатора.
           if ((chatMetaAsync.value?['isGroup'] ?? chatDataAsync.value?['isGroup']) != true &&
               otherUidResolved != null &&
-              jobOfferRoundOpen &&
+              jobOfferBy != null &&
+              roundOpen &&
               currentUid.isNotEmpty)
             _buildJobOfferBanner(
               jobOfferBy: jobOfferBy,
