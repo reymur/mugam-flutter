@@ -62,15 +62,6 @@ Future<void> proposeJobOffer(
   final myUid = FirebaseAuth.instance.currentUser?.uid;
   if (myUid == null) return;
 
-  final service = ref.read(firestoreServiceProvider);
-
-  // Кого не назвали — спрашиваем. Отказ от выбора (закрыл лист) — это
-  // ответ «передумал», и он обязан остановить ход целиком: молча открыть
-  // форму предложения без адресата значило бы продолжить разговор, из
-  // которого человек вышел.
-  final personUid = toUid ?? await pickPersonForJobOffer(context);
-  if (personUid == null || !context.mounted) return;
-
   // ПРОШЛЫЙ ДЕНЬ — ОТКАЗ, И ДО СОЗДАНИЯ ЧАТА.
   //
   // Вкладка «Təqvim» даёт листать месяцы назад и выбирать вчерашний день:
@@ -87,6 +78,11 @@ Future<void> proposeJobOffer(
   // косметика: тот при отсутствии чата СОЗДАЁТ документ. Откажи мы после
   // него — в базе оставался бы пустой чат, заведённый ходом, который не
   // состоялся.
+  //
+  // ОНА ЖЕ СТОИТ ДО ВОПРОСА «КОМУ?», и это вторая половина того же
+  // правила (N91). День от человека не зависит вовсе — значит спрашивать
+  // человека, чтобы затем отказать по дню, значит забрать выбор и
+  // выбросить его. Прежняя редакция спрашивала первой.
   final proposedDate = onDay == null ? null : jobOfferDateOnDay(onDay);
   if (proposedDate != null && proposedDate.isBefore(DateTime.now())) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -98,6 +94,71 @@ Future<void> proposeJobOffer(
     return;
   }
 
+  // ХОД СОБРАН ЦИКЛОМ, А НЕ ЦЕПОЧКОЙ (N91).
+  //
+  // «Выбери человека → заполни предложение» — это ДВА ШАГА ОДНОГО ХОДА, а
+  // не два независимых листа. Прежняя редакция шла цепочкой: выбор
+  // закрывался насовсем, и у листа предложения не оказывалось «назад».
+  // Найдено на устройстве: ткнул не в того человека — и возвращаться
+  // некуда, начинай с главного экрана.
+  //
+  // Цена ошибки была не в лишнем нажатии, а в том, что ломалась
+  // ОБРАТИМОСТЬ, которой весь этот пункт и добивался: закрытие листа
+  // предложения не создаёт ничего именно затем, чтобы открывать его было
+  // не страшно. Шагом раньше становилось страшно выбирать человека.
+  //
+  // Признак «отправлено» берётся флагом из `onSave`, а не по значению
+  // `showModalBottomSheet`: тот отдаёт `null` и при отправке, и при
+  // закрытии, то есть сам по себе эти два случая НЕ различает.
+  var personUid = toUid;
+  while (true) {
+    // Второй заход цикла приходит ПОСЛЕ двух `await` предыдущего, значит
+    // экрана под ногами может уже не быть. Проверка стоит в начале круга,
+    // а не только у первого показа: анализатор это и назвал.
+    if (!context.mounted) return;
+    final String person;
+    if (personUid == null) {
+      final picked = await pickPersonForJobOffer(context);
+      // Закрыл выбор, никого не назвав, — это ответ «передумал», и он
+      // останавливает ход целиком. Показать после него форму предложения
+      // значило бы продолжить разговор, из которого человек вышел.
+      if (picked == null || !context.mounted) return;
+      person = picked;
+    } else {
+      person = personUid;
+    }
+
+    final done = await _offerToPerson(
+      context,
+      ref,
+      myUid: myUid,
+      personUid: person,
+      proposedDate: proposedDate,
+      // Человека дал ВХОД (чат, карточка) — списка не было, возвращаться
+      // не к чему, и любой исход завершает ход.
+      personGivenByEntry: toUid != null,
+    );
+    if (done) return;
+    // Не отправлено, человека выбирали здесь — спрашиваем снова.
+    personUid = null;
+  }
+}
+
+/// Один заход: чат, отказ при открытом раунде, лист предложения.
+///
+/// Возвращает `true`, когда ход завершён (отправлено, отказано без
+/// возврата, или экран ушёл из-под ног), и `false`, когда надо снова
+/// показать выбор человека.
+Future<bool> _offerToPerson(
+  BuildContext context,
+  WidgetRef ref, {
+  required String myUid,
+  required String personUid,
+  required DateTime? proposedDate,
+  required bool personGivenByEntry,
+}) async {
+  final service = ref.read(firestoreServiceProvider);
+
   // Чат ищется сперва в уже загруженном списке — там же, где его нашёл бы
   // экран «Mesaj», и по тому же правилу (`directChatIn`). Полный поиск с
   // созданием зовётся только как запасной путь: он делает несколько
@@ -105,7 +166,7 @@ Future<void> proposeJobOffer(
   final cached = ref.read(chatsProvider(myUid)).asData?.value;
   final chatId = (cached == null ? null : directChatIn(cached, personUid))?.id ??
       await service.getOrCreateDirectChat(myUid: myUid, otherUid: personUid);
-  if (!context.mounted) return;
+  if (!context.mounted) return true;
 
   // ОТКРЫТЫЙ РАУНД — ОТКАЗ СЛОВАМИ, А НЕ МОЛЧАЛИВАЯ ПЕРЕЗАПИСЬ.
   //
@@ -120,7 +181,7 @@ Future<void> proposeJobOffer(
   // договорённость — то же самое действие, что «Əvəz et» делал с
   // договором.
   final meta = await service.fetchChatData(chatId);
-  if (!context.mounted) return;
+  if (!context.mounted) return true;
   final roundOpen = jobOfferRoundOpen(
     jobOfferBy: meta?['jobOfferBy'] as String?,
     roundStep: meta?['roundStep'] as String?,
@@ -141,9 +202,14 @@ Future<void> proposeJobOffer(
         ),
       ),
     );
-    return;
+    // Раунд занят ЭТИМ человеком, а не всеми: если список был, человек
+    // выберет другого. Прежде отказ выбрасывал на исходный экран, и
+    // выбор приходилось начинать заново — та же беда, что с закрытием
+    // листа (N91).
+    return personGivenByEntry;
   }
 
+  var sent = false;
   await showModalBottomSheet<void>(
     context: context,
     // Прозрачный фон и никакой формы: лист рисует свой контейнер сам, во
@@ -163,6 +229,10 @@ Future<void> proposeJobOffer(
       // Чей календарь проверяется на занятость — того, кто предлагает.
       currentUid: myUid,
       onSave: (date, type, location, notes) {
+        // Отправлено. Флаг ставится ЗДЕСЬ, потому что сам лист об этом
+        // никому не сообщает: `showModalBottomSheet` отдаёт `null` и при
+        // отправке, и при закрытии свайпом.
+        sent = true;
         // Запись уходит ОДНОЙ операцией и сразу содержательной: дата, тип,
         // место, заметки. Пустого предложения не бывает — и это свойство
         // устройства, а не внимательности вызывающего.
@@ -182,5 +252,13 @@ Future<void> proposeJobOffer(
         );
       },
     ),
+  );
+  if (!context.mounted) return true;
+  // Решение принимает ПРАВИЛО (`jobOfferReturnsToPicker`), а не условие,
+  // написанное здесь: его можно проверить возвратом, а этот ход с двумя
+  // `await` — нельзя (I17).
+  return !jobOfferReturnsToPicker(
+    sent: sent,
+    personGivenByEntry: personGivenByEntry,
   );
 }
