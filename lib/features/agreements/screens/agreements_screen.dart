@@ -25,6 +25,8 @@ import '../../../shared/widgets/event_conflict_dialog.dart';
 import '../../../shared/widgets/event_notes_picker.dart';
 import '../../../shared/widgets/wheel_date_time_picker.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
+import '../../job_offer/job_offer_entry.dart';
+import '../../job_offer/screens/job_offer_date_sheet.dart';
 import '../../search/screens/filter_sheet.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import '../../user/screens/user_profile_screen.dart';
@@ -1012,6 +1014,39 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                   ],
                 ),
               ),
+          // ВХОД В ПРЕДЛОЖЕНИЕ РАБОТЫ ИЗ ДНЯ КАЛЕНДАРЯ (пункт 6,
+          // `docs/plan.md`). Календарь знает ровно одно — какой день
+          // выбран, — и передаёт только его. Часа у дня нет: его
+          // подставляет лист своим умолчанием (`jobOfferDateOnDay`), и
+          // своего числа здесь нет намеренно (I22).
+          //
+          // Кнопка стоит и на занятом дне, и на пустом. Занятый день не
+          // повод молчать: два мероприятия в одну дату — обычная жизнь, а
+          // не ошибка, и лист сам покажет предупреждение о совпадении.
+          // Прятать её на занятом дне значило бы решить за человека то,
+          // что решает он.
+          // Прошлый день кнопки не получает: месяцы листаются назад, и
+          // предложить работу на вчера нельзя. Правило спрашивается у
+          // того, кто знает час умолчания, — своего числа здесь нет.
+          if (canOfferOnDay(date, DateTime.now())) ...[
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () => proposeJobOffer(context, ref, onDay: date),
+              style: TextButton.styleFrom(
+                foregroundColor: kGold,
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text(
+                '📅 Bu günə iş təklif et',
+                style: TextStyle(color: kGold, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
+          ],
         ],
       ),
     );

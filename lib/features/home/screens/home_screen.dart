@@ -9,6 +9,7 @@ import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../../firebase/models.dart';
 import '../../../firebase/firestore_service.dart';
+import '../../job_offer/job_offer_entry.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import '../../user/screens/user_profile_screen.dart';
 
@@ -37,6 +38,17 @@ class HomeScreen extends ConsumerWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: const [
+                    // ВХОД С ГЛАВНОГО (пункт 6, `docs/plan.md`) — тот
+                    // самый, который не знает НИЧЕГО: ни человека, ни
+                    // дня. Именно он и проверяет, что «предложить можно
+                    // откуда угодно» держится на точке вызова, а не на
+                    // осведомлённости входов: спрашивает недостающее не
+                    // экран, а она.
+                    //
+                    // Кнопка стоит НАД списком музыкантов, а не под ним:
+                    // список длинный и прокручивается, а действие
+                    // относится ко всему экрану, а не к последнему в нём.
+                    _OfferFromHomeButton(),
                     // Баннер «RƏSMİ KLUB» снят 07.08 вместе с двумя
                     // кнопками, ни одна из которых не делала ничего —
                     // «Musiqiçi Tap» и «Elan Ver» (N65). Нажатие без
@@ -57,6 +69,38 @@ class HomeScreen extends ConsumerWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// «Предложить работу» с главного экрана — вход, не знающий ничего.
+///
+/// Ни человека, ни дня он не передаёт: и то и другое спрашивает точка
+/// вызова. Своего вопроса «кому?» здесь нет намеренно — заведи его тут, и
+/// вопрос будет задан столькими способами, сколько входов.
+class _OfferFromHomeButton extends ConsumerWidget {
+  const _OfferFromHomeButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: OutlinedButton(
+        onPressed: () => proposeJobOffer(context, ref),
+        style: OutlinedButton.styleFrom(
+          side: const BorderSide(color: kGold),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(28),
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+        ),
+        child: const Text(
+          '📅 İş təklif et',
+          style: TextStyle(color: kGold, fontWeight: FontWeight.bold),
         ),
       ),
     );

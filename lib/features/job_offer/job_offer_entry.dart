@@ -7,6 +7,7 @@ import '../../core/chat/direct_chat_lookup.dart';
 import '../../core/chat/job_offer_round.dart';
 import '../../firebase/firestore_service.dart';
 import 'screens/job_offer_date_sheet.dart';
+import 'screens/pick_person_sheet.dart';
 
 // ---------------------------------------------------------------------------
 // ЕДИНСТВЕННАЯ ТОЧКА ВЫЗОВА ПРЕДЛОЖЕНИЯ РАБОТЫ (пункт 6 плана, `docs/plan.md`)
@@ -40,6 +41,13 @@ import 'screens/job_offer_date_sheet.dart';
 
 /// Предложить работу человеку `toUid`.
 ///
+/// **`toUid` необязателен, и это не послабление, а половина смысла
+/// пункта 6.** Вход с главного экрана не знает НИЧЕГО — ни человека, ни
+/// дня, — и «предложить можно откуда угодно» держится ровно на том, что
+/// недостающее спрашивает эта функция, а не каждый вход по-своему. Дай
+/// каждому входу спрашивать самому — и вопрос «кому?» будет задан
+/// столькими способами, сколько входов.
+///
 /// `onDay` — день, выбранный входом (вкладка «Təqvim» или дневной экран);
 /// час к нему добавляет сам лист своим умолчанием, см.
 /// `jobOfferDateOnDay`. Вход, который дня не знает (чат, карточка
@@ -48,7 +56,7 @@ import 'screens/job_offer_date_sheet.dart';
 Future<void> proposeJobOffer(
   BuildContext context,
   WidgetRef ref, {
-  required String toUid,
+  String? toUid,
   DateTime? onDay,
 }) async {
   final myUid = FirebaseAuth.instance.currentUser?.uid;
@@ -56,13 +64,47 @@ Future<void> proposeJobOffer(
 
   final service = ref.read(firestoreServiceProvider);
 
+  // Кого не назвали — спрашиваем. Отказ от выбора (закрыл лист) — это
+  // ответ «передумал», и он обязан остановить ход целиком: молча открыть
+  // форму предложения без адресата значило бы продолжить разговор, из
+  // которого человек вышел.
+  final personUid = toUid ?? await pickPersonForJobOffer(context);
+  if (personUid == null || !context.mounted) return;
+
+  // ПРОШЛЫЙ ДЕНЬ — ОТКАЗ, И ДО СОЗДАНИЯ ЧАТА.
+  //
+  // Вкладка «Təqvim» даёт листать месяцы назад и выбирать вчерашний день:
+  // для просмотра это законно, для предложения работы — нет.
+  //
+  // Сам лист этот случай НЕ ловит, и не по недосмотру: он запрещает
+  // ВЫБОР прошлой даты (`_selectedDate != _openedWithDate`), а не
+  // сохранение вообще — иначе человек, открывший старое предложение ради
+  // правки места, оказался бы заперт требованием сдвинуть дату. Открой мы
+  // лист сразу на прошлом дне — человек ничего не менял бы, запрет не
+  // сработал бы, и предложение ушло бы задним числом.
+  //
+  // Проверка стоит ДО `getOrCreateDirectChat`, и порядок здесь не
+  // косметика: тот при отсутствии чата СОЗДАЁТ документ. Откажи мы после
+  // него — в базе оставался бы пустой чат, заведённый ходом, который не
+  // состоялся.
+  final proposedDate = onDay == null ? null : jobOfferDateOnDay(onDay);
+  if (proposedDate != null && proposedDate.isBefore(DateTime.now())) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Keçmiş tarixə təklif göndərilə bilməz'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    return;
+  }
+
   // Чат ищется сперва в уже загруженном списке — там же, где его нашёл бы
   // экран «Mesaj», и по тому же правилу (`directChatIn`). Полный поиск с
   // созданием зовётся только как запасной путь: он делает несколько
   // обращений подряд и на паре со старыми чатами заметно думает.
   final cached = ref.read(chatsProvider(myUid)).asData?.value;
-  final chatId = (cached == null ? null : directChatIn(cached, toUid))?.id ??
-      await service.getOrCreateDirectChat(myUid: myUid, otherUid: toUid);
+  final chatId = (cached == null ? null : directChatIn(cached, personUid))?.id ??
+      await service.getOrCreateDirectChat(myUid: myUid, otherUid: personUid);
   if (!context.mounted) return;
 
   // ОТКРЫТЫЙ РАУНД — ОТКАЗ СЛОВАМИ, А НЕ МОЛЧАЛИВАЯ ПЕРЕЗАПИСЬ.
@@ -115,7 +157,7 @@ Future<void> proposeJobOffer(
     // правило на все листы С ВВОДОМ (N28).
     isDismissible: false,
     builder: (sheetContext) => JobOfferDateSheet(
-      initialDate: onDay == null ? null : jobOfferDateOnDay(onDay),
+      initialDate: proposedDate,
       title: 'İş təklifi',
       submitLabel: 'Təklifi göndər',
       // Чей календарь проверяется на занятость — того, кто предлагает.

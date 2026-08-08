@@ -8,6 +8,8 @@ import '../../../core/time/az_date_format.dart';
 import '../../../core/time/event_local_time.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../job_offer/job_offer_entry.dart';
+import '../../job_offer/screens/job_offer_date_sheet.dart';
 
 /// Дневной экран — «что у меня сегодня».
 ///
@@ -75,6 +77,27 @@ class DayScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 22),
             ..._todayBlock(buckets),
+            // ВХОД В ПРЕДЛОЖЕНИЕ РАБОТЫ С ДНЕВНОГО ЭКРАНА (пункт 6,
+            // `docs/plan.md`). Заведён вместе с календарным, а не после
+            // него, по доводу владельца 09.08: «Bu gün» — первое, что
+            // человек видит при запуске, и разговор «свободен девятого»
+            // разбирается именно здесь. Отложенный вход появился бы через
+            // неделю ВТОРЫМ путём к той же операции.
+            //
+            // Контекст тот же, что у календаря, — ОДНА ДАТА и ничего
+            // больше. Экран знает и мероприятия дня вместе с их
+            // участниками, но их сюда не передаётся ни одного: человек в
+            // мероприятии — это не тот, кому предлагают работу, и стоило
+            // бы взять его отсюда «раз уж он есть», как оба входа
+            // перестали бы звать одну точку одинаково.
+            // Кнопка исчезает, когда сегодняшний час умолчания уже
+            // позади: иначе она вела бы в тупик — точка вызова законно
+            // отказала бы «прошлой датой». Своего числа экран не знает,
+            // вопрос задаётся тому, кто знает час (`canOfferOnDay`).
+            if (canOfferOnDay(now, now)) ...[
+              const SizedBox(height: 10),
+              _OfferForTodayButton(day: now),
+            ],
             ..._tomorrowBlock(buckets),
             ..._weekBlock(buckets),
           ],
@@ -113,6 +136,37 @@ class DayScreen extends ConsumerWidget {
       const _SectionLabel('BU HƏFTƏ'),
       for (final row in b.week) _WeekRow(row: row),
     ];
+  }
+}
+
+/// «Предложить работу на сегодня» — вход, и только вход.
+///
+/// Отдельным виджетом, потому что `DayScreen` — `ConsumerWidget` без
+/// состояния, а `ref` для вызова нужен здесь же; заодно кнопка не
+/// перерисовывает список при нажатии.
+class _OfferForTodayButton extends ConsumerWidget {
+  const _OfferForTodayButton({required this.day});
+
+  final DateTime day;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: TextButton(
+        onPressed: () => proposeJobOffer(context, ref, onDay: day),
+        style: TextButton.styleFrom(
+          foregroundColor: kGold,
+          padding: EdgeInsets.zero,
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        child: const Text(
+          '📅 Bu günə iş təklif et',
+          style: TextStyle(color: kGold, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
   }
 }
 
