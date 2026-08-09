@@ -672,6 +672,19 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   Widget _buildAgreementCard(PersonalEvent e) {
     final unread = _isUnread(e);
     final cancelled = e.status == 'cancelled';
+    // ПОД ВОПРОСОМ ВИДНО И В СПИСКЕ (Часть 6а `docs/plan.md`). Список — то
+    // самое место, где решают, что делать: человек открывает его, чтобы
+    // понять, что у него на руках. Неотличимый от живого договор под
+    // вопросом означает, что список ВРЁТ про то, чем занят вечер.
+    //
+    // ВКЛАДКА НЕ МЕНЯЕТСЯ, и это решение, а не экономия. Вкладки делят по
+    // РОЛИ («вы отправили» / «вам отправили»), и «отменённые» —
+    // единственное исключение по состоянию. Оно оправдано тем, что у
+    // отменённого роль больше ничего не решает: действий нет. У «под
+    // вопросом» роль решает всё — владелец определяет судьбу договора,
+    // вторая сторона либо ждёт, либо отменяет. Унеси его на свою вкладку —
+    // и это различие пропадёт.
+    final unsettled = e.status == kEventStatusUnsettled;
 
     Color? borderColor;
     Color? bgColor;
@@ -681,6 +694,12 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     } else if (cancelled) {
       borderColor = kRed.withAlpha(77);
       bgColor = Colors.white.withAlpha(3);
+    } else if (unsettled) {
+      // Не золотая рамка и не красная: договор ни «свежий», ни отменённый.
+      // Тот же набор `kWarn*`, что у отметки на самой карточке и у
+      // предупреждения о занятом времени, — один смысл, один вид.
+      borderColor = kWarnBorder;
+      bgColor = kWarnBg;
     } else if (unread) {
       borderColor = kGold;
       bgColor = kGold.withAlpha(20);
@@ -700,10 +719,21 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       // до Этапа II; второй половины — что само слово ложное — он не
       // увидел. Комментарий защищает строку, а не класс.
       roleText = 'Razılıqla ləğv edildi';
+    } else if (unsettled) {
+      // Роль НЕ теряется: она и есть то, что решает следующий ход. Строка
+      // говорит и роль, и состояние — «вы отправили · под вопросом».
+      final role = e.ownerUid == _uid ? 'Siz göndərdiniz' : 'Sizə göndərildi';
+      roleText = '$role · şübhə altında';
     } else {
       roleText = e.ownerUid == _uid ? 'Siz göndərdiniz' : 'Sizə göndərildi';
     }
-    final roleColor = cancelled ? kRed : unread ? kGold2 : kMuted;
+    final roleColor = cancelled
+        ? kRed
+        : unsettled
+            ? kWarnTitle
+            : unread
+                ? kGold2
+                : kMuted;
 
     String? eventLine;
     if (!cancelled && e.type.isNotEmpty && e.date.isNotEmpty) {
