@@ -1024,9 +1024,14 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           ),
           const SizedBox(height: 10),
           if (events.isEmpty)
-            const Text(
-              'Boşsunuz',
-              style: TextStyle(fontSize: 19, color: kTextSecondary),
+            // `const` снят: текст теперь зависит от того, прошёл ли день.
+            Text(
+              // Прошедший день говорит о себе в ПРОШЕДШЕМ времени.
+              // «Boşsunuz» — «вы свободны», и про вчера это звучит так,
+              // будто вчерашний вечер ещё можно занять. Слово выбрано
+              // автором 09.08, язык его.
+              isPast ? 'Boş idi' : 'Boşsunuz',
+              style: const TextStyle(fontSize: 19, color: kTextSecondary),
             )
           else
             for (final e in events)
