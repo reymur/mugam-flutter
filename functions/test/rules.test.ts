@@ -404,12 +404,12 @@ const confirm = (uid: string) => ({
 
 // Ставит состояние «под вопросом» в обход правил — его пишет сервер, и
 // клиентского хода для входа нет вовсе.
-async function seedUnsettled() {
+async function seedUnsettled(reason = "memberLeft") {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     await updateDoc(doc(context.firestore(), `personalEvents/${EVENT}`), {
       status: "unsettled",
       lastActionBy: CONTACT,
-      lastActionType: "memberLeft",
+      lastActionType: reason,
     });
   });
 }
@@ -431,6 +431,19 @@ test("возврат: владелец МОЖЕТ вернуть договор 
 // «Всё в силе» — решение того, кто договор держит. Участник, вернувшийся
 // в состав, ничего не решает про саму работу; не согласен — у него есть
 // обычный ход отмены по согласию.
+// ПОВОДОВ ДВА, А ВЫХОД В СИЛУ ОСМЫСЛЕН У ОДНОГО. Ушёл участник — вечер на
+// месте, «продолжаю без него» законно. Исчезла работа — возвращать не к
+// чему: родительский договор отменён по согласию, и обратного хода у
+// отмены нет вовсе. Без этого отказа кнопки в приложении нет, а дорога
+// открыта, и чужой клиент вернул бы в силу вечер, которого не существует.
+test("возврат: при поводе «работа исчезла» нельзя даже владельцу", async () => {
+  await seedUnsettled("workCancelled");
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), restore(OWNER)),
+  );
+});
+
 test("возврат: вторая сторона НЕ может вернуть договор в силу", async () => {
   await seedUnsettled();
   const contactDb = testEnv.authenticatedContext(CONTACT).firestore();

@@ -42,6 +42,19 @@ const String kCancelConfirmed = 'cancelConfirmed';
 const String kCancelWithdrawn = 'cancelWithdrawn';
 const String kCancelDeclined = 'cancelDeclined';
 
+/// Возврат договора из «под вопросом» в силу — «продолжаю без него»
+/// (Часть 6а `docs/plan.md`).
+///
+/// Стоит рядом с именами отмены, а не отдельно, по той же причине, что и
+/// они: правило `restoresEvent()` в `firestore.rules` требует буквального
+/// совпадения строки, и разойдись клиент с ним на символ — сервер откажет
+/// по правам, молча, если отказ проглотить.
+///
+/// В `kCancelDeeds` НЕ входит: это не отмена. Проход по исходникам
+/// перечисляет их вместе, но смысл у них разный, и слить их в один набор
+/// значило бы разрешить `restoresEvent` там, где ждут отмену.
+const String kRestoredDeed = 'restored';
+
 /// Все имена отмены разом — для проходов по исходникам.
 const Set<String> kCancelDeeds = {
   kCancelRequested,

@@ -109,6 +109,16 @@ void main() {
 
     setUpAll(() => rules = readCode('firestore.rules'));
 
+    // ВОЗВРАТ В СИЛУ ПРОВЕРЯЕТСЯ ТЕМ ЖЕ, и отдельной строкой: имя новое,
+    // а требование к нему прежнее — буквальное совпадение с правилом
+    // `restoresEvent()`, иначе молчаливый отказ по правам.
+    test('имя возврата в силу есть в firestore.rules', () {
+      expect(rules.contains("'$kRestoredDeed'"), isTrue,
+          reason: 'Клиент шлёт lastActionType «$kRestoredDeed», а в '
+              'firestore.rules такого имени нет. Правило требует '
+              'буквального совпадения.');
+    });
+
     test('все четыре имени отмены есть в firestore.rules', () {
       // Все четыре, а не два: запрос и подтверждение тоже называют себя —
       // без этого сервер берёт автора уведомления из прошлого действия и
@@ -131,7 +141,7 @@ void main() {
           .toSet();
       expect(
         names,
-        {'left', ...kCancelDeeds},
+        {'left', kRestoredDeed, ...kCancelDeeds},
         reason: 'Служба пишет lastActionType значениями $names. Каждое из '
             'них обязано быть разрешено в firestore.rules — иначе запись '
             'отвергнут по правам.',

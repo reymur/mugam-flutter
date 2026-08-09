@@ -2337,6 +2337,54 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
 
     if (stage == CancelStage.cancelled) return const SizedBox.shrink();
 
+    // ВЕРНУТЬ В СИЛУ — только владельцу и только при поводе «ушёл
+    // участник» (Часть 6а `docs/plan.md`). Оба условия закреплены
+    // правилом `restoresEvent()`, а не вежливостью экрана: без кнопки
+    // дорога всё равно была бы открыта.
+    //
+    // При поводе «исчезла работа» кнопки НЕТ, и это не пропуск: возвращать
+    // не к чему. Родительский договор отменён по согласию обеих сторон, и
+    // обратного хода у отмены нет вовсе — вечера не существует.
+    //
+    // ПОДТВЕРЖДЕНИЕ ОБЯЗАТЕЛЬНО, и не потому, что действие «важное».
+    // Отмена — ход ДВУСТОРОННИЙ: она лишь задаёт вопрос, и случайный тап
+    // ничего не разрушает. «Продолжаю без него» — ход ОДНОСТОРОННИЙ и
+    // необратимый: нажал, и вторая сторона немедленно получила обещание,
+    // что вечер состоится. Подтверждение нужно необратимому (I29).
+    if (event.status == kEventStatusUnsettled &&
+        event.lastActionType == 'memberLeft' &&
+        event.ownerUid == currentUid) {
+      return _cancelBox(
+        children: [
+          _cancelButton(
+            // НАДПИСЬ ЖДЁТ АВТОРА (решение владельца 09.08). Здесь стоит
+            // предложенная, и стоит она в ОДНОМ месте: замена — одна
+            // строка. Смысл, который она обязана нести, — не «всё в
+            // силе», а «продолжаю без него»: состав не восстановился, и
+            // обещание даётся именно об этом.
+            label: 'Onsuz davam edirəm',
+            color: kWarnTitle,
+            filled: false,
+            onTap: () async {
+              final ok = await _ask(
+                title: 'Onsuz davam edirsiniz?',
+                body: 'Müqavilə yenidən qüvvəyə minəcək və qarşı tərəf '
+                    'bundan xəbər tutacaq.',
+                confirmLabel: 'Davam edirəm',
+              );
+              if (!ok) return;
+              await _cancelStep(
+                () => svc.restoreUnsettledAgreement(event.id, currentUid),
+                deed: kCancelRequested,
+                eventId: event.id,
+                raceMessage: 'Müqavilənin vəziyyəti dəyişib',
+              );
+            },
+          ),
+        ],
+      );
+    }
+
     if (stage == CancelStage.none) {
       return _cancelBox(
         children: [
@@ -2686,15 +2734,37 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
       // Цвета взяты существующие — набор `kWarn*` из предупреждения о
       // занятом времени. И там и здесь смысл один:
       // «посмотри, тут вопрос», а не «поломка».
-      statusBadge = Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: kWarnBg,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: kWarnBorder),
-        ),
-        child: const Text('⏳ Müqavilə şübhə altındadır',
-            style: TextStyle(color: kWarnTitle, fontWeight: FontWeight.w600)),
+      // СТРОКА ПОВОДА — обеим сторонам, и она обязательна.
+      //
+      // Отметка «под вопросом» без повода оставляет человека ждать
+      // НЕИЗВЕСТНО ЧЕГО. Знание повода даёт ему собственный ход: ушёл
+      // участник — можно предложить замену или спросить; исчезла работа —
+      // ждать нечего, остаётся отпустить. Это N99 про ПОВОД, а не про
+      // ответ: одно и то же «жду» означает разное, и экран, не
+      // различающий их, врёт про ожидание.
+      final reason = event.lastActionType == 'workCancelled'
+          ? 'İş ləğv olundu — təşkilatçı qərar verir'
+          : 'İştirakçı ayrıldı — təşkilatçı qərar verir';
+      statusBadge = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: kWarnBg,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: kWarnBorder),
+            ),
+            child: const Text('⏳ Müqavilə şübhə altındadır',
+                style: TextStyle(color: kWarnTitle, fontWeight: FontWeight.w600)),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            reason,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 12, color: kWarnHint),
+          ),
+        ],
       );
     } else {
       statusBadge = Container(
