@@ -2648,6 +2648,24 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
         child: const Text('✖ Müqavilə ləğv edildi',
             style: TextStyle(color: kRed, fontWeight: FontWeight.w600)),
       );
+    } else if (card.outcome == AgreementOutcome.unsettled) {
+      // ПОД ВОПРОСОМ — своя отметка, не зелёная и не красная (Часть 6а
+      // `docs/plan.md`). Зелёная сказала бы «всё в силе» там, где опоры
+      // нет; красная — «отменено» там, где никто не отменял.
+      //
+      // Цвета взяты существующие — набор `kWarn*` из предупреждения о
+      // занятом времени. И там и здесь смысл один:
+      // «посмотри, тут вопрос», а не «поломка».
+      statusBadge = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: kWarnBg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: kWarnBorder),
+        ),
+        child: const Text('⏳ Müqavilə şübhə altındadır',
+            style: TextStyle(color: kWarnTitle, fontWeight: FontWeight.w600)),
+      );
     } else {
       statusBadge = Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),

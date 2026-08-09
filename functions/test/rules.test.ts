@@ -393,6 +393,112 @@ const confirm = (uid: string) => ({
   lastActionType: "cancelConfirmed",
 });
 
+// ---------------------------------------------------------------------
+// personalEvents — возврат из «под вопросом» в силу (Часть 6а плана)
+//
+// Ход-зеркало к подтверждению отмены: там договор уходит в `cancelled`,
+// здесь возвращается в `agreed`. Проверяется парно — разрешено тому,
+// кому положено, и отказано ВСЕМ прочим: правило существует ради
+// отказов не меньше, чем ради разрешения.
+// ---------------------------------------------------------------------
+
+// Ставит состояние «под вопросом» в обход правил — его пишет сервер, и
+// клиентского хода для входа нет вовсе.
+async function seedUnsettled() {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), `personalEvents/${EVENT}`), {
+      status: "unsettled",
+      lastActionBy: CONTACT,
+      lastActionType: "memberLeft",
+    });
+  });
+}
+
+const restore = (uid: string) => ({
+  status: "agreed",
+  lastActionBy: uid,
+  lastActionType: "restored",
+});
+
+test("возврат: владелец МОЖЕТ вернуть договор в силу", async () => {
+  await seedUnsettled();
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), restore(OWNER)),
+  );
+});
+
+// «Всё в силе» — решение того, кто договор держит. Участник, вернувшийся
+// в состав, ничего не решает про саму работу; не согласен — у него есть
+// обычный ход отмены по согласию.
+test("возврат: вторая сторона НЕ может вернуть договор в силу", async () => {
+  await seedUnsettled();
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), restore(CONTACT)),
+  );
+});
+
+test("возврат: посторонний не может ничего", async () => {
+  await seedUnsettled();
+  const strangerDb = testEnv.authenticatedContext(STRANGER).firestore();
+  await assertFails(
+    updateDoc(doc(strangerDb, `personalEvents/${EVENT}`), restore(STRANGER)),
+  );
+});
+
+// Из отменённого возврата нет: отмена сделана по согласию обеих сторон,
+// и разворачивать её в одиночку значило бы обойти это согласие.
+test("возврат: из ОТМЕНЁННОГО вернуть нельзя даже владельцу", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), `personalEvents/${EVENT}`), {
+      status: "cancelled",
+    });
+  });
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), restore(OWNER)),
+  );
+});
+
+// Значение прибито в правиле. Без этого `hasOnly` пропустил бы любую
+// строку в поле, по которому судят все остальные ходы.
+test("возврат: подсунуть иное значение status нельзя", async () => {
+  await seedUnsettled();
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      ...restore(OWNER),
+      status: "whatever",
+    }),
+  );
+});
+
+// Ход назван, и имя подделать нельзя: сервер берёт из `lastActionType`
+// текст уведомления, а из `lastActionBy` — автора.
+test("возврат: чужим именем автора не подписаться", async () => {
+  await seedUnsettled();
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      ...restore(OWNER),
+      lastActionBy: CONTACT,
+    }),
+  );
+});
+
+// Заодно протащить соседнее поле нельзя — `hasOnly` держит ровно три.
+test("возврат: заодно поменять место мероприятия нельзя", async () => {
+  await seedUnsettled();
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      ...restore(OWNER),
+      location: "чужое место",
+    }),
+  );
+});
+
 test("отмена: вторая сторона МОЖЕТ предложить отмену своим uid", async () => {
   const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
   await assertSucceeds(

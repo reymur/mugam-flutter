@@ -1,4 +1,36 @@
 {
+  "permissions": {
+    "allow": [
+      "Read",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(grep*)",
+      "Bash(rg*)",
+      "Bash(ls*)",
+      "Bash(wc*)",
+      "Bash(head*)",
+      "Bash(tail*)",
+      "Bash(stat*)",
+      "Bash(pgrep*)",
+      "Bash(flutter test*)",
+      "Bash(flutter analyze*)",
+      "Bash(npm test*)",
+      "Bash(npx jest*)",
+      "Bash(npx tsc*)",
+      "Bash(codesign --verify*)"
+    ],
+    "ask": [
+      "Bash(firebase deploy*)",
+      "Bash(firebase functions:delete*)",
+      "Bash(gcloud*)",
+      "Bash(git push*)",
+      "Bash(rm*)",
+      "Bash(rmdir*)",
+      "Bash(xcrun devicectl device uninstall*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {

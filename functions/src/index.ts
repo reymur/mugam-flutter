@@ -27,6 +27,7 @@ import {
   reminderKey,
   ReminderKind,
   shouldCatchUp,
+  unsettledAfterMemberLeft,
   eventWallClock,
   BAKU_OFFSET_MS,
 } from "./eventNotifications";
@@ -2330,6 +2331,33 @@ export const onPersonalEventUpdated = onDocumentUpdated(
     await clearReadMark(event.params.eventId, recipientsOf(a, actor));
     if (!(await claimNotificationOnce(event.id))) return;
     await sendEventPushes(pushes);
+  },
+);
+
+// ДОГОВОР ПОД ВОПРОСОМ — отдельный триггер, а не ветка в предыдущем.
+//
+// Причина не в опрятности: тот выходит на `pushes.length === 0` РАНЬШЕ
+// записи, и «ушёл участник, уведомлять некого» (например, ушёл сам
+// владелец) не должно означать «состояние не менять».
+//
+// Пишет только сервер. Клиенту это состояние писать нечем и незачем:
+// правила его не пропускают, а `restoresEvent()` открывает только обратную
+// дорогу — из «под вопросом» в силу (Часть 6а `docs/plan.md`).
+export const markEventUnsettled = onDocumentUpdated(
+  "personalEvents/{eventId}",
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after) return;
+    const patch = unsettledAfterMemberLeft(
+      toEventSnapshot(before),
+      toEventSnapshot(after),
+    );
+    if (!patch) return;
+    logger.info(
+      `[unsettled] ${event.params.eventId} → ${patch.status} (${patch.lastActionType})`,
+    );
+    await db.collection("personalEvents").doc(event.params.eventId).update(patch);
   },
 );
 

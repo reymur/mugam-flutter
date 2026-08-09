@@ -12,6 +12,7 @@ import {
   reminderKey,
   reminderTitle,
   shouldCatchUp,
+  unsettledAfterMemberLeft,
 } from "../src/eventNotifications";
 import { isWatchingEventDecision } from "../src/presence";
 
@@ -37,6 +38,70 @@ function ev(over: Partial<EventSnapshot> = {}): EventSnapshot {
     ...over,
   };
 }
+
+describe("договор становится «под вопросом» (Часть 6а)", () => {
+  const before = ev({ status: "agreed" });
+
+  it("ушёл участник — договор под вопросом, повод назван", () => {
+    const after = ev({
+      status: "agreed",
+      musicians: [OWNER],
+      lastActionType: "left",
+    });
+    assert.deepEqual(unsettledAfterMemberLeft(before, after), {
+      status: "unsettled",
+      lastActionType: "memberLeft",
+    });
+  });
+
+  // Без этого триггер писал бы сам себе без конца: его же запись меняет
+  // документ и поднимает его заново.
+  it("повторного захода нет: после записи повод уже не «left»", () => {
+    const after = ev({
+      status: "unsettled",
+      musicians: [OWNER],
+      lastActionType: "memberLeft",
+    });
+    assert.equal(unsettledAfterMemberLeft(before, after), null);
+  });
+
+  // Из отменённого пути в «под вопросом» нет: он закрыт по согласию сторон.
+  it("отменённый договор под вопрос не ставится", () => {
+    const after = ev({
+      status: "cancelled",
+      musicians: [OWNER],
+      lastActionType: "left",
+    });
+    assert.equal(unsettledAfterMemberLeft(before, after), null);
+  });
+
+  // ЭТОТ СЛУЧАЙ ДОПИСАН ПО ПРОВЕРКЕ ВОЗВРАТОМ 09.08. Сняв условие «кто-то
+  // действительно ушёл», я не уронил НИ ОДНОГО теста: соседние случаи
+  // подставляли другой повод (`edited`), и до проверки состава разбор не
+  // доходил. Тест, которого не хватало, — повод «left» ПРИ НЕТРОНУТОМ
+  // составе: так выглядит холостая запись, и состояние по ней менять
+  // нечем.
+  it("повод «left», а состав не изменился — не под вопросом", () => {
+    const after = ev({ status: "agreed", lastActionType: "left" });
+    assert.equal(unsettledAfterMemberLeft(before, after), null);
+  });
+
+  // Правка места или даты — не уход, и состояние трогать нечем.
+  it("состав не менялся — состояние прежнее", () => {
+    const after = ev({ status: "agreed", lastActionType: "edited" });
+    assert.equal(unsettledAfterMemberLeft(before, after), null);
+  });
+
+  // Добавление участника — тоже не уход.
+  it("участника ДОБАВИЛИ — не под вопросом", () => {
+    const after = ev({
+      status: "agreed",
+      musicians: [OWNER, GUEST, "third"],
+      lastActionType: "edited",
+    });
+    assert.equal(unsettledAfterMemberLeft(before, after), null);
+  });
+});
 
 describe("формат времени мероприятия", () => {
   it("«плавающее гражданское время» читается как есть, без сдвига пояса", () => {

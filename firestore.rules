@@ -822,6 +822,40 @@ service cloud.firestore {
       }
 
       // Вторая сторона не согласна.
+      // ХОД-ЗЕРКАЛО К ОТМЕНЕ: вернуть договор из «под вопросом» в силу.
+      //
+      // Третье состояние (`unsettled`) заводится тогда, когда у договора
+      // пропала одна из опор: ушёл участник либо исчезла работа, ради
+      // которой звали (Часть 6а `docs/plan.md`). Ставит его СЕРВЕР —
+      // клиенту его писать незачем и нечем.
+      //
+      // А вот вернуть в силу решает ЧЕЛОВЕК, и потому ход нужен здесь.
+      // Проверено чтением 09.08: сегодня записать `agreed` в существующий
+      // документ не может НИКТО — владельцу запрещено трогать `status`
+      // вовсе (`!touchesCancel()`), а единственный ход, который его
+      // пишет, `confirmsCancel()`, прибит к значению `cancelled`.
+      //
+      // ПОЧЕМУ ТОЛЬКО ВЛАДЕЛЕЦ, а не любая сторона: «всё в силе» — это
+      // решение того, кто договор держит. Участник, вернувшийся в состав,
+      // ничего не решает про работу; а вторая сторона, если она не
+      // согласна, располагает обычным ходом отмены по согласию.
+      //
+      // ПОЧЕМУ ТОЛЬКО ИЗ `unsettled`: из отменённого возврата нет — он
+      // делается по согласию обеих сторон, и разворачивать его в
+      // одиночку значило бы обойти это согласие. Из `agreed` возвращать
+      // нечего.
+      //
+      // Значение прибито, как у соседа: иначе `hasOnly` пропустил бы
+      // любую строку в поле, по которому судят все остальные ходы.
+      function restoresEvent() {
+        return changedKeys().hasOnly(['status', 'lastActionBy', 'lastActionType'])
+          && request.resource.data.status == 'agreed'
+          && resource.data.get('status', null) == 'unsettled'
+          && resource.data.ownerUid == request.auth.uid
+          && request.resource.data.lastActionType == 'restored'
+          && stampsSelf();
+      }
+
       function declinesCancelRequest() {
         return clearsCancelFields()
           && resource.data.get('cancelRequestedBy', null) != request.auth.uid
@@ -870,6 +904,7 @@ service cloud.firestore {
           || (isParty() && (
                requestsCancel() || confirmsCancel() || leavesEvent()
                || withdrawsCancelRequest() || declinesCancelRequest()
+               || restoresEvent()
              ))
         );
       allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
