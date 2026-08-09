@@ -3195,9 +3195,20 @@ Route<void> agreementConflictEventRoute({
 }) => MaterialPageRoute(
   builder: (_) => _ConflictEventScreen(
     event: event,
-    categoryTitle: event.ownerUid == currentUid
-        ? 'Şəxsi tədbir'
-        : 'Dəvətli tədbir',
+    // ДОГОВОР НАЗЫВАЕТСЯ ДОГОВОРОМ (N94). Прежде здесь стояло только
+    // «своё / где я гость», и мешающий ДОГОВОР подписывался как «Şəxsi
+    // tədbir» — личное мероприятие. Снято владельцем на устройстве 09.08,
+    // сразу после того, как та же путаница была вылечена этажом ниже: тап
+    // по карточке открывал мероприятие вместо договора.
+    //
+    // Хвост дефекта уцелел ровно потому, что я поправил, КУДА ведёт тап, и
+    // не посмотрел на подпись экраном выше. Одно и то же различение
+    // выражено в двух местах — теперь оба зовут общее правило.
+    categoryTitle: switch (eventCardKindOf(event)) {
+      EventCardKind.agreement => 'Müqavilə',
+      EventCardKind.personalEvent =>
+        event.ownerUid == currentUid ? 'Şəxsi tədbir' : 'Dəvətli tədbir',
+    },
     currentUid: currentUid,
     allUsers: allUsers,
   ),
