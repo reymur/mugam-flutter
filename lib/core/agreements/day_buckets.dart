@@ -103,11 +103,42 @@ List<PersonalEvent> eventsOfDay({
   required List<PersonalEvent> own,
   required List<PersonalEvent> asParticipant,
   required DateTime day,
+}) =>
+    eventsByDay(own: own, asParticipant: asParticipant)[
+        DateTime(day.year, day.month, day.day)] ??
+    const [];
+
+/// Все мероприятия, разложенные по дням — ОДИН проход вместо прохода на
+/// каждый день.
+///
+/// **Зачем отдельно от `eventsOfDay`.** Сетка месяца строит 42 ячейки и на
+/// каждую спрашивала «что в этот день», а каждый такой вопрос проходил
+/// ВЕСЬ список мероприятий целиком. Считано 09.08: на 300 мероприятиях
+/// (три года работы музыканта) это **12 600 сравнений на одну перерисовку
+/// сетки**, на 3000 — **126 000**, и происходит это при каждом листании
+/// месяца.
+///
+/// Сегодня это незаметно — в проде 72 документа на всю базу. Заведено не
+/// «на всякий случай», а потому, что прошлое перестало быть редкостью:
+/// 60 мероприятий из 72 старше сегодня, и календарь показывает их все.
+///
+/// **`eventsOfDay` выражен ЧЕРЕЗ эту функцию, а не рядом с ней.** Иначе
+/// два места отвечали бы на один вопрос своим способом и разошлись бы
+/// молча — N74 дословно, там сетка считала свой счёт. Для одиночного
+/// вопроса цена та же, что была: один проход по списку.
+Map<DateTime, List<PersonalEvent>> eventsByDay({
+  required List<PersonalEvent> own,
+  required List<PersonalEvent> asParticipant,
 }) {
-  final target = DateTime(day.year, day.month, day.day);
-  return liveEvents(own: own, asParticipant: asParticipant)
-      .where((e) => eventDay(e.date) == target)
-      .toList();
+  final byDay = <DateTime, List<PersonalEvent>>{};
+  for (final e in liveEvents(own: own, asParticipant: asParticipant)) {
+    final day = eventDay(e.date);
+    // `liveEvents` уже выбросил записи без разбираемой даты — проверка
+    // здесь только для типа, а не для правила.
+    if (day == null) continue;
+    (byDay[day] ??= <PersonalEvent>[]).add(e);
+  }
+  return byDay;
 }
 
 /// Собирает раскладку из двух потоков — своих мероприятий и тех, где

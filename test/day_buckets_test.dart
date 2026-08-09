@@ -28,6 +28,54 @@ PersonalEvent ev(String id, String date, {String status = 'agreed'}) {
 }
 
 void main() {
+  group('разложение по дням — один проход вместо прохода на каждый день', () {
+    final own = [
+      ev('a', '2026-08-09T12:00:00.000'),
+      ev('b', '2026-08-09T19:00:00.000'),
+      ev('c', '2026-08-11T20:04:00.000'),
+      ev('cancelled', '2026-08-09T21:00:00.000', status: 'cancelled'),
+    ];
+
+    test('складывает мероприятия одного дня вместе', () {
+      final byDay = eventsByDay(own: own, asParticipant: const []);
+      expect(byDay[DateTime(2026, 8, 9)]?.length, 2);
+      expect(byDay[DateTime(2026, 8, 11)]?.length, 1);
+    });
+
+    test('отменённые не попадают — правило то же, что у остальных', () {
+      final byDay = eventsByDay(own: own, asParticipant: const []);
+      final ids = (byDay[DateTime(2026, 8, 9)] ?? []).map((e) => e.id);
+      expect(ids, isNot(contains('cancelled')));
+    });
+
+    test('пустой день ключа не заводит', () {
+      final byDay = eventsByDay(own: own, asParticipant: const []);
+      expect(byDay.containsKey(DateTime(2026, 8, 10)), isFalse);
+    });
+
+    // ГЛАВНАЯ ИЗ ЧЕТЫРЁХ: сетка месяца спрашивает разложением, а всё
+    // остальное — поимённо, и разойдись эти два ответа, кружок на числе
+    // снова разъедется с тем, что открывается по нажатию (N74).
+    test('разложение и одиночный вопрос дают ОДНО И ТО ЖЕ', () {
+      final byDay = eventsByDay(own: own, asParticipant: const []);
+      for (final day in [
+        DateTime(2026, 8, 9),
+        DateTime(2026, 8, 10),
+        DateTime(2026, 8, 11),
+      ]) {
+        final single =
+            eventsOfDay(own: own, asParticipant: const [], day: day);
+        final fromMap = byDay[day] ?? const <PersonalEvent>[];
+        expect(
+          single.map((e) => e.id).toList(),
+          fromMap.map((e) => e.id).toList(),
+          reason: 'день $day: разложение и одиночный вопрос разошлись',
+        );
+      }
+    });
+  });
+
+
   group('дневной экран подключён и открывается первым (работа 6, вариант А)', () {
     // Наблюдаемого поведения тут проверить нечем без Firebase, поэтому
     // сторож текстовый — но он держит ровно то, что можно потерять

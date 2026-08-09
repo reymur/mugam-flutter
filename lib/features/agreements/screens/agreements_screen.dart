@@ -977,6 +977,42 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     // разбора одной даты разошлись бы молча (N58).
     final events = buckets.today;
 
+    // ПРОШЕДШИЙ ДЕНЬ ПОКАЗЫВАЕТСЯ ПРИГЛУШЁННО, А НЕ ПУСТО.
+    //
+    // Довод владельца: музыкант часто смотрит НАЗАД — вспомнить, когда
+    // играл у этого человека, сколько было работы в июле, с кем. Перепись
+    // прода 09.08 его подтвердила числом: из 72 мероприятий **60 старше
+    // сегодня**, то есть календарь на 83% состоит из того, что уже было.
+    // Прятать эту массу значит делать календарь полезным наполовину.
+    //
+    // Приглушение решает ровно одну задачу: отличить «было» от «будет» с
+    // одного взгляда. Оно НЕ должно делать текст нечитаемым — иначе
+    // пропадает то, ради чего работа делается.
+    //
+    // ЦВЕТА ВЗЯТЫ СУЩЕСТВУЮЩИЕ И ПРОВЕРЕНЫ КОНТРАСТОМ, а не на глаз
+    // (измерено 09.08 к фону `kBg`):
+    //   kTextSecondary 9.27 — отлично;
+    //   kMuted         4.74 — годен для обычного текста;
+    //   kTextDim       2.75 — НЕ ЧИТАЕМ, ниже порога даже для крупного.
+    // Первая редакция этой правки ставила на «тип · место» именно
+    // `kTextDim` — он и есть «приглушённый» по имени. Замер это отменил:
+    // строка «Toy · İnci qarayev» — то самое, что человек пришёл
+    // вспомнить, и читаться она обязана. `kTextDim` остаётся там, где
+    // стоит сегодня: слово «boş» у пустого дня недели, которое читать не
+    // нужно.
+    //
+    // Полоска гасится в `kBarOff` — тем же цветом, которым на дневном
+    // экране погашена полоска ЗАВТРАШНЕГО дела. Это не совпадение и не
+    // экономия имени: и там и там она значит «не сейчас».
+    final selectedDay = DateTime(date.year, date.month, date.day);
+    final todayDay = DateTime.now();
+    final isPast = selectedDay.isBefore(
+      DateTime(todayDay.year, todayDay.month, todayDay.day),
+    );
+    final barColor = isPast ? kBarOff : kGold;
+    final timeColor = isPast ? kTextSecondary : kText;
+    final lineColor = isPast ? kMuted : kTextSecondary;
+
     return Padding(
       padding: const EdgeInsets.only(top: 18),
       child: Column(
@@ -1012,20 +1048,20 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                 child: Container(
                 margin: const EdgeInsets.only(bottom: 12),
                 padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
-                decoration: const BoxDecoration(
-                  border: Border(left: BorderSide(color: kGold, width: 4)),
+                decoration: BoxDecoration(
+                  border: Border(left: BorderSide(color: barColor, width: 4)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       fmtEventTime(e.date),
-                      style: const TextStyle(fontSize: 21, color: kText),
+                      style: TextStyle(fontSize: 21, color: timeColor),
                     ),
                     const SizedBox(height: 5),
                     Text(
                       [e.type, if (e.location.isNotEmpty) e.location].join(' · '),
-                      style: const TextStyle(fontSize: 16, color: kTextSecondary),
+                      style: TextStyle(fontSize: 16, color: lineColor),
                     ),
                   ],
                 ),
@@ -1242,6 +1278,17 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     final daysInMonth = DateTime(year, monthNum + 1, 0).day;
     final today = DateTime.now();
 
+    // ОДИН проход вместо прохода на каждую из 42 ячеек. Прежде сетка
+    // спрашивала `eventsOfDay` на каждый день, и каждый вопрос перебирал
+    // ВЕСЬ список: на 300 мероприятиях это 12 600 сравнений на одну
+    // перерисовку, на 3000 — 126 000, и повторяется при каждом листании
+    // месяца. Правило то же самое (`eventsByDay` и `eventsOfDay` —
+    // одна функция), меняется только число проходов.
+    final byDay = eventsByDay(
+      own: personalEvents,
+      asParticipant: eventsAsParticipant,
+    );
+
     final cells = <Widget>[];
     for (int i = 0; i < startOffset; i++) {
       cells.add(const SizedBox());
@@ -1252,11 +1299,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       // же число, обязаны считать ОДНИМ правилом. Здесь стоял свой счёт —
       // оба списка подряд, фильтр по дате, `.length`, — и он не знал ни про
       // отменённые, ни про повторы. На 9 avqust это дало «4» при трёх.
-      final dayEvents = eventsOfDay(
-        own: personalEvents,
-        asParticipant: eventsAsParticipant,
-        day: dayDate,
-      );
+      final dayEvents = byDay[dayDate] ?? const <PersonalEvent>[];
       final isSelected = _selectedCalendarDay == day &&
           _currentCalendarMonth.year == year &&
           _currentCalendarMonth.month == monthNum;
