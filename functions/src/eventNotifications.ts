@@ -486,7 +486,17 @@ export function pushCancelDeclined(
   };
 }
 
-export type ReminderKind = "24h" | "3h";
+// ТРЕТИЙ ВИД, и заведён он не ради текста, а ради КЛЮЧА ОТМЕТКИ.
+//
+// Отметка «уже отправлено» складывается из `(eventId, kind, дата)`. Не
+// различай она вид сообщения — напоминание «вечер под вопросом» заняло бы
+// ключ обычного, и после возвращения договора в силу человек не получил бы
+// напоминания о самом вечере ВОВСЕ. Устаревшее сообщение не просто уходит:
+// оно съедает верное.
+//
+// Обратная сторона названа честно: смени состояние туда-обратно — и за
+// одни сутки придут два напоминания. Это не дубль, сообщения разные.
+export type ReminderKind = "24h" | "3h" | "unsettled24h";
 
 /**
  * Напоминание. Два срока, и они не равнозначны:
@@ -499,6 +509,56 @@ export type ReminderKind = "24h" | "3h";
  * Часа намеренно нет: за час человек уже либо в пути, либо не успеет, и
  * уведомление становится укором вместо помощи.
  */
+// ПОВОД НАЗЫВАЕТСЯ ВЕЗДЕ, где называется состояние: и в отметке на
+// карточке, и в уведомлении о переходе, и в напоминании. «Под вопросом»
+// без повода оставляет человека ждать неизвестно чего, а знание повода
+// даёт ему собственный ход — предложить замену, спросить, отпустить (N99).
+//
+// СЛОВА ВРЕМЕННЫЕ И ПОМЕЧЕНЫ: автор ещё не сказал своих. Стоят в одном
+// месте, замена — одна строка.
+export function unsettledReasonText(
+  lastActionType: EventActionType | null | undefined,
+): string {
+  return lastActionType === "workCancelled"
+    ? "iş ləğv olundu"
+    : "iştirakçı ayrıldı";
+}
+
+// Уведомление о САМОМ ПЕРЕХОДЕ. Без него состояние молчит: `diffEvents`
+// не сравнивает `status`, а разбор уведомлений ветвится по
+// `lastActionType`, где повода `memberLeft` нет. Вторая сторона узнавала
+// бы о вопросе, только открыв карточку.
+export function pushUnsettled(
+  uid: string,
+  eventId: string,
+  e: EventSnapshot,
+): EventPush {
+  return {
+    uid,
+    title: "Müqavilə şübhə altındadır",
+    body: `${eventTitleOf(e)} — ${unsettledReasonText(e.lastActionType)}`,
+    data: openEvent(eventId, "event_unsettled"),
+  };
+}
+
+// Напоминание за сутки о вечере, вопрос по которому не решён.
+//
+// Идёт ОБЕИМ сторонам, а не только зовущему: владелец и так знает — ему
+// нужен толчок; вторая сторона ДЕРЖИТ ВЕЧЕР, и ради неё правило и
+// заводилось. Одно сообщение с названным поводом закрывает оба случая.
+export function pushUnsettledReminder(
+  uid: string,
+  eventId: string,
+  e: EventSnapshot,
+): EventPush {
+  return {
+    uid,
+    title: "Sabah: tədbir şübhə altında",
+    body: `${eventTitleOf(e)} — ${unsettledReasonText(e.lastActionType)}`,
+    data: openEvent(eventId, "event_reminder_unsettled24h"),
+  };
+}
+
 export function pushReminder(
   uid: string,
   eventId: string,

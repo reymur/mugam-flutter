@@ -26,6 +26,8 @@ import {
   recipientsOf,
   reminderKey,
   ReminderKind,
+  pushUnsettled,
+  pushUnsettledReminder,
   shouldCatchUp,
   unsettledAfterMemberLeft,
   eventWallClock,
@@ -2358,6 +2360,23 @@ export const markEventUnsettled = onDocumentUpdated(
       `[unsettled] ${event.params.eventId} → ${patch.status} (${patch.lastActionType})`,
     );
     await db.collection("personalEvents").doc(event.params.eventId).update(patch);
+
+    // УВЕДОМЛЕНИЕ О САМОМ ПЕРЕХОДЕ, и шлётся оно ЗДЕСЬ, а не общим
+    // разбором. Причина: `diffEvents` не сравнивает `status`, а
+    // `planUpdatePushes` ветвится по `lastActionType`, где повода
+    // `memberLeft` нет вовсе. То есть наша же запись прошла бы молча, и
+    // вторая сторона узнавала бы о вопросе, только открыв карточку.
+    //
+    // Ушедшему не шлём: `recipientsOf` снимает автора, а автор здесь —
+    // тот, кто вышел. Он и так знает, что вышел.
+    const a = toEventSnapshot({ ...after, ...patch });
+    const actor = a.lastActionBy ?? null;
+    if (!(await claimNotificationOnce(`unsettled_${event.id}`))) return;
+    await sendEventPushes(
+      recipientsOf(a, actor).map((uid) =>
+        pushUnsettled(uid, event.params.eventId, a),
+      ),
+    );
   },
 );
 
@@ -2418,6 +2437,11 @@ export const onPersonalEventDeleted = onDocumentDeleted(
 // обеспечивает отметка. Пропущенный прогон догоняется следующим, дрейф
 // расписания перестаёт значить что-либо, а дубль невозможен по устройству
 // отметки (create() плюс maxInstances: 1).
+// Состояние «под вопросом» — то же значение, что в правилах и в клиенте.
+// Три места, один смысл; сверять их нечем, кроме этой строки и текста
+// рядом с ней (языки разные).
+const kStatusUnsettled = "unsettled";
+
 const REMINDER_WINDOWS: { kind: ReminderKind; aheadMs: number }[] = [
   { kind: "24h", aheadMs: 24 * 60 * 60 * 1000 },
   { kind: "3h", aheadMs: 3 * 60 * 60 * 1000 },
@@ -2473,6 +2497,28 @@ export const remindUpcomingEventsHourly = onSchedule(
         createdAt && typeof createdAt.toMillis === "function"
           ? createdAt.toMillis()
           : null;
+
+      // ВЕЧЕР ПОД ВОПРОСОМ НАПОМИНАЕТ О СЕБЕ ИНАЧЕ — и вместо обычного,
+      // а не вместе с ним. Пока вопрос не решён, «завтра у вас
+      // мероприятие» — сведение неполное: может и не быть.
+      //
+      // Окно одно, суточное. Трёхчасового здесь нет намеренно: за три
+      // часа решать «играю или нет» поздно, и сообщение стало бы шумом,
+      // который ничего не меняет.
+      if (e.status === kStatusUnsettled) {
+        const w = REMINDER_WINDOWS.find((x) => x.kind === "24h");
+        if (!w) continue;
+        if (wallMs - nowMs > w.aheadMs) continue;
+        if (!shouldCatchUp(wallMs, w.aheadMs, createdAtMs)) continue;
+        // Ключ СВОЙ: иначе это напоминание заняло бы ключ обычного, и
+        // после возвращения договора в силу человек не услышал бы о самом
+        // вечере вовсе.
+        const key = reminderKey(doc.id, "unsettled24h", wall);
+        if (!(await claimNotificationOnce(key))) continue;
+        await sendEventPushes(recipientsOf(e, null).map((uid) =>
+          pushUnsettledReminder(uid, doc.id, e)));
+        continue;
+      }
 
       for (const w of REMINDER_WINDOWS) {
         if (wallMs - nowMs > w.aheadMs) continue;

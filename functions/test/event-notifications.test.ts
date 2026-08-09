@@ -1,4 +1,5 @@
 import { strict as assert } from "assert";
+import { readFileSync } from "fs";
 import {
   diffEvents,
   editedBody,
@@ -12,7 +13,10 @@ import {
   reminderKey,
   reminderTitle,
   shouldCatchUp,
+  pushUnsettled,
+  pushUnsettledReminder,
   unsettledAfterMemberLeft,
+  unsettledReasonText,
 } from "../src/eventNotifications";
 import { isWatchingEventDecision } from "../src/presence";
 
@@ -100,6 +104,65 @@ describe("договор становится «под вопросом» (Ча�
       lastActionType: "edited",
     });
     assert.equal(unsettledAfterMemberLeft(before, after), null);
+  });
+});
+
+describe("сообщения о «под вопросом» (Часть 6а)", () => {
+  const e = ev({ status: "unsettled", lastActionType: "memberLeft" });
+
+  it("повод назван в уведомлении о переходе", () => {
+    const p = pushUnsettled("u", "ev1", e);
+    assert.ok(p.body.includes("iştirakçı ayrıldı"));
+  });
+
+  it("повод «работа исчезла» называется своими словами", () => {
+    const p = pushUnsettled(
+      "u",
+      "ev1",
+      ev({ status: "unsettled", lastActionType: "workCancelled" }),
+    );
+    assert.ok(p.body.includes("iş ləğv olundu"));
+  });
+
+  // ГЛАВНОЕ В ЭТОМ НАБОРЕ. Ключ отметки обязан различать, ЧТО отправлено:
+  // иначе напоминание «под вопросом» занимает ключ обычного, и после
+  // возвращения договора в силу человек не услышит о самом вечере вовсе.
+  // Устаревшее сообщение не просто уходит — оно съедает верное.
+  it("ключ отметки различает напоминание под вопросом и обычное", () => {
+    const wall = "2026-08-09T19:00:00";
+    assert.notEqual(
+      reminderKey("ev1", "unsettled24h", wall),
+      reminderKey("ev1", "24h", wall),
+    );
+  });
+
+  // СТОРОЖ НА МЕСТО ВЫЗОВА, а не только на саму функцию ключа.
+  //
+  // Заведён проверкой возвратом: испортив ВЫЗОВ (передав обычный вид),
+  // я не уронил ни одного теста — проверка выше сторожит функцию, и ей
+  // всё равно, каким видом её зовут. Ровно та форма I9, что записана в
+  // реестре: до испорченного места исполнение не добиралось.
+  it("почасовой проход зовёт ключ ИМЕННО вида «под вопросом»", () => {
+    const src = readFileSync(`${__dirname}/../src/index.ts`, "utf8");
+    assert.ok(
+      src.includes('reminderKey(doc.id, "unsettled24h", wall)'),
+      "почасовой проход перестал звать ключ вида unsettled24h: напоминание " +
+        "«под вопросом» займёт ключ обычного, и после возвращения договора " +
+        "в силу человек не услышит о самом вечере вовсе",
+    );
+  });
+
+  it("напоминание называет повод, а не только состояние", () => {
+    const p = pushUnsettledReminder("u", "ev1", e);
+    assert.ok(p.body.includes("iştirakçı ayrıldı"));
+  });
+
+  // Соседка: без неё разбор повода мог бы возвращать пустоту, и три
+  // проверки выше прошли бы на пустой строке.
+  it("повод непустой при любом значении", () => {
+    assert.ok(unsettledReasonText("memberLeft").length > 0);
+    assert.ok(unsettledReasonText("workCancelled").length > 0);
+    assert.ok(unsettledReasonText(null).length > 0);
   });
 });
 
