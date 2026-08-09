@@ -33,12 +33,37 @@ void main() {
       // человека в `activeUsers` — ровно та дыра, что была в
       // removeGroupMember до 04.08.
       final offenders = <String>[];
+      // КАНАРЕЙКА ПО КАЖДОЙ ПОЛОВИНЕ УСЛОВИЯ, а не по строке целиком
+      // (I31). Проверка утверждает ОТСУТСТВИЕ, и ослепнуть она может
+      // ПОЛОВИНОЙ: достаточно, чтобы перестало находиться одно из двух
+      // слов — переименовали поле, сменили кавычки, разбор съел строку —
+      // и `&&` даст пусто при живом втором слове. Один общий счёт
+      // «нашлось хоть что-то» этого не поймал бы: он остался бы
+      // ненулевым за счёт уцелевшей половины. Поэтому считаются обе.
+      var withMembers = 0;
+      var withArrayRemove = 0;
       for (var i = 0; i < lines.length; i++) {
         final l = lines[i];
+        if (l.contains("'members'")) withMembers += 1;
+        if (l.contains('arrayRemove')) withArrayRemove += 1;
         if (l.contains("'members'") && l.contains('arrayRemove')) {
           offenders.add('$_service:${i + 1}: ${l.trim()}');
         }
       }
+      expect(
+        withMembers,
+        greaterThan(0),
+        reason: 'в $_service не нашлось ни одной строки с `\'members\'` — '
+            'поле переименовано либо разбор его больше не видит. Пустой '
+            'список нарушителей ниже тогда ничего не доказывает.',
+      );
+      expect(
+        withArrayRemove,
+        greaterThan(0),
+        reason: 'в $_service не нашлось ни одного `arrayRemove` — служба '
+            'переписана целиком либо разбор ослеп. Проверка ниже в этом '
+            'случае зелена без единого прочитанного совпадения.',
+      );
       expect(
         offenders,
         isEmpty,
