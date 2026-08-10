@@ -1428,6 +1428,21 @@ export const onChatUpdated = onDocumentUpdated(
       // "participantUids" here would leave both parties unable to see
       // this event at all.
       musicians: [initiatorUid, recipientUid],
+      // Ответы состава — шаг 1 работы «договоры и мероприятия — одна
+      // сущность» (docs/plan.md). Пишется рядом с musicians и НИКЕМ на этом
+      // шаге не читается.
+      //
+      // Правило то же, что у клиента (core/agreements/event_answers.dart):
+      // все, кто в составе, — «идут». Здесь оно повторено литералом, а не
+      // импортом, потому что импортировать через границу Dart↔TypeScript
+      // нечего; цена названа вслух — это ВТОРОЙ писатель того же поля, и
+      // разойтись они могут молча. Сторожем против расхождения служит
+      // парный тест правил в эмуляторе и проверка состава ключей: у обоих
+      // писателей ключи answers обязаны совпасть с musicians поимённо.
+      //
+      // «Ждём» тут появится на шаге 4 — сегодня согласие УЖЕ дано: договор
+      // и рождается ровно тем, что вторая сторона нажала «Razıyam».
+      answers: { [initiatorUid]: "going", [recipientUid]: "going" },
       isAgree: true,
       agreementChatId: event.params.chatId,
       partnerUid: recipientUid,

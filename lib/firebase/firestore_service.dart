@@ -9,6 +9,7 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/agreements/event_answers.dart';
 import '../core/chat/chat_departure.dart';
 import '../core/chat/chat_existence.dart';
 import '../core/models/activity_type.dart';
@@ -3583,6 +3584,13 @@ class FirestoreService {
       'location': location,
       'notes': notes,
       'musicians': participantUids,
+      // Ответы состава — шаг 1 работы «договоры и мероприятия — одна
+      // сущность» (`docs/plan.md`). Пишется рядом с `musicians`, НИКЕМ на
+      // этом шаге не читается. Правило — одной функцией на всех писателей
+      // (`core/agreements/event_answers.dart`), а не строкой здесь: иначе
+      // создание и правка разошлись бы в том, что значит «состав», и
+      // разошлись бы молча.
+      'answers': answersForParticipants(participantUids),
       'isAgree': false,
       'agreementChatId': null,
       'partnerUid': null,
