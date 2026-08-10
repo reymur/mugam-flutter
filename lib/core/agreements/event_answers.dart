@@ -63,6 +63,71 @@ Map<String, String> answersForParticipants(List<String> participantUids) {
   return out;
 }
 
+/// РАСХОЖДЕНИЕ ЗАПИСИ С СОСТАВОМ — шаг 2 (`docs/plan.md`).
+///
+/// **Это НЕ для экрана.** Экран спрашивает `answerOf` и получает ответ на
+/// каждого человека; здесь считается другое — **сходится ли запись с
+/// составом вообще**, и нужно это переписи, а не показу. Разделение
+/// намеренное: там решают, что показать человеку, здесь — норма это или
+/// поломка (I47).
+///
+/// **ОТСУТСТВИЕ ПОЛЯ РАСХОЖДЕНИЕМ НЕ СЧИТАЕТСЯ, а пустая карта считается.**
+/// Это и есть решение 10.08, ради которого функция и заведена:
+///
+///   • `answers == null` — «сведений нет». Так писали до шага 1, так пишет
+///     mugam-v2, так пишут старые сборки. Норма;
+///   • `answers == {}` при непустом составе — **утверждение «в составе
+///     никого» рядом с непустым составом**, то есть противоречие. Ни один
+///     наш писатель такого не делает: и клиент, и сервер пишут карту
+///     целиком по составу.
+///
+/// Свести их к одному ответу значило бы потерять возможность отличить
+/// поломку от нормы — N13 в новом месте.
+class AnswersMismatch {
+  /// В составе есть, в карте нет. **Ожидаемо** от старых сборок и от
+  /// mugam-v2 — они правят состав, не зная про поле (см. шаг 3 плана).
+  final List<String> missing;
+
+  /// Ключ есть, в составе нет. **Ожидаемо** от выхода из состава: правило
+  /// `leavesEvent()` разрешает трогать только `musicians`, и ключ ушедшего
+  /// остаётся.
+  final List<String> extra;
+
+  /// Карта записана пустой, а состав непуст. **Не ожидаемо ни от одного
+  /// известного писателя** — единственный по-настоящему тревожный из трёх.
+  final bool emptyWithPeople;
+
+  const AnswersMismatch({
+    required this.missing,
+    required this.extra,
+    required this.emptyWithPeople,
+  });
+
+  bool get isClean => missing.isEmpty && extra.isEmpty && !emptyWithPeople;
+}
+
+/// Считает расхождение. `null` в `answers` — не расхождение, а отсутствие
+/// сведений (см. выше).
+AnswersMismatch answersMismatch({
+  required List<String> participantUids,
+  Map<String, dynamic>? answers,
+}) {
+  if (answers == null) {
+    return const AnswersMismatch(
+      missing: [],
+      extra: [],
+      emptyWithPeople: false,
+    );
+  }
+  final people = participantUids.where((u) => u.isNotEmpty).toSet();
+  final keys = answers.keys.toSet();
+  return AnswersMismatch(
+    missing: people.difference(keys).toList()..sort(),
+    extra: keys.difference(people).toList()..sort(),
+    emptyWithPeople: answers.isEmpty && people.isNotEmpty,
+  );
+}
+
 /// Ответ одного человека — с запасным путём на время, пока поля нет.
 ///
 /// **Запасной путь обязателен и переживёт шаг 1:** у 75 записей прода поля

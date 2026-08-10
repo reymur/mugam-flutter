@@ -71,6 +71,113 @@ void main() {
     });
   });
 
+  group('шаг 2 · КРУГОВАЯ: чтение сходится с записью', () {
+    // ПОЧЕМУ КРУГОВАЯ, А НЕ ПРИМЕР. Обычная проверка сверяет вывод с тем,
+    // что мы ОЖИДАЛИ, — то есть с нашим же представлением, и удачный пример
+    // проходит её, ничего не доказав. Здесь сверяются друг с другом ЗАПИСЬ
+    // и ЧТЕНИЕ: `answersForParticipants` кладёт, `answerOf` достаёт, и
+    // разойтись они могут только по-настоящему. Ожидание в этой проверке не
+    // участвует вовсе, и подогнать её под себя нечем.
+    //
+    // ЧЕГО ОНА СЕГОДНЯ НЕ ЛОВИТ — измерено порчей 10.08, а не оценено
+    // (I46: перед порчей названо, что упадёт; предсказание сошлось).
+    // Заставил `answerOf` игнорировать карту целиком — **круговая осталась
+    // зелёной**. Причина в данных, а не в проверке: на шагах 1–2 записанное
+    // значение ОДНО на всех, `going`, и «взял из карты» неотличимо от
+    // «вернул умолчание». Упала только соседка «ответ из карты берётся как
+    // есть» — та, где в карте стоит `cant`.
+    //
+    // **Круговая станет сильной на шаге 4**, когда появятся `waiting` и
+    // `cant`: тогда игнорирование карты разойдётся с записью на первом же
+    // человеке. До тех пор она сторожит СОСТАВ ключей, а не значения, и
+    // полагаться на неё шире нельзя.
+    void roundTrip(List<String> people) {
+      final written = answersForParticipants(people);
+      for (final uid in people.where((u) => u.isNotEmpty)) {
+        expect(
+          answerOf(uid: uid, participantUids: people, answers: written),
+          written[uid],
+          reason: 'чтение разошлось с записью на $uid при составе $people',
+        );
+      }
+    }
+
+    test('один человек', () => roundTrip(const ['a']));
+    test('двое', () => roundTrip(const ['a', 'b']));
+    test('пятеро', () => roundTrip(const ['a', 'b', 'c', 'd', 'e']));
+    test('с повтором', () => roundTrip(const ['a', 'a', 'b']));
+    test('с пустым uid', () => roundTrip(const ['a', '', 'b']));
+    test('пустой состав — сверять нечего, и это не отказ', () {
+      expect(answersForParticipants(const []), isEmpty);
+    });
+  });
+
+  group('шаг 2 · расхождение записи с составом — для переписи, не для экрана', () {
+    test('поля НЕТ — это не расхождение, а отсутствие сведений', () {
+      // Так писали до шага 1, так пишет mugam-v2, так пишут старые сборки.
+      final m = answersMismatch(participantUids: const ['a', 'b']);
+      expect(m.isClean, isTrue);
+      expect(m.emptyWithPeople, isFalse);
+    });
+
+    test('карта ПУСТА при непустом составе — расхождение, и тревожное', () {
+      // Ни один известный писатель так не делает: и клиент, и сервер пишут
+      // карту целиком по составу. Значит это противоречие, а не незнание.
+      final m = answersMismatch(
+        participantUids: const ['a', 'b'],
+        answers: const {},
+      );
+      expect(m.emptyWithPeople, isTrue);
+      expect(m.missing, ['a', 'b']);
+      expect(m.isClean, isFalse);
+    });
+
+    test('пустая карта при пустом составе — согласие, а не расхождение', () {
+      final m = answersMismatch(participantUids: const [], answers: const {});
+      expect(m.isClean, isTrue);
+      expect(m.emptyWithPeople, isFalse);
+    });
+
+    test('НЕДОСТАЧА: в составе есть, в карте нет — ожидаемо (шаг 3)', () {
+      // Источники названы заранее: старые сборки и mugam-v2 правят состав,
+      // не зная про поле. На шаге 3 это не находка, а ожидаемое.
+      final m = answersMismatch(
+        participantUids: const ['a', 'b'],
+        answers: const {'a': 'going'},
+      );
+      expect(m.missing, ['b']);
+      expect(m.extra, isEmpty);
+      expect(m.emptyWithPeople, isFalse);
+    });
+
+    test('ИЗБЫТОК: ключ вне состава — ожидаемо от выхода из состава', () {
+      // `leavesEvent()` разрешает трогать только `musicians`, `lastActionBy`
+      // и `lastActionType`; ключ ушедшего в карте остаётся.
+      final m = answersMismatch(
+        participantUids: const ['a'],
+        answers: const {'a': 'going', 'ушедший': 'going'},
+      );
+      expect(m.extra, ['ушедший']);
+      expect(m.missing, isEmpty);
+    });
+
+    test('своя же запись расхождения не даёт — при любом составе', () {
+      for (final people in const [
+        <String>[],
+        ['a'],
+        ['a', 'b'],
+        ['a', 'a', 'b'],
+        ['a', '', 'b'],
+      ]) {
+        final m = answersMismatch(
+          participantUids: people,
+          answers: answersForParticipants(people),
+        );
+        expect(m.isClean, isTrue, reason: 'состав $people');
+      }
+    });
+  });
+
   group('шаг 1 · чтение, которое появится на шаге 3', () {
     test('поля нет — человек в составе читается как «идёт»', () {
       // Запасной путь обязателен и переживёт шаг 1: у 75 записей прода поля
