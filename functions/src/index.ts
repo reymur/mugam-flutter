@@ -24,6 +24,7 @@ import {
   pushReminder,
   pushReplaced,
   recipientsOf,
+  remindableOf,
   reminderKey,
   ReminderKind,
   pushUnsettled,
@@ -2202,6 +2203,12 @@ function toEventSnapshot(d: Record<string, unknown>): EventSnapshot {
     replacedEventId: (d.replacedEventId as string) ?? null,
     lastActionBy: (d.lastActionBy as string) ?? null,
     lastActionType: (d.lastActionType as EventSnapshot["lastActionType"]) ?? null,
+    // `?? null` здесь НЕЛЬЗЯ, и это не придирка: `undefined` (поля нет) и
+    // `{}` (пустая карта) обязаны дойти разными, иначе теряется единственный
+    // признак, по которому норма отличается от поломки (I47). Приводить
+    // отсутствие к `null` тоже незачем — `remindableOf` проверяет
+    // истинность, а не тип.
+    answers: (d.answers as Record<string, string> | undefined),
   };
 }
 
@@ -2549,7 +2556,14 @@ export const remindUpcomingEventsHourly = onSchedule(
         // Напоминание идёт ВСЕМ, включая владельца: это не уведомление о
         // чужом действии, а сообщение о времени, и владелец забывает так
         // же, как остальные.
-        await sendEventPushes(recipientsOf(e, null).map((uid) =>
+        //
+        // ЕДИНСТВЕННОЕ ИСКЛЮЧЕНИЕ — сказавший «не может» (шаг 3,
+        // docs/plan.md): напоминание про вечер, на который человек не идёт,
+        // никакого решения не поддерживает. Изменения при этом идут ему
+        // по-прежнему — `recipientsOf` не тронут, — потому что «не может»
+        // сказано про сегодняшние условия, и, поехав дата, он вправе
+        // передумать. Фильтр стоит в одном месте: `remindableOf`.
+        await sendEventPushes(remindableOf(e).map((uid) =>
           pushReminder(uid, doc.id, e, w.kind, hoursLeft)));
       }
     }

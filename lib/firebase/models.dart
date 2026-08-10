@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../core/agreements/event_answers.dart';
 import '../core/models/activity_type.dart';
 
 extension UserListFiltering on List<User> {
@@ -1193,6 +1194,37 @@ class PersonalEvent {
   final String? lastActionBy;
   final String? lastActionType;
 
+  /// ОТВЕТЫ СОСТАВА — шаг 3 работы «договоры и мероприятия — одна сущность»
+  /// (`docs/plan.md`). Карта uid → `going` | `waiting` | `cant`.
+  ///
+  /// **ПОЛЕ ЗАКРЫТО НАМЕРЕННО, наружу отдаётся только [answerFor].** Читатель
+  /// не должен иметь возможности прочесть карту мимо правила: правило знает
+  /// про запасной путь (у 75 записей прода поля нет вовсе) и про ключи вне
+  /// состава (ушедший свой ключ оставляет — `leavesEvent()` трогать `answers`
+  /// не даёт), а сырая карта не знает ни того, ни другого.
+  ///
+  /// Приватность в Dart — на файл, значит `_answers` не виден никому за
+  /// пределами `models.dart`, и обойти [answerFor] нечем.
+  ///
+  /// **Следствие, проверенное делом 10.08:** параметр конструктора — тоже
+  /// `_answers`, то есть **передать карту снаружи файла нельзя вовсе**.
+  /// Единственная дорога внутрь — [PersonalEvent.fromFirestore], и это
+  /// правильно: ответы приходят из документа, а не из чьих-то рук. Тест по
+  /// той же причине строит событие через `fromFirestore`, как прод.
+  final Map<String, dynamic>? _answers;
+
+  /// Ответ одного человека. Правило — `core/agreements/event_answers.dart`,
+  /// одно на весь проект: клиент, сервер и перепись обязаны отвечать
+  /// одинаково.
+  ///
+  /// `null` — человека нет в составе. Иначе `going` по запасному пути, если
+  /// сведений нет.
+  String? answerFor(String uid) => answerOf(
+        uid: uid,
+        participantUids: participantUids,
+        answers: _answers,
+      );
+
   /// Когда было ОТПРАВЛЕНО предложение, из которого вырос договор.
   ///
   /// Не то же самое, что `createdAt`: договор создаётся в миг согласия
@@ -1224,6 +1256,7 @@ class PersonalEvent {
     this.lastActionBy,
     this.lastActionType,
     this.jobOfferAt,
+    this._answers,
   });
 
   factory PersonalEvent.fromFirestore(String id, Map<String, dynamic> data) {
@@ -1248,6 +1281,27 @@ class PersonalEvent {
       lastActionBy: data['lastActionBy'] as String?,
       lastActionType: data['lastActionType'] as String?,
       jobOfferAt: data['jobOfferAt'] as String?,
+      // Сырьё, а не разобранное: `null` (поля нет) и `{}` (пустая карта)
+      // обязаны дойти сюда РАЗНЫМИ — свести их значило бы потерять
+      // возможность отличить норму от поломки (I47). Разбирает их правило
+      // в `answerFor`, а не модель.
+      //
+      // ЧТЕНИЕ ЗАЩИТНОЕ, и жёсткого приведения здесь стояло бы зря.
+      // `data['answers'] as Map<String, dynamic>?` падает на любой карте с
+      // другим типом ключей — поймано тестом 10.08 на `const {}`, который в
+      // Dart имеет тип `Map<dynamic, dynamic>`. В проде `cloud_firestore`
+      // отдаёт `Map<String, dynamic>`, но полагаться на это незачем, когда
+      // защита стоит в одну строку: документы пишет и mugam-v2, и правит
+      // консоль.
+      //
+      // Значение НЕ карты приравнено к отсутствию — на экране падать нельзя.
+      // Но это не «сведений нет», а мусор, и замечать его обязана ПЕРЕПИСЬ
+      // (`censusAnswers.ts`, четвёртая графа), где и решается «норма или
+      // поломка» (I47).
+      answers: switch (data['answers']) {
+        final Map<dynamic, dynamic> m => Map<String, dynamic>.from(m),
+        _ => null,
+      },
     );
   }
 }

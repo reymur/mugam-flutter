@@ -59,6 +59,15 @@ type Mismatch = {
   emptyWithPeople: boolean;
 };
 
+/** Поле есть, но это НЕ карта — мусор, а не сведения. Считается отдельно. */
+export function isNotAMap(answers: unknown): boolean {
+  return (
+    answers !== undefined &&
+    answers !== null &&
+    (typeof answers !== "object" || Array.isArray(answers))
+  );
+}
+
 function answersMismatch(
   participantUids: unknown,
   answers: unknown,
@@ -66,6 +75,8 @@ function answersMismatch(
   // Поля НЕТ — не расхождение, а отсутствие сведений. Свести его с пустой
   // картой значило бы потерять возможность отличить поломку от нормы (I47).
   if (answers === undefined || answers === null) return null;
+  // Не карта — считается своей графой выше по вызову, здесь разбирать нечего.
+  if (isNotAMap(answers)) return null;
   const people = new Set(
     (Array.isArray(participantUids) ? participantUids : []).filter(
       (u): u is string => typeof u === "string" && u.length > 0,
@@ -94,8 +105,17 @@ function answersMismatch(
   const extra: string[] = [];
   const emptyWithPeople: string[] = [];
 
+  const notAMap: string[] = [];
+
   for (const doc of snap.docs) {
     const e = doc.data();
+    // Мусор вместо карты — своя графа. Модель на клиенте приравнивает его к
+    // отсутствию, чтобы не падал экран, и потому заметить его может только
+    // перепись (I47: различать надо там, где решается «норма или поломка»).
+    if (isNotAMap(e.answers)) {
+      notAMap.push(`${doc.id} ${e.date ?? "(без даты)"} → ${typeof e.answers}`);
+      continue;
+    }
     const m = answersMismatch(e.musicians, e.answers);
     if (m === null) continue; // поля нет — считается отдельно, ниже
     withField++;
@@ -122,6 +142,8 @@ function answersMismatch(
   console.log("");
   console.log(`ТРЕВОЖНОЕ — пустая карта при непустом составе: ${emptyWithPeople.length}`);
   for (const s of emptyWithPeople) console.log(`    ${s}`);
+  console.log(`ТРЕВОЖНОЕ — поле есть, но это НЕ карта: ${notAMap.length}`);
+  for (const s of notAMap) console.log(`    ${s}`);
   console.log(`ожидаемое — недостача (старые сборки, mugam-v2): ${missing.length}`);
   for (const s of missing) console.log(`    ${s}`);
   console.log(`ожидаемое — избыток (ключ ушедшего): ${extra.length}`);

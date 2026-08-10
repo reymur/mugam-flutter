@@ -10,6 +10,7 @@ import {
   pushDeleted,
   pushReminder,
   recipientsOf,
+  remindableOf,
   reminderKey,
   reminderTitle,
   shouldCatchUp,
@@ -200,6 +201,71 @@ describe("кому уходит", () => {
 
   it("владелец один в мероприятии — уведомлять некого", () => {
     assert.deepEqual(recipientsOf(ev({ musicians: [OWNER] }), OWNER), []);
+  });
+});
+
+describe("кому уходит НАПОМИНАНИЕ (шаг 3, docs/plan.md)", () => {
+  // РАЗВЕДЕНИЕ АДРЕСАТОВ. Изменения идут всем, кто ВИДИТ, — `recipientsOf`
+  // выше не тронут, и это главное: сказавший «не может» сказал это про
+  // СЕГОДНЯШНИЕ условия, и, поехав дата, он вправе передумать. Напоминание
+  // же ничего не решает, оно про время: про вечер, на который человек не
+  // идёт, оно чистый шум.
+  //
+  // ЧТО ЭТО МЕНЯЕТ НА ШАГЕ 3: ничего. Все ответы сегодня `going` — писателя
+  // `waiting`/`cant` нет до шага 4. Проверки ниже описывают поведение,
+  // которое ЗАРАБОТАЕТ позже; сейчас они сторожат, что читатель встал верно
+  // (I48 — необратимый шаг не должен нести чужую работу).
+
+  it("поля нет вовсе — напоминание всем, как до шага 1", () => {
+    // Запасной путь для 75 записей прода, у которых поля не было никогда.
+    assert.deepEqual(remindableOf(ev()).sort(), [GUEST, OWNER].sort());
+  });
+
+  it("все идут — напоминание всем", () => {
+    const r = remindableOf(
+      ev({ answers: { [OWNER]: "going", [GUEST]: "going" } }),
+    );
+    assert.deepEqual(r.sort(), [GUEST, OWNER].sort());
+  });
+
+  it("сказавший «не может» напоминания не получает", () => {
+    const r = remindableOf(ev({ answers: { [GUEST]: "cant" } }));
+    assert.deepEqual(r, [OWNER]);
+  });
+
+  it("«ждём» напоминание получает — он ещё решает", () => {
+    const r = remindableOf(ev({ answers: { [GUEST]: "waiting" } }));
+    assert.deepEqual(r.sort(), [GUEST, OWNER].sort());
+  });
+
+  it("ВЛАДЕЛЕЦ получает всегда, даже сказав «не может»", () => {
+    // У 46 обычных мероприятий из 48 владельца в `musicians` нет вовсе
+    // (перепись 10.08), и напоминание про собственный вечер он терять не
+    // должен ни при каком ответе.
+    const r = remindableOf(
+      ev({ answers: { [OWNER]: "cant", [GUEST]: "cant" } }),
+    );
+    assert.deepEqual(r, [OWNER]);
+  });
+
+  it("ключа нет — недостача ожидаема, напоминание идёт", () => {
+    // Старые сборки и mugam-v2 правят состав, не зная про поле.
+    const r = remindableOf(ev({ answers: { [OWNER]: "going" } }));
+    assert.deepEqual(r.sort(), [GUEST, OWNER].sort());
+  });
+
+  it("незнакомое значение не отнимает напоминания", () => {
+    const r = remindableOf(
+      ev({ answers: { [GUEST]: "нечто" } as Record<string, string> }),
+    );
+    assert.deepEqual(r.sort(), [GUEST, OWNER].sort());
+  });
+
+  it("пустая карта при непустом составе напоминания не отнимает", () => {
+    // В ОТВЕТЕ пустая карта и отсутствие поля неразличимы (I47); различать
+    // их обязана перепись, а не рассылка.
+    const r = remindableOf(ev({ answers: {} }));
+    assert.deepEqual(r.sort(), [GUEST, OWNER].sort());
   });
 });
 

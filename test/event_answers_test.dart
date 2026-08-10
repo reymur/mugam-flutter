@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/agreements/event_answers.dart';
+import 'package:mugam_flutter/firebase/models.dart';
 
 // ОТВЕТ УЧАСТНИКА — шаг 1 работы «договоры и мероприятия — одна сущность»
 // (`docs/plan.md`).
@@ -175,6 +176,67 @@ void main() {
         );
         expect(m.isClean, isTrue, reason: 'состав $people');
       }
+    });
+  });
+
+  group('шаг 3 · модель отдаёт ОТВЕТ, а не карту', () {
+    // Событие строится через `fromFirestore`, а не конструктором, и это не
+    // прихоть теста: поле и параметр приватны (`_answers`), значит передать
+    // карту снаружи `models.dart` НЕЛЬЗЯ вовсе. Единственная дорога внутрь —
+    // документ, ровно как в проде.
+    // Сторожевой объект, а не `null`: нам нужно различать «поля нет» и
+    // «поле есть и равно null», а `null` сам по себе этого не умеет —
+    // тот же I47, только в сигнатуре теста.
+    //
+    // И не `Symbol`: `#нет` не собирается вовсе — имена в Dart обязаны быть
+    // ASCII (проверено этим заходом, ошибка компиляции). Тот же
+    // ASCII-предрассудок, что в I16, третьим носителем.
+    const absent = Object();
+    PersonalEvent make({
+      required List<String> musicians,
+      Object? answers = absent,
+    }) =>
+        PersonalEvent.fromFirestore('id', {
+          'ownerUid': 'owner',
+          'musicians': musicians,
+          if (!identical(answers, absent)) 'answers': answers,
+        });
+
+    test('карта наружу не отдаётся — у модели её нет в открытом виде', () {
+      // Проверяется составом открытого API: если поле когда-нибудь станет
+      // публичным, эта проверка не заметит, а вот компилятор соседей —
+      // заметит. Здесь же утверждается то, что проверить можно: модель
+      // отвечает МЕТОДОМ.
+      final e = make(musicians: const ['a']);
+      expect(e.answerFor('a'), 'going');
+    });
+
+    test('поля нет — человек в составе идёт (75 записей прода)', () {
+      expect(make(musicians: const ['a', 'b']).answerFor('b'), 'going');
+    });
+
+    test('ответ из карты доходит как есть', () {
+      final e = make(
+        musicians: const ['a'],
+        answers: const {'a': 'cant'},
+      );
+      expect(e.answerFor('a'), 'cant');
+    });
+
+    test('не в составе — null, даже если ключ в карте есть', () {
+      final e = make(
+        musicians: const ['a'],
+        answers: const {'ушедший': 'going'},
+      );
+      expect(e.answerFor('ушедший'), isNull);
+    });
+
+    test('пустая карта при непустом составе не роняет чтение', () {
+      // В ОТВЕТЕ пустая карта и отсутствие поля неразличимы — так решено
+      // (I47). Различать их обязан разбор, а не показ: `answersMismatch`
+      // и перепись.
+      final e = make(musicians: const ['a'], answers: const {});
+      expect(e.answerFor('a'), 'going');
     });
   });
 
