@@ -230,11 +230,13 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   List<PersonalEvent> _agreeEvents(List<PersonalEvent> personalEvents) =>
       personalEvents.where((e) => e.isAgree).toList();
 
-  List<PersonalEvent> _outgoing(List<PersonalEvent> agree) =>
-      agree.where((e) => e.ownerUid == _uid && e.status != 'cancelled').toList();
+  List<PersonalEvent> _outgoing(List<PersonalEvent> agree) => agree
+      .where((e) => e.ownerUid == _uid && e.status != 'cancelled')
+      .toList();
 
-  List<PersonalEvent> _incoming(List<PersonalEvent> agree) =>
-      agree.where((e) => e.ownerUid != _uid && e.status != 'cancelled').toList();
+  List<PersonalEvent> _incoming(List<PersonalEvent> agree) => agree
+      .where((e) => e.ownerUid != _uid && e.status != 'cancelled')
+      .toList();
 
   List<PersonalEvent> _cancelled(List<PersonalEvent> agree) =>
       agree.where((e) => e.status == 'cancelled').toList();
@@ -250,8 +252,6 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   /// поломку — что и есть цена необъяснённого решения (N55).
   List<PersonalEvent> _sortedAgreements(List<PersonalEvent> list) =>
       list.toList()..sort(compareAgreementsByStamp);
-
-
 
   // -------------------------------------------------------------------------
   // Build
@@ -275,10 +275,12 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     // есть всё выглядит непрочитанным: сомнение здесь безопаснее в эту
     // сторону — лишняя рамка снимается открытием карточки, недостающая не
     // замечается никем.
-    _readAgreementIds = ref.watch(readAgreementIdsProvider(uid)).value ??
-        const <String>[];
+    _readAgreementIds =
+        ref.watch(readAgreementIdsProvider(uid)).value ?? const <String>[];
     final personalEventsAsync = ref.watch(personalEventsProvider(uid));
-    final eventsAsParticipantAsync = ref.watch(eventsAsParticipantProvider(uid));
+    final eventsAsParticipantAsync = ref.watch(
+      eventsAsParticipantProvider(uid),
+    );
 
     final personalEvents = personalEventsAsync.asData?.value ?? [];
     final eventsAsParticipant = eventsAsParticipantAsync.asData?.value ?? [];
@@ -361,8 +363,16 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
               child: _mainView == 'agreements'
                   ? _buildAgreementsTab(agreeEvents)
                   : _mainView == 'calendar'
-                      ? _buildCalendarTab(personalEvents, eventsAsParticipant, allUsers)
-                      : _buildTedbirlerTab(personalEvents, eventsAsParticipant, allUsers),
+                  ? _buildCalendarTab(
+                      personalEvents,
+                      eventsAsParticipant,
+                      allUsers,
+                    )
+                  : _buildTedbirlerTab(
+                      personalEvents,
+                      eventsAsParticipant,
+                      allUsers,
+                    ),
             ),
           ],
         ),
@@ -377,7 +387,12 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                 context,
                 initialDate: _isSameMonth(_currentCalendarMonth, DateTime.now())
                     ? DateTime.now()
-                    : DateTime(_currentCalendarMonth.year, _currentCalendarMonth.month, 1, 12),
+                    : DateTime(
+                        _currentCalendarMonth.year,
+                        _currentCalendarMonth.month,
+                        1,
+                        12,
+                      ),
                 personalEvents: personalEvents,
                 eventsAsParticipant: eventsAsParticipant,
                 allUsers: allUsers,
@@ -400,10 +415,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                       blurRadius: 18,
                       offset: const Offset(0, 8),
                     ),
-                    BoxShadow(
-                      color: kGold2.withAlpha(170),
-                      blurRadius: 18,
-                    ),
+                    BoxShadow(color: kGold2.withAlpha(170), blurRadius: 18),
                   ],
                 ),
                 child: const Icon(Icons.add, color: kOnGold, size: 28),
@@ -486,7 +498,10 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                   top: 0,
                   right: 4,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: badgeRed ? const Color(0xFFFF3B30) : kGold,
                       borderRadius: BorderRadius.circular(8),
@@ -543,20 +558,23 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
 
     return Column(
       children: [
-        _buildAgreementSubTabs(outgoing.length, incoming.length, cancelled.length),
+        _buildAgreementSubTabs(
+          outgoing.length,
+          incoming.length,
+          cancelled.length,
+        ),
         Expanded(
           child: agreeEvents.isEmpty
               ? _buildAgreementsEmpty()
               : currentList.isEmpty
-                  ? Center(
-                      child: Text('Boşdur', style: const TextStyle(color: kMuted)),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: currentList.length,
-                      itemBuilder: (_, i) =>
-                          _buildAgreementCard(currentList[i]),
-                    ),
+              ? Center(
+                  child: Text('Boşdur', style: const TextStyle(color: kMuted)),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: currentList.length,
+                  itemBuilder: (_, i) => _buildAgreementCard(currentList[i]),
+                ),
         ),
       ],
     );
@@ -655,9 +673,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     // отменённого — когда отменён (решение владельца 07.08). Дата прихода
     // к ней не подмешивается, она живёт своей строкой внизу справа.
     final cancelled = agreementStamp(e.status) == AgreementStamp.cancelled;
-    final at = cancelled
-        ? agreementCancelledValue(e)
-        : agreementSignedValue(e);
+    final at = cancelled ? agreementCancelledValue(e) : agreementSignedValue(e);
     if (at == null) return '';
     // Без слов: владелец 07.08 — «убери тексты». Что за дата, читается
     // из места: под мероприятием соглашение, внизу справа приход.
@@ -734,14 +750,15 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     final roleColor = cancelled
         ? kRed
         : unsettled
-            ? kWarnTitle
-            : unread
-                ? kGold2
-                : kMuted;
+        ? kWarnTitle
+        : unread
+        ? kGold2
+        : kMuted;
 
     String? eventLine;
     if (!cancelled && e.type.isNotEmpty && e.date.isNotEmpty) {
-      eventLine = '📅 ${e.type} — ${_fmtDate(e.date)}${e.location.isNotEmpty ? ' · ${e.location}' : ''}';
+      eventLine =
+          '📅 ${e.type} — ${_fmtDate(e.date)}${e.location.isNotEmpty ? ' · ${e.location}' : ''}';
     }
 
     return GestureDetector(
@@ -922,28 +939,31 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           padding: const EdgeInsets.symmetric(vertical: 10),
           children: [
             for (var i = 0; i < 12; i++)
-              Builder(builder: (_) {
-                final m = DateTime(base.year, base.month + i, 1);
-                final active = m.year == _currentCalendarMonth.year &&
-                    m.month == _currentCalendarMonth.month;
-                return ListTile(
-                  title: Text(
-                    '${_azMonth(m.month)} ${m.year}',
-                    style: TextStyle(color: active ? kGold : kText),
-                  ),
-                  trailing: active
-                      ? const Icon(Icons.check, color: kGold, size: 20)
-                      : null,
-                  onTap: () {
-                    setState(() {
-                      _currentCalendarMonth = m;
-                      _selectedCalendarDay = null;
-                    });
-                    _pageController.jumpToPage(_pageForMonth(m));
-                    Navigator.pop(sheetContext);
-                  },
-                );
-              }),
+              Builder(
+                builder: (_) {
+                  final m = DateTime(base.year, base.month + i, 1);
+                  final active =
+                      m.year == _currentCalendarMonth.year &&
+                      m.month == _currentCalendarMonth.month;
+                  return ListTile(
+                    title: Text(
+                      '${_azMonth(m.month)} ${m.year}',
+                      style: TextStyle(color: active ? kGold : kText),
+                    ),
+                    trailing: active
+                        ? const Icon(Icons.check, color: kGold, size: 20)
+                        : null,
+                    onTap: () {
+                      setState(() {
+                        _currentCalendarMonth = m;
+                        _selectedCalendarDay = null;
+                      });
+                      _pageController.jumpToPage(_pageForMonth(m));
+                      Navigator.pop(sheetContext);
+                    },
+                  );
+                },
+              ),
           ],
         ),
       ),
@@ -988,10 +1008,14 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('${hollow ? '○' : '●'} $label',
-                  style: TextStyle(fontSize: 14, color: color)),
-              Text('$days gün',
-                  style: const TextStyle(fontSize: 14, color: kTextSecondary)),
+              Text(
+                '${hollow ? '○' : '●'} $label',
+                style: TextStyle(fontSize: 14, color: color),
+              ),
+              Text(
+                '$days gün',
+                style: const TextStyle(fontSize: 14, color: kTextSecondary),
+              ),
             ],
           ),
         );
@@ -1021,10 +1045,14 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('Boş',
-                    style: TextStyle(fontSize: 14, color: kMuted)),
-                Text('${tally.freeDays} gün',
-                    style: const TextStyle(fontSize: 14, color: kTextSecondary)),
+                const Text(
+                  'Boş',
+                  style: TextStyle(fontSize: 14, color: kMuted),
+                ),
+                Text(
+                  '${tally.freeDays} gün',
+                  style: const TextStyle(fontSize: 14, color: kTextSecondary),
+                ),
               ],
             ),
           ),
@@ -1063,7 +1091,13 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-      child: Row(children: [seg('gun', 'Gün'), const SizedBox(width: 8), seg('ay', 'Ay')]),
+      child: Row(
+        children: [
+          seg('gun', 'Gün'),
+          const SizedBox(width: 8),
+          seg('ay', 'Ay'),
+        ],
+      ),
     );
   }
 
@@ -1138,7 +1172,11 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         children: [
           Text(
             fmtDayHeader(date),
-            style: const TextStyle(fontSize: 13, letterSpacing: 1.2, color: kMuted),
+            style: const TextStyle(
+              fontSize: 13,
+              letterSpacing: 1.2,
+              color: kMuted,
+            ),
           ),
           const SizedBox(height: 10),
           if (events.isEmpty)
@@ -1165,30 +1203,33 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
               // ни одной дороги, кроме списка «Tədbirlər».
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: () => Navigator.of(context).push(
-                  eventDetailRoute(eventId: e.id, currentUid: _uid),
-                ),
+                onTap: () => Navigator.of(
+                  context,
+                ).push(eventDetailRoute(eventId: e.id, currentUid: _uid)),
                 child: Container(
-                margin: const EdgeInsets.only(bottom: 12),
-                padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
-                decoration: BoxDecoration(
-                  border: Border(left: BorderSide(color: barColor, width: 4)),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
+                  decoration: BoxDecoration(
+                    border: Border(left: BorderSide(color: barColor, width: 4)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        fmtEventTime(e.date),
+                        style: TextStyle(fontSize: 21, color: timeColor),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        [
+                          e.type,
+                          if (e.location.isNotEmpty) e.location,
+                        ].join(' · '),
+                        style: TextStyle(fontSize: 16, color: lineColor),
+                      ),
+                    ],
+                  ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      fmtEventTime(e.date),
-                      style: TextStyle(fontSize: 21, color: timeColor),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      [e.type, if (e.location.isNotEmpty) e.location].join(' · '),
-                      style: TextStyle(fontSize: 16, color: lineColor),
-                    ),
-                  ],
-                ),
-              ),
               ),
           // ВХОД В ПРЕДЛОЖЕНИЕ РАБОТЫ ИЗ ДНЯ КАЛЕНДАРЯ (пункт 6,
           // `docs/plan.md`). Календарь знает ровно одно — какой день
@@ -1205,23 +1246,23 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           // предложить работу на вчера нельзя. Правило спрашивается у
           // того, кто знает час умолчания, — своего числа здесь нет.
           if (canOfferOnDay(date, DateTime.now())) ...[
-          const SizedBox(height: 6),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton(
-              onPressed: () => proposeJobOffer(context, ref, onDay: date),
-              style: TextButton.styleFrom(
-                foregroundColor: kGold,
-                padding: EdgeInsets.zero,
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              child: const Text(
-                '📅 Bu günə iş təklif et',
-                style: TextStyle(color: kGold, fontWeight: FontWeight.w600),
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () => proposeJobOffer(context, ref, onDay: date),
+                style: TextButton.styleFrom(
+                  foregroundColor: kGold,
+                  padding: EdgeInsets.zero,
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text(
+                  '📅 Bu günə iş təklif et',
+                  style: TextStyle(color: kGold, fontWeight: FontWeight.w600),
+                ),
               ),
             ),
-          ),
           ],
         ],
       ),
@@ -1310,9 +1351,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(13),
-          boxShadow: [
-            BoxShadow(color: kGold2.withAlpha(70), blurRadius: 12),
-          ],
+          boxShadow: [BoxShadow(color: kGold2.withAlpha(70), blurRadius: 12)],
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(13),
@@ -1327,7 +1366,10 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                 border: Border.all(color: kGold.withAlpha(60)),
               ),
               child: Center(
-                child: Text(label, style: const TextStyle(fontSize: 22, color: kGold2)),
+                child: Text(
+                  label,
+                  style: const TextStyle(fontSize: 22, color: kGold2),
+                ),
               ),
             ),
           ),
@@ -1340,19 +1382,21 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     const days = ['B.e', 'Ç.a', 'Ç', 'C.a', 'C', 'Ş', 'B'];
     return Row(
       children: days
-          .map((d) => Expanded(
-                child: Center(
-                  child: Text(
-                    d,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: kMuted,
-                      letterSpacing: 1.2,
-                    ),
+          .map(
+            (d) => Expanded(
+              child: Center(
+                child: Text(
+                  d,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: kMuted,
+                    letterSpacing: 1.2,
                   ),
                 ),
-              ))
+              ),
+            ),
+          )
           .toList(),
     );
   }
@@ -1428,24 +1472,39 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       // оба списка подряд, фильтр по дате, `.length`, — и он не знал ни про
       // отменённые, ни про повторы. На 9 avqust это дало «4» при трёх.
       final dayEvents = byDay[dayDate] ?? const <PersonalEvent>[];
-      final isSelected = _selectedCalendarDay == day &&
+      final isSelected =
+          _selectedCalendarDay == day &&
           _currentCalendarMonth.year == year &&
           _currentCalendarMonth.month == monthNum;
       final isToday = _sameDay(dayDate, today);
       final hasEvents = dayEvents.isNotEmpty;
 
-      cells.add(_buildDayCell(
-        day: day,
-        weekday: dayDate.weekday,
-        isSelected: isSelected,
-        isToday: isToday,
-        hasEvents: hasEvents,
-        eventCount: dayEvents.length,
-        mark: dayMarkOf(dayEvents, names),
-        currentUid: _uid,
-        onTap: () => _onDayTap(day, dayDate, dayEvents, personalEvents, eventsAsParticipant),
-        onLongPress: () => _onDayLongPress(day, dayDate, personalEvents, eventsAsParticipant, allUsers),
-      ));
+      cells.add(
+        _buildDayCell(
+          day: day,
+          weekday: dayDate.weekday,
+          isSelected: isSelected,
+          isToday: isToday,
+          hasEvents: hasEvents,
+          eventCount: dayEvents.length,
+          mark: dayMarkOf(dayEvents, names),
+          currentUid: _uid,
+          onTap: () => _onDayTap(
+            day,
+            dayDate,
+            dayEvents,
+            personalEvents,
+            eventsAsParticipant,
+          ),
+          onLongPress: () => _onDayLongPress(
+            day,
+            dayDate,
+            personalEvents,
+            eventsAsParticipant,
+            allUsers,
+          ),
+        ),
+      );
     }
 
     return GridView.count(
@@ -1531,65 +1590,56 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
-      // Glass tile behind every cell (not just selected/event/today ones,
-      // which is all the previous version drew) — a plain day used to have
-      // no background at all, so the grid only looked "glassy" wherever a
-      // special state already added its own circle.
+      // ПОМЕТКА ЗАНИМАЕТ ВСЮ ЯЧЕЙКУ, а не кружок внутри неё (решение
+      // владельца 12.08, по виду на устройстве). В макете клетка — это
+      // прямоугольник со скруглением 8, залитый целиком; кружок внутри
+      // квадратной плитки читался как две разные фигуры, вложенные друг в
+      // друга, и цвет человека доставался меньшей из них.
+      //
+      // Стеклянная подложка осталась ТОЛЬКО у непомеченных дней: у
+      // помеченного её место занимает заливка пометки, иначе поверх
+      // подложки лёг бы второй фон и цвет поехал бы.
       child: Container(
         margin: const EdgeInsets.all(2),
         decoration: BoxDecoration(
-          color: Colors.white.withAlpha(16),
+          color: bgColor == Colors.transparent
+              ? Colors.white.withAlpha(16)
+              : bgColor,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white.withAlpha(28)),
+          border: border ?? Border.all(color: Colors.white.withAlpha(28)),
+          boxShadow: glow,
         ),
         child: Center(
-          child: Stack(
-            clipBehavior: Clip.none,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: bgColor,
-                  shape: BoxShape.circle,
-                  border: border,
-                  boxShadow: glow,
-                ),
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '$day',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: textColor,
-                          fontWeight: isSelected || hasEvents
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                          shadows: textGlow,
-                          height: 1.05,
-                        ),
-                      ),
-                      // ТРИ БУКВЫ ИМЕНИ ВЛАДЕЛЬЦА — из макета. Мелко (9pt) и
-                      // тем же цветом, что пометка: подпись отвечает на
-                      // вопрос «чей это день», а не спорит с числом за
-                      // внимание.
-                      if (mark != null && mark.initials.isNotEmpty && !isSelected)
-                        Text(
-                          mark.initials,
-                          style: TextStyle(
-                            fontSize: 9,
-                            letterSpacing: 0.4,
-                            height: 1.1,
-                            color: markColor,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                    ],
-                  ),
+              Text(
+                '$day',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: textColor,
+                  fontWeight: isSelected || hasEvents
+                      ? FontWeight.bold
+                      : FontWeight.normal,
+                  shadows: textGlow,
+                  height: 1.05,
                 ),
               ),
+              // ТРИ БУКВЫ ИМЕНИ ВЛАДЕЛЬЦА — из макета. Мелко (9pt) и
+              // тем же цветом, что пометка: подпись отвечает на
+              // вопрос «чей это день», а не спорит с числом за
+              // внимание.
+              if (mark != null && mark.initials.isNotEmpty && !isSelected)
+                Text(
+                  mark.initials,
+                  style: TextStyle(
+                    fontSize: 9,
+                    letterSpacing: 0.4,
+                    height: 1.1,
+                    color: markColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
             ],
           ),
         ),
@@ -1678,7 +1728,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         initialType: seed?.type ?? existingEvent?.type ?? '',
         initialLocation: seed?.location ?? existingEvent?.location ?? '',
         initialNotes: seed?.notes ?? existingEvent?.notes ?? '',
-        initialParticipantUids: seed?.participantUids ??
+        initialParticipantUids:
+            seed?.participantUids ??
             existingEvent?.participantUids ??
             initialParticipantUids,
         allUsers: allUsers,
@@ -1714,8 +1765,14 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     List<User> allUsers,
   ) {
     List<_TaggedEvent> tagged = [];
-    final ownEvents = personalEvents.where((e) => e.ownerUid == _uid).map((e) => _TaggedEvent(e, true)).toList();
-    final invitedEvents = eventsAsParticipant.where((e) => e.ownerUid != _uid).map((e) => _TaggedEvent(e, false)).toList();
+    final ownEvents = personalEvents
+        .where((e) => e.ownerUid == _uid)
+        .map((e) => _TaggedEvent(e, true))
+        .toList();
+    final invitedEvents = eventsAsParticipant
+        .where((e) => e.ownerUid != _uid)
+        .map((e) => _TaggedEvent(e, false))
+        .toList();
 
     switch (_tedbirTab) {
       case 'sexsi':
@@ -1761,30 +1818,38 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         Expanded(
           child: isEmpty
               ? const Center(
-                  child: Text('Heç bir tədbir yoxdur', style: TextStyle(color: kMuted)),
+                  child: Text(
+                    'Heç bir tədbir yoxdur',
+                    style: TextStyle(color: kMuted),
+                  ),
                 )
               : tagged.isEmpty
-                  ? const Center(
-                      child: Text('Bu filterdə tədbir yoxdur', style: TextStyle(color: kMuted)),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: tagged.length,
-                      itemBuilder: (_, i) {
-                        final t = tagged[i];
-                        final allUsersList = ref.watch(allUsersProvider).asData?.value ?? [];
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: _EventCard(
-                            event: t.event,
-                            isOwn: t.isOwn,
-                            currentUid: _uid,
-                            allUsers: allUsersList,
-                            onTap: () => setState(() => _tedbirDetailId = t.event.id),
-                          ),
-                        );
-                      },
-                    ),
+              ? const Center(
+                  child: Text(
+                    'Bu filterdə tədbir yoxdur',
+                    style: TextStyle(color: kMuted),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: tagged.length,
+                  itemBuilder: (_, i) {
+                    final t = tagged[i];
+                    final allUsersList =
+                        ref.watch(allUsersProvider).asData?.value ?? [];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _EventCard(
+                        event: t.event,
+                        isOwn: t.isOwn,
+                        currentUid: _uid,
+                        allUsers: allUsersList,
+                        onTap: () =>
+                            setState(() => _tedbirDetailId = t.event.id),
+                      ),
+                    );
+                  },
+                ),
         ),
       ],
     );
@@ -1794,7 +1859,10 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     return Container(
       margin: const EdgeInsets.all(12),
       padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(color: kBg3, borderRadius: BorderRadius.circular(14)),
+      decoration: BoxDecoration(
+        color: kBg3,
+        borderRadius: BorderRadius.circular(14),
+      ),
       child: Row(
         children: [
           _tedbirSubTab('Hamısı', 'hamisi'),
@@ -1851,7 +1919,10 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                 const SizedBox(width: 8),
                 GestureDetector(
                   onTap: () => setState(() => _tedbirFilterDate = null),
-                  child: const Text('✕', style: TextStyle(color: kGold, fontSize: 13)),
+                  child: const Text(
+                    '✕',
+                    style: TextStyle(color: kGold, fontSize: 13),
+                  ),
                 ),
               ],
             ),
@@ -1936,7 +2007,10 @@ class _EventCard extends StatelessWidget {
               child: GestureDetector(
                 onTap: () => _openUserProfile(context, initiatorUid),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: kGold.withAlpha(56),
                     borderRadius: BorderRadius.circular(20),
@@ -1945,10 +2019,7 @@ class _EventCard extends StatelessWidget {
                     children: [
                       Text(
                         initiatorName,
-                        style: GoogleFonts.nunito(
-                          fontSize: 16,
-                          color: kGold,
-                        ),
+                        style: GoogleFonts.nunito(fontSize: 16, color: kGold),
                       ),
                       if (initiatorInstrument.isNotEmpty)
                         Text(
@@ -2017,12 +2088,14 @@ class _EventCard extends StatelessWidget {
                   // инструмента и тем же разделителем: строка узкая, второй
                   // ярус в неё не помещается, а различать нужно всё равно —
                   // иначе неответивший выглядит согласившимся.
-                  final answer =
-                      participantAnswerLabel(event.answerFor(mUid));
+                  final answer = participantAnswerLabel(event.answerFor(mUid));
                   return GestureDetector(
                     onTap: () => _openUserProfile(context, mUid),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
                       decoration: BoxDecoration(
                         color: isMe ? kGold.withAlpha(38) : kBg3,
                         borderRadius: BorderRadius.circular(16),
@@ -2077,15 +2150,16 @@ class _DetailRow extends StatelessWidget {
       decoration: BoxDecoration(
         color: flash ? kGold.withAlpha(46) : Colors.transparent,
         borderRadius: BorderRadius.circular(8),
-        border: last
-            ? null
-            : const Border(bottom: BorderSide(color: kBorder)),
+        border: last ? null : const Border(bottom: BorderSide(color: kBorder)),
       ),
       child: Row(
         children: [
           SizedBox(
             width: 90,
-            child: Text(label, style: const TextStyle(fontSize: 13, color: kMuted)),
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 13, color: kMuted),
+            ),
           ),
           Expanded(
             child: Text(
@@ -2146,20 +2220,35 @@ class _PartyRow extends StatelessWidget {
                 color: kBg3,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Center(child: Text('👤', style: TextStyle(fontSize: 18))),
+              child: const Center(
+                child: Text('👤', style: TextStyle(fontSize: 18)),
+              ),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(name,
-                      style: const TextStyle(
-                          fontSize: 14, color: kText, fontWeight: FontWeight.w600)),
-                  Text(label, style: const TextStyle(fontSize: 12, color: kMuted)),
+                  Text(
+                    name,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: kText,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    label,
+                    style: const TextStyle(fontSize: 12, color: kMuted),
+                  ),
                   if (answerLabel.isNotEmpty)
-                    Text(answerLabel,
-                        style: const TextStyle(fontSize: 12, color: kTextSecondary)),
+                    Text(
+                      answerLabel,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: kTextSecondary,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -2206,13 +2295,16 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
   Future<void> _write(String answer) async {
     setState(() => _saving = true);
     try {
-      await widget.firestoreService
-          .setEventAnswer(widget.event.id, widget.currentUid, answer);
+      await widget.firestoreService.setEventAnswer(
+        widget.event.id,
+        widget.currentUid,
+        answer,
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Cavab yazılmadı: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Cavab yazılmadı: $e')));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -2265,10 +2357,10 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
   /// плашка. Считается в `build`, а не в состоянии: список мероприятий живой,
   /// и снятый однажды ответ устарел бы молча.
   List<PersonalEvent> get _dayNotice => answerDayNotice(
-        target: widget.event,
-        myEvents: widget.myEvents,
-        currentUid: widget.currentUid,
-      );
+    target: widget.event,
+    myEvents: widget.myEvents,
+    currentUid: widget.currentUid,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -2283,14 +2375,21 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Cavabınız',
-              style: GoogleFonts.nunito(
-                  fontSize: 16, fontWeight: FontWeight.bold, color: kText)),
+          Text(
+            'Cavabınız',
+            style: GoogleFonts.nunito(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: kText,
+            ),
+          ),
           const SizedBox(height: 4),
           // Текущий ответ называется словом, тем же, что в составе: два места
           // об одном обязаны говорить одинаково.
-          Text(participantAnswerLabel(mine),
-              style: const TextStyle(fontSize: 13, color: kTextSecondary)),
+          Text(
+            participantAnswerLabel(mine),
+            style: const TextStyle(fontSize: 13, color: kTextSecondary),
+          ),
           // ЗАНЯТЫЙ ДЕНЬ — ПЛАШКОЙ, ДО НАЖАТИЯ (макет `mugam-6-kart.html`).
           // Не вопрос: два мероприятия в один день — обычная жизнь, и вопрос,
           // который задают всегда, перестают читать. Вопрос остаётся у минуты
@@ -2308,14 +2407,18 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Bu gün artıq tədbirin var',
-                      style: TextStyle(fontSize: 14, color: kText)),
+                  const Text(
+                    'Bu gün artıq tədbirin var',
+                    style: TextStyle(fontSize: 14, color: kText),
+                  ),
                   const SizedBox(height: 4),
                   // Чем именно занят день — иначе «занято» не отличает
                   // важное от проходного.
                   for (final e in _dayNotice)
-                    Text(eventConflictSummary(e),
-                        style: const TextStyle(fontSize: 13, color: kMuted)),
+                    Text(
+                      eventConflictSummary(e),
+                      style: const TextStyle(fontSize: 13, color: kMuted),
+                    ),
                 ],
               ),
             ),
@@ -2414,11 +2517,11 @@ class _RemoteChangeFlash {
   // один и тот же ключ и загораются вместе — это правда: сдвиг времени и
   // есть изменение даты.
   static Map<String, String> _fieldsOf(PersonalEvent e) => {
-        'type': e.type,
-        'date': e.date,
-        'location': e.location,
-        'notes': e.notes,
-      };
+    'type': e.type,
+    'date': e.date,
+    'location': e.location,
+    'notes': e.notes,
+  };
 
   void rememberSelfSave(Map<String, String>? saved) => _selfSaved = saved;
 
@@ -2467,8 +2570,7 @@ PersonalEvent? _findEvent(
   String id,
   List<PersonalEvent> own,
   List<PersonalEvent> asParticipant,
-) =>
-    findEventById(id, own, asParticipant);
+) => findEventById(id, own, asParticipant);
 
 // Событие исчезло, пока карточка открыта: владелец удалил его с другого
 // устройства. Отменённое сюда не попадает — у отменённого документ на
@@ -2487,8 +2589,10 @@ Widget _eventGoneScaffold(String title, VoidCallback onBack) {
       ),
     ),
     body: const Center(
-      child: Text('Bu qeyd artıq mövcud deyil',
-          style: TextStyle(color: kMuted)),
+      child: Text(
+        'Bu qeyd artıq mövcud deyil',
+        style: TextStyle(color: kMuted),
+      ),
     ),
   );
 }
@@ -2527,7 +2631,8 @@ class _AgreementDetailScreen extends ConsumerStatefulWidget {
 // Состояние здесь ровно одно и служит одной цели — подсветке чужой
 // правки. Само событие по-прежнему берётся из потока на каждой
 // перерисовке, копии в состоянии нет (N23).
-class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> {
+class _AgreementDetailScreenState
+    extends ConsumerState<_AgreementDetailScreen> {
   final _flash = _RemoteChangeFlash();
 
   // Идёт запись отмены — гасим кнопки, чтобы второй тап не ушёл поверх
@@ -2608,7 +2713,8 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
       FirebaseCrashlytics.instance.recordError(
         e,
         st,
-        reason: 'agreements_screen: отказ по правам, состояние его не '
+        reason:
+            'agreements_screen: отказ по правам, состояние его не '
             'объясняет (ход $deed, статус ${fresh?.status ?? 'не прочитан'})',
       );
     } catch (e, st) {
@@ -2710,7 +2816,8 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
             onTap: () async {
               final ok = await _ask(
                 title: 'Onsuz davam edirsiniz?',
-                body: 'Müqavilə yenidən qüvvəyə minəcək və qarşı tərəf '
+                body:
+                    'Müqavilə yenidən qüvvəyə minəcək və qarşı tərəf '
                     'bundan xəbər tutacaq.',
                 confirmLabel: 'Davam edirəm',
               );
@@ -2737,7 +2844,8 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
             onTap: () async {
               final ok = await _ask(
                 title: 'Müqaviləni ləğv etmək?',
-                body: 'Qarşı tərəfə ləğv təklifi göndəriləcək. Müqavilə '
+                body:
+                    'Qarşı tərəfə ləğv təklifi göndəriləcək. Müqavilə '
                     'yalnız o razılaşdıqdan sonra ləğv olunacaq.',
                 confirmLabel: 'Təklif göndər',
               );
@@ -2818,7 +2926,8 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
           onTap: () async {
             final ok = await _ask(
               title: 'Ləğvə etiraz etmək?',
-              body: 'Müqavilə qüvvədə qalacaq, qarşı tərəfə bildiriş '
+              body:
+                  'Müqavilə qüvvədə qalacaq, qarşı tərəfə bildiriş '
                   'göndəriləcək.',
               confirmLabel: 'Razı deyiləm',
               confirmColor: kGold,
@@ -2890,8 +2999,7 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
             borderRadius: BorderRadius.circular(10),
           ),
         ),
-        child: Text(label,
-            style: const TextStyle(fontWeight: FontWeight.bold)),
+        child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
       );
     }
     return OutlinedButton(
@@ -2900,9 +3008,7 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
         foregroundColor: color,
         side: BorderSide(color: color.withAlpha(140)),
         padding: const EdgeInsets.symmetric(vertical: 12),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
       child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
     );
@@ -2921,9 +3027,14 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: kBg2,
-        title: Text(title,
-            style: GoogleFonts.nunito(
-                color: kGold, fontSize: 17, fontWeight: FontWeight.bold)),
+        title: Text(
+          title,
+          style: GoogleFonts.nunito(
+            color: kGold,
+            fontSize: 17,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         content: Text(body, style: const TextStyle(color: kText, height: 1.4)),
         actions: [
           TextButton(
@@ -2990,7 +3101,11 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
     }
   }
 
-  void _openUserProfile(BuildContext context, List<User> allUsers, String? uid) {
+  void _openUserProfile(
+    BuildContext context,
+    List<User> allUsers,
+    String? uid,
+  ) {
     final u = uid == null ? null : _findUser(allUsers, uid);
     if (u == null) return;
     Navigator.push(
@@ -3010,7 +3125,11 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
     final allUsers = ref.watch(allUsersProvider).asData?.value ?? [];
     final firestoreService = ref.read(firestoreServiceProvider);
 
-    final event = _findEvent(widget.eventId, personalEvents, eventsAsParticipant);
+    final event = _findEvent(
+      widget.eventId,
+      personalEvents,
+      eventsAsParticipant,
+    );
     if (event == null) return _eventGoneScaffold('Müqavilə', onBack);
 
     _flash.sync(event, () {
@@ -3042,7 +3161,9 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
       // Запасной путь ровно для одного случая: человека нет в списке
       // (удалён, ещё не загрузился). Имя владельца в документе не лежит
       // вовсе, поэтому здесь честнее «Naməlum», чем чужое имя.
-      return uid == event.partnerUid ? (event.partnerName ?? 'Naməlum') : 'Naməlum';
+      return uid == event.partnerUid
+          ? (event.partnerName ?? 'Naməlum')
+          : 'Naməlum';
     }
 
     // «кто» + глагол в нужном лице. Слова — в правиле
@@ -3065,8 +3186,10 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
         // поля запроса и оставляет договор в силе. Слово «imtina»
         // переехало сюда из чатового раунда, где отказ действительно
         // исход, и здесь называло согласие отказом (N54).
-        child: const Text('✖ Müqavilə ləğv edildi',
-            style: TextStyle(color: kRed, fontWeight: FontWeight.w600)),
+        child: const Text(
+          '✖ Müqavilə ləğv edildi',
+          style: TextStyle(color: kRed, fontWeight: FontWeight.w600),
+        ),
       );
     } else if (card.outcome == AgreementOutcome.unsettled) {
       // ПОД ВОПРОСОМ — своя отметка, не зелёная и не красная (Часть 6а
@@ -3097,8 +3220,10 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: kWarnBorder),
             ),
-            child: const Text('⏳ Müqavilə şübhə altındadır',
-                style: TextStyle(color: kWarnTitle, fontWeight: FontWeight.w600)),
+            child: const Text(
+              '⏳ Müqavilə şübhə altındadır',
+              style: TextStyle(color: kWarnTitle, fontWeight: FontWeight.w600),
+            ),
           ),
           const SizedBox(height: 6),
           Text(
@@ -3116,8 +3241,10 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: kGreen.withAlpha(100)),
         ),
-        child: const Text('✅ Razılaşma qəbul edildi',
-            style: TextStyle(color: kGreen, fontWeight: FontWeight.w600)),
+        child: const Text(
+          '✅ Razılaşma qəbul edildi',
+          style: TextStyle(color: kGreen, fontWeight: FontWeight.w600),
+        ),
       );
     }
 
@@ -3125,8 +3252,10 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
       backgroundColor: kBg,
       appBar: AppBar(
         backgroundColor: kBg2,
-        title: Text('Müqavilə',
-            style: GoogleFonts.nunito(color: kGold, fontSize: 18)),
+        title: Text(
+          'Müqavilə',
+          style: GoogleFonts.nunito(color: kGold, fontSize: 18),
+        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: kGold),
           onPressed: onBack,
@@ -3160,7 +3289,10 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
                     initialParticipantUids: event.participantUids,
                     allUsers: allUsers,
                     existingEvent: event,
-                    allCombinedEvents: [...personalEvents, ...eventsAsParticipant],
+                    allCombinedEvents: [
+                      ...personalEvents,
+                      ...eventsAsParticipant,
+                    ],
                     currentUid: currentUid,
                     firestoreService: firestoreService,
                     onWillSave: _flash.rememberSelfSave,
@@ -3226,7 +3358,9 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
                 ),
               ),
             ],
-            if (!isCancelled && event.type.isNotEmpty && event.date.isNotEmpty) ...[
+            if (!isCancelled &&
+                event.type.isNotEmpty &&
+                event.date.isNotEmpty) ...[
               const SizedBox(height: 20),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -3238,34 +3372,44 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
                 child: Column(
                   children: [
                     _DetailRow(
-                        label: 'Növ',
-                        value: event.type,
-                        flash: _flash.flashing.contains('type')),
+                      label: 'Növ',
+                      value: event.type,
+                      flash: _flash.flashing.contains('type'),
+                    ),
                     _DetailRow(
-                        label: 'Tarix',
-                        value: _fmtDate(event.date),
-                        flash: _flash.flashing.contains('date')),
+                      label: 'Tarix',
+                      value: _fmtDate(event.date),
+                      flash: _flash.flashing.contains('date'),
+                    ),
                     _DetailRow(
-                        label: 'Vaxt',
-                        value: _fmtTime(event.date),
-                        flash: _flash.flashing.contains('date')),
+                      label: 'Vaxt',
+                      value: _fmtTime(event.date),
+                      flash: _flash.flashing.contains('date'),
+                    ),
                     _DetailRow(
-                        label: 'Yer',
-                        value: event.location,
-                        flash: _flash.flashing.contains('location')),
+                      label: 'Yer',
+                      value: event.location,
+                      flash: _flash.flashing.contains('location'),
+                    ),
                     _DetailRow(
-                        label: 'Əlavələr',
-                        value: event.notes,
-                        last: true,
-                        flash: _flash.flashing.contains('notes')),
+                      label: 'Əlavələr',
+                      value: event.notes,
+                      last: true,
+                      flash: _flash.flashing.contains('notes'),
+                    ),
                   ],
                 ),
               ),
             ],
             const SizedBox(height: 20),
-            Text('Tərəflər',
-                style: GoogleFonts.nunito(
-                    fontSize: 16, fontWeight: FontWeight.bold, color: kText)),
+            Text(
+              'Tərəflər',
+              style: GoogleFonts.nunito(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: kText,
+              ),
+            ),
             const SizedBox(height: 8),
             Container(
               decoration: BoxDecoration(
@@ -3281,18 +3425,26 @@ class _AgreementDetailScreenState extends ConsumerState<_AgreementDetailScreen> 
                   // (N53): имени владельца в документе нет вовсе.
                   _PartyRow(
                     name: nameOf(event.ownerUid),
-                    label: _partyLabel(card,
-                        uid: event.ownerUid, base: 'Göndərən (Təklif edən)'),
+                    label: _partyLabel(
+                      card,
+                      uid: event.ownerUid,
+                      base: 'Göndərən (Təklif edən)',
+                    ),
                     highlighted: event.ownerUid == currentUid,
-                    onTap: () => _openUserProfile(context, allUsers, event.ownerUid),
+                    onTap: () =>
+                        _openUserProfile(context, allUsers, event.ownerUid),
                   ),
                   const Divider(color: kBorder, height: 1),
                   _PartyRow(
                     name: nameOf(event.partnerUid),
-                    label: _partyLabel(card,
-                        uid: event.partnerUid, base: 'Qəbul edən'),
+                    label: _partyLabel(
+                      card,
+                      uid: event.partnerUid,
+                      base: 'Qəbul edən',
+                    ),
                     highlighted: event.ownerUid != currentUid,
-                    onTap: () => _openUserProfile(context, allUsers, event.partnerUid),
+                    onTap: () =>
+                        _openUserProfile(context, allUsers, event.partnerUid),
                   ),
                 ],
               ),
@@ -3394,7 +3546,11 @@ class _PersonalEventDetailScreenState
     }
   }
 
-  void _openUserProfile(BuildContext context, List<User> allUsers, String? uid) {
+  void _openUserProfile(
+    BuildContext context,
+    List<User> allUsers,
+    String? uid,
+  ) {
     final u = uid == null ? null : _findUser(allUsers, uid);
     if (u == null) return;
     Navigator.push(
@@ -3414,7 +3570,11 @@ class _PersonalEventDetailScreenState
     final allUsers = ref.watch(allUsersProvider).asData?.value ?? [];
     final firestoreService = ref.read(firestoreServiceProvider);
 
-    final event = _findEvent(widget.eventId, personalEvents, eventsAsParticipant);
+    final event = _findEvent(
+      widget.eventId,
+      personalEvents,
+      eventsAsParticipant,
+    );
     if (event == null) return _eventGoneScaffold('Tədbir', onBack);
 
     _flash.sync(event, () {
@@ -3432,8 +3592,10 @@ class _PersonalEventDetailScreenState
       backgroundColor: kBg,
       appBar: AppBar(
         backgroundColor: kBg2,
-        title: Text('Tədbir',
-            style: GoogleFonts.nunito(color: kGold, fontSize: 18)),
+        title: Text(
+          'Tədbir',
+          style: GoogleFonts.nunito(color: kGold, fontSize: 18),
+        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: kGold),
           onPressed: onBack,
@@ -3467,7 +3629,10 @@ class _PersonalEventDetailScreenState
                     initialParticipantUids: event.participantUids,
                     allUsers: allUsers,
                     existingEvent: event,
-                    allCombinedEvents: [...personalEvents, ...eventsAsParticipant],
+                    allCombinedEvents: [
+                      ...personalEvents,
+                      ...eventsAsParticipant,
+                    ],
                     currentUid: currentUid,
                     firestoreService: firestoreService,
                     onWillSave: _flash.rememberSelfSave,
@@ -3487,18 +3652,28 @@ class _PersonalEventDetailScreenState
               child: GestureDetector(
                 onTap: () => _openUserProfile(context, allUsers, initiatorUid),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
                     color: kGold.withAlpha(56),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Column(
                     children: [
-                      Text(initiatorName,
-                          style: GoogleFonts.nunito(fontSize: 16, color: kGold)),
+                      Text(
+                        initiatorName,
+                        style: GoogleFonts.nunito(fontSize: 16, color: kGold),
+                      ),
                       if (initiatorInstrument.isNotEmpty)
-                        Text(initiatorInstrument,
-                            style: TextStyle(fontSize: 11, color: kGold.withAlpha(204))),
+                        Text(
+                          initiatorInstrument,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: kGold.withAlpha(204),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -3516,26 +3691,31 @@ class _PersonalEventDetailScreenState
               child: Column(
                 children: [
                   _DetailRow(
-                      label: 'Növ',
-                      value: event.type,
-                      flash: _flash.flashing.contains('type')),
+                    label: 'Növ',
+                    value: event.type,
+                    flash: _flash.flashing.contains('type'),
+                  ),
                   _DetailRow(
-                      label: 'Yer',
-                      value: event.location,
-                      flash: _flash.flashing.contains('location')),
+                    label: 'Yer',
+                    value: event.location,
+                    flash: _flash.flashing.contains('location'),
+                  ),
                   _DetailRow(
-                      label: 'Tarix',
-                      value: _fmtDate(event.date),
-                      flash: _flash.flashing.contains('date')),
+                    label: 'Tarix',
+                    value: _fmtDate(event.date),
+                    flash: _flash.flashing.contains('date'),
+                  ),
                   _DetailRow(
-                      label: 'Saat',
-                      value: _fmtTime(event.date),
-                      flash: _flash.flashing.contains('date')),
+                    label: 'Saat',
+                    value: _fmtTime(event.date),
+                    flash: _flash.flashing.contains('date'),
+                  ),
                   _DetailRow(
-                      label: 'Qeyd',
-                      value: event.notes,
-                      last: true,
-                      flash: _flash.flashing.contains('notes')),
+                    label: 'Qeyd',
+                    value: event.notes,
+                    last: true,
+                    flash: _flash.flashing.contains('notes'),
+                  ),
                 ],
               ),
             ),
@@ -3559,9 +3739,14 @@ class _PersonalEventDetailScreenState
             // Organiser card (if invited)
             if (!isOwner && event.ownerUid.isNotEmpty) ...[
               const SizedBox(height: 20),
-              Text('Təşkilatçı',
-                  style: GoogleFonts.nunito(
-                      fontSize: 16, fontWeight: FontWeight.bold, color: kText)),
+              Text(
+                'Təşkilatçı',
+                style: GoogleFonts.nunito(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: kText,
+                ),
+              ),
               const SizedBox(height: 8),
               Container(
                 decoration: BoxDecoration(
@@ -3576,16 +3761,22 @@ class _PersonalEventDetailScreenState
                   name: _findUser(allUsers, event.ownerUid)?.name ?? 'Naməlum',
                   label: 'Təşkilatçı',
                   highlighted: false,
-                  onTap: () => _openUserProfile(context, allUsers, event.ownerUid),
+                  onTap: () =>
+                      _openUserProfile(context, allUsers, event.ownerUid),
                 ),
               ),
             ],
             // Participants card
             if (event.participantUids.isNotEmpty) ...[
               const SizedBox(height: 20),
-              Text('İştirakçılar',
-                  style: GoogleFonts.nunito(
-                      fontSize: 16, fontWeight: FontWeight.bold, color: kText)),
+              Text(
+                'İştirakçılar',
+                style: GoogleFonts.nunito(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: kText,
+                ),
+              ),
               const SizedBox(height: 8),
               Container(
                 decoration: BoxDecoration(
@@ -3598,16 +3789,31 @@ class _PersonalEventDetailScreenState
                     for (int i = 0; i < event.participantUids.length; i++) ...[
                       if (i > 0) const Divider(color: kBorder, height: 1),
                       _PartyRow(
-                        name: _findUser(allUsers, event.participantUids[i])?.name ?? event.participantUids[i],
-                        label: _findUser(allUsers, event.participantUids[i])?.instrument ?? 'İştirakçı',
+                        name:
+                            _findUser(
+                              allUsers,
+                              event.participantUids[i],
+                            )?.name ??
+                            event.participantUids[i],
+                        label:
+                            _findUser(
+                              allUsers,
+                              event.participantUids[i],
+                            )?.instrument ??
+                            'İştirakçı',
                         highlighted: event.participantUids[i] == currentUid,
                         // Ответ спрашивается у МОДЕЛИ, а не читается из карты:
                         // `answerFor` знает и про запасной путь у 75 записей
                         // без поля, и про то, что отсутствие ключа — «не
                         // спрашивали», а не «ждём».
                         answerLabel: participantAnswerLabel(
-                            event.answerFor(event.participantUids[i])),
-                        onTap: () => _openUserProfile(context, allUsers, event.participantUids[i]),
+                          event.answerFor(event.participantUids[i]),
+                        ),
+                        onTap: () => _openUserProfile(
+                          context,
+                          allUsers,
+                          event.participantUids[i],
+                        ),
                       ),
                     ],
                   ],
@@ -3664,10 +3870,9 @@ class _PersonalEventDetailScreenState
 Route<void> eventDetailRoute({
   required String eventId,
   required String currentUid,
-}) =>
-    MaterialPageRoute(
-      builder: (_) => _EventDetailById(eventId: eventId, currentUid: currentUid),
-    );
+}) => MaterialPageRoute(
+  builder: (_) => _EventDetailById(eventId: eventId, currentUid: currentUid),
+);
 
 class _EventDetailById extends ConsumerWidget {
   const _EventDetailById({required this.eventId, required this.currentUid});
@@ -3706,15 +3911,15 @@ class _EventDetailById extends ConsumerWidget {
 
     return switch (eventCardKindOf(event)) {
       EventCardKind.agreement => _AgreementDetailScreen(
-          eventId: eventId,
-          currentUid: currentUid,
-          onBack: back,
-        ),
+        eventId: eventId,
+        currentUid: currentUid,
+        onBack: back,
+      ),
       EventCardKind.personalEvent => _PersonalEventDetailScreen(
-          eventId: eventId,
-          currentUid: currentUid,
-          onBack: back,
-        ),
+        eventId: eventId,
+        currentUid: currentUid,
+        onBack: back,
+      ),
     };
   }
 }
@@ -3775,7 +3980,8 @@ class _ConflictEventScreenState extends State<_ConflictEventScreen> {
 
   Timer _startBlink() {
     return Timer.periodic(const Duration(milliseconds: 500), (t) {
-      if (_blinkCount >= 6) { // 3 full blinks = 6 toggles
+      if (_blinkCount >= 6) {
+        // 3 full blinks = 6 toggles
         t.cancel();
         if (mounted) setState(() => _highlighted = true); // ensure stays on
         return;
@@ -3821,11 +4027,13 @@ class _ConflictEventScreenState extends State<_ConflictEventScreen> {
                   width: _highlighted ? 2.0 : 1.0,
                 ),
                 boxShadow: _highlighted
-                    ? [BoxShadow(
-                        color: kGold.withAlpha(60),
-                        blurRadius: 12,
-                        spreadRadius: 2,
-                      )]
+                    ? [
+                        BoxShadow(
+                          color: kGold.withAlpha(60),
+                          blurRadius: 12,
+                          spreadRadius: 2,
+                        ),
+                      ]
                     : [],
               ),
               child: ClipRRect(
@@ -3938,11 +4146,11 @@ class _EventFormModalState extends State<_EventFormModal> {
   bool _touchedParticipants = false;
 
   EventFormTouched get _touched => EventFormTouched(
-        type: _touchedType,
-        location: _touchedLocation,
-        notes: _touchedNotes,
-        participants: _touchedParticipants,
-      );
+    type: _touchedType,
+    location: _touchedLocation,
+    notes: _touchedNotes,
+    participants: _touchedParticipants,
+  );
 
   bool _saving = false;
   // Время и день, которые человек сам объявил занятыми, ответив «Yeni
@@ -4053,8 +4261,7 @@ class _EventFormModalState extends State<_EventFormModal> {
 
   String get _computedNotes => _notes.joined;
 
-  bool get _isTimeBlocked =>
-      isConflictTimeBlocked(_selectedDate, _blockedTime);
+  bool get _isTimeBlocked => isConflictTimeBlocked(_selectedDate, _blockedTime);
 
   /// Мероприятие, которое сейчас правят, само с собой конфликтовать не
   /// может. У листа предложения такого нет — он всегда создаёт новое.
@@ -4155,14 +4362,16 @@ class _EventFormModalState extends State<_EventFormModal> {
   Future<void> _openConflictEvent(PersonalEvent conflict) async {
     final isOwn = conflict.ownerUid == widget.currentUid;
     final categoryTitle = isOwn ? 'Şəxsi tədbir' : 'Dəvətli tədbir';
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => _ConflictEventScreen(
-        event: conflict,
-        categoryTitle: categoryTitle,
-        currentUid: widget.currentUid,
-        allUsers: widget.allUsers,
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _ConflictEventScreen(
+          event: conflict,
+          categoryTitle: categoryTitle,
+          currentUid: widget.currentUid,
+          allUsers: widget.allUsers,
+        ),
       ),
-    ));
+    );
   }
 
   /// Прокрутить к предупреждению. Пауза — чтобы оно успело появиться в
@@ -4230,10 +4439,13 @@ class _EventFormModalState extends State<_EventFormModal> {
 
     final events = widget.allCombinedEvents;
     final editing = widget.existingEvent != null;
-    final exact = exactConflictsAt(_selectedDate, events,
-        currentUid: widget.currentUid,
-        excludeEventId: _excludeEventId,
-        resolvedIds: _resolvedConflictIds);
+    final exact = exactConflictsAt(
+      _selectedDate,
+      events,
+      currentUid: widget.currentUid,
+      excludeEventId: _excludeEventId,
+      resolvedIds: _resolvedConflictIds,
+    );
 
     if (editing) {
       final answers = conflictAnswers(
@@ -4243,8 +4455,8 @@ class _EventFormModalState extends State<_EventFormModal> {
         // подмена этого вопроса и давала N39. Передаётся ради полноты
         // вызова — правило его при правке не читает. Берём первое из
         // занявших минуту: при правке ответ от этого не зависит вовсе.
-        targetIsMine: exact.isNotEmpty &&
-            exact.first.ownerUid == widget.currentUid,
+        targetIsMine:
+            exact.isNotEmpty && exact.first.ownerUid == widget.currentUid,
       );
       // Суть варианта А одной строкой: при правке ответ единственный, а
       // вопрос с единственным ответом это не вопрос, а задержка. Стоит
@@ -4277,10 +4489,12 @@ class _EventFormModalState extends State<_EventFormModal> {
       await _showConflictFlow(exact, exactTime: true);
       return;
     }
-    final sameDay = conflictEventsOnDay(_selectedDate, events,
-            currentUid: widget.currentUid, excludeEventId: _excludeEventId)
-        .where((e) => !_resolvedConflictIds.contains(e.id))
-        .toList();
+    final sameDay = conflictEventsOnDay(
+      _selectedDate,
+      events,
+      currentUid: widget.currentUid,
+      excludeEventId: _excludeEventId,
+    ).where((e) => !_resolvedConflictIds.contains(e.id)).toList();
     if (sameDay.isNotEmpty) {
       await _showConflictFlow(sameDay, exactTime: false);
       return;
@@ -4463,8 +4677,10 @@ class _EventFormModalState extends State<_EventFormModal> {
       // ему («İştirakçı ayrıldı», `planUpdatePushes` по
       // `lastActionType: 'left'`). Оно и есть единственное, что этот ход
       // порождает: до починки N47 уходило три, из них два ложных.
-      await widget.firestoreService
-          .leavePersonalEvent(target.id, widget.currentUid);
+      await widget.firestoreService.leavePersonalEvent(
+        target.id,
+        widget.currentUid,
+      );
       if (!mounted) return;
       setState(() {
         // Состав — только выбранный человеком: подмешанные пришли из того
@@ -4638,7 +4854,9 @@ class _EventFormModalState extends State<_EventFormModal> {
               children: [
                 Center(
                   child: Text(
-                    widget.existingEvent != null ? 'Tədbiri Redaktə et' : 'Yeni Tədbir',
+                    widget.existingEvent != null
+                        ? 'Tədbiri Redaktə et'
+                        : 'Yeni Tədbir',
                     style: GoogleFonts.nunito(
                       fontSize: 18,
                       color: kText,
@@ -4658,7 +4876,10 @@ class _EventFormModalState extends State<_EventFormModal> {
                         _touchedType = true; // N46
                       }),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
                         decoration: BoxDecoration(
                           color: sel ? kGold : kBg3,
                           borderRadius: BorderRadius.circular(20),
@@ -4698,257 +4919,284 @@ class _EventFormModalState extends State<_EventFormModal> {
                 children: [
                   // Inline wheel date/time picker
                   WheelDateTimePicker(
-              value: _selectedDate,
-              onChanged: (d) {
-                setState(() {
-                  _selectedDate = d;
-                  // Человек сдвинул — его же просьба «дай выбрать другое»
-                  // исполнена, запрет снимается сам. Каждый запрет
-                  // снимается своим действием: запрет на минуту — сдвигом
-                  // времени, запрет на день — сменой дня.
-                  if (_blockedTime != null &&
-                      (d.hour != _blockedTime!.hour ||
-                          d.minute != _blockedTime!.minute)) {
-                    _blockedTime = null;
-                  }
-                  // Сменился конфликт — сменился и подмешанный из него
-                  // состав (N38). Подмешивание живёт в `build`, а снятия не
-                  // было нигде, кроме ответа «Yeni tədbir»: человек
-                  // прокручивал дату через занятую минуту, состав того дня
-                  // налипал и оставался от даты, которую он уже не
-                  // выбирает. Правило целиком — в
-                  // `participantsAfterConflictChange`; здесь применение.
-                  final next = resolveConflictBanner(
-                    selectedDate: d,
-                    events: widget.allCombinedEvents,
-                    currentUid: widget.currentUid,
-                    blockedTime: _blockedTime,
-                    excludeEventId: _excludeEventId,
-                    // Считается для НОВОЙ даты, а не через `_pastDatePicked`:
-                    // тот смотрит на `_selectedDate`, и на прошлой дате
-                    // предупреждение о занятости не поднимается вовсе —
-                    // значит и конфликтов в нём не будет.
-                    pastDate: d != _openedWithDate && d.isBefore(DateTime.now()),
-                    resolvedIds: _resolvedConflictIds,
-                  );
-                  final change = participantsAfterConflictChange(
-                    current: _selectedParticipantUids,
-                    merged: _mergedFromConflict,
-                    conflicts: next?.events ?? const <PersonalEvent>[],
-                    explicitlyRemoved: _explicitlyRemoved,
-                    currentUid: widget.currentUid,
-                    isEditing: widget.existingEvent != null,
-                  );
-                  _selectedParticipantUids = change.participants;
-                  _mergedFromConflict
-                    ..clear()
-                    ..addAll(change.merged);
-                });
-              },
-            ),
-            // Предупреждение о занятом времени — общий виджет И общие
-            // правила с листом «İş təklif et»
-            // (shared/widgets/event_conflict_banner.dart).
-            //
-            // До 03.08 здесь стояла своя однострочная плашка с эмодзи ⚠️,
-            // и показывалась она только ПОСЛЕ ответа «Yeni tədbir»: пока
-            // человек крутил колесо, календарь про занятое время молчал.
-            // Лист к тому времени предупреждал живьём — то есть разошлись
-            // не только вид, но и момент появления, а заметить это можно
-            // было только глазами. Требование владельца 03.08: «пусть
-            // будет одно и то же в обоих местах».
-            if (banner != null) ...[
-              const SizedBox(height: 8),
-              EventConflictBanner(
-                key: _warningKey,
-                title: banner.title,
-                detail: banner.detail,
-                events: banner.events,
-                onOpenEvent: _openConflictEvent,
-              ),
-            ],
-            if (widget.mode == 'time-only') ...[
-              const SizedBox(height: 16),
-              // Participants
-              const Text('İŞTİRAKÇILAR',
-                  style: TextStyle(
-                      fontSize: 11,
-                      letterSpacing: 0.8,
-                      color: kMuted,
-                      fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              // "+ Əlavə et" deliberately lives in its own row below the
-              // chips' Wrap, not as the last item inside that same Wrap —
-              // as a Wrap child, it used to reflow to a new position every
-              // time a chip was added/removed (jumping up a line, sliding
-              // along the last row, etc.). A fixed row underneath keeps it
-              // in the same place regardless of how many chips there are or
-              // how they wrap.
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: _selectedParticipantUids.map((uid) {
-                  User? m;
-                  try {
-                    m = widget.allUsers.firstWhere((x) => x.id == uid);
-                  } catch (_) {}
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: kGold.withAlpha(38),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: kGold),
+                    value: _selectedDate,
+                    onChanged: (d) {
+                      setState(() {
+                        _selectedDate = d;
+                        // Человек сдвинул — его же просьба «дай выбрать другое»
+                        // исполнена, запрет снимается сам. Каждый запрет
+                        // снимается своим действием: запрет на минуту — сдвигом
+                        // времени, запрет на день — сменой дня.
+                        if (_blockedTime != null &&
+                            (d.hour != _blockedTime!.hour ||
+                                d.minute != _blockedTime!.minute)) {
+                          _blockedTime = null;
+                        }
+                        // Сменился конфликт — сменился и подмешанный из него
+                        // состав (N38). Подмешивание живёт в `build`, а снятия не
+                        // было нигде, кроме ответа «Yeni tədbir»: человек
+                        // прокручивал дату через занятую минуту, состав того дня
+                        // налипал и оставался от даты, которую он уже не
+                        // выбирает. Правило целиком — в
+                        // `participantsAfterConflictChange`; здесь применение.
+                        final next = resolveConflictBanner(
+                          selectedDate: d,
+                          events: widget.allCombinedEvents,
+                          currentUid: widget.currentUid,
+                          blockedTime: _blockedTime,
+                          excludeEventId: _excludeEventId,
+                          // Считается для НОВОЙ даты, а не через `_pastDatePicked`:
+                          // тот смотрит на `_selectedDate`, и на прошлой дате
+                          // предупреждение о занятости не поднимается вовсе —
+                          // значит и конфликтов в нём не будет.
+                          pastDate:
+                              d != _openedWithDate &&
+                              d.isBefore(DateTime.now()),
+                          resolvedIds: _resolvedConflictIds,
+                        );
+                        final change = participantsAfterConflictChange(
+                          current: _selectedParticipantUids,
+                          merged: _mergedFromConflict,
+                          conflicts: next?.events ?? const <PersonalEvent>[],
+                          explicitlyRemoved: _explicitlyRemoved,
+                          currentUid: widget.currentUid,
+                          isEditing: widget.existingEvent != null,
+                        );
+                        _selectedParticipantUids = change.participants;
+                        _mergedFromConflict
+                          ..clear()
+                          ..addAll(change.merged);
+                      });
+                    },
+                  ),
+                  // Предупреждение о занятом времени — общий виджет И общие
+                  // правила с листом «İş təklif et»
+                  // (shared/widgets/event_conflict_banner.dart).
+                  //
+                  // До 03.08 здесь стояла своя однострочная плашка с эмодзи ⚠️,
+                  // и показывалась она только ПОСЛЕ ответа «Yeni tədbir»: пока
+                  // человек крутил колесо, календарь про занятое время молчал.
+                  // Лист к тому времени предупреждал живьём — то есть разошлись
+                  // не только вид, но и момент появления, а заметить это можно
+                  // было только глазами. Требование владельца 03.08: «пусть
+                  // будет одно и то же в обоих местах».
+                  if (banner != null) ...[
+                    const SizedBox(height: 8),
+                    EventConflictBanner(
+                      key: _warningKey,
+                      title: banner.title,
+                      detail: banner.detail,
+                      events: banner.events,
+                      onOpenEvent: _openConflictEvent,
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        GestureDetector(
-                          // Pushed (not replaced) on top of this still-open
-                          // sheet, so popping UserProfileScreen naturally
-                          // lands back here with every field/participant
-                          // exactly as left — no extra state to restore.
-                          onTap: m == null
-                              ? null
-                              : () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => UserProfileScreen(user: m!),
+                  ],
+                  if (widget.mode == 'time-only') ...[
+                    const SizedBox(height: 16),
+                    // Participants
+                    const Text(
+                      'İŞTİRAKÇILAR',
+                      style: TextStyle(
+                        fontSize: 11,
+                        letterSpacing: 0.8,
+                        color: kMuted,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    // "+ Əlavə et" deliberately lives in its own row below the
+                    // chips' Wrap, not as the last item inside that same Wrap —
+                    // as a Wrap child, it used to reflow to a new position every
+                    // time a chip was added/removed (jumping up a line, sliding
+                    // along the last row, etc.). A fixed row underneath keeps it
+                    // in the same place regardless of how many chips there are or
+                    // how they wrap.
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: _selectedParticipantUids.map((uid) {
+                        User? m;
+                        try {
+                          m = widget.allUsers.firstWhere((x) => x.id == uid);
+                        } catch (_) {}
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: kGold.withAlpha(38),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: kGold),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              GestureDetector(
+                                // Pushed (not replaced) on top of this still-open
+                                // sheet, so popping UserProfileScreen naturally
+                                // lands back here with every field/participant
+                                // exactly as left — no extra state to restore.
+                                onTap: m == null
+                                    ? null
+                                    : () => Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              UserProfileScreen(user: m!),
+                                        ),
+                                      ),
+                                child: Text(
+                                  '${m?.emoji ?? '🎵'} ${m?.name ?? uid}',
+                                  style: const TextStyle(
+                                    color: kGold,
+                                    fontSize: 12,
                                   ),
                                 ),
-                          child: Text(
-                            '${m?.emoji ?? '🎵'} ${m?.name ?? uid}',
-                            style: const TextStyle(color: kGold, fontSize: 12),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        GestureDetector(
-                          // Второй путь к «убрать участника руками» — идёт
-                          // той же записью, что и диалог выбора (N35).
-                          onTap: () => _applyParticipantSelection(
-                            _selectedParticipantUids
-                                .where((u) => u != uid)
-                                .toList(),
-                          ),
-                          child: const Text('×',
-                              style: TextStyle(color: kRed, fontSize: 16)),
-                        ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: GestureDetector(
-                  onTap: _openParticipantPicker,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: kBg3,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: kBorder),
-                    ),
-                    child: const Text('+ Əlavə et',
-                        style: TextStyle(color: kMuted, fontSize: 12)),
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            // Location
-            Container(
-              key: _locationKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('MƏKAN',
-                      style: TextStyle(
-                          fontSize: 11,
-                          letterSpacing: 0.8,
-                          color: kMuted,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: _locationController,
-                    onChanged: (v) {
-                      _location = v;
-                      _touchedLocation = true; // N46
-                      if (_showLocationError && v.trim().isNotEmpty) {
-                        setState(() => _showLocationError = false);
-                      }
-                    },
-                    style: const TextStyle(color: kText, fontSize: 14),
-                    decoration: InputDecoration(
-                      hintText: 'Məkan daxil edin',
-                      hintStyle: const TextStyle(color: kMuted),
-                      filled: true,
-                      fillColor: kBg3,
-                      contentPadding:
-                          const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: _showLocationError ? kRed : kBorder,
-                        ),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: _showLocationError ? kRed : kBorder,
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: kGold),
-                      ),
-                    ),
-                  ),
-                  if (_showLocationError) ...[
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: kRed.withAlpha(25),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: kRed.withAlpha(80)),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              '⚠️ Məkanı daxil edin',
-                              style: const TextStyle(
-                                color: kRed,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
                               ),
-                            ),
+                              const SizedBox(width: 6),
+                              GestureDetector(
+                                // Второй путь к «убрать участника руками» — идёт
+                                // той же записью, что и диалог выбора (N35).
+                                onTap: () => _applyParticipantSelection(
+                                  _selectedParticipantUids
+                                      .where((u) => u != uid)
+                                      .toList(),
+                                ),
+                                child: const Text(
+                                  '×',
+                                  style: TextStyle(color: kRed, fontSize: 16),
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: GestureDetector(
+                        onTap: _openParticipantPicker,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: kBg3,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: kBorder),
+                          ),
+                          child: const Text(
+                            '+ Əlavə et',
+                            style: TextStyle(color: kMuted, fontSize: 12),
+                          ),
+                        ),
                       ),
                     ),
                   ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Форма одежды и свободная заметка — общий виджет
-            // (shared/widgets/event_notes_picker.dart), тот же, что в листе
-            // предложения работы. Список пунктов и склейка строки живут
-            // там: договор создаётся из предложения, а правится здесь, то
-            // есть строку пишет один экран, а разбирает другой.
-            EventNotesPicker(
-              value: _notes,
-              onChanged: (v) => setState(() {
-                _notes = v;
-                _touchedNotes = true; // N46
-              }),
-              // Свободная заметка здесь показывается только в режиме с
-              // участниками — так было до выделения виджета, поведение
-              // сохранено как есть.
-              showFreeNote: widget.mode == 'time-only',
-            ),
+                  const SizedBox(height: 16),
+                  // Location
+                  Container(
+                    key: _locationKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'MƏKAN',
+                          style: TextStyle(
+                            fontSize: 11,
+                            letterSpacing: 0.8,
+                            color: kMuted,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _locationController,
+                          onChanged: (v) {
+                            _location = v;
+                            _touchedLocation = true; // N46
+                            if (_showLocationError && v.trim().isNotEmpty) {
+                              setState(() => _showLocationError = false);
+                            }
+                          },
+                          style: const TextStyle(color: kText, fontSize: 14),
+                          decoration: InputDecoration(
+                            hintText: 'Məkan daxil edin',
+                            hintStyle: const TextStyle(color: kMuted),
+                            filled: true,
+                            fillColor: kBg3,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 14,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: _showLocationError ? kRed : kBorder,
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: _showLocationError ? kRed : kBorder,
+                              ),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: const BorderSide(color: kGold),
+                            ),
+                          ),
+                        ),
+                        if (_showLocationError) ...[
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: kRed.withAlpha(25),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: kRed.withAlpha(80)),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    '⚠️ Məkanı daxil edin',
+                                    style: const TextStyle(
+                                      color: kRed,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Форма одежды и свободная заметка — общий виджет
+                  // (shared/widgets/event_notes_picker.dart), тот же, что в листе
+                  // предложения работы. Список пунктов и склейка строки живут
+                  // там: договор создаётся из предложения, а правится здесь, то
+                  // есть строку пишет один экран, а разбирает другой.
+                  EventNotesPicker(
+                    value: _notes,
+                    onChanged: (v) => setState(() {
+                      _notes = v;
+                      _touchedNotes = true; // N46
+                    }),
+                    // Свободная заметка здесь показывается только в режиме с
+                    // участниками — так было до выделения виджета, поведение
+                    // сохранено как есть.
+                    showFreeNote: widget.mode == 'time-only',
+                  ),
                   const SizedBox(height: 20),
                 ],
               ),
@@ -4968,7 +5216,8 @@ class _EventFormModalState extends State<_EventFormModal> {
                       side: const BorderSide(color: kBorder),
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
                     child: const Text('Ləğv et'),
                   ),
@@ -4982,7 +5231,8 @@ class _EventFormModalState extends State<_EventFormModal> {
                       disabledBackgroundColor: kGold,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                       elevation: 0,
                     ),
                     child: _saving
@@ -5073,7 +5323,9 @@ class _ParticipantPickerDialogState
   }
 
   void _onScroll() {
-    if (!_searchCtrl.hasMore || _searchCtrl.isLoading || _searchCtrl.isLoadingMore) {
+    if (!_searchCtrl.hasMore ||
+        _searchCtrl.isLoading ||
+        _searchCtrl.isLoadingMore) {
       return;
     }
     if (_scrollController.position.pixels >=
@@ -5203,32 +5455,41 @@ class _ParticipantPickerDialogState
                   }
                   if (_searchCtrl.error != null) {
                     return Center(
-                      child: Text(_searchCtrl.error!, style: const TextStyle(color: kMuted)),
+                      child: Text(
+                        _searchCtrl.error!,
+                        style: const TextStyle(color: kMuted),
+                      ),
                     );
                   }
 
                   final filtered = _searchCtrl.results;
                   return ListView.builder(
                     controller: _scrollController,
-                    itemCount: filtered.length + (_searchCtrl.isLoadingMore ? 1 : 0),
+                    itemCount:
+                        filtered.length + (_searchCtrl.isLoadingMore ? 1 : 0),
                     itemBuilder: (_, i) {
                       if (i >= filtered.length) {
                         return const Padding(
                           padding: EdgeInsets.symmetric(vertical: 16),
-                          child: Center(child: CircularProgressIndicator(color: kGold)),
+                          child: Center(
+                            child: CircularProgressIndicator(color: kGold),
+                          ),
                         );
                       }
                       final m = filtered[i];
                       final sel = _selected.contains(m.id);
-                  final hasActiveStatus = m.hasActiveStatus;
-                  final viewerUser = hasActiveStatus
-                      ? ref.watch(currentUserProvider(widget.currentUid)).value
-                      : null;
-                  final hasUnviewed = hasActiveStatus &&
-                      (viewerUser?.hasUnviewedStatusFrom(m) ?? false);
-                  const avatarBaseSize = 36.0;
-                  final avatarBoxSize = avatarBaseSize * 1.2;
-                  void openStatusViewer() => Navigator.push(
+                      final hasActiveStatus = m.hasActiveStatus;
+                      final viewerUser = hasActiveStatus
+                          ? ref
+                                .watch(currentUserProvider(widget.currentUid))
+                                .value
+                          : null;
+                      final hasUnviewed =
+                          hasActiveStatus &&
+                          (viewerUser?.hasUnviewedStatusFrom(m) ?? false);
+                      const avatarBaseSize = 36.0;
+                      final avatarBoxSize = avatarBaseSize * 1.2;
+                      void openStatusViewer() => Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) => UserStatusViewerScreen(
@@ -5238,95 +5499,107 @@ class _ParticipantPickerDialogState
                           ),
                         ),
                       );
-                  return ListTile(
-                    leading: SizedBox(
-                      width: avatarBoxSize,
-                      height: avatarBoxSize,
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          if (hasActiveStatus)
-                            GestureDetector(
-                              onTap: openStatusViewer,
-                              onLongPress: () => showAvatarLongPressMenu(
-                                context,
-                                photoURL: m.photoURL,
-                                onViewStatus: openStatusViewer,
-                              ),
-                              child: AvatarRing(
-                                photoURL: m.photoURL,
-                                fallbackEmoji: m.emoji,
-                                hasUnviewed: hasUnviewed,
-                                size: avatarBoxSize,
-                              ),
-                            )
-                          else
-                            // Unified to a circle to match AvatarRing above
-                            // and every other avatar in the app — this
-                            // dialog's avatar was previously the one
-                            // outlier still using a rounded-square shape
-                            // (BorderRadius.circular(10)), which would have
-                            // made rows visibly change shape depending on
-                            // hasActiveStatus if left as-is. Everything
-                            // else in this dialog (search field, dialog
-                            // corners) keeps its own unrelated rounded-rect
-                            // styling untouched.
-                            GestureDetector(
-                              onTap: m.photoURL != null
-                                  ? () => showFullImage(context, m.photoURL!)
-                                  : null,
-                              child: Container(
-                                width: avatarBoxSize,
-                                height: avatarBoxSize,
-                                decoration: BoxDecoration(
-                                  color: kBg3,
-                                  shape: BoxShape.circle,
-                                  image: m.photoURL != null
-                                      ? DecorationImage(
-                                          image: NetworkImage(m.photoURL!),
-                                          fit: BoxFit.cover,
-                                        )
+                      return ListTile(
+                        leading: SizedBox(
+                          width: avatarBoxSize,
+                          height: avatarBoxSize,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              if (hasActiveStatus)
+                                GestureDetector(
+                                  onTap: openStatusViewer,
+                                  onLongPress: () => showAvatarLongPressMenu(
+                                    context,
+                                    photoURL: m.photoURL,
+                                    onViewStatus: openStatusViewer,
+                                  ),
+                                  child: AvatarRing(
+                                    photoURL: m.photoURL,
+                                    fallbackEmoji: m.emoji,
+                                    hasUnviewed: hasUnviewed,
+                                    size: avatarBoxSize,
+                                  ),
+                                )
+                              else
+                                // Unified to a circle to match AvatarRing above
+                                // and every other avatar in the app — this
+                                // dialog's avatar was previously the one
+                                // outlier still using a rounded-square shape
+                                // (BorderRadius.circular(10)), which would have
+                                // made rows visibly change shape depending on
+                                // hasActiveStatus if left as-is. Everything
+                                // else in this dialog (search field, dialog
+                                // corners) keeps its own unrelated rounded-rect
+                                // styling untouched.
+                                GestureDetector(
+                                  onTap: m.photoURL != null
+                                      ? () =>
+                                            showFullImage(context, m.photoURL!)
                                       : null,
+                                  child: Container(
+                                    width: avatarBoxSize,
+                                    height: avatarBoxSize,
+                                    decoration: BoxDecoration(
+                                      color: kBg3,
+                                      shape: BoxShape.circle,
+                                      image: m.photoURL != null
+                                          ? DecorationImage(
+                                              image: NetworkImage(m.photoURL!),
+                                              fit: BoxFit.cover,
+                                            )
+                                          : null,
+                                    ),
+                                    child: m.photoURL == null
+                                        ? Center(
+                                            child: Text(
+                                              m.emoji,
+                                              style: const TextStyle(
+                                                fontSize: 18,
+                                              ),
+                                            ),
+                                          )
+                                        : null,
+                                  ),
                                 ),
-                                child: m.photoURL == null
-                                    ? Center(
-                                        child: Text(m.emoji, style: const TextStyle(fontSize: 18)),
-                                      )
-                                    : null,
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Container(
+                                  width: 12,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: m.isActuallyOnline ? kGreen : kMuted,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: kBg2, width: 2),
+                                  ),
+                                ),
                               ),
-                            ),
-                          Positioned(
-                            bottom: 0,
-                            right: 0,
-                            child: Container(
-                              width: 12,
-                              height: 12,
-                              decoration: BoxDecoration(
-                                color: m.isActuallyOnline ? kGreen : kMuted,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: kBg2, width: 2),
-                              ),
-                            ),
+                            ],
                           ),
-                        ],
-                      ),
-                    ),
-                    title: Text(m.name,
-                        style: TextStyle(
-                            color: sel ? kGold : kText, fontSize: 14)),
-                    subtitle: Text(m.instrument,
-                        style: const TextStyle(color: kMuted, fontSize: 12)),
-                    trailing: sel
-                        ? const Icon(Icons.check_circle, color: kGold)
-                        : const Icon(Icons.circle_outlined, color: kBorder),
-                    onTap: () => setState(() {
-                      if (sel) {
-                        _selected.remove(m.id);
-                      } else {
-                        _selected.add(m.id);
-                      }
-                    }),
-                  );
+                        ),
+                        title: Text(
+                          m.name,
+                          style: TextStyle(
+                            color: sel ? kGold : kText,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          m.instrument,
+                          style: const TextStyle(color: kMuted, fontSize: 12),
+                        ),
+                        trailing: sel
+                            ? const Icon(Icons.check_circle, color: kGold)
+                            : const Icon(Icons.circle_outlined, color: kBorder),
+                        onTap: () => setState(() {
+                          if (sel) {
+                            _selected.remove(m.id);
+                          } else {
+                            _selected.add(m.id);
+                          }
+                        }),
+                      );
                     },
                   );
                 },
@@ -5345,10 +5618,13 @@ class _ParticipantPickerDialogState
                   minimumSize: const Size.fromHeight(44),
                   elevation: 0,
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
-                child: const Text('Təsdiqlə',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                child: const Text(
+                  'Təsdiqlə',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
             ),
           ],
