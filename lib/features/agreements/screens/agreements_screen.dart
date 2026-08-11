@@ -428,116 +428,68 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       a.year == b.year && a.month == b.month;
 
   // -------------------------------------------------------------------------
-  // Top header with three tabs
+  // Верхняя полоса — переключатель «Gün | Ay»
   // -------------------------------------------------------------------------
+  // ТРИ ВКЛАДКИ УБРАНЫ (решение владельца 12.08): «Müqavilələr», «Təqvim»,
+  // «Tədbirlər» больше нет, их место занял переключатель дня и месяца.
+  //
+  // ЧТО ЭТИМ ПОТЕРЯНО, названо прямо: у списков договоров и мероприятий
+  // больше нет входа. Экран остаётся один — календарь, и он показывает всё.
+  // Это и есть направление, утверждённое 10.08 («договора как отдельной вещи
+  // больше нет»), но фильтра в календаре сейчас тоже нет — он был снят
+  // 11.08 как не предусмотренный макетом. Значит до появления нового входа
+  // договоры видны только клетками месяца.
   Widget _buildTopHeader(List<PersonalEvent> agreeEvents, bool hasUnread) {
+    Widget seg(String mode, String label) {
+      final active = _calendarMode == mode;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() => _calendarMode = mode),
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: active ? kGold : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+            ),
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.nunito(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: active ? kText : kMuted,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Container(
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: kBorder)),
       ),
       child: Row(
         children: [
-          // Only shown when this screen was pushed standalone (e.g. "İş
-          // yazdır") rather than reached via its usual bottom-nav "/agreements"
-          // tab — that tab has no back destination and never sets
-          // initialParticipantUid, so this stays absent there exactly like
-          // before this button existed.
+          // Кнопка возврата остаётся: экран открывают и отдельно («İş
+          // yazdır»), и тогда уйти с него больше нечем.
           if (widget.initialParticipantUid != null)
             IconButton(
               icon: const Icon(Icons.arrow_back, color: kGold),
               onPressed: () => Navigator.of(context).pop(),
             ),
-          _buildHeaderTab(
-            label: '📋 Müqavilələr',
-            view: 'agreements',
-            badge: agreeEvents.length,
-            badgeRed: hasUnread,
-          ),
-          _buildHeaderTab(label: '📅 Təqvim', view: 'calendar'),
-          _buildHeaderTab(label: '🎪 Tədbirlər', view: 'tedbirler'),
+          seg('gun', 'Gün'),
+          seg('ay', 'Ay'),
         ],
       ),
     );
   }
 
-  Widget _buildHeaderTab({
-    required String label,
-    required String view,
-    int badge = 0,
-    bool badgeRed = false,
-  }) {
-    final active = _mainView == view;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _mainView = view),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: active ? kGold : Colors.transparent,
-                width: 2,
-              ),
-            ),
-          ),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                style: GoogleFonts.nunito(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: active ? kText : kMuted,
-                ),
-              ),
-              if (badge > 0)
-                Positioned(
-                  top: 0,
-                  right: 4,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 5,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: badgeRed ? const Color(0xFFFF3B30) : kGold,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '$badge',
-                      // ЗОЛОТОЕ состояние получило kOnGold 08.08.
-                      //
-                      // Заливка тут МЕНЯЕТСЯ: красная, когда есть
-                      // непрочитанные договоры, золотая — когда все
-                      // прочитаны. Текст же был белым в обоих, и на
-                      // золоте это спорило с правилом того же файла:
-                      // на соседней кнопке отправки стоит kOnGold.
-                      // Две правды рядом хуже, чем чуть иной оттенок.
-                      //
-                      // Красное состояние НЕ тронуто намеренно: оно
-                      // уходит в работу 7б вместе со сведением трёх
-                      // красных (N82) — там заливка и текст решаются
-                      // парой, а не порознь.
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: badgeRed ? Colors.white : kOnGold,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // =========================================================================
-  // AGREEMENTS TAB
-  // =========================================================================
   Widget _buildAgreementsTab(List<PersonalEvent> agreeEvents) {
     final outgoing = _sortedAgreements(_outgoing(agreeEvents));
     final incoming = _sortedAgreements(_incoming(agreeEvents));
@@ -886,19 +838,12 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     List<User> allUsers,
   ) {
     if (_calendarMode == 'gun') {
-      return Column(
-        children: [
-          _buildCalendarModeSwitch(),
-          const Expanded(child: DayScreen()),
-        ],
-      );
+      return const DayScreen();
     }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          _buildCalendarModeSwitch(),
-          const SizedBox(height: 12),
           _buildMonthHeader(),
           const SizedBox(height: 16),
           _buildDayOfWeekRow(),
@@ -1055,46 +1000,6 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCalendarModeSwitch() {
-    Widget seg(String mode, String label) {
-      final active = _calendarMode == mode;
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => setState(() => _calendarMode = mode),
-          behavior: HitTestBehavior.opaque,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 9),
-            decoration: BoxDecoration(
-              color: active ? kGoldDim : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: active ? kGold : Colors.transparent),
-            ),
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: active ? kGold : kMuted,
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-      child: Row(
-        children: [
-          seg('gun', 'Gün'),
-          const SizedBox(width: 8),
-          seg('ay', 'Ay'),
         ],
       ),
     );
@@ -1290,7 +1195,9 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         child: Text(
           azUpperCase('$monthName ${_currentCalendarMonth.year}'),
           style: const TextStyle(
-            fontSize: 14,
+            // 19pt: макетные 14 плюс пять — решение владельца 12.08 по виду
+            // на устройстве. Разрядка и цвет остаются макетными.
+            fontSize: 19,
             letterSpacing: 1.8,
             color: kMonthCap,
           ),

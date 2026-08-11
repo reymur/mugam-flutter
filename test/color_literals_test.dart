@@ -27,12 +27,17 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// Остаток на 08.08: `путь|значение` → сколько раз.
 ///
+/// **УБЫЛО 12.08:** `agreements_screen.dart|Color(0xFFFF3B30)` — системный
+/// красный жил в бейдже закладки «Müqavilələr», а сами закладки убраны
+/// решением владельца (их место занял переключатель «Gün | Ay»). Литерал ушёл
+/// вместе с ними, и запись об этом стоит здесь, а не растворяется в diff: тест
+/// требует править список именно затем, чтобы убыль была ВИДНА.
+///
 /// Ключ — путь и ЗНАЧЕНИЕ, а не номер строки: правка выше по файлу
 /// сдвигает строки, и список начал бы врать сам по себе. Хуже того, на
 /// освободившийся номер съезжает соседняя строка и молча получает чужое
 /// разрешение (урок из `guards_are_guards_test`).
 const _known = <String, int>{
-  'features/agreements/screens/agreements_screen.dart|Color(0xFFFF3B30)': 1,
   'features/chat/screens/about_contact_screen.dart|Color(0xFF4CAF50)': 1,
   'features/chat/screens/chat_screen.dart|Color(0xFF2196F3)': 2,
   'features/chat/screens/chat_screen.dart|Color(0xFF43A047)': 1,
