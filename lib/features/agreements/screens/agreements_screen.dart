@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide User;
@@ -1269,114 +1268,40 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     );
   }
 
+  /// ЗАГОЛОВОК МЕСЯЦА — ТОЧНО ПО МАКЕТУ (`docs/design/mugam-8-teqvim.html`,
+  /// класс `.cap`): `AVQUST 2026` заглавными, 14pt, разрядка 1.8, цвет
+  /// `#E09A2B`, по левому краю.
+  ///
+  /// **Стрелки «‹ ›» убраны — решение владельца 12.08.** Месяц листается
+  /// свайпом сетки, и он же остаётся единственной дорогой к соседнему месяцу;
+  /// заголовок по-прежнему открывает список месяцев для далёкой даты, но
+  /// **без значка «⌄»** — в макете его нет.
+  ///
+  /// Названо вслух, потому что это потеря подсказки: дорога к списку месяцев
+  /// теперь ничем не помечена. Понадобится — вернём знак, но уже как решение
+  /// о виде, а не как остаток прежнего заголовка.
   Widget _buildMonthHeader() {
     final monthName = _azMonth(_currentCalendarMonth.month);
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        _calNavBtn('‹', () {
-          final newMonth = DateTime(
-            _currentCalendarMonth.year,
-            _currentCalendarMonth.month - 1,
-            1,
-          );
-          setState(() {
-            _currentCalendarMonth = newMonth;
-            _selectedCalendarDay = null;
-          });
-          _pageController.animateToPage(
-            _pageForMonth(newMonth),
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-          );
-        }),
-        // Заголовок — дорога к далёкой дате БЕЗ ЛИСТАНИЯ МЕСЯЦЕВ.
-        //
-        // Набора числа с клавиатуры здесь нет и не будет (решение
-        // владельца 07.08): второй путь к той же операции — это ровно то
-        // место, где правило потом оказывается применено к одному из
-        // двух. Список месяцев закрывает далёкие даты, и клавиатура для
-        // этого не нужна ни разу.
-        GestureDetector(
-          onTap: _openMonthJump,
-          behavior: HitTestBehavior.opaque,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '$monthName ${_currentCalendarMonth.year}',
-                style: GoogleFonts.nunito(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  color: kGold2,
-                  shadows: [
-                    Shadow(color: kGold2.withAlpha(170), blurRadius: 12),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 4),
-              const Icon(Icons.expand_more, color: kGold2, size: 22),
-            ],
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: GestureDetector(
+        onTap: _openMonthJump,
+        behavior: HitTestBehavior.opaque,
+        child: Text(
+          azUpperCase('$monthName ${_currentCalendarMonth.year}'),
+          style: const TextStyle(
+            fontSize: 14,
+            letterSpacing: 1.8,
+            color: kMonthCap,
           ),
         ),
-        _calNavBtn('›', () {
-          final newMonth = DateTime(
-            _currentCalendarMonth.year,
-            _currentCalendarMonth.month + 1,
-            1,
-          );
-          setState(() {
-            _currentCalendarMonth = newMonth;
-            _selectedCalendarDay = null;
-          });
-          _pageController.animateToPage(
-            _pageForMonth(newMonth),
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-          );
-        }),
-      ],
+      ),
     );
   }
 
   // Glass rounded-square (approved preview design) rather than flat kBg3 —
   // same onTap/behavior as before, just BackdropFilter + translucent fill +
   // thin gold border instead of a solid background.
-  Widget _calNavBtn(String label, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      // Glow lives on this outer, unclipped Container — a BoxShadow inside
-      // the ClipRRect below would just get clipped away at its rounded
-      // edge (same lesson as chat_screen.dart's "İş yazdır" menu glow).
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(13),
-          boxShadow: [BoxShadow(color: kGold2.withAlpha(70), blurRadius: 12)],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(13),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-            child: Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: Colors.white.withAlpha(20),
-                borderRadius: BorderRadius.circular(13),
-                border: Border.all(color: kGold.withAlpha(60)),
-              ),
-              child: Center(
-                child: Text(
-                  label,
-                  style: const TextStyle(fontSize: 22, color: kGold2),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 
   Widget _buildDayOfWeekRow() {
     const days = ['B.e', 'Ç.a', 'Ç', 'C.a', 'C', 'Ş', 'B'];

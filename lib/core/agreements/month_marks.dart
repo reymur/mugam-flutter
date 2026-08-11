@@ -21,6 +21,7 @@
 library;
 
 import '../../firebase/models.dart';
+import '../time/az_date_format.dart';
 
 /// Форма пометки — то, чем «точно» отличается от «под вопросом».
 enum DayMarkShape {
@@ -55,15 +56,13 @@ class DayMark {
 /// двухбуквенное — двумя буквами. Дополнять нечем, а придумывать третью букву
 /// значит показать человеку имя, которого у него нет.
 ///
-/// **Заглавные берутся по-турецки неверно, и это надо знать:** в Dart
-/// `'i'.toUpperCase()` даёт `I`, а не `İ`. Для азербайджанского это чужая
-/// буква. Поэтому `i` заменяется на `İ` явно — остальные буквы алфавита
-/// (`ə`, `ç`, `ş`, `ğ`, `ö`, `ü`) переводятся верно сами.
+/// Заглавные делает `azUpperCase` — одно правило на весь проект: в Dart
+/// `'i'.toUpperCase()` даёт латинскую `I`, а это другая буква (разбор там же).
 String initialsOf(String name) {
   final trimmed = name.trim();
   if (trimmed.isEmpty) return '';
   final take = trimmed.length < 3 ? trimmed.length : 3;
-  return trimmed.substring(0, take).replaceAll('i', 'İ').toUpperCase();
+  return azUpperCase(trimmed.substring(0, take));
 }
 
 /// Что показать на дне — или `null`, если день пуст.
