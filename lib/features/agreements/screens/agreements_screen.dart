@@ -10,6 +10,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/agreements/agreement_cancel.dart';
 import '../../../core/agreements/agreement_card.dart';
+import '../../../core/agreements/event_answers.dart';
 import '../../../core/agreements/event_edit.dart';
 import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
@@ -1902,6 +1903,12 @@ class _EventCard extends StatelessWidget {
                   final name = m?.name ?? mUid;
                   final instr = m?.instrument ?? '';
                   final isMe = mUid == currentUid;
+                  // Ответ участника (шаг 4, пункт 2). В фишке он идёт ПОСЛЕ
+                  // инструмента и тем же разделителем: строка узкая, второй
+                  // ярус в неё не помещается, а различать нужно всё равно —
+                  // иначе неответивший выглядит согласившимся.
+                  final answer =
+                      participantAnswerLabel(event.answerFor(mUid));
                   return GestureDetector(
                     onTap: () => _openUserProfile(context, mUid),
                     child: Container(
@@ -1912,7 +1919,9 @@ class _EventCard extends StatelessWidget {
                         border: Border.all(color: isMe ? kGold : kBorder),
                       ),
                       child: Text(
-                        '${m?.emoji ?? '🎵'} $name${instr.isNotEmpty ? ' · $instr' : ''}',
+                        '${m?.emoji ?? '🎵'} $name'
+                        '${instr.isNotEmpty ? ' · $instr' : ''}'
+                        '${answer.isNotEmpty ? ' · $answer' : ''}',
                         style: TextStyle(
                           fontSize: 12,
                           color: isMe ? kGold : kMuted,
@@ -1990,11 +1999,22 @@ class _PartyRow extends StatelessWidget {
   final bool highlighted;
   final VoidCallback onTap;
 
+  /// Ответ участника — ОТДЕЛЬНОЙ строкой, а не вместо [label].
+  ///
+  /// [label] говорит, КТО человек (инструмент, роль), ответ — что он решил.
+  /// Подменить одно другим значило бы завести N109 второй раз: там строка
+  /// назвала роль вместо события, здесь событие вытеснило бы роль.
+  ///
+  /// Пустая строка — ответа нет вовсе (человека нет в составе), и тогда
+  /// строки нет: пустой ярлык занимает место и не сообщает ничего.
+  final String answerLabel;
+
   const _PartyRow({
     required this.name,
     required this.label,
     required this.highlighted,
     required this.onTap,
+    this.answerLabel = '',
   });
 
   @override
@@ -2027,6 +2047,9 @@ class _PartyRow extends StatelessWidget {
                       style: const TextStyle(
                           fontSize: 14, color: kText, fontWeight: FontWeight.w600)),
                   Text(label, style: const TextStyle(fontSize: 12, color: kMuted)),
+                  if (answerLabel.isNotEmpty)
+                    Text(answerLabel,
+                        style: const TextStyle(fontSize: 12, color: kTextSecondary)),
                 ],
               ),
             ),
@@ -3242,6 +3265,12 @@ class _PersonalEventDetailScreenState
                         name: _findUser(allUsers, event.participantUids[i])?.name ?? event.participantUids[i],
                         label: _findUser(allUsers, event.participantUids[i])?.instrument ?? 'İştirakçı',
                         highlighted: event.participantUids[i] == currentUid,
+                        // Ответ спрашивается у МОДЕЛИ, а не читается из карты:
+                        // `answerFor` знает и про запасной путь у 75 записей
+                        // без поля, и про то, что отсутствие ключа — «не
+                        // спрашивали», а не «ждём».
+                        answerLabel: participantAnswerLabel(
+                            event.answerFor(event.participantUids[i])),
                         onTap: () => _openUserProfile(context, allUsers, event.participantUids[i]),
                       ),
                     ],
@@ -3740,6 +3769,7 @@ class _EventFormModalState extends State<_EventFormModal> {
       final left = exactConflictsAt(
         _selectedDate,
         widget.allCombinedEvents,
+        currentUid: widget.currentUid,
         excludeEventId: _excludeEventId,
         resolvedIds: _resolvedConflictIds,
       );
@@ -3865,7 +3895,9 @@ class _EventFormModalState extends State<_EventFormModal> {
     final events = widget.allCombinedEvents;
     final editing = widget.existingEvent != null;
     final exact = exactConflictsAt(_selectedDate, events,
-        excludeEventId: _excludeEventId, resolvedIds: _resolvedConflictIds);
+        currentUid: widget.currentUid,
+        excludeEventId: _excludeEventId,
+        resolvedIds: _resolvedConflictIds);
 
     if (editing) {
       final answers = conflictAnswers(
@@ -3910,7 +3942,7 @@ class _EventFormModalState extends State<_EventFormModal> {
       return;
     }
     final sameDay = conflictEventsOnDay(_selectedDate, events,
-            excludeEventId: _excludeEventId)
+            currentUid: widget.currentUid, excludeEventId: _excludeEventId)
         .where((e) => !_resolvedConflictIds.contains(e.id))
         .toList();
     if (sameDay.isNotEmpty) {
@@ -3960,6 +3992,10 @@ class _EventFormModalState extends State<_EventFormModal> {
             // берётся единственным входом, заведённым для писателя, и это
             // ЕДИНСТВЕННОЕ место его вызова — держит сторож по исходникам.
             previousAnswers: widget.existingEvent!.answersForRewrite(),
+            // Владелец ПРАВИМОГО, а не правящий: у договора правит любая из
+            // сторон, и записать согласие правящему значило бы ответить за
+            // него (N112).
+            ownerUid: widget.existingEvent!.ownerUid,
           ),
         );
       } else {
@@ -4230,6 +4266,7 @@ class _EventFormModalState extends State<_EventFormModal> {
     final banner = resolveConflictBanner(
       selectedDate: _selectedDate,
       events: widget.allCombinedEvents,
+      currentUid: widget.currentUid,
       blockedTime: _blockedTime,
       excludeEventId: _excludeEventId,
       pastDate: _pastDatePicked,
@@ -4345,6 +4382,7 @@ class _EventFormModalState extends State<_EventFormModal> {
                   final next = resolveConflictBanner(
                     selectedDate: d,
                     events: widget.allCombinedEvents,
+                    currentUid: widget.currentUid,
                     blockedTime: _blockedTime,
                     excludeEventId: _excludeEventId,
                     // Считается для НОВОЙ даты, а не через `_pastDatePicked`:

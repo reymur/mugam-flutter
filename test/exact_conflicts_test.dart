@@ -13,6 +13,13 @@ import 'package:mugam_flutter/shared/widgets/event_conflict_banner.dart';
 // `[...свои, ...где я участник]`, и при равном времени вперёд выходит
 // своё. То есть невидимым становилось ровно то мероприятие, где человека
 // ждёт кто-то другой.
+//
+// ПОЧЕМУ ЭТИ СЛУЧАИ ПЕРЕЖИЛИ ШАГ 4 БЕЗ ПРАВКИ СМЫСЛА. С шага 4 занятость
+// считается по ответу, а не по составу, — но события здесь строятся
+// конструктором, то есть БЕЗ карты `answers`, и для них работает запасной
+// путь: карты нет — «есть в составе» означает «идёт». Это ровно поведение
+// 75 записей прода на 10.08, поэтому проверки N51 остались о том же, о чём
+// были. Случаи с картой живут в `event_conflict_test.dart`.
 
 const me = 'me-uid';
 const other = 'other-uid';
@@ -50,6 +57,7 @@ void main() {
       final got = exactConflictsAt(
         DateTime(2026, 8, 12, 18, 0),
         [_own, _foreign],
+        currentUid: me,
       );
       expect(got.length, 2);
       expect(got.map((e) => e.id), containsAll(<String>['own', 'foreign']));
@@ -59,8 +67,10 @@ void main() {
       // Порядок перечня — не свойство данных, а способ их сборки. Правило
       // обязано не зависеть от него вовсе: до починки именно он и решал,
       // кого человек увидит.
-      final a = exactConflictsAt(DateTime(2026, 8, 12, 18, 0), [_own, _foreign]);
-      final b = exactConflictsAt(DateTime(2026, 8, 12, 18, 0), [_foreign, _own]);
+      final a = exactConflictsAt(DateTime(2026, 8, 12, 18, 0), [_own, _foreign],
+          currentUid: me);
+      final b = exactConflictsAt(DateTime(2026, 8, 12, 18, 0), [_foreign, _own],
+          currentUid: me);
       expect(a.map((e) => e.id).toSet(), b.map((e) => e.id).toSet());
       expect(a.any((e) => e.id == 'foreign'), isTrue);
       expect(b.any((e) => e.id == 'foreign'), isTrue);
@@ -70,6 +80,7 @@ void main() {
       final spec = resolveConflictBanner(
         selectedDate: DateTime(2026, 8, 12, 18, 0),
         events: [_own, _foreign],
+        currentUid: me,
       );
       expect(spec, isNotNull);
       expect(spec!.events.length, 2);
@@ -82,6 +93,7 @@ void main() {
       final got = exactConflictsAt(
         DateTime(2026, 8, 12, 18, 0),
         [_own, _foreign, _third],
+        currentUid: me,
       );
       expect(got.length, 3);
     });
@@ -90,6 +102,7 @@ void main() {
       final spec = resolveConflictBanner(
         selectedDate: DateTime(2026, 8, 12, 18, 0),
         events: [_own, _foreign, _third],
+        currentUid: me,
       );
       expect(spec!.events.length, 3);
       expect(spec.title, contains('3'));
@@ -104,6 +117,7 @@ void main() {
       final left = exactConflictsAt(
         DateTime(2026, 8, 12, 18, 0),
         [_own, _foreign],
+        currentUid: me,
         resolvedIds: const {'foreign'},
       );
       expect(left.length, 1);
@@ -114,6 +128,7 @@ void main() {
       final left = exactConflictsAt(
         DateTime(2026, 8, 12, 18, 0),
         [_own, _foreign],
+        currentUid: me,
         resolvedIds: const {'foreign', 'own'},
       );
       expect(left, isEmpty);
@@ -126,6 +141,7 @@ void main() {
       final spec = resolveConflictBanner(
         selectedDate: DateTime(2026, 8, 12, 18, 0),
         events: [_own, _foreign],
+        currentUid: me,
         resolvedIds: const {'foreign'},
       );
       expect(spec!.events.map((e) => e.id), ['own']);
@@ -136,6 +152,7 @@ void main() {
       final spec = resolveConflictBanner(
         selectedDate: DateTime(2026, 8, 12, 15, 0),
         events: [_own, _foreign],
+        currentUid: me,
         resolvedIds: const {'foreign'},
       );
       expect(spec!.events.map((e) => e.id), ['own']);

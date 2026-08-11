@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/agreements/event_answers.dart';
 import '../../core/theme/colors.dart';
 import '../../core/time/az_date_format.dart';
 import '../../firebase/models.dart';
@@ -65,6 +66,34 @@ List<String> eventPeople(PersonalEvent e) {
   if (e.ownerUid.isNotEmpty) out.add(e.ownerUid);
   out.addAll(e.participantUids.where((u) => u.isNotEmpty));
   return out.toList();
+}
+
+/// ЗАНИМАЕТ ЛИ ЭТОТ ВЕЧЕР КАЛЕНДАРЬ ЧЕЛОВЕКА — правило шага 4
+/// (`docs/plan.md`, «договоры и мероприятия — одна сущность»).
+///
+/// **Решение владельца 11.08: «ждём» вечер НЕ занимает. Занятость — свойство
+/// СОСТАВА, а не приглашения.** Иначе приглашение блокировало бы чужой
+/// календарь без согласия, а по решению 10.08 в состав попадают только после
+/// согласия. До шага 4 занятость стояла на `musicians`, то есть на праве
+/// ВИДЕТЬ вечер, — а видеть и идти это разные вещи с того дня, как добавление
+/// стало приглашением.
+///
+/// **Пустой [uid] даёт «занято», и менять это на `false` нельзя.** Пустой uid
+/// означает не «свободен», а «неизвестно, кто спрашивает», то есть поломку
+/// вызывающего. `false` тихо очистил бы список и выключил ВСЕ предупреждения
+/// о конфликтах — пустой вывод, прочитанный как хорошая новость (I14).
+/// «Занято» на каждом вечере — ложная тревога, и её видно в тот же миг.
+///
+/// **ВЛАДЕЛЕЦ ЗАНЯТ ВСЕГДА, до чтения ответа, и это не перестраховка.**
+/// `answersForParticipants` ставит `waiting` всем новым в составе, а у
+/// договоров владелец в составе есть (`onChatUpdated` кладёт обе стороны) —
+/// значит без этой строки правка состава молча освобождала бы календарь
+/// владельца на его же вечере. Разбор и числа — **N112**; там же сказано, что
+/// сам дефект живёт в показе состава, а не здесь.
+bool occupiesCalendarOf(PersonalEvent e, String uid) {
+  if (uid.isEmpty) return true;
+  if (e.ownerUid == uid) return true;
+  return e.answerFor(uid) == kAnswerGoing;
 }
 
 /// Кого подмешать в форму из конфликтующего мероприятия — ЧИСТОЕ правило.
@@ -272,9 +301,21 @@ bool sameCalendarDay(DateTime a, DateTime b) =>
 /// же ответ, что бы ему ни передали. Иначе следующий экран, собравший
 /// список так же, разойдётся с остальными — и опять молча, потому что
 /// дубль не ошибка, а просто неверное число.
+/// **ФИЛЬТР ПО ОТВЕТУ СТОИТ ЗДЕСЬ, А НЕ У ВЫЗЫВАЮЩИХ** (шаг 4). Это
+/// единственная воронка, через которую проходят оба экрана: `exactConflictsAt`
+/// зовёт её, `resolveConflictBanner` зовёт обе. Отдай фильтр вызывающим — и
+/// «занято» разойдётся между листом и календарём молча, ровно как разошёлся
+/// дедуп 03.08.
+///
+/// **[currentUid] обязателен намеренно, а не для порядка.** Необязательный
+/// параметр с умолчанием оставил бы забытому вызывающему СТАРОЕ поведение —
+/// занятость по составу вместо ответа, — и оно ничем бы себя не выдало (I31:
+/// утверждение отсутствия ломается молча). Обязательный требует от компилятора
+/// перечислить все места, и перечислять их не приходится памятью.
 List<PersonalEvent> conflictEventsOnDay(
   DateTime when,
   List<PersonalEvent> events, {
+  required String currentUid,
   String? excludeEventId,
 }) {
   final out = <({PersonalEvent event, DateTime at})>[];
@@ -284,6 +325,8 @@ List<PersonalEvent> conflictEventsOnDay(
     if (!seen.add(e.id)) continue;
     if (e.date.isEmpty) continue;
     if (e.status == 'cancelled') continue;
+    // Приглашение чужой календарь не занимает (решение 11.08, N112 рядом).
+    if (!occupiesCalendarOf(e, currentUid)) continue;
     try {
       final d = DateTime.parse(e.date);
       if (sameCalendarDay(d, when)) out.add((event: e, at: d));
@@ -322,12 +365,13 @@ List<PersonalEvent> conflictEventsOnDay(
 List<PersonalEvent> exactConflictsAt(
   DateTime when,
   List<PersonalEvent> events, {
+  required String currentUid,
   String? excludeEventId,
   Set<String> resolvedIds = const <String>{},
 }) {
   final out = <PersonalEvent>[];
   for (final e in conflictEventsOnDay(when, events,
-      excludeEventId: excludeEventId)) {
+      currentUid: currentUid, excludeEventId: excludeEventId)) {
     if (resolvedIds.contains(e.id)) continue;
     try {
       final d = DateTime.parse(e.date);
@@ -363,6 +407,7 @@ class ConflictBannerSpec {
 ConflictBannerSpec? resolveConflictBanner({
   required DateTime selectedDate,
   required List<PersonalEvent> events,
+  required String currentUid,
   DateTime? blockedTime,
   String? excludeEventId,
   bool pastDate = false,
@@ -386,11 +431,13 @@ ConflictBannerSpec? resolveConflictBanner({
   }
 
   final onDay = conflictEventsOnDay(selectedDate, events,
-          excludeEventId: excludeEventId)
+          currentUid: currentUid, excludeEventId: excludeEventId)
       .where((e) => !resolvedIds.contains(e.id))
       .toList();
   final exact = exactConflictsAt(selectedDate, events,
-      excludeEventId: excludeEventId, resolvedIds: resolvedIds);
+      currentUid: currentUid,
+      excludeEventId: excludeEventId,
+      resolvedIds: resolvedIds);
 
   if (isConflictTimeBlocked(selectedDate, blockedTime)) {
     return ConflictBannerSpec(

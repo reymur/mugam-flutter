@@ -3590,7 +3590,9 @@ class FirestoreService {
       // (`core/agreements/event_answers.dart`), а не строкой здесь: иначе
       // создание и правка разошлись бы в том, что значит «состав», и
       // разошлись бы молча.
-      'answers': answersForParticipants(participantUids),
+      // `ownerUid` — чтобы владелец, попавший в состав, не оказался ждущим
+      // ответа на собственном вечере (N112).
+      'answers': answersForParticipants(participantUids, ownerUid: ownerUid),
       'isAgree': false,
       'agreementChatId': null,
       'partnerUid': null,

@@ -271,7 +271,7 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
   /// разойдись эти два экрана в самом правиле, одинаковый вид плашки уже
   /// ничего бы не значил.
   List<PersonalEvent> _eventsOnDay(DateTime when, List<PersonalEvent> events) =>
-      conflictEventsOnDay(when, events);
+      conflictEventsOnDay(when, events, currentUid: widget.currentUid);
 
   /// ВСЕ, кто занял эту минуту, а не первый из них (N51). Лист ничего не
   /// переписывает и не удаляет, поэтому пересчёта после разбора здесь нет
@@ -279,7 +279,7 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
   /// минуту встают своё мероприятие и чужое, где он участник, а окно
   /// называло одно.
   List<PersonalEvent> _conflictsAt(DateTime when, List<PersonalEvent> events) =>
-      exactConflictsAt(when, events);
+      exactConflictsAt(when, events, currentUid: widget.currentUid);
 
   /// Ровно тот же круг, что в календаре (`_showConflictFlow`): посмотреть
   /// мероприятие → вернуться и снова спросить; заменить → отправить как
@@ -452,6 +452,7 @@ class _JobOfferDateSheetState extends ConsumerState<JobOfferDateSheet> {
     final banner = resolveConflictBanner(
       selectedDate: _selectedDate,
       events: _myEvents,
+      currentUid: widget.currentUid,
       blockedTime: _blockedTime,
       pastDate: _pastDatePicked,
     );
