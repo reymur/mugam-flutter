@@ -10,6 +10,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/agreements/agreement_cancel.dart';
 import '../../../core/agreements/agreement_card.dart';
+import '../../../core/agreements/calendar_filter.dart';
 import '../../../core/agreements/event_answer_reply.dart';
 import '../../../core/agreements/event_answers.dart';
 import '../../../core/agreements/event_edit.dart';
@@ -130,6 +131,14 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   /// заданный на разном расстоянии**. Значит им место не рядом, а внутри
   /// одного места, переключателем.
   String _calendarMode = 'gun'; // 'gun' | 'ay'
+
+  /// Шаг 5: что показывает календарь — всё или только договоры.
+  ///
+  /// Умолчание `all`, то есть нынешнее поведение: фильтр ДОБАВЛЯЕТ дорогу, а
+  /// не меняет ту, что есть. Пока он не сверен с вкладкой составом, менять
+  /// умолчание нельзя — иначе первый же промах отбора спрячет от человека
+  /// половину календаря молча.
+  CalendarFilter _calendarFilter = CalendarFilter.all;
   String _activeTab = 'outgoing';
   String _tedbirTab = 'hamisi';
   // Только id, а не сам объект (N23): карточка достаёт живую запись из
@@ -876,22 +885,30 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         ],
       );
     }
+    // ФИЛЬТР ПРИМЕНЯЕТСЯ ОДИН РАЗ, В ОДНОМ МЕСТЕ, к обоим потокам сразу
+    // (шаг 5). Отдай его вниз — и сетка с содержимым дня отберут по-разному;
+    // ошибки не возникнет нигде, просто день будет помечен, а под сеткой
+    // пусто. Так уже было в N74, и заметил это человек, а не код.
+    final shownOwn = applyCalendarFilter(personalEvents, _calendarFilter);
+    final shownAsParticipant =
+        applyCalendarFilter(eventsAsParticipant, _calendarFilter);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
           _buildCalendarModeSwitch(),
+          _buildCalendarFilterSwitch(),
           const SizedBox(height: 12),
           _buildMonthHeader(),
           const SizedBox(height: 16),
           _buildDayOfWeekRow(),
           const SizedBox(height: 8),
-          _buildCalendarPageView(personalEvents, eventsAsParticipant, allUsers),
+          _buildCalendarPageView(shownOwn, shownAsParticipant, allUsers),
           // Содержимое выбранного дня — ПОД СЕТКОЙ, а не на другой
           // закладке. Сетка остаётся на экране: в разговоре спрашивают
           // про несколько дат подряд, и каждая следующая — одно касание,
           // а не новый заход.
-          _buildSelectedDayAnswer(personalEvents, eventsAsParticipant),
+          _buildSelectedDayAnswer(shownOwn, shownAsParticipant),
           const SizedBox(height: 80),
         ],
       ),
@@ -945,6 +962,50 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Переключатель «Hamısı | Müqavilələr» — шаг 5: вкладка становится
+  /// фильтром календаря.
+  ///
+  /// Стоит ПОД «Gün | Ay» и только в режиме месяца: дневной экран — отдельный
+  /// виджет со своими провайдерами, и фильтр туда не проходит. Это названо, а
+  /// не забыто (см. отчёт шага 5).
+  Widget _buildCalendarFilterSwitch() {
+    Widget seg(CalendarFilter f) {
+      final active = _calendarFilter == f;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() => _calendarFilter = f),
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 7),
+            decoration: BoxDecoration(
+              color: active ? kGoldDim : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: active ? kGold : kBorder),
+            ),
+            child: Text(
+              calendarFilterLabel(f),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+                color: active ? kGold : kMuted,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Row(children: [
+        seg(CalendarFilter.all),
+        const SizedBox(width: 8),
+        seg(CalendarFilter.agreements),
+      ]),
     );
   }
 
