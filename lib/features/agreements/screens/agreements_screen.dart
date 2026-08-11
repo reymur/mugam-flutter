@@ -3956,6 +3956,10 @@ class _EventFormModalState extends State<_EventFormModal> {
             notes: notes,
             musicians: _selectedParticipantUids,
             actorUid: widget.currentUid,
+            // Прежние ответы переносятся, а не стираются (шаг 4). Сырая карта
+            // берётся единственным входом, заведённым для писателя, и это
+            // ЕДИНСТВЕННОЕ место его вызова — держит сторож по исходникам.
+            previousAnswers: widget.existingEvent!.answersForRewrite(),
           ),
         );
       } else {

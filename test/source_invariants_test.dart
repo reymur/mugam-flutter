@@ -159,6 +159,41 @@ void main() {
       );
     });
 
+    test('answersForRewrite зовётся ровно в одном месте (шаг 4)', () {
+      // Карта ответов приватна в `models.dart`, и это защита СМЫСЛА, а не
+      // формы: читать ответ человека надо через `answerFor`, который знает
+      // про запасной путь у документов без карты, про ключи вне состава и
+      // про то, что отсутствие ключа — «не спрашивали», а не «ждём».
+      //
+      // `answersForRewrite` — узкий вход для того, кто карту ПЕРЕЗАПИСЫВАЕТ:
+      // правка состава обязана перенести уже данные ответы. Появись у него
+      // второй вызов — и приватность поля перестанет что-либо значить:
+      // читать сырьё станет так же легко, как через геттер.
+      //
+      // Считаются ВЫЗОВЫ со скобкой, а не упоминания имени: комментарий и
+      // док-строка о нём есть и должны быть (I12).
+      final all = <String>[];
+      for (final path in const [
+        'lib/features/agreements/screens/agreements_screen.dart',
+        'lib/firebase/firestore_service.dart',
+        'lib/features/day/screens/day_screen.dart',
+        'lib/features/job_offer/screens/job_offer_date_sheet.dart',
+      ]) {
+        final lines = readCode(path).split('\n');
+        for (var i = 0; i < lines.length; i++) {
+          final l = lines[i];
+          if (l.trimLeft().startsWith('//')) continue;
+          if (l.contains('answersForRewrite(')) all.add('$path:${i + 1}');
+        }
+      }
+      expect(
+        all.length,
+        1,
+        reason: 'Сырая карта ответов берётся не в одном месте — значит её '
+            'начали читать мимо правила `answerFor`. Места: ${all.join(", ")}',
+      );
+    });
+
     test('_explicitlyRemoved пополняется ровно в одном месте', () {
       // Признак «убрал руками» ставит та же запись, что меняет состав.
       // Разойдись они — появится путь, который состав сократил, а признак

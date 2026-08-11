@@ -159,6 +159,13 @@ Map<String, dynamic> eventEditUpdate({
   required String notes,
   required List<String> musicians,
   required String actorUid,
+  /// Прежние ответы состава — чтобы правка их НЕ СТЁРЛА (шаг 4).
+  ///
+  /// Без этого первая же правка места или времени объявляла бы всех
+  /// ответивших заново ждущими: человек сказал «не могу», владелец поправил
+  /// адрес — и ответ пропал. Ответ принадлежит человеку, а не документу, и
+  /// правка чужого поля его отнимать не вправе.
+  Map<String, dynamic>? previousAnswers,
 }) {
   return <String, dynamic>{
     'date': date,
@@ -173,7 +180,7 @@ Map<String, dynamic> eventEditUpdate({
     // функцией. Не из прежнего значения документа: правка на то и правка,
     // что состав в ней уже другой, и ответы обязаны поехать вместе с ним, а
     // не остаться от прошлого состава (шаг 1, `docs/plan.md`).
-    'answers': answersForParticipants(musicians),
+    'answers': answersForParticipants(musicians, previous: previousAnswers),
     // Признак автора. Правила требуют, чтобы он был самим просящим
     // (`stampsSelf`), а сервер берёт из него имя для текста уведомления —
     // без него «{Ad} tarixi dəyişdi» назвало бы владельца вместо

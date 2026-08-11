@@ -111,7 +111,9 @@ void main() {
       final data = update();
       final answers = data['answers'] as Map<String, String>;
       expect(answers.keys.toSet(), {'a', 'b'});
-      expect(answers.values.toSet(), {'going'});
+      // ШАГ 4: без прежних ответов новые — «ждём». До шага 4 здесь стояло
+      // `going`, и это было верно, пока добавление означало согласие.
+      expect(answers.values.toSet(), {'waiting'});
     });
 
     test('правка ведёт ответы за составом, а не оставляет от прошлого', () {
@@ -133,7 +135,22 @@ void main() {
       // проверка смотрела ТОЛЬКО на ключи, и порча `going` → `waiting` её
       // не роняла, хотя я предсказывал обратное (I46). Два разных свойства
       // — кто в карте и что про него сказано, — и покрыто было одно.
-      expect(answers.values.toSet(), {'going'});
+      expect(answers.values.toSet(), {'waiting'});
+    });
+
+    test('ШАГ 4: правка НЕ стирает уже данные ответы', () {
+      // Первая же правка места объявила бы ответивших заново ждущими, а
+      // ответ принадлежит человеку, не документу.
+      final data = eventEditUpdate(
+        date: '2026-08-09T19:00:00.000',
+        type: 'Toy',
+        location: 'Bakı',
+        notes: '',
+        musicians: const ['a', 'b', 'c'],
+        actorUid: _actor,
+        previousAnswers: const {'a': 'cant', 'b': 'going'},
+      );
+      expect(data['answers'], {'a': 'cant', 'b': 'going', 'c': 'waiting'});
     });
 
     test('ни одного сохраняемого ключа в записи нет', () {
