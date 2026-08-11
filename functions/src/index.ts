@@ -1444,6 +1444,15 @@ export const onChatUpdated = onDocumentUpdated(
       // «Ждём» тут появится на шаге 4 — сегодня согласие УЖЕ дано: договор
       // и рождается ровно тем, что вторая сторона нажала «Razıyam».
       answers: { [initiatorUid]: "going", [recipientUid]: "going" },
+      // Отметка «карту заполнял тот, кто пишет её ЦЕЛИКОМ по составу» (N115).
+      // Здесь это сервер, и он пишет обе стороны разом — значит отсутствие
+      // ключа в такой карте означает «не спрашивали», а не «сведений нет».
+      //
+      // ТРЕТИЙ ПИСАТЕЛЬ ОДНОГО ПОЛЯ, и цена та же, что у карты рядом: имя
+      // повторено литералом, потому что импортировать через границу
+      // Dart↔TypeScript нечего. Расходиться им нельзя — читатель один
+      // (core/agreements/event_answers.dart, answerOf).
+      answersWrittenByOwner: true,
       isAgree: true,
       agreementChatId: event.params.chatId,
       partnerUid: recipientUid,

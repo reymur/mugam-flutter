@@ -296,11 +296,15 @@ void main() {
     PersonalEvent make({
       required List<String> musicians,
       Object? answers = absent,
+      // N115: отметка «карту заполнял тот, кто пишет её целиком». Идёт через
+      // документ, а не параметром модели, — тем же путём, что в проде.
+      bool writtenByOwner = false,
     }) =>
         PersonalEvent.fromFirestore('id', {
           'ownerUid': 'owner',
           'musicians': musicians,
           if (!identical(answers, absent)) 'answers': answers,
+          'answersWrittenByOwner': writtenByOwner,
         });
 
     test('карта наружу не отдаётся — у модели её нет в открытом виде', () {
@@ -338,7 +342,11 @@ void main() {
       // шага 4 они дают разные ответы, потому что различие стало
       // содержательным: нет поля — старый документ, все идут; поле есть и
       // пусто — карту писали, а человека в неё не внесли.
-      final e = make(musicians: const ['a'], answers: const {});
+      // N115: пустая карта говорит «в составе никого» только если её писал
+      // тот, кто пишет целиком. Пустая карта без отметки — след писателя,
+      // который про состав ничего не утверждал.
+      final e = make(
+          musicians: const ['a'], answers: const {}, writtenByOwner: true);
       expect(e.answerFor('a'), 'notAsked');
     });
 
@@ -389,11 +397,16 @@ void main() {
       // как going, потому что карта писалась целиком и недостача означала
       // старую сборку; с шага 4 недостача означает «человека добавил тот,
       // кто про ответы не знает» — то есть его НЕ СПРАШИВАЛИ.
+      // ПОПРАВЛЕНО 11.08 ПО N115: одной карты для этого мало. «Ключа нет»
+      // значит «не спрашивали» только тогда, когда карту заполнял тот, кто
+      // пишет её ЦЕЛИКОМ по составу. Без отметки та же карта могла быть
+      // начата участником — и тогда про остальных она не говорит ничего.
       expect(
         answerOf(
           uid: 'b',
           participantUids: const ['a', 'b'],
           answers: const {'a': 'going'},
+          answersWrittenByOwner: true,
         ),
         'notAsked',
       );
@@ -406,11 +419,13 @@ void main() {
         uid: 'b',
         participantUids: const ['a', 'b'],
         answers: const {'a': 'going'},
+        answersWrittenByOwner: true,
       );
       final waiting = answerOf(
         uid: 'b',
         participantUids: const ['a', 'b'],
         answers: const {'a': 'going', 'b': 'waiting'},
+        answersWrittenByOwner: true,
       );
       expect(notAsked, isNot(waiting));
       expect(notAsked, 'notAsked');
@@ -418,11 +433,15 @@ void main() {
     });
 
     test('незнакомое значение — «не спрашивали», и чтение не падает', () {
+      // Мусор читается как отсутствие ключа — значит и здесь решает отметка
+      // (N115). Без неё то же значение прочтётся как «идёт», и это проверено
+      // отдельно в группе N115.
       expect(
         answerOf(
           uid: 'a',
           participantUids: const ['a'],
           answers: const {'a': 'нечто'},
+          answersWrittenByOwner: true,
         ),
         'notAsked',
       );
@@ -430,7 +449,11 @@ void main() {
 
     test('значение не строки — то же самое', () {
       expect(
-        answerOf(uid: 'a', participantUids: const ['a'], answers: const {'a': 7}),
+        answerOf(
+            uid: 'a',
+            participantUids: const ['a'],
+            answers: const {'a': 7},
+            answersWrittenByOwner: true),
         'notAsked',
       );
     });
@@ -442,6 +465,92 @@ void main() {
       // неподтверждёнными.
       expect(answerOf(uid: 'a', participantUids: const ['a', 'b']), 'going');
       expect(answerOf(uid: 'b', participantUids: const ['a', 'b']), 'going');
+    });
+  });
+
+  // N115 — ПЕРЕКЛЮЧАТЕЛЬ ЧИТАЕТ ПИСАТЕЛЯ, А НЕ НАЛИЧИЕ КАРТЫ.
+  //
+  // Три строки таблицы из `answerOf`, и каждая своим тестом. Средняя — самая
+  // дорогая: сломай её, и 73 документа без карты (замер прода 11.08) задним
+  // числом переведутся из согласившихся в ждущие.
+  group('N115: что значит «ключа нет» — решает, кто заполнял карту', () {
+    test('ключ ЕСТЬ — читается его значение, отметка ни при чём', () {
+      for (final mark in [true, false]) {
+        expect(
+          answerOf(
+            uid: 'a',
+            participantUids: const ['a', 'b'],
+            answers: const {'a': 'cant'},
+            answersWrittenByOwner: mark,
+          ),
+          'cant',
+          reason: 'отметка $mark не должна менять прочтение своего ключа',
+        );
+      }
+    });
+
+    test('СРЕДНЯЯ СТРОКА: ключа нет, отметки нет — «идёт», а не «не спрошен»',
+        () {
+      // Ровно случай N115: карту начал участник своим ответом, и про
+      // остальных она не утверждает ничего. Для них верен старый смысл.
+      expect(
+        answerOf(
+          uid: 'owner',
+          participantUids: const ['owner', 'guest'],
+          answers: const {'guest': 'cant'},
+        ),
+        'going',
+      );
+    });
+
+    test('ключа нет, отметка СТОИТ — «не спрошен»', () {
+      // Карту заполнял владелец, она полна по составу, значит человека в неё
+      // не включили намеренно.
+      expect(
+        answerOf(
+          uid: 'newcomer',
+          participantUids: const ['owner', 'newcomer'],
+          answers: const {'owner': 'going'},
+          answersWrittenByOwner: true,
+        ),
+        'notAsked',
+      );
+    });
+
+    test('карты нет вовсе — отметка не спасает и не мешает', () {
+      // Первая строка старше всех: нет карты — нет и разговора о том, кто её
+      // заполнял. Проверяется с отметкой, потому что документ без карты, но с
+      // отметкой — это порча, и читаться она обязана безопасно.
+      expect(
+        answerOf(
+          uid: 'a',
+          participantUids: const ['a'],
+          answersWrittenByOwner: true,
+        ),
+        'going',
+      );
+    });
+
+    test('МУСОР в своём ключе читается как отсутствие ключа, по обеим дорогам',
+        () {
+      expect(
+        answerOf(
+          uid: 'a',
+          participantUids: const ['a'],
+          answers: const {'a': 7},
+        ),
+        'going',
+        reason: 'без отметки мусор не должен объявлять человека неспрошенным',
+      );
+      expect(
+        answerOf(
+          uid: 'a',
+          participantUids: const ['a'],
+          answers: const {'a': 7},
+          answersWrittenByOwner: true,
+        ),
+        'notAsked',
+      );
     });
   });
 

@@ -3593,6 +3593,11 @@ class FirestoreService {
       // `ownerUid` — чтобы владелец, попавший в состав, не оказался ждущим
       // ответа на собственном вечере (N112).
       'answers': answersForParticipants(participantUids, ownerUid: ownerUid),
+      // Карта заполнена ЦЕЛИКОМ по составу — значит отсутствующий в ней
+      // человек не «неизвестен», а не спрошен (N115). Ставит только тот, кто
+      // пишет карту целиком; участнику это поле недоступно по правилу
+      // `answersForSelf()` — оно разрешает трогать ровно `answers`.
+      kAnswersWrittenByOwner: true,
       'isAgree': false,
       'agreementChatId': null,
       'partnerUid': null,

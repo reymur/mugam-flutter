@@ -48,12 +48,17 @@ PersonalEvent _foreign(
   required String owner,
   required List<String> musicians,
   Map<String, dynamic>? answers,
+  // N115: карту, заполненную владельцем, от карты, начатой участником,
+  // отличает отметка. Здесь по умолчанию `true` — почти все случаи ниже про
+  // документ, который владелец уже перевёл в новый мир.
+  bool writtenByOwner = true,
 }) => PersonalEvent.fromFirestore(id, {
   'ownerUid': owner,
   'date': date,
   'type': 'Toy',
   'musicians': musicians,
   'status': 'agreed',
+  'answersWrittenByOwner': writtenByOwner,
   // `?answers` — ключа НЕТ вовсе, когда карты нет. Это не то же, что ключ со
   // значением `null`: на отсутствии поля стоит запасной путь шага 4, и
   // подсунуть сюда `null` значило бы проверять другой случай.
@@ -201,6 +206,22 @@ void main() {
           musicians: [_other, _me],
           answers: {_other: kAnswerGoing});
       expect(conflictEventsOnDay(at, [notAsked], currentUid: _me), isEmpty);
+    });
+
+    test('N115: карта БЕЗ ОТМЕТКИ не освобождает календарь остальным', () {
+      // Карту начал участник своим ответом. Для тех, кого в ней нет, верен
+      // старый смысл — «в составе» значит «идёт», — и вечер обязан занимать
+      // их календарь. Сломай это, и первый же чужой ответ освободил бы день
+      // всем остальным, ничего им не сказав.
+      final startedByGuest = _foreign('x', '2026-08-08T19:00:00',
+          owner: _other,
+          musicians: [_other, _me],
+          answers: {_other: kAnswerCant},
+          writtenByOwner: false);
+      expect(
+        conflictEventsOnDay(at, [startedByGuest], currentUid: _me).single.id,
+        'x',
+      );
     });
 
     test('СТАРЫЙ документ без карты занимает по-прежнему', () {

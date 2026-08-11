@@ -1223,7 +1223,15 @@ class PersonalEvent {
         uid: uid,
         participantUids: participantUids,
         answers: _answers,
+        answersWrittenByOwner: _answersWrittenByOwner,
       );
+
+  /// Заполнял ли карту тот, кто пишет её ЦЕЛИКОМ по составу (N115).
+  ///
+  /// Закрыто так же, как сама карта: наружу отдаётся только через [answerFor].
+  /// Читатель не должен решать по нему сам — решает правило в
+  /// `core/agreements/event_answers.dart`, одно на клиент, сервер и перепись.
+  final bool _answersWrittenByOwner;
 
   /// СЫРАЯ КАРТА — **только для того, кто её ПЕРЕЗАПИСЫВАЕТ**, и ни для кого
   /// больше (шаг 4).
@@ -1276,6 +1284,7 @@ class PersonalEvent {
     this.lastActionType,
     this.jobOfferAt,
     this._answers,
+    this._answersWrittenByOwner = false,
   });
 
   factory PersonalEvent.fromFirestore(String id, Map<String, dynamic> data) {
@@ -1321,6 +1330,14 @@ class PersonalEvent {
         final Map<dynamic, dynamic> m => Map<String, dynamic>.from(m),
         _ => null,
       },
+      // Отметка «карту заполнял тот, кто пишет её целиком» (N115). Чтение
+      // защитное по той же причине, что и у карты: поле пишут трое, а
+      // значение гарантирует не поле, а писатель (I49). Всё, что не `true`,
+      // — включая отсутствие поля, `null` и чужой тип — читается как «не
+      // заполнял», то есть по СТАРОМУ смыслу. Умолчание выбрано в сторону
+      // 73 документов без карты: ошибись оно в другую сторону, и все они
+      // разом стали бы неспрошенными.
+      answersWrittenByOwner: data['answersWrittenByOwner'] == true,
     );
   }
 }
