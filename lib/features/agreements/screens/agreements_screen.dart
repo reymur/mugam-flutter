@@ -460,7 +460,9 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
               label,
               textAlign: TextAlign.center,
               style: GoogleFonts.nunito(
-                fontSize: 14,
+                // 18pt: прежние 14 плюс четыре — решение владельца 12.08 по
+                // виду на устройстве.
+                fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: active ? kText : kMuted,
               ),
@@ -840,7 +842,17 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     if (_calendarMode == 'gun') {
       return const DayScreen();
     }
-    return SingleChildScrollView(
+    // СЕТКА ЗАКРЕПЛЕНА, ПРОКРУЧИВАЕТСЯ ТОЛЬКО НИЗ (решение владельца 12.08).
+    //
+    // Прежде весь экран лежал в одном `SingleChildScrollView`: стоило
+    // посмотреть список дня, и сетка уезжала вверх. А сетка — это то, ради
+    // чего экран открывают: в разговоре спрашивают про несколько дат подряд,
+    // и каждая следующая должна стоить одно касание, а не «проскроллить
+    // обратно и попасть в клетку».
+    //
+    // Поэтому заголовок, дни недели и сам месяц стоят неподвижно, а счёт по
+    // людям и содержимое выбранного дня живут в своей прокрутке под ними.
+    return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
@@ -849,13 +861,25 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           _buildDayOfWeekRow(),
           const SizedBox(height: 8),
           _buildCalendarPageView(personalEvents, eventsAsParticipant, allUsers),
-          _buildMonthTally(personalEvents, eventsAsParticipant, allUsers),
-          // Содержимое выбранного дня — ПОД СЕТКОЙ, а не на другой
-          // закладке. Сетка остаётся на экране: в разговоре спрашивают
-          // про несколько дат подряд, и каждая следующая — одно касание,
-          // а не новый заход.
-          _buildSelectedDayAnswer(personalEvents, eventsAsParticipant),
-          const SizedBox(height: 80),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  _buildMonthTally(
+                    personalEvents,
+                    eventsAsParticipant,
+                    allUsers,
+                  ),
+                  // Содержимое выбранного дня — ПОД СЕТКОЙ, а не на другой
+                  // закладке. Сетка остаётся на экране: в разговоре
+                  // спрашивают про несколько дат подряд, и каждая следующая —
+                  // одно касание, а не новый заход.
+                  _buildSelectedDayAnswer(personalEvents, eventsAsParticipant),
+                  const SizedBox(height: 80),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
