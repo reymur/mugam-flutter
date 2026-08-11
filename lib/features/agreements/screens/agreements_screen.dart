@@ -10,7 +10,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/agreements/agreement_cancel.dart';
 import '../../../core/agreements/agreement_card.dart';
-import '../../../core/agreements/calendar_filter.dart';
 import '../../../core/agreements/event_answer_reply.dart';
 import '../../../core/agreements/event_answers.dart';
 import '../../../core/agreements/event_edit.dart';
@@ -18,6 +17,7 @@ import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/agreements/day_buckets.dart';
 import '../../../core/agreements/event_lookup.dart';
+import '../../../core/agreements/month_marks.dart';
 import '../../../core/time/az_date_format.dart';
 import '../../day/screens/day_screen.dart';
 import '../../../firebase/firestore_service.dart';
@@ -131,14 +131,6 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   /// заданный на разном расстоянии**. Значит им место не рядом, а внутри
   /// одного места, переключателем.
   String _calendarMode = 'gun'; // 'gun' | 'ay'
-
-  /// Шаг 5: что показывает календарь — всё или только договоры.
-  ///
-  /// Умолчание `all`, то есть нынешнее поведение: фильтр ДОБАВЛЯЕТ дорогу, а
-  /// не меняет ту, что есть. Пока он не сверен с вкладкой составом, менять
-  /// умолчание нельзя — иначе первый же промах отбора спрячет от человека
-  /// половину календаря молча.
-  CalendarFilter _calendarFilter = CalendarFilter.all;
   String _activeTab = 'outgoing';
   String _tedbirTab = 'hamisi';
   // Только id, а не сам объект (N23): карточка достаёт живую запись из
@@ -885,30 +877,23 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         ],
       );
     }
-    // ФИЛЬТР ПРИМЕНЯЕТСЯ ОДИН РАЗ, В ОДНОМ МЕСТЕ, к обоим потокам сразу
-    // (шаг 5). Отдай его вниз — и сетка с содержимым дня отберут по-разному;
-    // ошибки не возникнет нигде, просто день будет помечен, а под сеткой
-    // пусто. Так уже было в N74, и заметил это человек, а не код.
-    final shownOwn = applyCalendarFilter(personalEvents, _calendarFilter);
-    final shownAsParticipant =
-        applyCalendarFilter(eventsAsParticipant, _calendarFilter);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
           _buildCalendarModeSwitch(),
-          _buildCalendarFilterSwitch(),
           const SizedBox(height: 12),
           _buildMonthHeader(),
           const SizedBox(height: 16),
           _buildDayOfWeekRow(),
           const SizedBox(height: 8),
-          _buildCalendarPageView(shownOwn, shownAsParticipant, allUsers),
+          _buildCalendarPageView(personalEvents, eventsAsParticipant, allUsers),
+          _buildMonthTally(personalEvents, eventsAsParticipant, allUsers),
           // Содержимое выбранного дня — ПОД СЕТКОЙ, а не на другой
           // закладке. Сетка остаётся на экране: в разговоре спрашивают
           // про несколько дат подряд, и каждая следующая — одно касание,
           // а не новый заход.
-          _buildSelectedDayAnswer(shownOwn, shownAsParticipant),
+          _buildSelectedDayAnswer(personalEvents, eventsAsParticipant),
           const SizedBox(height: 80),
         ],
       ),
@@ -965,47 +950,86 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     );
   }
 
-  /// Переключатель «Hamısı | Müqavilələr» — шаг 5: вкладка становится
-  /// фильтром календаря.
+  /// СЧЁТ ПОД СЕТКОЙ — из макета `docs/design/mugam-8-teqvim.html`.
   ///
-  /// Стоит ПОД «Gün | Ay» и только в режиме месяца: дневной экран — отдельный
-  /// виджет со своими провайдерами, и фильтр туда не проходит. Это названо, а
-  /// не забыто (см. отчёт шага 5).
-  Widget _buildCalendarFilterSwitch() {
-    Widget seg(CalendarFilter f) {
-      final active = _calendarFilter == f;
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => setState(() => _calendarFilter = f),
-          behavior: HitTestBehavior.opaque,
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 7),
-            decoration: BoxDecoration(
-              color: active ? kGoldDim : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: active ? kGold : kBorder),
-            ),
-            child: Text(
-              calendarFilterLabel(f),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: active ? FontWeight.w600 : FontWeight.w400,
-                color: active ? kGold : kMuted,
-              ),
-            ),
-          ),
-        ),
-      );
+  /// Отвечает на вопрос, ради которого календарь и открывают: «кто занял этот
+  /// месяц и сколько осталось». Строки — по людям, затем «под вопросом», затем
+  /// отдельной чертой «свободно».
+  ///
+  /// **«Şübhəli» — ПОДМНОЖЕСТВО занятых, а не отдельная доля.** В самом макете
+  /// 8 + 6 + 2 + 17 даёт 33 при 31 дне августа; сходится только так: два дня
+  /// под вопросом уже посчитаны у своих владельцев. Сложи их отдельно — счёт
+  /// соврёт на два дня, и заметить это будет нечем.
+  Widget _buildMonthTally(
+    List<PersonalEvent> personalEvents,
+    List<PersonalEvent> eventsAsParticipant,
+    List<User> allUsers,
+  ) {
+    final month = _currentCalendarMonth;
+    final daysInMonth = DateTime(month.year, month.month + 1, 0).day;
+    final byDay = eventsByDay(
+      own: personalEvents,
+      asParticipant: eventsAsParticipant,
+    );
+    final names = {for (final u in allUsers) u.id: u.name};
+    final marks = <int, DayMark>{};
+    for (int day = 1; day <= daysInMonth; day++) {
+      final events = byDay[DateTime(month.year, month.month, day)];
+      if (events == null || events.isEmpty) continue;
+      final mark = dayMarkOf(events, names);
+      if (mark != null) marks[day] = mark;
     }
+    final tally = monthTally(marks: marks, daysInMonth: daysInMonth);
+    if (tally.busyDays == 0) return const SizedBox.shrink();
+
+    Widget line(String label, Color color, int days, {bool hollow = false}) =>
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('${hollow ? '○' : '●'} $label',
+                  style: TextStyle(fontSize: 14, color: color)),
+              Text('$days gün',
+                  style: const TextStyle(fontSize: 14, color: kTextSecondary)),
+            ],
+          ),
+        );
+
+    // Порядок строк — по числу дней, чтобы самый занятый стоял первым.
+    final owners = tally.byOwner.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      child: Row(children: [
-        seg(CalendarFilter.all),
-        const SizedBox(width: 8),
-        seg(CalendarFilter.agreements),
-      ]),
+      padding: const EdgeInsets.fromLTRB(4, 16, 4, 0),
+      child: Column(
+        children: [
+          for (final e in owners)
+            line(
+              names[e.key] ?? '—',
+              e.key == _uid ? kGold : kOwnerOther,
+              e.value,
+            ),
+          if (tally.unsettledDays > 0)
+            line('Şübhəli', kMuted, tally.unsettledDays, hollow: true),
+          Container(
+            margin: const EdgeInsets.only(top: 4),
+            padding: const EdgeInsets.only(top: 9),
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: kBorder)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Boş',
+                    style: TextStyle(fontSize: 14, color: kMuted)),
+                Text('${tally.freeDays} gün',
+                    style: const TextStyle(fontSize: 14, color: kTextSecondary)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1388,6 +1412,11 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       asParticipant: eventsAsParticipant,
     );
 
+    // Имена для трёх букв — одним справочником, а не поиском на каждую
+    // клетку: 42 клетки против списка пользователей это тот же счёт, что
+    // чинили в `eventsByDay` выше.
+    final names = {for (final u in allUsers) u.id: u.name};
+
     final cells = <Widget>[];
     for (int i = 0; i < startOffset; i++) {
       cells.add(const SizedBox());
@@ -1412,6 +1441,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         isToday: isToday,
         hasEvents: hasEvents,
         eventCount: dayEvents.length,
+        mark: dayMarkOf(dayEvents, names),
+        currentUid: _uid,
         onTap: () => _onDayTap(day, dayDate, dayEvents, personalEvents, eventsAsParticipant),
         onLongPress: () => _onDayLongPress(day, dayDate, personalEvents, eventsAsParticipant, allUsers),
       ));
@@ -1431,6 +1462,18 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   // clear, strong "this one's picked" state), hasEvents gets a soft
   // outward gold glow instead of a flat tinted fill, and the count badge
   // gets a gradient + small glow instead of a flat gold pill.
+  /// ЯЧЕЙКА ДНЯ. Занятые дни рисуются ПО МАКЕТУ
+  /// (`docs/design/mugam-8-teqvim.html`): цвет владельца, три буквы его имени,
+  /// **залито — в силе, рамка — под вопросом**.
+  ///
+  /// **Пустые дни, выходные и подложка НЕ ТРОНУТЫ, и это граница, а не
+  /// недоделка.** Макет утверждает только про занятые дни: у него пустой день
+  /// — просто число. Про подсветку выходных и стеклянную плитку он не говорит
+  /// ничего, а они утверждены раньше; снять их «заодно» значило бы отменить
+  /// решение, которого макет не отменял.
+  ///
+  /// Кружок со счётом событий убран: его место заняли три буквы. Число дел
+  /// человек читает в списке под сеткой, а на клетке важнее, ЧЕЙ это вечер.
   Widget _buildDayCell({
     required int day,
     required int weekday,
@@ -1438,9 +1481,17 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     required bool isToday,
     required bool hasEvents,
     required int eventCount,
+    required DayMark? mark,
+    required String currentUid,
     required VoidCallback onTap,
     required VoidCallback onLongPress,
   }) {
+    // Цвет человека: свой вечер золотой, чужой — синий из макета. Третьего
+    // цвета макет не даёт, и придумывать его здесь нельзя: при третьем
+    // владельце он совпадёт с чужим, и это названо вслух, а не скрыто.
+    final markColor = mark == null
+        ? kGold
+        : (mark.ownerUid == currentUid ? kGold : kOwnerOther);
     Color bgColor = Colors.transparent;
     Color textColor = kText;
     Border? border;
@@ -1463,12 +1514,15 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     if (isSelected) {
       bgColor = kGold;
       textColor = kOnGold;
-    } else if (hasEvents) {
-      bgColor = kGold.withAlpha(28);
-      textColor = kGold2;
-      glow = [
-        BoxShadow(color: kGold2.withAlpha(120), blurRadius: 10),
-      ];
+    } else if (mark != null) {
+      // Залито — в силе; рамка — под вопросом. Заливка альфой 0.18 от цвета
+      // человека, как в макете (`.bgT`/`.bgR` против `.brT`/`.brR`).
+      if (mark.shape == DayMarkShape.filled) {
+        bgColor = markColor.withValues(alpha: 0.18);
+      } else {
+        border = Border.all(color: markColor, width: 1.5);
+      }
+      textColor = kText;
     }
     if (isToday && !isSelected) {
       border = Border.all(color: kGold, width: 1.2);
@@ -1502,47 +1556,40 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                   boxShadow: glow,
                 ),
                 child: Center(
-                  child: Text(
-                    '$day',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: textColor,
-                      fontWeight: isSelected || hasEvents ? FontWeight.bold : FontWeight.normal,
-                      shadows: textGlow,
-                    ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '$day',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: textColor,
+                          fontWeight: isSelected || hasEvents
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          shadows: textGlow,
+                          height: 1.05,
+                        ),
+                      ),
+                      // ТРИ БУКВЫ ИМЕНИ ВЛАДЕЛЬЦА — из макета. Мелко (9pt) и
+                      // тем же цветом, что пометка: подпись отвечает на
+                      // вопрос «чей это день», а не спорит с числом за
+                      // внимание.
+                      if (mark != null && mark.initials.isNotEmpty && !isSelected)
+                        Text(
+                          mark.initials,
+                          style: TextStyle(
+                            fontSize: 9,
+                            letterSpacing: 0.4,
+                            height: 1.1,
+                            color: markColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ),
-              if (hasEvents && !isSelected)
-                Positioned(
-                  top: -4,
-                  right: -6,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                    constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [kGold2, kGold],
-                      ),
-                      borderRadius: BorderRadius.circular(999),
-                      boxShadow: [
-                        BoxShadow(color: kGold.withAlpha(140), blurRadius: 6),
-                      ],
-                    ),
-                    child: Center(
-                      child: Text(
-                        '$eventCount',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: kOnGold,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
             ],
           ),
         ),
