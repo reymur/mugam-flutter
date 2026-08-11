@@ -36,8 +36,10 @@ class DayScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
     final own = ref.watch(personalEventsProvider(uid)).asData?.value;
-    final asParticipant =
-        ref.watch(eventsAsParticipantProvider(uid)).asData?.value;
+    final asParticipant = ref
+        .watch(eventsAsParticipantProvider(uid))
+        .asData
+        ?.value;
 
     // Пока хоть один поток молчит — ждём. Показать «Bu gün boşsunuz» по
     // недошедшим данным значит соврать ровно тем ответом, ради честности
@@ -57,51 +59,67 @@ class DayScreen extends ConsumerWidget {
       now: now,
     );
 
+    // СЕГОДНЯШНИЙ ДЕНЬ ЗАКРЕПЛЁН, ПРОКРУЧИВАЕТСЯ ТО, ЧТО ПОСЛЕ «BU HƏFTƏ»
+    // (решение владельца 12.08).
+    //
+    // Прежде весь экран был одним списком: стоило посмотреть неделю, и
+    // сегодняшний вечер уезжал вверх — а он здесь главный, ради него экран и
+    // открывают («что у меня сегодня»). Теперь он и завтрашний блок стоят
+    // неподвижно, а неделя живёт в своей прокрутке.
     return Scaffold(
       backgroundColor: kBg,
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(22, 32, 22, 32),
-          children: [
-            Text(
-              fmtDayHeader(now),
-              style: const TextStyle(fontSize: 15, color: kMuted),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Bu gün',
-              style: TextStyle(
-                fontSize: 33,
-                color: kText,
-                fontWeight: FontWeight.w400,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(22, 32, 22, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                fmtDayHeader(now),
+                style: const TextStyle(fontSize: 15, color: kMuted),
               ),
-            ),
-            const SizedBox(height: 22),
-            ..._todayBlock(buckets),
-            // ВХОД В ПРЕДЛОЖЕНИЕ РАБОТЫ С ДНЕВНОГО ЭКРАНА (пункт 6,
-            // `docs/plan.md`). Заведён вместе с календарным, а не после
-            // него, по доводу владельца 09.08: «Bu gün» — первое, что
-            // человек видит при запуске, и разговор «свободен девятого»
-            // разбирается именно здесь. Отложенный вход появился бы через
-            // неделю ВТОРЫМ путём к той же операции.
-            //
-            // Контекст тот же, что у календаря, — ОДНА ДАТА и ничего
-            // больше. Экран знает и мероприятия дня вместе с их
-            // участниками, но их сюда не передаётся ни одного: человек в
-            // мероприятии — это не тот, кому предлагают работу, и стоило
-            // бы взять его отсюда «раз уж он есть», как оба входа
-            // перестали бы звать одну точку одинаково.
-            // Кнопка исчезает, когда сегодняшний час умолчания уже
-            // позади: иначе она вела бы в тупик — точка вызова законно
-            // отказала бы «прошлой датой». Своего числа экран не знает,
-            // вопрос задаётся тому, кто знает час (`canOfferOnDay`).
-            if (canOfferOnDay(now, now)) ...[
-              const SizedBox(height: 10),
-              _OfferForTodayButton(day: now),
+              const SizedBox(height: 8),
+              const Text(
+                'Bu gün',
+                style: TextStyle(
+                  fontSize: 33,
+                  color: kText,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+              const SizedBox(height: 22),
+              ..._todayBlock(buckets),
+              // ВХОД В ПРЕДЛОЖЕНИЕ РАБОТЫ С ДНЕВНОГО ЭКРАНА (пункт 6,
+              // `docs/plan.md`). Заведён вместе с календарным, а не после
+              // него, по доводу владельца 09.08: «Bu gün» — первое, что
+              // человек видит при запуске, и разговор «свободен девятого»
+              // разбирается именно здесь. Отложенный вход появился бы через
+              // неделю ВТОРЫМ путём к той же операции.
+              //
+              // Контекст тот же, что у календаря, — ОДНА ДАТА и ничего
+              // больше. Экран знает и мероприятия дня вместе с их
+              // участниками, но их сюда не передаётся ни одного: человек в
+              // мероприятии — это не тот, кому предлагают работу, и стоило
+              // бы взять его отсюда «раз уж он есть», как оба входа
+              // перестали бы звать одну точку одинаково.
+              // Кнопка исчезает, когда сегодняшний час умолчания уже
+              // позади: иначе она вела бы в тупик — точка вызова законно
+              // отказала бы «прошлой датой». Своего числа экран не знает,
+              // вопрос задаётся тому, кто знает час (`canOfferOnDay`).
+              if (canOfferOnDay(now, now)) ...[
+                const SizedBox(height: 10),
+                _OfferForTodayButton(day: now),
+              ],
+              ..._tomorrowBlock(buckets),
+              // Неделя — в своей прокрутке. Всё выше остаётся на экране.
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.only(bottom: 32),
+                  children: _weekBlock(buckets),
+                ),
+              ),
             ],
-            ..._tomorrowBlock(buckets),
-            ..._weekBlock(buckets),
-          ],
+          ),
         ),
       ),
     );
@@ -109,9 +127,7 @@ class DayScreen extends ConsumerWidget {
 
   List<Widget> _todayBlock(DayBuckets b) {
     if (b.today.isNotEmpty) {
-      return [
-        for (final e in b.today) _EventBar(event: e, accented: true),
-      ];
+      return [for (final e in b.today) _EventBar(event: e, accented: true)];
     }
     // Пустой день ОТВЕЧАЕТ. Экран, промолчавший в ответ на «что у меня
     // сегодня», читается как сломанный, а не как свободный.
@@ -182,11 +198,7 @@ class _SectionLabel extends StatelessWidget {
       padding: const EdgeInsets.only(top: 26, bottom: 12),
       child: Text(
         text,
-        style: const TextStyle(
-          fontSize: 13,
-          letterSpacing: 1.5,
-          color: kMuted,
-        ),
+        style: const TextStyle(fontSize: 13, letterSpacing: 1.5, color: kMuted),
       ),
     );
   }
@@ -235,47 +247,43 @@ class _EventBar extends ConsumerWidget {
         ),
       ),
       child: Container(
-      margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
-      decoration: BoxDecoration(
-        border: Border(
-          left: BorderSide(color: accented ? kGold : kBarOff, width: 4),
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.only(left: 16, top: 2, bottom: 2),
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(color: accented ? kGold : kBarOff, width: 4),
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            time == null ? '' : fmtEventTime(event.date),
-            style: TextStyle(
-              fontSize: accented ? 23 : 21,
-              color: kText,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            // Тип и место одной строкой. Место — ОДНИМ полем: в макете
-            // зал и город разведены («Toy · İnci Qarayev» / «Bakı ·
-            // …»), а в данных это одна строка `location`, и в самой
-            // форме правки она заполняется целиком — «İnci Qarayev,
-            // Bakı». Разделять показом то, что не разделено в данных,
-            // значит выдумывать.
-            [event.type, if (event.location.isNotEmpty) event.location]
-                .join(' · '),
-            style: TextStyle(
-              fontSize: 17,
-              color: accented ? kText : kTextSecondary,
-            ),
-          ),
-          if (accented && names.isNotEmpty) ...[
-            const SizedBox(height: 7),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Text(
-              names,
-              style: const TextStyle(fontSize: 16, color: kMuted),
+              time == null ? '' : fmtEventTime(event.date),
+              style: TextStyle(fontSize: accented ? 23 : 21, color: kText),
             ),
+            const SizedBox(height: 6),
+            Text(
+              // Тип и место одной строкой. Место — ОДНИМ полем: в макете
+              // зал и город разведены («Toy · İnci Qarayev» / «Bakı ·
+              // …»), а в данных это одна строка `location`, и в самой
+              // форме правки она заполняется целиком — «İnci Qarayev,
+              // Bakı». Разделять показом то, что не разделено в данных,
+              // значит выдумывать.
+              [
+                event.type,
+                if (event.location.isNotEmpty) event.location,
+              ].join(' · '),
+              style: TextStyle(
+                fontSize: 17,
+                color: accented ? kText : kTextSecondary,
+              ),
+            ),
+            if (accented && names.isNotEmpty) ...[
+              const SizedBox(height: 7),
+              Text(names, style: const TextStyle(fontSize: 16, color: kMuted)),
+            ],
           ],
-        ],
-      ),
+        ),
       ),
     );
   }
@@ -357,10 +365,7 @@ class _EmptyAnswer extends StatelessWidget {
   Widget build(BuildContext context) {
     final (title, note) = switch (answer) {
       EmptyDayAnswer.freeToday => ('Bu gün boşsunuz', null),
-      EmptyDayAnswer.freeBothDays => (
-          'Bu gün və sabah boşsunuz',
-          _nextLine(),
-        ),
+      EmptyDayAnswer.freeBothDays => ('Bu gün və sabah boşsunuz', _nextLine()),
       EmptyDayAnswer.calendarEmpty => ('Təqvim boşdur', null),
       // Сюда не приходит: блок зовётся только при пустом сегодня.
       EmptyDayAnswer.hasEventsToday => ('', null),

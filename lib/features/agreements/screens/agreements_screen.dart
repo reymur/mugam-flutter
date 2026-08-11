@@ -130,6 +130,14 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
   /// заданный на разном расстоянии**. Значит им место не рядом, а внутри
   /// одного места, переключателем.
   String _calendarMode = 'gun'; // 'gun' | 'ay'
+
+  /// ВЫБРАННЫЙ ЧЕЛОВЕК В СЧЁТЕ ПОД СЕТКОЙ — `null` значит «все».
+  ///
+  /// Нажатие на имя гасит чужие дни: месяц отвечает на вопрос «когда занят
+  /// ИМЕННО ОН». Это то, чем стал фильтр после того, как переключатель
+  /// «Hamısı | Müqavilələr» был снят: отбор идёт по ЧЕЛОВЕКУ, как в макете, а
+  /// не по типу записи.
+  String? _selectedOwnerUid;
   String _activeTab = 'outgoing';
   String _tedbirTab = 'hamisi';
   // Только id, а не сам объект (N23): карточка достаёт живую запись из
@@ -970,15 +978,52 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     final tally = monthTally(marks: marks, daysInMonth: daysInMonth);
     if (tally.busyDays == 0) return const SizedBox.shrink();
 
-    Widget line(String label, Color color, int days, {bool hollow = false}) =>
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
+    // СТРОКА ИМЕНИ — НАЖИМАЕМАЯ: она и есть фильтр месяца по человеку
+    // (решение владельца 12.08). Нажал имя — на сетке остались его дни, чужие
+    // погасли до одного числа.
+    //
+    // Выбранная строка ВЫХОДИТ ВПЕРЁД: заливка цветом человека и рамка тем
+    // же цветом, имя жирнее. Не галочка сбоку — её на тёмном экране ищут
+    // глазами, а заливка сразу говорит, что именно выбрано.
+    //
+    // Второе нажатие снимает выбор. Отдельной кнопки «показать всех» нет
+    // намеренно: это был бы второй путь к тому же действию, а такие пары
+    // расходятся молча.
+    //
+    // Строка «Şübhəli» не нажимается: она не человек, а срез по всем, и
+    // фильтровать по ней значило бы завести второй смысл у одного места.
+    Widget line(
+      String label,
+      Color color,
+      int days, {
+      bool hollow = false,
+      String? ownerUid,
+    }) {
+      final picked = ownerUid != null && ownerUid == _selectedOwnerUid;
+      return GestureDetector(
+        onTap: ownerUid == null
+            ? null
+            : () =>
+                  setState(() => _selectedOwnerUid = picked ? null : ownerUid),
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: picked ? color.withValues(alpha: 0.18) : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: picked ? color : Colors.transparent),
+          ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 '${hollow ? '○' : '●'} $label',
-                style: TextStyle(fontSize: 14, color: color),
+                style: TextStyle(
+                  fontSize: 14,
+                  color: color,
+                  fontWeight: picked ? FontWeight.w700 : FontWeight.w400,
+                ),
               ),
               Text(
                 '$days gün',
@@ -986,7 +1031,9 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
               ),
             ],
           ),
-        );
+        ),
+      );
+    }
 
     // Порядок строк — по числу дней, чтобы самый занятый стоял первым.
     final owners = tally.byOwner.entries.toList()
@@ -1001,6 +1048,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
               names[e.key] ?? '—',
               e.key == _uid ? kGold : kOwnerOther,
               e.value,
+              ownerUid: e.key,
             ),
           if (tally.unsettledDays > 0)
             line('Şübhəli', kMuted, tally.unsettledDays, hollow: true),
@@ -1345,6 +1393,9 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
           eventCount: dayEvents.length,
           mark: dayMarkOf(dayEvents, names),
           currentUid: _uid,
+          dimmed:
+              _selectedOwnerUid != null &&
+              dayMarkOf(dayEvents, names)?.ownerUid != _selectedOwnerUid,
           onTap: () => _onDayTap(
             day,
             dayDate,
@@ -1398,6 +1449,11 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     required int eventCount,
     required DayMark? mark,
     required String currentUid,
+
+    /// Выбран другой человек — этот день гасится почти до фона. Не
+    /// скрывается совсем: число дня обязано остаться читаемым, иначе месяц
+    /// перестанет быть календарём и станет списком одного человека.
+    required bool dimmed,
     required VoidCallback onTap,
     required VoidCallback onLongPress,
   }) {
@@ -1429,7 +1485,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     if (isSelected) {
       bgColor = kGold;
       textColor = kOnGold;
-    } else if (mark != null) {
+    } else if (mark != null && !dimmed) {
       // Залито — в силе; рамка — под вопросом. Заливка альфой 0.18 от цвета
       // человека, как в макете (`.bgT`/`.bgR` против `.brT`/`.brR`).
       if (mark.shape == DayMarkShape.filled) {
@@ -1438,6 +1494,10 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         border = Border.all(color: markColor, width: 1.5);
       }
       textColor = kText;
+    } else if (dimmed) {
+      // Чужой день при выбранном человеке: пометки нет вовсе, число
+      // приглушено. Так на сетке остаются видны РОВНО его дни.
+      textColor = kMuted.withValues(alpha: 0.45);
     }
     if (isToday && !isSelected) {
       border = Border.all(color: kGold, width: 1.2);
