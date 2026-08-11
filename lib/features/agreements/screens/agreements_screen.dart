@@ -4224,6 +4224,9 @@ class _EventFormModalState extends State<_EventFormModal> {
             // сторон, и записать согласие правящему значило бы ответить за
             // него (N112).
             ownerUid: widget.existingEvent!.ownerUid,
+            // Состав ДО правки — иначе ушедший, приглашённый заново, вернулся
+            // бы уже согласившимся (N114).
+            previousParticipants: widget.existingEvent!.participantUids,
           ),
         );
       } else {

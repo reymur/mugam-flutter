@@ -174,6 +174,12 @@ Map<String, dynamic> eventEditUpdate({
   /// согласие, которого он не давал, а владельцу — ожидание ответа на его же
   /// вечере (N112). Два разных вопроса — два разных параметра.
   String ownerUid = '',
+
+  /// Состав ДО этой правки — чтобы ушедший, приглашённый заново, не вернулся
+  /// уже согласившимся (N114). Его ключ в карте остаётся после выхода, и без
+  /// прежнего состава перенос молча отменяет самое сильное «нет», какое
+  /// участник может сказать.
+  List<String> previousParticipants = const [],
 }) {
   return <String, dynamic>{
     'date': date,
@@ -189,7 +195,9 @@ Map<String, dynamic> eventEditUpdate({
     // что состав в ней уже другой, и ответы обязаны поехать вместе с ним, а
     // не остаться от прошлого состава (шаг 1, `docs/plan.md`).
     'answers': answersForParticipants(musicians,
-        previous: previousAnswers, ownerUid: ownerUid),
+        previous: previousAnswers,
+        ownerUid: ownerUid,
+        previousParticipants: previousParticipants),
     // Признак автора. Правила требуют, чтобы он был самим просящим
     // (`stampsSelf`), а сервер берёт из него имя для текста уведомления —
     // без него «{Ad} tarixi dəyişdi» назвало бы владельца вместо

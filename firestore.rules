@@ -778,6 +778,53 @@ service cloud.firestore {
              resource.data.musicians.removeAll([request.auth.uid]);
       }
 
+      // ОТВЕТИТЬ ЗА СЕБЯ — шаг 4 работы «одна сущность» (`docs/plan.md`).
+      //
+      // Приём тот же, что у `clearedBy` в чатах (`writesOnlyOwnClearedBy`), и
+      // довод тот же: там чужой ключ стёр бы историю, здесь — ОТВЕТИЛ БЫ ЗА
+      // ЧЕЛОВЕКА. Ответ принадлежит тому, кто его дал, и запись, способная
+      // поставить чужое согласие, отменяет весь смысл шага 4: с него
+      // занятость календаря считается по согласию, а не по составу.
+      //
+      // ПРИЗНАК АВТОРА (`lastActionBy`) ЗДЕСЬ НЕ ТРЕБУЕТСЯ — и это отличие от
+      // `leavesEvent` по существу, а не по недосмотру. Там из `musicians`
+      // пропадает uid, и триггер, видящий before/after, не может сказать, КТО
+      // писал: «вышел сам» и «владелец убрал» в данных неразличимы. Здесь
+      // ПОСТУПОК САМ СЕБЯ НАЗЫВАЕТ — изменённый ключ карты и есть автор, а
+      // подделать его нельзя: `affectedKeys().hasOnly([uid])` не пустит чужое
+      // имя. Требовать сверх этого ещё и подпись значило бы просить человека
+      // назваться дважды.
+      //
+      // ДВА ПОСЛЕДНИХ УСЛОВИЯ — ОДИН КЛАСС: ОБХОД ЧЕРЕЗ ОТСУТСТВИЕ.
+      // Их легко принять за перестраховку и снять как лишние, поэтому довод
+      // стоит здесь целиком.
+      //
+      //   • `uid in request.resource.data.answers` — нельзя УДАЛИТЬ свой ключ;
+      //   • значение из трёх названных — нельзя записать чужую строку.
+      //
+      // Оба закрывают одну дорогу. `answerOf` читает и пустоту (ключа нет), и
+      // мусор (значение не из набора) ОДИНАКОВО — как `notAsked`, а `notAsked`
+      // означает «его не спрашивали». Значит участник, которому это оставить,
+      // мог бы ОТМЕНИТЬ САМ ФАКТ ВОПРОСА — двумя разными способами, стерев
+      // ключ или записав в него что угодно, — и выглядело бы это не как отказ,
+      // а как будто владелец его никогда не звал.
+      //
+      // `notAsked` в списке значений нет и быть не может: оно и есть отсутствие
+      // ключа, записывать его нечем.
+      //
+      // Владельцу ход не даётся (`ownerUid != uid`): у него своя ветка, а
+      // согласия он не даёт вовсе — он вечер создал (N112).
+      function answersForSelf() {
+        return changedKeys().hasOnly(['answers'])
+          && request.resource.data.answers
+               .diff(resource.data.get('answers', {}))
+               .affectedKeys().hasOnly([request.auth.uid])
+          && request.auth.uid in request.resource.data.answers
+          && request.resource.data.answers[request.auth.uid] in
+             ['going', 'waiting', 'cant']
+          && resource.data.ownerUid != request.auth.uid;
+      }
+
       // СНЯТИЕ СТОЯЩЕГО ЗАПРОСА ОТМЕНЫ. Двумя ходами, а не одним, хотя в
       // данных они оставляют ОДИН И ТОТ ЖЕ след — пустые
       // `cancelRequestedBy`/`cancelRequestedAt`.
@@ -925,7 +972,7 @@ service cloud.firestore {
           || (isParty() && (
                requestsCancel() || confirmsCancel() || leavesEvent()
                || withdrawsCancelRequest() || declinesCancelRequest()
-               || restoresEvent()
+               || restoresEvent() || answersForSelf()
              ))
         );
       allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
