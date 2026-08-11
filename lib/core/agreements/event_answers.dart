@@ -251,11 +251,22 @@ AnswersMismatch answersMismatch({
 /// Пустая строка на всё незнакомое — включая `null`. Он означает «человека
 /// нет в составе», и ярлыка у него быть не должно: тот, кого не поймало
 /// условие, получает НИЧЕГО, а не чужой ярлык (I34).
+/// **СЛОВА ВЗЯТЫ ИЗ МАКЕТА, а не придуманы здесь** (`assets/yenilenecekler/
+/// mugam-6-kart.html` и `mugam-8-teqvim.html`, 10.08). Первая редакция была
+/// написана своими словами — `Gəlir` / `Gözlənilir` / `Gələ bilmir` — и
+/// разошлась с макетом в трёх из трёх: у него **строчные** буквы, «ждём» — это
+/// `cavab gözlənilir` (сказано, чего именно ждут), а «не может» — `bacarmır`,
+/// короче и без вспомогательного глагола.
+///
+/// **`notAsked` в макете отсутствует, и это не упущение макета.** Он нарисован
+/// 10.08, а четвёртое состояние заведено 11.08, когда выяснилось, что «не
+/// спрашивали» и «ждём» — разные вещи (I47). Слово подобрано в один ряд с
+/// остальными: строчное, о состоянии человека, а не о действии владельца.
 String participantAnswerLabel(String? answer) => switch (answer) {
-      kAnswerGoing => 'Gəlir',
-      kAnswerWaiting => 'Gözlənilir',
-      kAnswerCant => 'Gələ bilmir',
-      kAnswerNotAsked => 'Soruşulmayıb',
+      kAnswerGoing => 'gəlir',
+      kAnswerWaiting => 'cavab gözlənilir',
+      kAnswerCant => 'bacarmır',
+      kAnswerNotAsked => 'soruşulmayıb',
       _ => '',
     };
 

@@ -10,6 +10,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import '../../../core/agreements/agreement_cancel.dart';
 import '../../../core/agreements/agreement_card.dart';
+import '../../../core/agreements/event_answer_reply.dart';
 import '../../../core/agreements/event_answers.dart';
 import '../../../core/agreements/event_edit.dart';
 import '../../../core/search/user_search_controller.dart';
@@ -20,6 +21,7 @@ import '../../../core/time/az_date_format.dart';
 import '../../day/screens/day_screen.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../../shared/widgets/answer_conflict_dialog.dart';
 import '../../../shared/widgets/avatar_ring.dart';
 import '../../../core/presence/presence_service.dart';
 import '../../../shared/widgets/event_conflict_banner.dart';
@@ -2061,6 +2063,215 @@ class _PartyRow extends StatelessWidget {
   }
 }
 
+/// МОЙ ОТВЕТ НА ПРИГЛАШЕНИЕ — шаг 4, пункт 3 (`docs/plan.md`).
+///
+/// Ответ становится ПОСТУПКОМ: до этого он существовал только как значение,
+/// которое писал владелец, правя состав. Отсюда и вопрос о занятости — он
+/// задаётся в момент согласия и больше нигде.
+class _MyAnswerCard extends StatefulWidget {
+  const _MyAnswerCard({
+    required this.event,
+    required this.currentUid,
+    required this.myEvents,
+    required this.firestoreService,
+  });
+
+  final PersonalEvent event;
+  final String currentUid;
+
+  /// Свои плюс те, где я участник. Дедуп и отсев отменённых делает
+  /// `conflictEventsOnDay` внутри правила — здесь список отдаётся как есть,
+  /// чтобы не завести четвёртую сшивку (N75).
+  final List<PersonalEvent> myEvents;
+  final FirestoreService firestoreService;
+
+  @override
+  State<_MyAnswerCard> createState() => _MyAnswerCardState();
+}
+
+class _MyAnswerCardState extends State<_MyAnswerCard> {
+  bool _saving = false;
+
+  /// Записать ответ. Отказ НЕ ГЛОТАЕТСЯ: до выкладки правил шага 4 участнику
+  /// нельзя писать в чужой документ вовсе, и молчаливый провал выглядел бы
+  /// как «ответ принят».
+  Future<void> _write(String answer) async {
+    setState(() => _saving = true);
+    try {
+      await widget.firestoreService
+          .setEventAnswer(widget.event.id, widget.currentUid, answer);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Cavab yazılmadı: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  /// «Иду» — единственный ответ, у которого есть вопрос перед записью.
+  Future<void> _sayGoing() async {
+    final conflicts = answerConflicts(
+      target: widget.event,
+      myEvents: widget.myEvents,
+      currentUid: widget.currentUid,
+      answer: kAnswerGoing,
+    );
+    if (conflicts.isEmpty) {
+      await _write(kAnswerGoing);
+      return;
+    }
+    if (!mounted) return;
+    final choice = await showDialog<AnswerConflictChoice>(
+      context: context,
+      builder: (_) => AnswerConflictDialog(conflicts: conflicts),
+    );
+    // Что писать — решает ПРАВИЛО, а не экран (`answerAfterConflict`). Там же
+    // записано, почему закрытие окна и «посмотреть» не пишут ничего: закрыл —
+    // поступка не было, и записать за человека отказ значило бы ответить
+    // вместо него (I47).
+    final toWrite = answerAfterConflict(choice);
+    if (toWrite != null) {
+      await _write(toWrite);
+      return;
+    }
+    if (choice == AnswerConflictChoice.view) {
+      if (!mounted) return;
+      // Открывается ТА карточка, а эта остаётся под ней: вернувшись,
+      // человек продолжает с того же места и с тем же вопросом.
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => _PersonalEventDetailScreen(
+            eventId: conflicts.first.id,
+            currentUid: widget.currentUid,
+            onBack: () => Navigator.pop(context),
+          ),
+        ),
+      );
+    }
+  }
+
+  /// Мероприятия того же дня, кроме занявших ту же минуту, — их показывает
+  /// плашка. Считается в `build`, а не в состоянии: список мероприятий живой,
+  /// и снятый однажды ответ устарел бы молча.
+  List<PersonalEvent> get _dayNotice => answerDayNotice(
+        target: widget.event,
+        myEvents: widget.myEvents,
+        currentUid: widget.currentUid,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final mine = widget.event.answerFor(widget.currentUid);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: kBg3,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Cavabınız',
+              style: GoogleFonts.nunito(
+                  fontSize: 16, fontWeight: FontWeight.bold, color: kText)),
+          const SizedBox(height: 4),
+          // Текущий ответ называется словом, тем же, что в составе: два места
+          // об одном обязаны говорить одинаково.
+          Text(participantAnswerLabel(mine),
+              style: const TextStyle(fontSize: 13, color: kTextSecondary)),
+          // ЗАНЯТЫЙ ДЕНЬ — ПЛАШКОЙ, ДО НАЖАТИЯ (макет `mugam-6-kart.html`).
+          // Не вопрос: два мероприятия в один день — обычная жизнь, и вопрос,
+          // который задают всегда, перестают читать. Вопрос остаётся у минуты
+          // в минуту, где человек оказался бы в двух местах разом.
+          if (_dayNotice.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: kWarnBg,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: kWarnBorder),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Bu gün artıq tədbirin var',
+                      style: TextStyle(fontSize: 14, color: kText)),
+                  const SizedBox(height: 4),
+                  // Чем именно занят день — иначе «занято» не отличает
+                  // важное от проходного.
+                  for (final e in _dayNotice)
+                    Text(eventConflictSummary(e),
+                        style: const TextStyle(fontSize: 13, color: kMuted)),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: _answerButton(
+                  label: 'Gəlirəm',
+                  selected: mine == kAnswerGoing,
+                  onTap: _saving ? null : _sayGoing,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _answerButton(
+                  // Слово из макета (`mugam-6-kart.html`), а не своё:
+                  // «Bacarmıram», не «Gələ bilmirəm».
+                  label: 'Bacarmıram',
+                  selected: mine == kAnswerCant,
+                  // У отказа вопроса нет: человек освобождает время, а не
+                  // занимает его, и мешать ему нечем.
+                  onTap: _saving ? null : () => _write(kAnswerCant),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _answerButton({
+    required String label,
+    required bool selected,
+    required VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          // Выбранный ответ залит, невыбранный — рамкой. Цвет один и тот же:
+          // «не могу» красным здесь означало бы то же, что отмена вечера
+          // (N110), а это разные вещи.
+          color: selected ? kGold.withAlpha(38) : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: selected ? kGold : kBorder),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            color: selected ? kGold : kMuted,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // AgreementDetail screen
 // ---------------------------------------------------------------------------
@@ -3220,6 +3431,23 @@ class _PersonalEventDetailScreenState
                 ],
               ),
             ),
+            // МОЙ ОТВЕТ — шаг 4, пункт 3. Виден ТОЛЬКО тому, кого позвали:
+            // владелец согласия не даёт, он вечер создал (N112), а тот, кого
+            // нет в составе, отвечать не за что.
+            //
+            // `answerFor` возвращает `null` для не-участника, и это условие
+            // здесь единственное: спрашивать «есть ли он в составе» вторым
+            // способом значило бы завести второе место, где решается тот же
+            // вопрос, и дать им разойтись.
+            if (!isOwner && event.answerFor(currentUid) != null) ...[
+              const SizedBox(height: 20),
+              _MyAnswerCard(
+                event: event,
+                currentUid: currentUid,
+                myEvents: [...personalEvents, ...eventsAsParticipant],
+                firestoreService: firestoreService,
+              ),
+            ],
             // Organiser card (if invited)
             if (!isOwner && event.ownerUid.isNotEmpty) ...[
               const SizedBox(height: 20),
