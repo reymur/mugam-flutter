@@ -726,7 +726,15 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     return GestureDetector(
       onTap: () async {
         await _markRead(e);
-        setState(() => _selectedAgreementId = e.id);
+        if (!context.mounted) return;
+        // ЧЕРЕЗ ОБЩУЮ ДВЕРЬ (N117). Здесь стояло собственное открытие
+        // карточки договора — третья дорога к тому же экрану, живая через
+        // `agreementsTabRequestProvider` (уведомление просит открыть список).
+        // Пока карточек было две, она вела в свою; переключи главную дверь и
+        // забудь эту — и человек из уведомления попадал бы на старый экран.
+        Navigator.of(
+          context,
+        ).push(eventDetailRoute(eventId: e.id, currentUid: _uid));
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
@@ -1761,8 +1769,13 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                         isOwn: t.isOwn,
                         currentUid: _uid,
                         allUsers: allUsersList,
-                        onTap: () =>
-                            setState(() => _tedbirDetailId = t.event.id),
+                        // Через общую дверь, по той же причине (N117).
+                        onTap: () => Navigator.of(context).push(
+                          eventDetailRoute(
+                            eventId: t.event.id,
+                            currentUid: _uid,
+                          ),
+                        ),
                       ),
                     );
                   },
@@ -2257,14 +2270,17 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
       if (!mounted) return;
       // Открывается ТА карточка, а эта остаётся под ней: вернувшись,
       // человек продолжает с того же места и с тем же вопросом.
+      //
+      // ЧЕРЕЗ ОБЩУЮ ДВЕРЬ (N90, N117), а не своим `MaterialPageRoute`: здесь
+      // стоял прямой вызов карточки, то есть вторая дорога к тому же экрану.
+      // Пока карточек было две, она открывала не ту при договорённости; и
+      // даже теперь, когда карточка одна, прямой вызов остаётся местом, где
+      // следующее изменение двери обойдёт стороной.
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (_) => _PersonalEventDetailScreen(
-            eventId: conflicts.first.id,
-            currentUid: widget.currentUid,
-            onBack: () => Navigator.pop(context),
-          ),
+        eventDetailRoute(
+          eventId: conflicts.first.id,
+          currentUid: widget.currentUid,
         ),
       );
     }
@@ -4228,18 +4244,22 @@ class _EventDetailById extends ConsumerWidget {
     // сказать уже нечем — его нет.
     if (event == null) return _eventGoneScaffold('Tədbir', back);
 
-    return switch (eventCardKindOf(event)) {
-      EventCardKind.agreement => _AgreementDetailScreen(
-        eventId: eventId,
-        currentUid: currentUid,
-        onBack: back,
-      ),
-      EventCardKind.personalEvent => _PersonalEventDetailScreen(
-        eventId: eventId,
-        currentUid: currentUid,
-        onBack: back,
-      ),
-    };
+    // ОДНА КАРТОЧКА НА ВСЕ ВЕЧЕРА — шаг 6 (`docs/plan.md`), 12.08.
+    //
+    // Прежде здесь стояла развилка `eventCardKindOf` по `isAgree`: договор
+    // открывался своей карточкой, мероприятие — своей. Развилка снята вместе
+    // с самим различением: договорённость это часть вечера, а не отдельная
+    // вещь, и **две карточки — это `isAgree` в новом месте**.
+    //
+    // `_AgreementDetailScreen` НЕ УДАЛЁН намеренно: он цел и возвращается
+    // одной строкой, пока новая карточка не доказана на трубках (порядок
+    // владельца: старое снимается после того, как новое доказано). Снятие
+    // кода — отдельный шаг, а не побочный итог этого.
+    return _PersonalEventDetailScreen(
+      eventId: eventId,
+      currentUid: currentUid,
+      onBack: back,
+    );
   }
 }
 
