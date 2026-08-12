@@ -3494,6 +3494,19 @@ class _PersonalEventDetailScreenState
     );
   }
 
+  /// ОТВЕТ ЗАГЛУШКИ — «скоро».
+  ///
+  /// Стоит под кнопками, у которых механизма ещё нет: «Şübhə altına al»
+  /// (третий повод под вопроса) и голосовое. Обе показаны потому, что их
+  /// показывает макет; **говорить правду при нажатии — единственное, что
+  /// делает такую кнопку честной.** Молчаливая кнопка хуже отсутствующей:
+  /// человек решает, что действие сделано.
+  void _soon(BuildContext context) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Tezliklə əlavə olunacaq')));
+  }
+
   Future<void> _continueWithout(
     PersonalEvent event,
     FirestoreService service,
@@ -3598,195 +3611,256 @@ class _PersonalEventDetailScreenState
 
     return Scaffold(
       backgroundColor: kBg,
-      appBar: AppBar(
-        backgroundColor: kBg2,
-        title: Text(
-          'Tədbir',
-          style: GoogleFonts.nunito(color: kGold, fontSize: 18),
-        ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: kGold),
-          onPressed: onBack,
-        ),
-        actions: [
-          if (isOwner)
-            IconButton(
-              icon: const Text('✏️', style: TextStyle(fontSize: 20)),
-              onPressed: () {
-                DateTime initialDate;
-                try {
-                  initialDate = DateTime.parse(event.date);
-                } catch (_) {
-                  initialDate = DateTime.now();
-                }
-                showModalBottomSheet(
-                  // Тап по затемнённому фону не закрывает: по нему легко попасть,
-                  // целясь в поле формы, и терять введённое из-за промаха обидно.
-                  // Свайп и кнопка отмены закрывают как обычно — они делаются
-                  // намеренно. Одно правило на все листы С ВВОДОМ (N28).
-                  isDismissible: false,
-                  context: context,
-                  isScrollControlled: true,
-                  backgroundColor: Colors.transparent,
-                  builder: (_) => _EventFormModal(
-                    mode: 'time-only',
-                    initialDate: initialDate,
-                    initialType: event.type,
-                    initialLocation: event.location,
-                    initialNotes: event.notes,
-                    initialParticipantUids: event.participantUids,
-                    allUsers: allUsers,
-                    existingEvent: event,
-                    allCombinedEvents: [
-                      ...personalEvents,
-                      ...eventsAsParticipant,
+      // ШАПКИ НЕТ ВОВСЕ — по макету (`docs/design/mugam-6-kart`, левый экран):
+      // там сверху только «← Geri» мелким серым, без заголовка и без
+      // карандаша. Заголовок «Tədbir» повторял то, что и так написано первой
+      // строкой крупно, а карандаш был вторым путём к правке — теперь она
+      // одна, кнопкой «Dəyişiklik et» внизу.
+      //
+      // Прежняя редакция этого экрана заголовок оставила, хотя в отчёте было
+      // сказано, что он убран: правка тела и правка шапки — разные места, и
+      // сверять надо по экрану, а не по замыслу.
+      // КНОПКИ ПРИЖАТЫ К НИЗУ — в макете подвал стоит на `margin-top: auto`.
+      // Приём: высота содержимого не меньше экрана (`ConstrainedBox` по
+      // `maxHeight` области), `IntrinsicHeight` делает её конечной, и тогда
+      // `Spacer` разводит содержимое и кнопки по краям. Без него кнопки
+      // липли к тексту, а под ними оставалась пустота в треть экрана.
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, viewport) => SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: viewport.maxHeight - 40),
+              child: IntrinsicHeight(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // «← GERİ» — единственное, что осталось от шапки.
+                    GestureDetector(
+                      onTap: onBack,
+                      behavior: HitTestBehavior.opaque,
+                      child: const Padding(
+                        padding: EdgeInsets.only(bottom: 14),
+                        child: Text(
+                          '← Geri',
+                          style: TextStyle(fontSize: 15, color: kMuted),
+                        ),
+                      ),
+                    ),
+                    // ── КАРТОЧКА ВЕЧЕРА СОБРАНА ПО МАКЕТУ ──────────────────────
+                    // `docs/design/mugam-6-kart` (левый экран), 12.08. Прежде здесь
+                    // стоял прежний экран мероприятия, куда были ДОПИСАНЫ плашка и
+                    // строка договорённости, — и порядок вышел свой: плашка
+                    // организатора, таблица из пяти полей, где дата пятой строкой,
+                    // крупные карточки участников со стрелками.
+                    //
+                    // Макет говорит другое, и разница не косметическая: **вечер
+                    // отвечает на «когда», а не на «какие у него поля»**. Поэтому
+                    // дата и время идут ПЕРВОЙ строкой и крупно, а тип с местом —
+                    // одной строкой под ней.
+                    //
+                    // ПЛАШКА ОРГАНИЗАТОРА УБРАНА У ВЛАДЕЛЬЦА и оставлена
+                    // приглашённому. Она отвечала на вопрос «чей это вечер» — у
+                    // владельца такого вопроса нет, он свой вечер и открыл; а
+                    // приглашённому это первое, что нужно знать, и в макете второго
+                    // экрана ровно оно и стоит: «Rafael səni çağırır».
+                    if (!isOwner) ...[
+                      Center(
+                        child: GestureDetector(
+                          onTap: () =>
+                              _openUserProfile(context, allUsers, initiatorUid),
+                          child: Text(
+                            '$initiatorName səni çağırır',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              color: kTextSecondary,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
                     ],
-                    currentUid: currentUid,
-                    firestoreService: firestoreService,
-                    onWillSave: _flash.rememberSelfSave,
-                  ),
-                );
-              },
+
+                    // 1. ДАТА И ВРЕМЯ — первой строкой, крупно (макет: 26pt).
+                    Text(
+                      _fmtDayAndTime(event.date),
+                      style: const TextStyle(fontSize: 26, color: kText),
+                    ),
+
+                    // 2. ТИП И МЕСТО — одной строкой под ней. Пустые части не
+                    // оставляют висящих разделителей: у вечера может не быть места.
+                    if (_typeAndPlace(event).isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        _typeAndPlace(event),
+                        style: const TextStyle(
+                          fontSize: 15,
+                          color: kTextSecondary,
+                        ),
+                      ),
+                    ],
+
+                    // 3. ПЛАШКА СОСТОЯНИЯ (N116) и повод под ней.
+                    const SizedBox(height: 11),
+                    _statusPillFor(event, allUsers),
+
+                    // 4. СОСТАВ — компактными строками: кружок с двумя буквами в
+                    // обводке по ответу, имя, под ним ответ. Без крупных карточек и
+                    // без стрелок: стрелка обещает переход, а тут переход не главное.
+                    if (event.participantUids.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      Text(
+                        _partyHeader(event),
+                        style: const TextStyle(
+                          fontSize: 13,
+                          letterSpacing: 1.5,
+                          color: kMuted,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      for (final uid in event.participantUids)
+                        _PartyMemberRow(
+                          name: _findUser(allUsers, uid)?.name ?? uid,
+                          answer: event.answerFor(uid),
+                          onTap: () => _openUserProfile(context, allUsers, uid),
+                        ),
+                    ],
+
+                    // ЗАМЕТКА — если она есть. В макете её нет вовсе, но поле живое
+                    // («Qalstuk, qara kostyum») и молчать о нём нельзя: это то, что
+                    // человек должен надеть, придя на вечер.
+                    if (event.notes.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        event.notes,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: kTextSecondary,
+                        ),
+                      ),
+                    ],
+
+                    // ГОЛОСОВОЕ — ЗАГЛУШКА (решение владельца 12.08). Сама
+                    // работа с голосом не написана (Часть 11 плана).
+                    //
+                    // **Длительности и волны здесь НЕТ намеренно.** В макете
+                    // нарисованы «0:14» и столбики — но записи не
+                    // существует, и показать её признаки значило бы
+                    // нарисовать данные, которых нет. Заглушка честная:
+                    // видно, что место для голоса задумано, и слышно при
+                    // нажатии, что его пока нет.
+                    const SizedBox(height: 16),
+                    GestureDetector(
+                      onTap: () => _soon(context),
+                      behavior: HitTestBehavior.opaque,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: kBorder, width: 1.5),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 28,
+                              height: 28,
+                              alignment: Alignment.center,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: kGoldDim,
+                              ),
+                              child: const Icon(
+                                Icons.play_arrow,
+                                size: 16,
+                                color: kGold,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            const Text(
+                              'Səsli qeyd',
+                              style: TextStyle(fontSize: 14, color: kMuted),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // 5. СТРОКА ДОГОВОРЁННОСТИ — свёрнутая, раскрывается В ЭТОЙ ЖЕ
+                    // карточке. Договорённость это часть вечера, а не самостоятельная
+                    // вещь: музыкант открывает вечер и вспоминает — 14-го у Теймура,
+                    // договорились восьмого.
+                    if (event.isAgree) ...[
+                      const SizedBox(height: 18),
+                      _AgreementLine(
+                        event: event,
+                        currentUid: currentUid,
+                        allUsers: allUsers,
+                        firestoreService: firestoreService,
+                      ),
+                    ],
+
+                    // Распорка: всё выше остаётся у верхнего края, кнопки уезжают к
+                    // нижнему — как подвал макета на `margin-top: auto`.
+                    const Spacer(),
+
+                    // 6. КНОПКИ — внизу, сразу видны, не внутри раскрытия. Разделение
+                    // владельца 12.08: кнопки это действия с вечером, строка выше —
+                    // память о нём.
+                    if (isOwner) ...[
+                      const SizedBox(height: 22),
+                      _CardButton(
+                        label: 'Dəyişiklik',
+                        tone: _CardButtonTone.gold,
+                        onTap: () => _openEdit(
+                          event,
+                          allUsers,
+                          personalEvents,
+                          eventsAsParticipant,
+                          firestoreService,
+                        ),
+                      ),
+                      // «ŞÜBHƏ ALTINA AL» — ЗАГЛУШКА, решение владельца 12.08.
+                      //
+                      // Механизма под ней нет: поставить `unsettled` клиент не
+                      // может вовсе — правила разрешают ему писать `status`
+                      // только `cancelled` и `agreed`, а `unsettled` ставит
+                      // сервер. Работа заведена (`docs/plan.md`, «Третий повод
+                      // под вопроса»).
+                      //
+                      // Кнопка стоит, потому что её показывает макет, и при
+                      // нажатии говорит правду — «скоро». Это лучше пустого
+                      // места: человек видит, что действие задумано. И лучше
+                      // молчаливой кнопки, которая делает вид, что сработала.
+                      if (!showsContinueWithout(
+                        isOwner: isOwner,
+                        status: event.status,
+                        lastActionType: event.lastActionType,
+                      ))
+                        _CardButton(
+                          label: 'Şübhə altına al',
+                          tone: _CardButtonTone.plain,
+                          onTap: () => _soon(context),
+                        ),
+                      if (showsContinueWithout(
+                        isOwner: isOwner,
+                        status: event.status,
+                        lastActionType: event.lastActionType,
+                      ))
+                        _CardButton(
+                          label: 'Onsuz davam edirəm',
+                          tone: _CardButtonTone.plain,
+                          onTap: () =>
+                              _continueWithout(event, firestoreService),
+                        ),
+                    ],
+                  ],
+                ),
+              ),
             ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── КАРТОЧКА ВЕЧЕРА СОБРАНА ПО МАКЕТУ ──────────────────────
-            // `docs/design/mugam-6-kart` (левый экран), 12.08. Прежде здесь
-            // стоял прежний экран мероприятия, куда были ДОПИСАНЫ плашка и
-            // строка договорённости, — и порядок вышел свой: плашка
-            // организатора, таблица из пяти полей, где дата пятой строкой,
-            // крупные карточки участников со стрелками.
-            //
-            // Макет говорит другое, и разница не косметическая: **вечер
-            // отвечает на «когда», а не на «какие у него поля»**. Поэтому
-            // дата и время идут ПЕРВОЙ строкой и крупно, а тип с местом —
-            // одной строкой под ней.
-            //
-            // ПЛАШКА ОРГАНИЗАТОРА УБРАНА У ВЛАДЕЛЬЦА и оставлена
-            // приглашённому. Она отвечала на вопрос «чей это вечер» — у
-            // владельца такого вопроса нет, он свой вечер и открыл; а
-            // приглашённому это первое, что нужно знать, и в макете второго
-            // экрана ровно оно и стоит: «Rafael səni çağırır».
-            if (!isOwner) ...[
-              Center(
-                child: GestureDetector(
-                  onTap: () =>
-                      _openUserProfile(context, allUsers, initiatorUid),
-                  child: Text(
-                    '$initiatorName səni çağırır',
-                    style: const TextStyle(fontSize: 15, color: kTextSecondary),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-            ],
-
-            // 1. ДАТА И ВРЕМЯ — первой строкой, крупно (макет: 26pt).
-            Text(
-              _fmtDayAndTime(event.date),
-              style: const TextStyle(fontSize: 26, color: kText),
-            ),
-
-            // 2. ТИП И МЕСТО — одной строкой под ней. Пустые части не
-            // оставляют висящих разделителей: у вечера может не быть места.
-            if (_typeAndPlace(event).isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(
-                _typeAndPlace(event),
-                style: const TextStyle(fontSize: 15, color: kTextSecondary),
-              ),
-            ],
-
-            // 3. ПЛАШКА СОСТОЯНИЯ (N116) и повод под ней.
-            const SizedBox(height: 11),
-            _statusPillFor(event, allUsers),
-
-            // 4. СОСТАВ — компактными строками: кружок с двумя буквами в
-            // обводке по ответу, имя, под ним ответ. Без крупных карточек и
-            // без стрелок: стрелка обещает переход, а тут переход не главное.
-            if (event.participantUids.isNotEmpty) ...[
-              const SizedBox(height: 20),
-              Text(
-                _partyHeader(event),
-                style: const TextStyle(
-                  fontSize: 13,
-                  letterSpacing: 1.5,
-                  color: kMuted,
-                ),
-              ),
-              const SizedBox(height: 12),
-              for (final uid in event.participantUids)
-                _PartyMemberRow(
-                  name: _findUser(allUsers, uid)?.name ?? uid,
-                  answer: event.answerFor(uid),
-                  onTap: () => _openUserProfile(context, allUsers, uid),
-                ),
-            ],
-
-            // ЗАМЕТКА — если она есть. В макете её нет вовсе, но поле живое
-            // («Qalstuk, qara kostyum») и молчать о нём нельзя: это то, что
-            // человек должен надеть, придя на вечер.
-            if (event.notes.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              Text(
-                event.notes,
-                style: const TextStyle(fontSize: 14, color: kTextSecondary),
-              ),
-            ],
-
-            // 5. СТРОКА ДОГОВОРЁННОСТИ — свёрнутая, раскрывается В ЭТОЙ ЖЕ
-            // карточке. Договорённость это часть вечера, а не самостоятельная
-            // вещь: музыкант открывает вечер и вспоминает — 14-го у Теймура,
-            // договорились восьмого.
-            if (event.isAgree) ...[
-              const SizedBox(height: 18),
-              _AgreementLine(
-                event: event,
-                currentUid: currentUid,
-                allUsers: allUsers,
-                firestoreService: firestoreService,
-              ),
-            ],
-
-            // 6. КНОПКИ — внизу, сразу видны, не внутри раскрытия. Разделение
-            // владельца 12.08: кнопки это действия с вечером, строка выше —
-            // память о нём.
-            if (isOwner) ...[
-              const SizedBox(height: 22),
-              _CardButton(
-                label: 'Dəyişiklik',
-                tone: _CardButtonTone.gold,
-                onTap: () => _openEdit(
-                  event,
-                  allUsers,
-                  personalEvents,
-                  eventsAsParticipant,
-                  firestoreService,
-                ),
-              ),
-              // «Şübhə altına al» из макета здесь НЕТ, и это не пропуск:
-              // поставить `unsettled` клиент не может вовсе — правила
-              // разрешают ему писать `status` только `cancelled` и `agreed`.
-              // Разбор и работа — `docs/plan.md`, «Третий повод под вопроса».
-              if (showsContinueWithout(
-                isOwner: isOwner,
-                status: event.status,
-                lastActionType: event.lastActionType,
-              ))
-                _CardButton(
-                  label: 'Onsuz davam edirəm',
-                  tone: _CardButtonTone.plain,
-                  onTap: () => _continueWithout(event, firestoreService),
-                ),
-            ],
-
-            const SizedBox(height: 40),
-          ],
+          ),
         ),
       ),
     );
