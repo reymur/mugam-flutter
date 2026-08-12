@@ -227,6 +227,19 @@ const Color kReadBlue = Color(0xFF1A6B9E);
 // "listened" wave color, not the dot or checkmarks (which keep kReadBlue).
 const Color kListenedBlue = Color(0xFF2D9DCF);
 
+/// СОСТОЯНИЕ ВЕЧЕРА «В СИЛЕ» — плашка «Dəqiq» из макета `mugam-6-kart.html`
+/// (класс `.pill`): рамка `#7FA84A`, текст `#9BC46A`.
+///
+/// **Два значения, а не одно с прозрачностью:** в макете рамка темнее текста,
+/// это разные краски, и вывести одну из другой нельзя. Имена по роли — «в
+/// силе», а не «зелёный»: сменится палитра, роль переживёт.
+///
+/// **Красного здесь нет намеренно.** Красный на этих экранах отдан ОТМЕНЕ
+/// целиком (N110), поэтому «под вопросом» рисуется приглушённым `kMuted`, а не
+/// красным: иначе одно и то же слово значило бы два разных состояния.
+const Color kStatusFirmBorder = Color(0xFF7FA84A);
+const Color kStatusFirmText = Color(0xFF9BC46A);
+
 /// ЗАГОЛОВОК МЕСЯЦА В КАЛЕНДАРЕ — золотой ИЗ МАКЕТА, а не проектный `kGold`.
 ///
 /// `docs/design/mugam-8-teqvim.html`, класс `.cap`: `#E09A2B`, 14px,

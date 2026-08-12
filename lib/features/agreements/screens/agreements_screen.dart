@@ -11,6 +11,7 @@ import '../../../core/agreements/agreement_cancel.dart';
 import '../../../core/agreements/agreement_card.dart';
 import '../../../core/agreements/event_answer_reply.dart';
 import '../../../core/agreements/event_answers.dart';
+import '../../../core/agreements/event_status_view.dart';
 import '../../../core/agreements/event_edit.dart';
 import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
@@ -3441,6 +3442,55 @@ class _PersonalEventDetailScreenState
   // приложение, и отметка перестаёт быть свежей без всякой уборки. Ровно
   // это и чинил N19: признак без срока годности глушил уведомления
   // навсегда.
+  /// «ONSUZ DAVAM EDİRƏM» — возврат вечера в силу после ухода участника.
+  ///
+  /// **Спрашивает подтверждение, потому что ход НЕОБРАТИМ** (I29): в отличие
+  /// от отмены, которая лишь задаёт вопрос второй стороне, этот немедленно
+  /// даёт обещание прийти без ушедшего.
+  ///
+  /// Отказ не глотается: правило `restoresEvent()` пускает только владельца,
+  /// только из `unsettled` и только по поводу `memberLeft`, и если состояние
+  /// успело измениться, человек обязан узнать об этом словами.
+  Future<void> _continueWithout(
+    PersonalEvent event,
+    FirestoreService service,
+  ) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: kBg2,
+        title: const Text(
+          'Onsuz davam edirsiniz?',
+          style: TextStyle(color: kText, fontSize: 17),
+        ),
+        content: const Text(
+          'Tədbir yenidən qüvvəyə minəcək və iştirakçılar bundan xəbər tutacaq.',
+          style: TextStyle(color: kTextSecondary, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Ləğv et', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text(
+              'Davam edirəm',
+              style: TextStyle(color: kGold, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await service.restoreUnsettledAgreement(event.id, widget.currentUid);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Alınmadı: $e')));
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -3595,6 +3645,12 @@ class _PersonalEventDetailScreenState
                 ),
               ),
             ),
+            const SizedBox(height: 14),
+            // СОСТОЯНИЕ ВЕЧЕРА — первым блоком, как в макете `mugam-6-kart`
+            // (плашка «Dəqiq» зелёной обводкой сразу под шапкой). Починка
+            // N116: до 12.08 карточка вечера не показывала состояние вовсе, и
+            // вечер «под вопросом» выглядел целым.
+            _statusPillFor(event, allUsers),
             const SizedBox(height: 20),
             // Details card
             Container(
@@ -3736,6 +3792,35 @@ class _PersonalEventDetailScreenState
                 ),
               ),
             ],
+            // СТРОКА ДОГОВОРЁННОСТИ — свёрнутая, раскрывается В ЭТОЙ ЖЕ
+            // карточке (шаг 6). Договорённость это часть вечера, а не
+            // самостоятельная вещь: музыкант открывает вечер и вспоминает —
+            // 14-го у Теймура, договорились восьмого.
+            if (event.isAgree) ...[
+              const SizedBox(height: 20),
+              _AgreementLine(
+                event: event,
+                currentUid: currentUid,
+                allUsers: allUsers,
+                firestoreService: firestoreService,
+              ),
+            ],
+            // ДЕЙСТВИЯ С ВЕЧЕРОМ — внизу, сразу видны, не внутри раскрытия.
+            // Разделение автора 12.08: кнопки это действия с вечером, строка
+            // выше — память о нём.
+            if (isOwner) ...[
+              const SizedBox(height: 24),
+              if (showsContinueWithout(
+                isOwner: isOwner,
+                status: event.status,
+                lastActionType: event.lastActionType,
+              ))
+                _CardButton(
+                  label: 'Onsuz davam edirəm',
+                  tone: _CardButtonTone.gold,
+                  onTap: () => _continueWithout(event, firestoreService),
+                ),
+            ],
             const SizedBox(height: 40),
           ],
         ),
@@ -3789,6 +3874,324 @@ Route<void> eventDetailRoute({
 }) => MaterialPageRoute(
   builder: (_) => _EventDetailById(eventId: eventId, currentUid: currentUid),
 );
+
+enum _CardButtonTone { gold, plain }
+
+/// КНОПКА КАРТОЧКИ — по макету `mugam-6-kart` (класс `.btn`): рамка 1.5px,
+/// скругление 10, padding 15, во всю ширину. Золотая — главное действие,
+/// серая — второе.
+class _CardButton extends StatelessWidget {
+  const _CardButton({
+    required this.label,
+    required this.tone,
+    required this.onTap,
+  });
+
+  final String label;
+  final _CardButtonTone tone;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final gold = tone == _CardButtonTone.gold;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 11),
+        padding: const EdgeInsets.symmetric(vertical: 15),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: gold ? kGold : kBorder, width: 1.5),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 16, color: gold ? kGold : kTextSecondary),
+        ),
+      ),
+    );
+  }
+}
+
+/// СТРОКА ДОГОВОРЁННОСТИ — свёрнута, раскрывается В ЭТОЙ ЖЕ КАРТОЧКЕ.
+///
+/// Макет `mugam-6-kart`: рамка `#4A7A1E`, скругление 10, текст «Teymur
+/// razılaşdı · 8 avqust». Нажал — раскрылась: кто предложил и когда, кто
+/// согласился, история отмен.
+///
+/// **ОТМЕНА ПО СОГЛАСИЮ ЖИВЁТ ЗДЕСЬ, а не среди кнопок внизу** (решение
+/// владельца 12.08). Довод: кнопки — действия с ВЕЧЕРОМ, строка — память о
+/// нём, а отмена отменяет ДОГОВОРЁННОСТЬ: вечер остаётся в календаре на своей
+/// дате. Заодно весь разговор об отмене — кто предложил, кто подтвердил,
+/// история — оказывается в одном месте, а не разорван между низом карточки и
+/// раскрытием.
+class _AgreementLine extends StatefulWidget {
+  const _AgreementLine({
+    required this.event,
+    required this.currentUid,
+    required this.allUsers,
+    required this.firestoreService,
+  });
+
+  final PersonalEvent event;
+  final String currentUid;
+  final List<User> allUsers;
+  final FirestoreService firestoreService;
+
+  @override
+  State<_AgreementLine> createState() => _AgreementLineState();
+}
+
+class _AgreementLineState extends State<_AgreementLine> {
+  bool _open = false;
+
+  String _nameOf(String? uid) {
+    if (uid == null || uid.isEmpty) return 'Naməlum';
+    if (uid == widget.currentUid) return 'Siz';
+    return widget.allUsers
+            .where((u) => u.id == uid)
+            .map((u) => u.name)
+            .firstOrNull ??
+        'Naməlum';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final e = widget.event;
+    // Кто согласился — вторая сторона: договор рождается тем, что она нажала
+    // «Razıyam». Дата согласия — `createdAt` документа: он и создаётся в этот
+    // миг (`onChatUpdated`).
+    final agreedBy = _nameOf(e.partnerUid);
+    final when = _fmtCreatedAt(e.createdAt);
+    return GestureDetector(
+      onTap: () => setState(() => _open = !_open),
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: kStatusFirmBorder, width: 1.5),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Flexible(
+                  child: Text(
+                    when.isEmpty
+                        ? '$agreedBy razılaşdı'
+                        : '$agreedBy razılaşdı · $when',
+                    style: const TextStyle(fontSize: 14, color: kTextSecondary),
+                  ),
+                ),
+                Icon(
+                  _open ? Icons.expand_less : Icons.expand_more,
+                  size: 20,
+                  color: kMuted,
+                ),
+              ],
+            ),
+            if (_open) ...[
+              const SizedBox(height: 10),
+              _AgreementDetails(
+                event: e,
+                currentUid: widget.currentUid,
+                allUsers: widget.allUsers,
+                firestoreService: widget.firestoreService,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// РАСКРЫТИЕ ДОГОВОРЁННОСТИ — кто предложил, кто согласился, история отмен и
+/// сама отмена по согласию.
+///
+/// **Ходы отмены НЕ ПЕРЕПИСАНЫ, а взяты у карточки договора** через тот же
+/// `FirestoreService`: там четыре хода, проверенные на устройстве, разбор
+/// отказов по правам (N45) и подтверждения. Переписать их заново значило бы
+/// завести второй экземпляр правил, а расходятся такие пары молча.
+///
+/// **Что здесь НЕ показано и почему:** «Məni azad et» (Часть 8 плана) — его в
+/// проекте нет вовсе, а кнопка без механизма это дверь в стену. И «Şübhə
+/// altına al» — поставить `unsettled` клиент не может по правилам, это делает
+/// только сервер (`markEventUnsettled`); ей нужен новый ход в
+/// `firestore.rules`, то есть отдельная работа с выкладкой.
+class _AgreementDetails extends StatelessWidget {
+  const _AgreementDetails({
+    required this.event,
+    required this.currentUid,
+    required this.allUsers,
+    required this.firestoreService,
+  });
+
+  final PersonalEvent event;
+  final String currentUid;
+  final List<User> allUsers;
+  final FirestoreService firestoreService;
+
+  String _nameOf(String? uid) {
+    if (uid == null || uid.isEmpty) return 'Naməlum';
+    if (uid == currentUid) return 'Siz';
+    return allUsers.where((u) => u.id == uid).map((u) => u.name).firstOrNull ??
+        'Naməlum';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final requestedBy = event.cancelRequestedBy;
+    final iRequested = requestedBy == currentUid;
+    final cancelled = event.status == kStatusCancelled;
+
+    Widget row(String label, String value) => Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 13, color: kMuted)),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 13, color: kTextSecondary),
+          ),
+        ],
+      ),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(color: kBorder, height: 1),
+        const SizedBox(height: 10),
+        row('Təklif edən', _nameOf(event.ownerUid)),
+        row('Razılaşan', _nameOf(event.partnerUid)),
+        if (event.jobOfferAt != null && event.jobOfferAt!.isNotEmpty)
+          row('Təklif tarixi', _fmtDate(event.jobOfferAt!)),
+        // ИСТОРИЯ ОТМЕН — то, ради чего раскрытие и заведено: разговор об
+        // отмене виден целиком, а не по кускам.
+        if (requestedBy != null) row('Ləğv təklifi', _nameOf(requestedBy)),
+        if (event.cancelConfirmedBy != null)
+          row('Ləğvə razılaşan', _nameOf(event.cancelConfirmedBy)),
+        const SizedBox(height: 8),
+        // ОТМЕНА ПО СОГЛАСИЮ. Отменённой договорённости отменять нечего —
+        // тогда здесь только история выше.
+        if (!cancelled) ...[
+          if (requestedBy == null)
+            _CardButton(
+              label: 'Müqaviləni ləğv et',
+              tone: _CardButtonTone.plain,
+              onTap: () => _requestCancel(context),
+            )
+          else if (iRequested)
+            _CardButton(
+              label: 'Geri götür',
+              tone: _CardButtonTone.plain,
+              onTap: () => _withdrawCancel(context),
+            )
+          else ...[
+            _CardButton(
+              label: 'Razıyam, ləğv edilsin',
+              tone: _CardButtonTone.gold,
+              onTap: () => _confirmCancel(context),
+            ),
+            _CardButton(
+              label: 'Razı deyiləm',
+              tone: _CardButtonTone.plain,
+              onTap: () => _declineCancel(context),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+
+  Future<void> _run(
+    BuildContext context,
+    Future<void> Function() action,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await action();
+    } catch (e) {
+      // ОТКАЗ НЕ ГЛОТАЕТСЯ: `permission-denied` здесь означает, что вторая
+      // сторона успела сходить первой, и это ровно то, о чём человеку надо
+      // сказать словами (N45).
+      messenger.showSnackBar(SnackBar(content: Text('Alınmadı: $e')));
+    }
+  }
+
+  Future<void> _requestCancel(BuildContext context) => _run(
+    context,
+    () => firestoreService.requestAgreementCancel(event.id, currentUid),
+  );
+
+  Future<void> _withdrawCancel(BuildContext context) => _run(
+    context,
+    () => firestoreService.withdrawAgreementCancel(event.id, currentUid),
+  );
+
+  Future<void> _confirmCancel(BuildContext context) => _run(
+    context,
+    () => firestoreService.confirmAgreementCancel(event.id, currentUid),
+  );
+
+  Future<void> _declineCancel(BuildContext context) => _run(
+    context,
+    () => firestoreService.declineAgreementCancel(event.id, currentUid),
+  );
+}
+
+/// ПЛАШКА СОСТОЯНИЯ И ПОВОД — по макету `mugam-6-kart` (класс `.pill`).
+///
+/// **Повод стоит ОТДЕЛЬНОЙ СТРОКОЙ ПОД ПЛАШКОЙ, и он не украшение.** Кнопка
+/// «Onsuz davam edirəm» появляется ровно в этом состоянии, и без строки про
+/// ушедшего она была бы действием без причины на экране: человеку предлагают
+/// продолжить «без него», не сказав, кто ушёл (решение владельца 12.08).
+///
+/// Кто ушёл — берётся из `lastActionBy`: сервер записывает туда автора
+/// поступка, и по нему же он решал, кому слать уведомление о переходе.
+Widget _statusPillFor(PersonalEvent event, List<User> allUsers) {
+  final leftName = event.lastActionBy == null
+      ? null
+      : allUsers
+            .where((u) => u.id == event.lastActionBy)
+            .map((u) => u.name)
+            .firstOrNull;
+  final view = eventStatusView(
+    status: event.status,
+    lastActionType: event.lastActionType,
+    leftMemberName: leftName,
+  );
+  final (border, text) = switch (view.tone) {
+    EventStatusTone.firm => (kStatusFirmBorder, kStatusFirmText),
+    EventStatusTone.doubt => (kMuted, kTextSecondary),
+    EventStatusTone.cancelled => (kRed, kRed),
+  };
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(color: border, width: 1.5),
+        ),
+        child: Text(view.label, style: TextStyle(fontSize: 14, color: text)),
+      ),
+      if (view.reason != null) ...[
+        const SizedBox(height: 6),
+        Text(view.reason!, style: const TextStyle(fontSize: 13, color: kMuted)),
+      ],
+    ],
+  );
+}
 
 class _EventDetailById extends ConsumerWidget {
   const _EventDetailById({required this.eventId, required this.currentUid});
