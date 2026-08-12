@@ -3507,41 +3507,113 @@ class _PersonalEventDetailScreenState
     ).showSnackBar(const SnackBar(content: Text('Tezliklə əlavə olunacaq')));
   }
 
-  Future<void> _continueWithout(
+  /// Прошедший вечер состояние не меняет — плашка не нажимается (12.08).
+  bool _isPast(PersonalEvent e) {
+    try {
+      return DateTime.parse(e.date).isBefore(DateTime.now());
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// ОКОШКО ВЫБОРА СОСТОЯНИЯ — три строки, у договорённости с иной подписью.
+  ///
+  /// Строки взяты из правила `statusChoices` — там же записано, почему разница
+  /// сказана словами ДО нажатия. Форма строк из макета: рамка 1.5, скругление
+  /// 10, выбранная — золотая.
+  Future<void> _openStatusPicker(
     PersonalEvent event,
+    List<User> allUsers,
     FirestoreService service,
   ) async {
-    final ok = await showDialog<bool>(
+    final partner = event.partnerUid == null
+        ? null
+        : allUsers
+              .where((u) => u.id == event.partnerUid)
+              .map((u) => u.name)
+              .firstOrNull;
+    final choices = statusChoices(
+      isAgreement: event.isAgree,
+      otherSideName: partner,
+    );
+    final picked = await showModalBottomSheet<StatusChoice>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        backgroundColor: kBg2,
-        title: const Text(
-          'Onsuz davam edirsiniz?',
-          style: TextStyle(color: kText, fontSize: 17),
-        ),
-        content: const Text(
-          'Tədbir yenidən qüvvəyə minəcək və iştirakçılar bundan xəbər tutacaq.',
-          style: TextStyle(color: kTextSecondary, fontSize: 14),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Ləğv et', style: TextStyle(color: kMuted)),
+      backgroundColor: kBg2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheet) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final c in choices)
+                GestureDetector(
+                  onTap: () => Navigator.pop(sheet, c),
+                  behavior: HitTestBehavior.opaque,
+                  child: Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: event.status == c.status ? kGold : kBorder,
+                        width: 1.5,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          c.label,
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: event.status == c.status
+                                ? kGold
+                                : kTextSecondary,
+                          ),
+                        ),
+                        if (c.note != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              c.note!,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: kMuted,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text(
-              'Davam edirəm',
-              style: TextStyle(color: kGold, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ],
+        ),
       ),
     );
-    if (ok != true) return;
+    if (picked == null || picked.status == event.status) return;
     final messenger = ScaffoldMessenger.of(context);
     try {
-      await service.restoreUnsettledAgreement(event.id, widget.currentUid);
+      if (picked.asksOtherSide) {
+        // У договорённости «отменить» не отменяет, а ПРОСИТ согласия — тем же
+        // ходом, что и раньше. Так защита остаётся на месте, а окошко её не
+        // обходит.
+        await service.requestAgreementCancel(event.id, widget.currentUid);
+      } else {
+        await service.setEventStatus(
+          event.id,
+          widget.currentUid,
+          picked.status,
+          picked.deed,
+        );
+      }
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('Alınmadı: $e')));
     }
@@ -3702,7 +3774,20 @@ class _PersonalEventDetailScreenState
 
                     // 3. ПЛАШКА СОСТОЯНИЯ (N116) и повод под ней.
                     const SizedBox(height: 11),
-                    _statusPillFor(event, allUsers),
+                    GestureDetector(
+                      // ПЛАШКА — КНОПКА (12.08). Прошедший вечер состояние не
+                      // меняет: спорить о том, состоялся ли вчерашний вечер,
+                      // приложению нечем, а данные оно испортит.
+                      onTap: (isOwner && !_isPast(event))
+                          ? () => _openStatusPicker(
+                              event,
+                              allUsers,
+                              firestoreService,
+                            )
+                          : null,
+                      behavior: HitTestBehavior.opaque,
+                      child: _statusPillFor(event, allUsers),
+                    ),
 
                     // 4. СОСТАВ — компактными строками: кружок с двумя буквами в
                     // обводке по ответу, имя, под ним ответ. Без крупных карточек и
@@ -3822,39 +3907,10 @@ class _PersonalEventDetailScreenState
                           firestoreService,
                         ),
                       ),
-                      // «ŞÜBHƏ ALTINA AL» — ЗАГЛУШКА, решение владельца 12.08.
-                      //
-                      // Механизма под ней нет: поставить `unsettled` клиент не
-                      // может вовсе — правила разрешают ему писать `status`
-                      // только `cancelled` и `agreed`, а `unsettled` ставит
-                      // сервер. Работа заведена (`docs/plan.md`, «Третий повод
-                      // под вопроса»).
-                      //
-                      // Кнопка стоит, потому что её показывает макет, и при
-                      // нажатии говорит правду — «скоро». Это лучше пустого
-                      // места: человек видит, что действие задумано. И лучше
-                      // молчаливой кнопки, которая делает вид, что сработала.
-                      if (!showsContinueWithout(
-                        isOwner: isOwner,
-                        status: event.status,
-                        lastActionType: event.lastActionType,
-                      ))
-                        _CardButton(
-                          label: 'Şübhə altına al',
-                          tone: _CardButtonTone.plain,
-                          onTap: () => _soon(context),
-                        ),
-                      if (showsContinueWithout(
-                        isOwner: isOwner,
-                        status: event.status,
-                        lastActionType: event.lastActionType,
-                      ))
-                        _CardButton(
-                          label: 'Onsuz davam edirəm',
-                          tone: _CardButtonTone.plain,
-                          onTap: () =>
-                              _continueWithout(event, firestoreService),
-                        ),
+                      // «Şübhə altına al» и «Onsuz davam edirəm» СНЯТЫ
+                      // 12.08: первую заменило окошко выбора на плашке, вторую
+                      // — «убрать из состава» у вышедшего. Обе делали то, что
+                      // теперь делается там, где человек об этом и думает.
                     ],
                   ],
                 ),

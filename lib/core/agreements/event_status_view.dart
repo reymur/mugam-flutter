@@ -110,3 +110,65 @@ bool showsContinueWithout({
     isOwner &&
     status == kStatusUnsettled &&
     lastActionType == kReasonMemberLeft;
+
+
+/// СТРОКИ ОКОШКА ВЫБОРА СОСТОЯНИЯ — шаг «состояния пересмотрены» (12.08).
+///
+/// Плашка на карточке стала кнопкой; нажатие открывает три строки. **У вечера
+/// с договорённостью и без неё окошко РАЗНОЕ, и разница сказана словами ДО
+/// нажатия** (требование автора 12.08): у договорённости отмена не отменяет, а
+/// запускает согласие второй стороны.
+///
+/// Подпись стоит ПОД строкой, а не всплывает после выбора: всплывшее
+/// объяснение приходит, когда решение уже принято, — а здесь оно и есть
+/// решение. Человек выбирает не «отменить», а «отменить самому» либо
+/// «попросить согласия».
+class StatusChoice {
+  const StatusChoice({
+    required this.status,
+    required this.deed,
+    required this.label,
+    this.note,
+    this.asksOtherSide = false,
+  });
+
+  final String status;
+  final String deed;
+  final String label;
+
+  /// Подпись под строкой. `null` — сказать нечего.
+  final String? note;
+
+  /// Ход не отменяет сам, а просит вторую сторону. Экран по нему решает,
+  /// какой метод звать: прямую запись или предложение отмены.
+  final bool asksOtherSide;
+}
+
+/// Три строки окошка. [partnerName] нужен только вечеру с договорённостью —
+/// в подписи называется тот, кто должен подтвердить.
+List<StatusChoice> statusChoices({
+  required bool isAgreement,
+  String? otherSideName,
+}) => [
+      const StatusChoice(
+        status: kStatusAgreed,
+        deed: 'ownerFirm',
+        label: 'Dəqiq',
+      ),
+      const StatusChoice(
+        status: kStatusUnsettled,
+        deed: 'ownerDoubt',
+        label: 'İş dəqiq deyil',
+        note: 'iştirakçılar xəbər tutacaq',
+      ),
+      StatusChoice(
+        status: kStatusCancelled,
+        deed: isAgreement ? 'cancelRequested' : 'ownerCancelled',
+        label: 'İş ləğv olundu',
+        // ВОТ ТА САМАЯ РАЗНИЦА, СКАЗАННАЯ СЛОВАМИ.
+        note: isAgreement
+            ? '${otherSideName ?? 'qarşı tərəf'} təsdiqləməlidir'
+            : 'tədbir təqvimdə qalacaq',
+        asksOtherSide: isAgreement,
+      ),
+    ];

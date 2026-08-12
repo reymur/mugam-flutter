@@ -30,9 +30,23 @@ const String kAnswerGoing = 'going';
 const String kAnswerWaiting = 'waiting';
 const String kAnswerCant = 'cant';
 
+/// ПЯТОЕ ЗНАЧЕНИЕ — «вышел из состава» (решение автора 12.08).
+///
+/// **Заменяет прежний выход через `musicians`.** Раньше участник вычёркивал
+/// себя из состава, то есть менял ОБЩИЙ список; теперь он пишет свой ключ и
+/// **остаётся в списке** — под именем стоит «İşdən çıxdı». Уход перестал быть
+/// событием вечера и стал ответом человека: под вопросом один человек, а не
+/// вечер.
+const String kAnswerLeft = 'left';
+
 /// Все допустимые ответы — одним местом, чтобы проверка «значение из набора»
 /// не переписывалась в каждом читателе своими словами.
-const Set<String> kEventAnswers = {kAnswerGoing, kAnswerWaiting, kAnswerCant};
+const Set<String> kEventAnswers = {
+  kAnswerGoing,
+  kAnswerWaiting,
+  kAnswerCant,
+  kAnswerLeft,
+};
 
 /// ЧЕТВЁРТОЕ СОСТОЯНИЕ — **читаемое, но никогда не записываемое** (шаг 4).
 ///
@@ -313,6 +327,7 @@ String participantAnswerLabel(String? answer) => switch (answer) {
       kAnswerGoing => 'gəlir',
       kAnswerWaiting => 'cavab gözlənilir',
       kAnswerCant => 'bacarmır',
+      kAnswerLeft => 'İşdən çıxdı',
       kAnswerNotAsked => 'soruşulmayıb',
       _ => '',
     };

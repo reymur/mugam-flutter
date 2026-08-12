@@ -3703,6 +3703,20 @@ class FirestoreService {
         .timeout(_writeTimeout);
   }
 
+  /// СОСТОЯНИЕ ВЕЧЕРА СТАВИТ ВЛАДЕЛЕЦ — плашка-кнопка на карточке (12.08).
+  ///
+  /// Пишет ровно три ключа, как требует правило `ownerSetsStatus()`. Отказ не
+  /// глотается: `permission-denied` здесь означает, что ход не тот — например,
+  /// вечер с договорённостью пытаются отменить в одиночку.
+  Future<void> setEventStatus(String eventId, String uid, String status,
+      String deed) {
+    return _db.collection('personalEvents').doc(eventId).update({
+      'status': status,
+      'lastActionBy': uid,
+      'lastActionType': deed,
+    }).timeout(_writeTimeout);
+  }
+
   /// ОТВЕТ УЧАСТНИКА ЗА СЕБЯ — шаг 4, пункт 3 (`docs/plan.md`).
   ///
   /// **Пишется ровно ОДИН ключ — свой**, точечным путём `answers.<uid>`, а не
