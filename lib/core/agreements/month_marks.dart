@@ -50,7 +50,14 @@ class DayMark {
   final DayMarkShape shape;
 }
 
-/// Три буквы имени — правило одно на весь проект.
+/// Инициалы имени — правило одно на весь проект.
+///
+/// **[count] по умолчанию ТРИ — столько берёт клетка календаря (`RAF`,
+/// `TEY`). Аватар в составе карточки берёт ДВЕ (`TE`, `RA`, `AL`), и это не
+/// разнобой, а два разных места макета:** в клетке буквы стоят под числом и
+/// читаются как подпись, в кружке — как метка человека. Правило одно,
+/// длина — параметр; заведи вторую функцию, и они разойдутся в первой же
+/// правке.
 ///
 /// Короткое имя не дополняется ничем: «Əli» так и остаётся «ƏLİ», а
 /// двухбуквенное — двумя буквами. Дополнять нечем, а придумывать третью букву
@@ -58,10 +65,10 @@ class DayMark {
 ///
 /// Заглавные делает `azUpperCase` — одно правило на весь проект: в Dart
 /// `'i'.toUpperCase()` даёт латинскую `I`, а это другая буква (разбор там же).
-String initialsOf(String name) {
+String initialsOf(String name, {int count = 3}) {
   final trimmed = name.trim();
   if (trimmed.isEmpty) return '';
-  final take = trimmed.length < 3 ? trimmed.length : 3;
+  final take = trimmed.length < count ? trimmed.length : count;
   return azUpperCase(trimmed.substring(0, take));
 }
 

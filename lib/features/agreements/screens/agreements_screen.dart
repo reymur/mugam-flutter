@@ -2113,22 +2113,17 @@ class _PartyRow extends StatelessWidget {
   final bool highlighted;
   final VoidCallback onTap;
 
-  /// Ответ участника — ОТДЕЛЬНОЙ строкой, а не вместо [label].
-  ///
-  /// [label] говорит, КТО человек (инструмент, роль), ответ — что он решил.
-  /// Подменить одно другим значило бы завести N109 второй раз: там строка
-  /// назвала роль вместо события, здесь событие вытеснило бы роль.
-  ///
-  /// Пустая строка — ответа нет вовсе (человека нет в составе), и тогда
-  /// строки нет: пустой ярлык занимает место и не сообщает ничего.
-  final String answerLabel;
+  // Ответ участника здесь БОЛЬШЕ НЕ ПОКАЗЫВАЕТСЯ: состав карточки вечера
+  // рисует `_PartyMemberRow` по макету (кружок с буквами, имя, ответ под
+  // ним). `_PartyRow` остался только у старой карточки договора, которая
+  // снимается после прогона, — и держать в ней второй способ показать ответ
+  // значило бы дать двум местам разойтись на время её жизни.
 
   const _PartyRow({
     required this.name,
     required this.label,
     required this.highlighted,
     required this.onTap,
-    this.answerLabel = '',
   });
 
   @override
@@ -2171,14 +2166,6 @@ class _PartyRow extends StatelessWidget {
                     label,
                     style: const TextStyle(fontSize: 12, color: kMuted),
                   ),
-                  if (answerLabel.isNotEmpty)
-                    Text(
-                      answerLabel,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: kTextSecondary,
-                      ),
-                    ),
                 ],
               ),
             ),
@@ -3467,6 +3454,46 @@ class _PersonalEventDetailScreenState
   /// Отказ не глотается: правило `restoresEvent()` пускает только владельца,
   /// только из `unsettled` и только по поводу `memberLeft`, и если состояние
   /// успело измениться, человек обязан узнать об этом словами.
+  /// «DƏYİŞİKLİK» — та же форма правки, что открывалась карандашом в шапке.
+  ///
+  /// Кнопка внизу заведена по макету, а карандаш оставлен: это не второй путь
+  /// к другому действию, а один и тот же вызов из двух мест экрана. Разойтись
+  /// им нечем — обе строки зовут этот метод.
+  void _openEdit(
+    PersonalEvent event,
+    List<User> allUsers,
+    List<PersonalEvent> personalEvents,
+    List<PersonalEvent> eventsAsParticipant,
+    FirestoreService firestoreService,
+  ) {
+    DateTime initialDate;
+    try {
+      initialDate = DateTime.parse(event.date);
+    } catch (_) {
+      initialDate = DateTime.now();
+    }
+    showModalBottomSheet(
+      isDismissible: false,
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _EventFormModal(
+        mode: 'time-only',
+        initialDate: initialDate,
+        initialType: event.type,
+        initialLocation: event.location,
+        initialNotes: event.notes,
+        initialParticipantUids: event.participantUids,
+        allUsers: allUsers,
+        existingEvent: event,
+        allCombinedEvents: [...personalEvents, ...eventsAsParticipant],
+        currentUid: widget.currentUid,
+        firestoreService: firestoreService,
+        onWillSave: _flash.rememberSelfSave,
+      ),
+    );
+  }
+
   Future<void> _continueWithout(
     PersonalEvent event,
     FirestoreService service,
@@ -3568,7 +3595,6 @@ class _PersonalEventDetailScreenState
     final initiator = _findUser(allUsers, initiatorUid);
     // То же правило, что и в карточке списка (N53).
     final initiatorName = initiator?.name ?? (isOwner ? 'Siz' : 'Naməlum');
-    final initiatorInstrument = initiator?.instrument ?? '';
 
     return Scaffold(
       backgroundColor: kBg,
@@ -3629,191 +3655,96 @@ class _PersonalEventDetailScreenState
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Initiator pill
-            Center(
-              child: GestureDetector(
-                onTap: () => _openUserProfile(context, allUsers, initiatorUid),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: kGold.withAlpha(56),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Column(
-                    children: [
-                      Text(
-                        initiatorName,
-                        style: GoogleFonts.nunito(fontSize: 16, color: kGold),
-                      ),
-                      if (initiatorInstrument.isNotEmpty)
-                        Text(
-                          initiatorInstrument,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: kGold.withAlpha(204),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            // СОСТОЯНИЕ ВЕЧЕРА — первым блоком, как в макете `mugam-6-kart`
-            // (плашка «Dəqiq» зелёной обводкой сразу под шапкой). Починка
-            // N116: до 12.08 карточка вечера не показывала состояние вовсе, и
-            // вечер «под вопросом» выглядел целым.
-            _statusPillFor(event, allUsers),
-            const SizedBox(height: 20),
-            // Details card
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                color: kBg3,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: kBorder),
-              ),
-              child: Column(
-                children: [
-                  _DetailRow(
-                    label: 'Növ',
-                    value: event.type,
-                    flash: _flash.flashing.contains('type'),
-                  ),
-                  _DetailRow(
-                    label: 'Yer',
-                    value: event.location,
-                    flash: _flash.flashing.contains('location'),
-                  ),
-                  _DetailRow(
-                    label: 'Tarix',
-                    value: _fmtDate(event.date),
-                    flash: _flash.flashing.contains('date'),
-                  ),
-                  _DetailRow(
-                    label: 'Saat',
-                    value: _fmtTime(event.date),
-                    flash: _flash.flashing.contains('date'),
-                  ),
-                  _DetailRow(
-                    label: 'Qeyd',
-                    value: event.notes,
-                    last: true,
-                    flash: _flash.flashing.contains('notes'),
-                  ),
-                ],
-              ),
-            ),
-            // МОЙ ОТВЕТ — шаг 4, пункт 3. Виден ТОЛЬКО тому, кого позвали:
-            // владелец согласия не даёт, он вечер создал (N112), а тот, кого
-            // нет в составе, отвечать не за что.
+            // ── КАРТОЧКА ВЕЧЕРА СОБРАНА ПО МАКЕТУ ──────────────────────
+            // `docs/design/mugam-6-kart` (левый экран), 12.08. Прежде здесь
+            // стоял прежний экран мероприятия, куда были ДОПИСАНЫ плашка и
+            // строка договорённости, — и порядок вышел свой: плашка
+            // организатора, таблица из пяти полей, где дата пятой строкой,
+            // крупные карточки участников со стрелками.
             //
-            // `answerFor` возвращает `null` для не-участника, и это условие
-            // здесь единственное: спрашивать «есть ли он в составе» вторым
-            // способом значило бы завести второе место, где решается тот же
-            // вопрос, и дать им разойтись.
-            if (!isOwner && event.answerFor(currentUid) != null) ...[
-              const SizedBox(height: 20),
-              _MyAnswerCard(
-                event: event,
-                currentUid: currentUid,
-                myEvents: [...personalEvents, ...eventsAsParticipant],
-                firestoreService: firestoreService,
-              ),
-            ],
-            // Organiser card (if invited)
-            if (!isOwner && event.ownerUid.isNotEmpty) ...[
-              const SizedBox(height: 20),
-              Text(
-                'Təşkilatçı',
-                style: GoogleFonts.nunito(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: kText,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  color: kBg3,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: kBorder),
-                ),
-                child: _PartyRow(
-                  // Запасным именем владельца НЕ может быть `partnerName`:
-                  // это имя второй стороны, и на её же экране оно назвало
-                  // бы её саму хозяином чужого мероприятия (N53).
-                  name: _findUser(allUsers, event.ownerUid)?.name ?? 'Naməlum',
-                  label: 'Təşkilatçı',
-                  highlighted: false,
+            // Макет говорит другое, и разница не косметическая: **вечер
+            // отвечает на «когда», а не на «какие у него поля»**. Поэтому
+            // дата и время идут ПЕРВОЙ строкой и крупно, а тип с местом —
+            // одной строкой под ней.
+            //
+            // ПЛАШКА ОРГАНИЗАТОРА УБРАНА У ВЛАДЕЛЬЦА и оставлена
+            // приглашённому. Она отвечала на вопрос «чей это вечер» — у
+            // владельца такого вопроса нет, он свой вечер и открыл; а
+            // приглашённому это первое, что нужно знать, и в макете второго
+            // экрана ровно оно и стоит: «Rafael səni çağırır».
+            if (!isOwner) ...[
+              Center(
+                child: GestureDetector(
                   onTap: () =>
-                      _openUserProfile(context, allUsers, event.ownerUid),
+                      _openUserProfile(context, allUsers, initiatorUid),
+                  child: Text(
+                    '$initiatorName səni çağırır',
+                    style: const TextStyle(fontSize: 15, color: kTextSecondary),
+                  ),
                 ),
               ),
+              const SizedBox(height: 14),
             ],
-            // Participants card
+
+            // 1. ДАТА И ВРЕМЯ — первой строкой, крупно (макет: 26pt).
+            Text(
+              _fmtDayAndTime(event.date),
+              style: const TextStyle(fontSize: 26, color: kText),
+            ),
+
+            // 2. ТИП И МЕСТО — одной строкой под ней. Пустые части не
+            // оставляют висящих разделителей: у вечера может не быть места.
+            if (_typeAndPlace(event).isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                _typeAndPlace(event),
+                style: const TextStyle(fontSize: 15, color: kTextSecondary),
+              ),
+            ],
+
+            // 3. ПЛАШКА СОСТОЯНИЯ (N116) и повод под ней.
+            const SizedBox(height: 11),
+            _statusPillFor(event, allUsers),
+
+            // 4. СОСТАВ — компактными строками: кружок с двумя буквами в
+            // обводке по ответу, имя, под ним ответ. Без крупных карточек и
+            // без стрелок: стрелка обещает переход, а тут переход не главное.
             if (event.participantUids.isNotEmpty) ...[
               const SizedBox(height: 20),
               Text(
-                'İştirakçılar',
-                style: GoogleFonts.nunito(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: kText,
+                _partyHeader(event),
+                style: const TextStyle(
+                  fontSize: 13,
+                  letterSpacing: 1.5,
+                  color: kMuted,
                 ),
               ),
-              const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  color: kBg3,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: kBorder),
+              const SizedBox(height: 12),
+              for (final uid in event.participantUids)
+                _PartyMemberRow(
+                  name: _findUser(allUsers, uid)?.name ?? uid,
+                  answer: event.answerFor(uid),
+                  onTap: () => _openUserProfile(context, allUsers, uid),
                 ),
-                child: Column(
-                  children: [
-                    for (int i = 0; i < event.participantUids.length; i++) ...[
-                      if (i > 0) const Divider(color: kBorder, height: 1),
-                      _PartyRow(
-                        name:
-                            _findUser(
-                              allUsers,
-                              event.participantUids[i],
-                            )?.name ??
-                            event.participantUids[i],
-                        label:
-                            _findUser(
-                              allUsers,
-                              event.participantUids[i],
-                            )?.instrument ??
-                            'İştirakçı',
-                        highlighted: event.participantUids[i] == currentUid,
-                        // Ответ спрашивается у МОДЕЛИ, а не читается из карты:
-                        // `answerFor` знает и про запасной путь у 75 записей
-                        // без поля, и про то, что отсутствие ключа — «не
-                        // спрашивали», а не «ждём».
-                        answerLabel: participantAnswerLabel(
-                          event.answerFor(event.participantUids[i]),
-                        ),
-                        onTap: () => _openUserProfile(
-                          context,
-                          allUsers,
-                          event.participantUids[i],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+            ],
+
+            // ЗАМЕТКА — если она есть. В макете её нет вовсе, но поле живое
+            // («Qalstuk, qara kostyum») и молчать о нём нельзя: это то, что
+            // человек должен надеть, придя на вечер.
+            if (event.notes.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Text(
+                event.notes,
+                style: const TextStyle(fontSize: 14, color: kTextSecondary),
               ),
             ],
-            // СТРОКА ДОГОВОРЁННОСТИ — свёрнутая, раскрывается В ЭТОЙ ЖЕ
-            // карточке (шаг 6). Договорённость это часть вечера, а не
-            // самостоятельная вещь: музыкант открывает вечер и вспоминает —
-            // 14-го у Теймура, договорились восьмого.
+
+            // 5. СТРОКА ДОГОВОРЁННОСТИ — свёрнутая, раскрывается В ЭТОЙ ЖЕ
+            // карточке. Договорённость это часть вечера, а не самостоятельная
+            // вещь: музыкант открывает вечер и вспоминает — 14-го у Теймура,
+            // договорились восьмого.
             if (event.isAgree) ...[
-              const SizedBox(height: 20),
+              const SizedBox(height: 18),
               _AgreementLine(
                 event: event,
                 currentUid: currentUid,
@@ -3821,11 +3752,27 @@ class _PersonalEventDetailScreenState
                 firestoreService: firestoreService,
               ),
             ],
-            // ДЕЙСТВИЯ С ВЕЧЕРОМ — внизу, сразу видны, не внутри раскрытия.
-            // Разделение автора 12.08: кнопки это действия с вечером, строка
-            // выше — память о нём.
+
+            // 6. КНОПКИ — внизу, сразу видны, не внутри раскрытия. Разделение
+            // владельца 12.08: кнопки это действия с вечером, строка выше —
+            // память о нём.
             if (isOwner) ...[
-              const SizedBox(height: 24),
+              const SizedBox(height: 22),
+              _CardButton(
+                label: 'Dəyişiklik',
+                tone: _CardButtonTone.gold,
+                onTap: () => _openEdit(
+                  event,
+                  allUsers,
+                  personalEvents,
+                  eventsAsParticipant,
+                  firestoreService,
+                ),
+              ),
+              // «Şübhə altına al» из макета здесь НЕТ, и это не пропуск:
+              // поставить `unsettled` клиент не может вовсе — правила
+              // разрешают ему писать `status` только `cancelled` и `agreed`.
+              // Разбор и работа — `docs/plan.md`, «Третий повод под вопроса».
               if (showsContinueWithout(
                 isOwner: isOwner,
                 status: event.status,
@@ -3833,10 +3780,11 @@ class _PersonalEventDetailScreenState
               ))
                 _CardButton(
                   label: 'Onsuz davam edirəm',
-                  tone: _CardButtonTone.gold,
+                  tone: _CardButtonTone.plain,
                   onTap: () => _continueWithout(event, firestoreService),
                 ),
             ],
+
             const SizedBox(height: 40),
           ],
         ),
@@ -4025,6 +3973,118 @@ class _AgreementLineState extends State<_AgreementLine> {
                 firestoreService: widget.firestoreService,
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// «11 avqust, 20:04» — дата и время одной строкой, как в макете
+/// (`mugam-6-kart`: «14 avqust, 20:00»).
+///
+/// Год не показывается: вечер, до которого больше года, в этом приложении не
+/// заводят, а лишнее слово в самой крупной строке экрана мешает прочесть
+/// главное — когда.
+String _fmtDayAndTime(String iso) {
+  try {
+    final d = DateTime.parse(iso);
+    final time = fmtEventTime(iso);
+    final day = fmtWeekRowDate(d);
+    return time.isEmpty ? day : '$day, $time';
+  } catch (_) {
+    return '';
+  }
+}
+
+/// «Toy · İnci Qarayev, Bakı» — тип и место одной строкой. Пустые части не
+/// оставляют висящих разделителей: у вечера может не быть места.
+String _typeAndPlace(PersonalEvent e) => [
+  if (e.type.isNotEmpty) e.type,
+  if (e.location.isNotEmpty) e.location,
+].join(' · ');
+
+/// «TOY HEYƏTİ · 3 NƏFƏR» — заголовок состава из макета.
+///
+/// **Собирается из ТИПА вечера, а не из имени группы.** Групп состава в
+/// проекте нет вовсе (они в отдельной работе), и подставить сюда выдуманное
+/// имя значило бы показать человеку то, чего он не заводил. Тип же у вечера
+/// есть всегда: «Toy» → «TOY HEYƏTİ».
+String _partyHeader(PersonalEvent e) {
+  final n = e.participantUids.length;
+  final head = e.type.isEmpty ? 'HEYƏT' : '${azUpperCase(e.type)} HEYƏTİ';
+  return '$head · $n NƏFƏR';
+}
+
+/// СТРОКА УЧАСТНИКА — кружок с двумя буквами в обводке по ответу, имя, под
+/// ним ответ. Из макета `mugam-6-kart` (классы `.av2`, `.st`).
+///
+/// **Обводка кружка и слово под именем говорят ОДНО И ТО ЖЕ разными
+/// средствами, и это не избыточность:** слово читают, когда смотрят на
+/// человека, а цвет — когда скользят по списку сверху вниз, чтобы понять,
+/// собрался ли состав.
+class _PartyMemberRow extends StatelessWidget {
+  const _PartyMemberRow({
+    required this.name,
+    required this.answer,
+    required this.onTap,
+  });
+
+  final String name;
+  final String? answer;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final (ring, word) = switch (answer) {
+      kAnswerGoing => (kStatusFirmBorder, kStatusFirmText),
+      kAnswerCant => (kAnswerCantBorder, kAnswerCantText),
+      // «Ждём» и «не спрашивали» — серая обводка у обоих: разницу несёт
+      // слово под именем, а цвета у макета на это состояние ровно один.
+      _ => (kBorder, kAnswerWaitText),
+    };
+    final label = participantAnswerLabel(answer);
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 13),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: ring, width: 1.5),
+              ),
+              child: Text(
+                initialsOf(name, count: 2),
+                style: TextStyle(fontSize: 12, color: word),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: const TextStyle(fontSize: 16, color: kText),
+                  ),
+                  if (label.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        label,
+                        style: TextStyle(fontSize: 13, color: word),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ],
         ),
       ),

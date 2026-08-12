@@ -240,6 +240,22 @@ const Color kListenedBlue = Color(0xFF2D9DCF);
 const Color kStatusFirmBorder = Color(0xFF7FA84A);
 const Color kStatusFirmText = Color(0xFF9BC46A);
 
+/// ОТВЕТЫ СОСТАВА НА КАРТОЧКЕ — три пары «обводка аватара / слово ответа»,
+/// взятые из макета `mugam-6-kart.html` (классы `.av2`, `.st`).
+///
+///   идёт      — обводка `kStatusFirmBorder`, слово `kStatusFirmText`
+///   ждём      — обводка `kBorder` (серая), слово `kAnswerWaitText`
+///   не может  — обводка `kAnswerCantBorder`, слово `kAnswerCantText`
+///
+/// **«Не может» НЕ КРАСНОЕ, а приглушённо-кирпичное (`#8A4A3A`/`#B08070`).**
+/// Красный на этих экранах означает ОТМЕНУ (N110), и покрась им отказ
+/// участника — человек прочтёт «вечер отменён» вместо «один не придёт».
+/// Разница в цвете здесь несёт весь смысл, и потому взята из макета, а не
+/// подобрана.
+const Color kAnswerWaitText = Color(0xFFBFB093);
+const Color kAnswerCantBorder = Color(0xFF8A4A3A);
+const Color kAnswerCantText = Color(0xFFB08070);
+
 /// ЗАГОЛОВОК МЕСЯЦА В КАЛЕНДАРЕ — золотой ИЗ МАКЕТА, а не проектный `kGold`.
 ///
 /// `docs/design/mugam-8-teqvim.html`, класс `.cap`: `#E09A2B`, 14px,
