@@ -13,6 +13,8 @@ import '../../../core/agreements/event_answer_reply.dart';
 import '../../../core/agreements/event_answers.dart';
 import '../../../core/agreements/event_status_view.dart';
 import '../../../core/agreements/event_edit.dart';
+import '../../../core/agreements/left_member_actions.dart';
+import '../../../core/chat/open_direct_chat.dart';
 import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/agreements/day_buckets.dart';
@@ -3516,6 +3518,143 @@ class _PersonalEventDetailScreenState
     }
   }
 
+  /// ОКОШКО У ВЫШЕДШЕГО УЧАСТНИКА — «Dəqiqləşdir» и «Siyahıdan sil».
+  ///
+  /// **ФОРМА ТА ЖЕ, ЧТО У ВЫБОРА СОСТОЯНИЯ, — НАМЕРЕННО, А НЕ ПО СОВПАДЕНИЮ.**
+  /// Это сказано вслух, потому что иначе следующий читатель решит, что два
+  /// похожих окошка получились случайно, и «уберёт дублирование» либо, наоборот,
+  /// поправит одно, не тронув второе. Ни то ни другое не годится:
+  ///
+  ///   • **одинаковыми они обязаны быть по ВИДУ** — человек в одной карточке
+  ///     нажимает то плашку, то «?», и два разных на вид окна означали бы, что
+  ///     это разные по опасности ходы, хотя оба просто спрашивают;
+  ///   • **разными они обязаны быть по СОДЕРЖАНИЮ** — списки живут в разных
+  ///     правилах (`statusChoices` и `leftMemberActions`), потому что отвечают
+  ///     на разные вопросы: «в каком вечер состоянии» и «что сделать с этим
+  ///     человеком».
+  ///
+  /// Свести их в одну функцию — это I58 наоборот: сведение по совпадению
+  /// показа, а не по задаче. Получилось бы окошко, которому надо объяснять,
+  /// показывает оно состояния вечера или действия над человеком, — то есть
+  /// параметр-переключатель, тот самый признак, что склеены два действия.
+  ///
+  /// Общее у них — рамка 1.5, скругление 10, `kBg2` и подпись под строкой; если
+  /// поменяется одно, поменять надо оба, и вот эта строка — единственное, что об
+  /// этом скажет.
+  ///
+  /// **Оба хода идут по УЖЕ ВЫЛОЖЕННЫМ правам, нового правила не нужно:**
+  /// «Dəqiqləşdir» — это открыть чат, а «Siyahıdan sil» — правка состава
+  /// владельцем, то есть тот же `eventEditUpdate`, которым работает карандаш.
+  Future<void> _openLeftMemberMenu(
+    PersonalEvent event,
+    String uid,
+    List<User> allUsers,
+    FirestoreService service,
+  ) async {
+    final name = _findUser(allUsers, uid)?.name;
+    final actions = leftMemberActions(name: name);
+    final picked = await showModalBottomSheet<LeftMemberAction>(
+      context: context,
+      backgroundColor: kBg2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheet) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final a in actions)
+                GestureDetector(
+                  onTap: () => Navigator.pop(sheet, a),
+                  behavior: HitTestBehavior.opaque,
+                  child: Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: kBorder, width: 1.5),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          a.label,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            color: kTextSecondary,
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            a.note,
+                            style: const TextStyle(fontSize: 13, color: kMuted),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    // `mounted` состояния, а НЕ `context.mounted`, и это проверено делом:
+    // дальше идут вызовы по `State.context` (переход в чат, показ жалобы), и
+    // анализатор для них требует проверку именно на состоянии. Вторая
+    // редакция стояла на `context.mounted` и дала две жалобы
+    // `use_build_context_synchronously` — обе снялись возвратом сюда.
+    if (picked == null || !mounted) return;
+    if (picked.deed == kLeftActionClarify) {
+      // ОБЩИЙ ВХОД, А НЕ ТРЕТЬЯ КОПИЯ ДОРОГИ В ЧАТ. Жалоба своя: человек
+      // нажимал не «открыть переписку», а «спросить ушедшего», и молчаливый
+      // отказ оставил бы его в уверенности, что спросил.
+      await openDirectChat(
+        context,
+        ref,
+        myUid: widget.currentUid,
+        otherUid: uid,
+        failureText: 'Soruşmaq alınmadı: çat açılmadı',
+      );
+      return;
+    }
+    // УДАЛЕНИЕ ИЗ СОСТАВА — ТОЙ ЖЕ ЗАПИСЬЮ, ЧТО И КАРАНДАШ (`_writeEventEdit`).
+    //
+    // Не `arrayRemove` одним полем: правка состава обязана переписать и карту
+    // ответов, иначе ключ удалённого останется — а он ровно тот, по которому
+    // вечер и считается «под вопросом». Человек исчез бы из списка, а повод
+    // под вопроса остался бы висеть от его имени.
+    //
+    // **Первая редакция собирала `eventEditUpdate` здесь своими руками, и
+    // сторож исходников покраснел за второй вызов `answersForRewrite`.** Он
+    // был прав, и починка не в том, чтобы ослабить сторожа: три параметра
+    // переноса ответов нельзя собирать в двух местах, которые дальше будут
+    // править порознь.
+    final messenger = ScaffoldMessenger.of(context);
+    final rest = event.participantUids.where((u) => u != uid).toList();
+    try {
+      await _writeEventEdit(
+        service,
+        event,
+        date: event.date,
+        type: event.type,
+        location: event.location,
+        notes: event.notes,
+        musicians: rest,
+        actorUid: widget.currentUid,
+      );
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Alınmadı: $e')));
+    }
+  }
+
   /// ОКОШКО ВЫБОРА СОСТОЯНИЯ — три строки, у договорённости с иной подписью.
   ///
   /// Строки взяты из правила `statusChoices` — там же записано, почему разница
@@ -3808,6 +3947,25 @@ class _PersonalEventDetailScreenState
                           name: _findUser(allUsers, uid)?.name ?? uid,
                           answer: event.answerFor(uid),
                           onTap: () => _openUserProfile(context, allUsers, uid),
+                          // Кнопка «?» — решает правило, а не эта строка.
+                          // Три uid, а не готовый `isOwner`: у владельца в
+                          // составе есть и своя строка, и кнопка на самом себе
+                          // навела бы оба хода на него (чат с собой, выход из
+                          // своего же вечера).
+                          onAsk:
+                              offersLeftMemberMenu(
+                                viewerUid: currentUid,
+                                memberUid: uid,
+                                ownerUid: event.ownerUid,
+                                answer: event.answerFor(uid),
+                              )
+                              ? () => _openLeftMemberMenu(
+                                  event,
+                                  uid,
+                                  allUsers,
+                                  firestoreService,
+                                )
+                              : null,
                         ),
                     ],
 
@@ -4163,11 +4321,20 @@ class _PartyMemberRow extends StatelessWidget {
     required this.name,
     required this.answer,
     required this.onTap,
+    this.onAsk,
   });
 
   final String name;
   final String? answer;
   final VoidCallback onTap;
+
+  /// Кнопка «?» справа — есть только у вышедшего и только у владельца.
+  ///
+  /// **Показывать её решает не эта строка, а правило `offersLeftMemberMenu`**
+  /// (`core/agreements/left_member_actions.dart`), и сюда приходит уже готовый
+  /// ответ: `null` значит «не предлагать». Условие живёт там, потому что его
+  /// можно прогнать тестом, а разметку — нет (I32).
+  final VoidCallback? onAsk;
 
   @override
   Widget build(BuildContext context) {
@@ -4220,6 +4387,28 @@ class _PartyMemberRow extends StatelessWidget {
                 ],
               ),
             ),
+            // «?» — отдельным нажатием, а не частью строки: нажатие на строку
+            // ведёт в карточку человека, и подменять этот привычный ход у
+            // одного участника из пяти значило бы завести две разные строки,
+            // выглядящие одинаково.
+            if (onAsk != null)
+              GestureDetector(
+                onTap: onAsk,
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: kBorder, width: 1.5),
+                  ),
+                  child: const Text(
+                    '?',
+                    style: TextStyle(fontSize: 14, color: kMuted),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -4640,6 +4829,58 @@ class _ConflictEventScreenState extends State<_ConflictEventScreen> {
 /// живо, и уносится из неё готовым. Считай его открывающий — пришлось бы
 /// заново узнавать, чего человек касался, а это ровно то знание, которое с
 /// закрытой формой умирает.
+/// ЗАПИСЬ ПРАВКИ МЕРОПРИЯТИЯ — единственное место, где берётся сырая карта
+/// ответов.
+///
+/// **Заведено 12.08, когда у правки состава появился ВТОРОЙ путь** — удаление
+/// вышедшего из окошка «?». Первая редакция того окошка собирала
+/// `eventEditUpdate` своими руками и позвала `answersForRewrite()` вторым
+/// вызовом; сторож `source_invariants_test` покраснел в тот же прогон и был
+/// прав: карта ответов приватна нарочно, и второй сырой вызов обесценивает
+/// приватность — читать сырьё становится так же легко, как через `answerFor`.
+///
+/// **Три параметра, которые здесь собраны, — те самые, которые второй
+/// вызывающий забывает.** Каждый из них закрывает свою находку, и ни один не
+/// виден по имени функции:
+///
+///   `previousAnswers`      — иначе правка места стирает данные ответы (шаг 4);
+///   `ownerUid`             — владелец вечер создал, а не согласился (N112);
+///   `previousParticipants` — иначе ушедший, приглашённый заново, вернётся уже
+///                            согласившимся (N114).
+///
+/// Собрать их правильно с первого раза можно; собрать их правильно ДВАЖДЫ, в
+/// двух местах, которые потом будут править порознь, — нельзя.
+Future<void> _writeEventEdit(
+  FirestoreService service,
+  PersonalEvent event, {
+  required String date,
+  required String type,
+  required String location,
+  required String notes,
+  required List<String> musicians,
+  required String actorUid,
+}) {
+  return service.updatePersonalEvent(
+    event.id,
+    eventEditUpdate(
+      date: date,
+      type: type,
+      location: location,
+      notes: notes,
+      musicians: musicians,
+      actorUid: actorUid,
+      // Сырая карта берётся единственным входом, заведённым для писателя, и
+      // это ЕДИНСТВЕННОЕ место его вызова — держит сторож по исходникам.
+      previousAnswers: event.answersForRewrite(),
+      // Владелец ПРАВИМОГО, а не правящий: у договора правит любая из сторон,
+      // и записать согласие правящему значило бы ответить за него (N112).
+      ownerUid: event.ownerUid,
+      // Состав ДО правки (N114).
+      previousParticipants: event.participantUids,
+    ),
+  );
+}
+
 class _EventEditRequest {
   final PersonalEvent target;
   final EventEditSeed seed;
@@ -5094,27 +5335,19 @@ class _EventFormModalState extends State<_EventFormModal> {
         // и разойдись они хоть одним полем, одна дорога начала бы стирать
         // то, что другая бережёт. Тринадцать сохраняемых полей проверяет
         // тест, а не внимательность.
-        await widget.firestoreService.updatePersonalEvent(
-          widget.existingEvent!.id,
-          eventEditUpdate(
-            date: dateIso,
-            type: _type,
-            location: _location,
-            notes: notes,
-            musicians: _selectedParticipantUids,
-            actorUid: widget.currentUid,
-            // Прежние ответы переносятся, а не стираются (шаг 4). Сырая карта
-            // берётся единственным входом, заведённым для писателя, и это
-            // ЕДИНСТВЕННОЕ место его вызова — держит сторож по исходникам.
-            previousAnswers: widget.existingEvent!.answersForRewrite(),
-            // Владелец ПРАВИМОГО, а не правящий: у договора правит любая из
-            // сторон, и записать согласие правящему значило бы ответить за
-            // него (N112).
-            ownerUid: widget.existingEvent!.ownerUid,
-            // Состав ДО правки — иначе ушедший, приглашённый заново, вернулся
-            // бы уже согласившимся (N114).
-            previousParticipants: widget.existingEvent!.participantUids,
-          ),
+        // Прежние ответы, владелец правимого и прежний состав собраны НЕ
+        // здесь, а в `_writeEventEdit`: у этой записи с 12.08 есть второй
+        // вызывающий (удаление вышедшего из окошка «?»), и три параметра,
+        // каждый из которых закрывает свою находку, нельзя собирать дважды.
+        await _writeEventEdit(
+          widget.firestoreService,
+          widget.existingEvent!,
+          date: dateIso,
+          type: _type,
+          location: _location,
+          notes: notes,
+          musicians: _selectedParticipantUids,
+          actorUid: widget.currentUid,
         );
       } else {
         await widget.firestoreService.addPersonalEvent(
