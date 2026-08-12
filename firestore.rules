@@ -821,8 +821,64 @@ service cloud.firestore {
                .affectedKeys().hasOnly([request.auth.uid])
           && request.auth.uid in request.resource.data.answers
           && request.resource.data.answers[request.auth.uid] in
-             ['going', 'waiting', 'cant']
+             ['going', 'waiting', 'cant', 'left']
           && resource.data.ownerUid != request.auth.uid;
+      }
+
+      // СОСТОЯНИЕ ВЕЧЕРА СТАВИТ ВЛАДЕЛЕЦ — плашка на карточке (решение
+      // автора 12.08). До этого хода `status` клиент писать почти не мог:
+      // `cancelled` через согласие и `agreed` через возврат из «под вопроса»,
+      // и всё.
+      //
+      // **`memberLeft` СРЕДИ ПОВОДОВ НЕТ, и это не забывчивость.** По решению
+      // 12.08 уход участника больше не ставит вечер под вопрос: под вопросом
+      // один человек, а не вечер. Повод переехал с документа на человека
+      // (`answers[uid] == 'left'`), и принимать его здесь значило бы держать
+      // открытой дорогу к состоянию, которого мы больше не порождаем.
+      //
+      // **`cancelled` СРЕДИ ЗНАЧЕНИЙ НЕТ** — отмена идёт своими ходами ниже:
+      // у личного вечера одним владельцем, у договорённости по согласию.
+      // Разреши его здесь — и защита «по согласию» обходится этим ходом.
+      function ownerSetsStatus() {
+        return changedKeys().hasOnly(['status', 'lastActionBy', 'lastActionType'])
+          && resource.data.ownerUid == request.auth.uid
+          && request.resource.data.status in ['agreed', 'unsettled']
+          && request.resource.data.lastActionType in
+             ['ownerFirm', 'ownerDoubt', 'workCancelled']
+          && stampsSelf();
+      }
+
+      // ОТМЕНА ЛИЧНОГО ВЕЧЕРА — одним владельцем, и ТОЛЬКО у вечера без
+      // договорённости.
+      //
+      // Довод, ради которого стоит `isAgree == false`: «расторгнуть
+      // договорённость» и «работа отменилась» — два разных действия, сегодня
+      // пишущие один и тот же `cancelled`. Первое требует согласия второй
+      // стороны, потому что согласие его и составляет; второе — сообщение о
+      // факте, и спрашивать о нём некого. Личный вечер никому не обещан.
+      function ownerCancelsOwnEvent() {
+        return changedKeys().hasOnly(['status', 'lastActionBy', 'lastActionType'])
+          && resource.data.ownerUid == request.auth.uid
+          && resource.data.get('isAgree', false) == false
+          && request.resource.data.status == 'cancelled'
+          && request.resource.data.lastActionType == 'ownerCancelled'
+          && stampsSelf();
+      }
+
+      // ВОЗВРАТ ЛИЧНОГО ВЕЧЕРА — тем же путём, что отмена.
+      //
+      // **Отменить вдвоём, а вернуть в одиночку — дыра того же рода**, только
+      // с другого конца: если возврат дешевле отмены, согласие обходится в два
+      // хода. Поэтому у договорённости возврата здесь нет — он идёт парой
+      // ходов-зеркал (отдельная работа, `docs/plan.md`).
+      function ownerRestoresOwnEvent() {
+        return changedKeys().hasOnly(['status', 'lastActionBy', 'lastActionType'])
+          && resource.data.ownerUid == request.auth.uid
+          && resource.data.get('isAgree', false) == false
+          && resource.data.get('status', null) == 'cancelled'
+          && request.resource.data.status == 'agreed'
+          && request.resource.data.lastActionType == 'ownerRestored'
+          && stampsSelf();
       }
 
       // СНЯТИЕ СТОЯЩЕГО ЗАПРОСА ОТМЕНЫ. Двумя ходами, а не одним, хотя в
@@ -973,6 +1029,8 @@ service cloud.firestore {
                requestsCancel() || confirmsCancel() || leavesEvent()
                || withdrawsCancelRequest() || declinesCancelRequest()
                || restoresEvent() || answersForSelf()
+               || ownerSetsStatus() || ownerCancelsOwnEvent()
+               || ownerRestoresOwnEvent()
              ))
         );
       allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
