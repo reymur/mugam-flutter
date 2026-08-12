@@ -3812,7 +3812,7 @@ class _PersonalEventDetailScreenState
                     if (isOwner) ...[
                       const SizedBox(height: 22),
                       _CardButton(
-                        label: 'Dəyişiklik',
+                        label: 'Dəyişiklik et',
                         tone: _CardButtonTone.gold,
                         onTap: () => _openEdit(
                           event,
@@ -4025,9 +4025,14 @@ class _AgreementLineState extends State<_AgreementLine> {
               children: [
                 Flexible(
                   child: Text(
-                    when.isEmpty
-                        ? '$agreedBy razılaşdı'
-                        : '$agreedBy razılaşdı · $when',
+                    // «Siz razılaşdınız», а не «Siz razılaşdı»: у второго
+                    // лица форма глагола другая, и на экране это видно сразу
+                    // — фраза читается как ошибка, а не как обращение.
+                    _agreedLine(
+                      agreedBy,
+                      isMe: e.partnerUid == widget.currentUid,
+                      when: when,
+                    ),
                     style: const TextStyle(fontSize: 14, color: kTextSecondary),
                   ),
                 ),
@@ -4164,6 +4169,16 @@ class _PartyMemberRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// «Teymur razılaşdı · 4 avqust» или «Siz razılaşdınız · 4 avqust».
+///
+/// **Форма глагола зависит от лица, и это не мелочь:** «Siz razılaşdı» на
+/// экране читается как ошибка языка, а не как обращение к человеку. Второе
+/// лицо в азербайджанском требует своего окончания — `-dınız`.
+String _agreedLine(String who, {required bool isMe, required String when}) {
+  final verb = isMe ? 'razılaşdınız' : 'razılaşdı';
+  return when.isEmpty ? '$who $verb' : '$who $verb · $when';
 }
 
 /// Когда согласились — днём и месяцем, как в макете `mugam-6-kart`.
