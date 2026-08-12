@@ -3980,7 +3980,11 @@ class _AgreementLineState extends State<_AgreementLine> {
     // «Razıyam». Дата согласия — `createdAt` документа: он и создаётся в этот
     // миг (`onChatUpdated`).
     final agreedBy = _nameOf(e.partnerUid);
-    final when = _fmtCreatedAt(e.createdAt);
+    // ДЕНЬ И МЕСЯЦ, без года и времени — как в макете («Teymur razılaşdı ·
+    // 8 avqust»). `_fmtCreatedAt` даёт «4 avqust 2026 01:10»: строка не
+    // помещается в рамку и переносится на две, а год с минутами тут никому
+    // не нужны — договорились «в начале августа», а не «в 01:10».
+    final when = _agreedOnDate(e.createdAt);
     return GestureDetector(
       onTap: () => setState(() => _open = !_open),
       behavior: HitTestBehavior.opaque,
@@ -4025,6 +4029,23 @@ class _AgreementLineState extends State<_AgreementLine> {
         ),
       ),
     );
+  }
+}
+
+/// Когда согласились — днём и месяцем, как в макете `mugam-6-kart`.
+///
+/// Правило форматирования берётся у соседей (`fmtWeekRowDate`), а не пишется
+/// заново: дат в этом проекте четыре формы, и пятая, отличающаяся пробелом,
+/// разошлась бы молча.
+String _agreedOnDate(dynamic ts) {
+  if (ts == null) return '';
+  try {
+    final d = ts is Timestamp
+        ? ts.toDate()
+        : (ts is DateTime ? ts : DateTime.parse(ts.toString()));
+    return fmtWeekRowDate(d);
+  } catch (_) {
+    return '';
   }
 }
 
