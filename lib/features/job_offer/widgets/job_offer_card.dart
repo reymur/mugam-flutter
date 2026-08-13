@@ -66,6 +66,16 @@ class JobOfferCard extends StatefulWidget {
 class _JobOfferCardState extends State<JobOfferCard> {
   late Set<String> _picked = widget.offer.pickedBy(widget.viewerUid).toSet();
   bool _detailsOpen = false;
+  bool _daysExpanded = false;
+
+  /// Сколько строк спрятано сворачиванием. Считается в `_dayRows` и
+  /// читается строкой «yenə N gün» под списком.
+  int _hiddenDaysCount = 0;
+
+  /// Порог сворачивания. Восемь — столько помещается в ленте, не съедая
+  /// экран целиком; число выбрано глазом по макету и на телефоне НЕ
+  /// проверялось.
+  static const int _collapseThreshold = 8;
 
   @override
   void didUpdateWidget(JobOfferCard old) {
@@ -118,6 +128,18 @@ class _JobOfferCardState extends State<JobOfferCard> {
           ),
           const SizedBox(height: 10),
           ..._dayRows(offer, actions.canPickDays),
+          if (_hiddenDaysCount > 0)
+            InkWell(
+              key: const ValueKey('offer-days-expand'),
+              onTap: () => setState(() => _daysExpanded = true),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'yenə $_hiddenDaysCount gün',
+                  style: const TextStyle(color: kGold, fontSize: 13),
+                ),
+              ),
+            ),
           if (_declinedLine(offer) != null) ...[
             const SizedBox(height: 6),
             Text(
@@ -173,9 +195,27 @@ class _JobOfferCardState extends State<JobOfferCard> {
 
     // После ответа перечисляются ТОЛЬКО отмеченные дни; неотмеченные уходят
     // в мелкую строку «10, 12 — yox» под заголовком.
-    final shown = answered && !canPick
+    final all = answered && !canPick
         ? offer.dates.where(picked.contains).toList()
         : offer.dates;
+
+    // ДЛИННЫЙ СПИСОК СВОРАЧИВАЕТСЯ — НО ТОЛЬКО НЕРЕДАКТИРУЕМЫЙ, и эта
+    // неравномерность намеренная.
+    //
+    // Предела на число дней нет нигде (ни в правилах, ни в листе, ни
+    // здесь — решение автора 14.08), значит месяц целиком законен: тридцать
+    // строк по ~46 пикселей — три-четыре экрана внутри ленты.
+    //
+    // У ТОГО, КТО ОТМЕЧАЕТ, СПИСОК ПОЛНЫЙ. Свёрнутый прячет ровно то, что
+    // он обязан протыкать, и превращает единственное действие карточки в
+    // два: сперва разверни, потом отвечай.
+    final collapsible = !canPick && all.length > _collapseThreshold;
+    final shown = collapsible && !_daysExpanded
+        ? all.take(_collapseThreshold).toList()
+        : all;
+    _hiddenDaysCount = collapsible && !_daysExpanded
+        ? all.length - _collapseThreshold
+        : 0;
 
     return shown.map((iso) {
       final busy = widget.busyDates.contains(iso);

@@ -258,6 +258,12 @@ void main() {
   group('предложение работы создаётся одним кодом (пункт 6)', () {
     const entry = 'lib/features/job_offer/job_offer_entry.dart';
     const service = 'lib/firebase/firestore_service.dart';
+    // Хранилище предложений — ПИСАТЕЛЬ, как и сервис: `createOffer` в нём
+    // объявляется, а не зовётся со стороны. Считать объявление обходом
+    // общей точки значило бы сторожить существование метода, а не дорогу
+    // к нему — ровно та же поправка, что сделана сторожу «б» для файла
+    // самого листа.
+    const repository = 'lib/core/job_offer/job_offer_repository.dart';
 
     // Все файлы `lib/`, кроме сервиса и самой точки вызова: это и есть
     // «остальной проект», которому создавать предложение запрещено.
@@ -266,13 +272,18 @@ void main() {
         .whereType<File>()
         .map((f) => f.path)
         .where((p) => p.endsWith('.dart'))
-        .where((p) => p != entry && p != service)
+        .where((p) => p != entry && p != service && p != repository)
         .toList();
 
-    test('а: setJobOffer зовут только из точки вызова', () {
+    test('а: предложение создают только из точки вызова', () {
       final offenders = <String>[];
       for (final path in otherLibFiles()) {
-        final n = 'setJobOffer('.allMatches(readCode(path)).length;
+        // Обе записи разом: прежняя (`setJobOffer`, сегодня без
+        // вызывающих) и нынешняя (`createOffer` в подколлекцию). Прежняя
+        // оставлена в счёте намеренно — пока она жива в сервисе, вернуть
+        // её вызов из любого экрана ничто не мешает.
+        final n = 'setJobOffer('.allMatches(readCode(path)).length +
+            'createOffer('.allMatches(readCode(path)).length;
         if (n > 0) offenders.add('$path ($n)');
       }
       expect(
@@ -290,6 +301,7 @@ void main() {
     // Сторож был бы красным на здоровом коде — то есть «нашёл» ровно то,
     // что сам же и породил.
     final sheetCall = RegExp(r'(?<![A-Za-z_])JobOfferDateSheet\(');
+    final daysSheetCall = RegExp(r'(?<![A-Za-z_])JobOfferDaysSheet\(');
 
     test('б: лист предложения строится ровно в одном месте', () {
       final places = <String>[];
@@ -345,10 +357,24 @@ void main() {
     test('г: то, что сторожится, вообще существует', () {
       final entryCode = readCode(entry);
       final serviceCode = readCode(service);
-      expect('setJobOffer('.allMatches(entryCode).length, 1,
-          reason: 'В точке вызова нет вызова setJobOffer — сторож «а» '
+      // ОБНОВЛЕНО 14.08 ВМЕСТЕ С ПЕРЕВОДОМ ПЯТИ ВХОДОВ НА НОВЫЙ ЛИСТ.
+      //
+      // Прежде здесь стояло `setJobOffer(` и `JobOfferDateSheet(` — по
+      // одному в точке вызова. Обоих там больше нет: создание уехало в
+      // подколлекцию (`JobOfferRepository.createOffer`), лист сменился на
+      // `JobOfferDaysSheet`. Соседка ПОЙМАЛА ЭТОТ ПЕРЕХОД в первый же
+      // прогон и была права: сторожа «а» и «б» после перевода сторожили
+      // пустоту.
+      //
+      // `setJobOffer` при этом остался в сервисе БЕЗ ЕДИНОГО ВЫЗЫВАЮЩЕГО
+      // (`grep -rn "setJobOffer(" lib` — только объявление, 14.08). Он не
+      // снят намеренно: снимать его надо вместе с четырнадцатью полями
+      // раунда на документе чата, которые держат существующие предложения,
+      // и это отдельная работа.
+      expect('createOffer('.allMatches(entryCode).length, 1,
+          reason: 'В точке вызова нет создания предложения — сторож «а» '
               'проверяет пустоту.');
-      expect(sheetCall.allMatches(entryCode).length, 1,
+      expect(daysSheetCall.allMatches(entryCode).length, 1,
           reason: 'Точка вызова больше не строит лист — сторож «б» '
               'проверяет пустоту.');
       expect("'jobOfferBy':".allMatches(serviceCode).length, greaterThan(0),

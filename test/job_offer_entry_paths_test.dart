@@ -74,6 +74,89 @@ void main() {
     expect(_countIn(files, "ValueKey('attach-job-offer')"), 1);
   });
 
+  // СТАРЫЕ ПОЛЯ НА ДОКУМЕНТЕ ЧАТА НОВЫЙ ПУТЬ НЕ ТРОГАЕТ.
+  //
+  // Их ЧЕТЫРНАДЦАТЬ (считано `grep -A80 "Future<void> setJobOffer" ... |
+  // grep -cE "^\s+'[a-zA-Z]+':"`, 13.08), и они держат предложения,
+  // созданные прежним путём. Сколько именно предложений — со слов автора
+  // 27, ЗАМЕРОМ НЕ ПОДТВЕРЖДЕНО.
+  //
+  // Сторож стоит затем, что порча тут была бы невидимой: новый путь мог бы
+  // «заодно» обновить `jobOfferBy` или `eventDate` на чате из лучших
+  // побуждений — показать раунд старой сборке, — и старые предложения
+  // начали бы переписываться новыми. Заметили бы это по чужим данным, а не
+  // по красному тесту.
+  test('новый путь не пишет ни одного старого поля раунда', () {
+    const oldRoundFields = [
+      'jobOfferBy',
+      'jobOfferAt',
+      'recipientAgreed',
+      'recipientAgreedAt',
+      'waitingForDateAt',
+      'negotiationSeenAt',
+      'cancelledBy',
+      'roundStep',
+      'roundEndedBy',
+      'roundEndedAt',
+      'eventDate',
+      'eventType',
+      'eventLocation',
+      'eventNotes',
+    ];
+
+    final newPath = [
+      File('lib/core/job_offer/job_offer_repository.dart'),
+      File('lib/core/job_offer/offer_draft.dart'),
+    ];
+
+    // Канарейка: разбор видит код. Без неё пустой список запрещённых слов
+    // читался бы как «чисто», а означал бы «файлы не прочитаны» (I31).
+    //
+    // ПЕРВАЯ РЕДАКЦИЯ ПРОВЕРЯЛА `contains('createOffer')`, И ЕЁ ПОЙМАЛ
+    // СТОРОЖ СТОРОЖЕЙ (`guards_are_guards_test`, проверка 2): довольство
+    // одним лишь УПОМИНАНИЕМ имени — слабая канарейка, потому что имя
+    // остаётся в файле и тогда, когда вызова уже нет. Здесь считается
+    // ДЛИНА снятого кода: она отвечает ровно на тот вопрос, ради которого
+    // канарейка и стоит, — «файл прочитан и комментарии не съели его
+    // целиком».
+    expect(
+      _code(newPath.first).length,
+      greaterThan(500),
+      reason: 'разбор не видит кода — снятие комментариев съело файл',
+    );
+
+    for (final f in newPath) {
+      final code = _code(f);
+      // `eventType`/`eventLocation`/`eventNotes` живут и в предложении, и в
+      // старых полях чата — одинаковые имена у разных документов. Ловится
+      // не имя, а обращение к документу чата: `.doc(chatId).update`.
+      expect(
+        code.contains('.doc(chatId).update') ||
+            code.contains("collection('chats').doc(chatId).set"),
+        isFalse,
+        reason: 'Новый путь пишет в документ чата: ${f.path}. Там лежат '
+            'четырнадцать полей прошлой схемы, и они держат существующие '
+            'предложения.',
+      );
+    }
+
+    // И сам вызов прежней записи не должен вернуться ни в один из новых
+    // файлов.
+    for (final f in newPath) {
+      for (final field in ['setJobOffer', 'saveChatEventDate']) {
+        expect(
+          _code(f).contains(field),
+          isFalse,
+          reason: '${f.path} зовёт прежнюю запись $field',
+        );
+      }
+    }
+
+    // Список полей держится здесь ради читателя: он называет, ЧТО именно
+    // защищается, и врёт заметно, если поля переименуют.
+    expect(oldRoundFields.length, 14);
+  });
+
   test('все входы зовут ОДНУ точку, и их пять', () {
     final files = _dartFiles();
     final callers = files

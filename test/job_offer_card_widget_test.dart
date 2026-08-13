@@ -217,4 +217,53 @@ void main() {
     await pump(tester, o: offer(withdrawnBy: boss), viewer: player);
     expect(find.textContaining('geri götürüldü'), findsWidgets);
   });
+
+  // ДЛИННЫЙ НАБОР ДНЕЙ. Предела на число дней нет нигде (решение автора
+  // 14.08), значит месяц целиком законен, и карточка обязана его пережить.
+  group('месяц целиком', () {
+    final month = List.generate(
+      30,
+      (i) => '2026-09-${(i + 1).toString().padLeft(2, '0')}',
+    );
+
+    // У ТОГО, КТО ОТМЕЧАЕТ, СПИСОК ПОЛНЫЙ И НЕ СВОРАЧИВАЕТСЯ. Свёрнутый
+    // прячет ровно то, что он обязан протыкать.
+    testWidgets('отмечающий видит все тридцать дней сразу', (tester) async {
+      await pump(tester, o: offer(dates: month), viewer: player);
+      expect(renderedDays(tester).length, 30);
+      expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
+    });
+
+    testWidgets('нередактируемый список свёрнут, и остаток назван числом', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        o: offer(dates: month, answers: {player: month}),
+        viewer: boss,
+      );
+      // Восемь показаны, двадцать два спрятаны и названы.
+      expect(find.text('yenə 22 gün'), findsOneWidget);
+    });
+
+    testWidgets('свёрнутый список разворачивается нажатием', (tester) async {
+      await pump(
+        tester,
+        o: offer(dates: month, answers: {player: month}),
+        viewer: boss,
+      );
+      await tester.tap(find.byKey(const ValueKey('offer-days-expand')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
+    });
+
+    testWidgets('короткий список не сворачивается вовсе', (tester) async {
+      await pump(
+        tester,
+        o: offer(answers: {player: const ['2026-08-09', '2026-08-10']}),
+        viewer: boss,
+      );
+      expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
+    });
+  });
 }

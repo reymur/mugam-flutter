@@ -1621,6 +1621,17 @@ class FirestoreService {
     // by the offline pending-send queue so a retry of the same queued text
     // message overwrites rather than duplicates.
     String? messageId,
+    // ЯКОРЬ КАРТОЧКИ ПРЕДЛОЖЕНИЯ РАБОТЫ (14.08).
+    //
+    // Сообщение остаётся ОБЫЧНЫМ ТЕКСТОМ (`type: 'text'`), и это не
+    // экономия, а живой шов: старая сборка про `offerId` не знает и
+    // покажет `text` — «5 gün: 9, 10, 11, 12, 15 avqust · Toy». Заведи мы
+    // новый `type`, у неё на этом месте было бы пусто.
+    //
+    // Новая сборка видит `offerId` и рисует вместо текста карточку. Так
+    // предложение получает место в ленте, `seq` и подкачку старых
+    // сообщений — то есть находится через месяц обычной прокруткой.
+    String? offerId,
   }) async {
     final replyTo = _buildReplyTo(
       replyToId: replyToId,
@@ -1648,6 +1659,7 @@ class FirestoreService {
       'timestamp': Timestamp.now(),
       'imageURL': null,
       'audioURL': null,
+      if (offerId != null) 'offerId': offerId,
       if (replyTo != null) 'replyTo': replyTo,
       if (replyToStatus != null) 'replyToStatus': replyToStatus,
     };
@@ -1658,6 +1670,16 @@ class FirestoreService {
     );
     return seq;
   }
+
+  /// Новый пустой id сообщения в этом чате — БЕЗ записи.
+  ///
+  /// Нужен предложению работы: `anchorMessageId` на документе предложения
+  /// правилами менять нельзя (его нет ни в одной из трёх форм правки),
+  /// значит id якоря обязан быть известен ДО создания предложения. Порядок
+  /// выходит такой: взять id → создать предложение с ним → отправить
+  /// сообщение под этим же id.
+  String newMessageId(String chatId) =>
+      _db.collection('chats').doc(chatId).collection('messages').doc().id;
 
   // customMetadata is enforced by storage.rules (uploaderUid/chatId must
   // match the real request.auth.uid and the path's chatId, or the write is

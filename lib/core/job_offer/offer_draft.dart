@@ -1,3 +1,5 @@
+import '../time/az_date_format.dart';
+
 // ЧЕРНОВИК ПРЕДЛОЖЕНИЯ — то, что человек набрал в листе до отправки.
 //
 // Вынесено из листа по той же причине, что и таблица действий у карточки
@@ -53,6 +55,28 @@ String offerSummaryLine(Iterable<String> isoDates) {
 /// Обязательны ровно двое: хотя бы один день и тип работы.
 bool canSendOffer({required Iterable<String> dates, required String eventType}) {
   return dates.isNotEmpty && eventType.trim().isNotEmpty;
+}
+
+/// Текст сообщения-якоря — ТОТ, ЧТО УВИДИТ СТАРАЯ СБОРКА.
+///
+/// Она про `offerId` не знает и покажет якорь обычным сообщением, провалив
+/// незнакомое поле в показ текста. Поэтому текст обязан быть человеческим и
+/// самодостаточным: «5 gün: 9, 10, 11, 12, 15 avqust · Toy». Пустой текст
+/// оставил бы на старой сборке пустой пузырь — то есть предложение,
+/// выглядящее поломкой.
+String offerAnchorText({
+  required List<String> dates,
+  required String eventType,
+}) {
+  final sorted = dates.toList()..sort();
+  if (sorted.isEmpty) return eventType;
+  final parsed = sorted.map(DateTime.tryParse).whereType<DateTime>().toList();
+  if (parsed.isEmpty) return '${sorted.length} gün · $eventType';
+  final days = parsed.map((d) => '${d.day}').join(', ');
+  // Месяц называется один раз, по первому дню: набор через границу месяца
+  // редок, а строка нужна короткая.
+  final month = azMonthFull(parsed.first.month).toLowerCase();
+  return '${sorted.length} gün: $days $month · $eventType';
 }
 
 /// Прошлые дни выбирать нельзя — тот же запрет, что и у прежнего листа

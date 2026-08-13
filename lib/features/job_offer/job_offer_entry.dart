@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,8 +6,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/chat/direct_chat_lookup.dart';
 import '../../core/chat/job_offer_round.dart';
+import '../../core/job_offer/job_offer_repository.dart';
+import '../../core/job_offer/offer_draft.dart';
 import '../../firebase/firestore_service.dart';
-import 'screens/job_offer_date_sheet.dart';
+import 'screens/job_offer_days_sheet.dart';
 import 'screens/pick_person_sheet.dart';
 
 // ---------------------------------------------------------------------------
@@ -83,8 +86,10 @@ Future<void> proposeJobOffer(
   // правила (N91). День от человека не зависит вовсе — значит спрашивать
   // человека, чтобы затем отказать по дню, значит забрать выбор и
   // выбросить его. Прежняя редакция спрашивала первой.
-  final proposedDate = onDay == null ? null : jobOfferDateOnDay(onDay);
-  if (proposedDate != null && proposedDate.isBefore(DateTime.now())) {
+  // Час к дню больше не подставляется: лист принимает НАБОР дней, а время
+  // спрашивает отдельным необязательным полем. Прежде здесь стоял
+  // `jobOfferDateOnDay`, ставивший 19:00 дню, который никто не выбирал.
+  if (onDay != null && isPastDay(onDay)) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Keçmiş tarixə təklif göndərilə bilməz'),
@@ -133,7 +138,7 @@ Future<void> proposeJobOffer(
       ref,
       myUid: myUid,
       personUid: person,
-      proposedDate: proposedDate,
+      onDay: onDay,
       // Человека дал ВХОД (чат, карточка) — списка не было, возвращаться
       // не к чему, и любой исход завершает ход.
       personGivenByEntry: toUid != null,
@@ -154,10 +159,11 @@ Future<bool> _offerToPerson(
   WidgetRef ref, {
   required String myUid,
   required String personUid,
-  required DateTime? proposedDate,
+  required DateTime? onDay,
   required bool personGivenByEntry,
 }) async {
   final service = ref.read(firestoreServiceProvider);
+  final repository = JobOfferRepository(FirebaseFirestore.instance);
 
   // Чат ищется сперва в уже загруженном списке — там же, где его нашёл бы
   // экран «Mesaj», и по тому же правилу (`directChatIn`). Полный поиск с
@@ -222,35 +228,74 @@ Future<bool> _offerToPerson(
     // и «Ləğv et» закрывают как обычно — их случайно не сделаешь. Одно
     // правило на все листы С ВВОДОМ (N28).
     isDismissible: false,
-    builder: (sheetContext) => JobOfferDateSheet(
-      initialDate: proposedDate,
-      title: 'İş təklifi',
-      submitLabel: 'Təklifi göndər',
-      // Чей календарь проверяется на занятость — того, кто предлагает.
-      currentUid: myUid,
-      onSave: (date, type, location, notes) {
-        // Отправлено. Флаг ставится ЗДЕСЬ, потому что сам лист об этом
-        // никому не сообщает: `showModalBottomSheet` отдаёт `null` и при
-        // отправке, и при закрытии свайпом.
-        sent = true;
-        // Запись уходит ОДНОЙ операцией и сразу содержательной: дата, тип,
-        // место, заметки. Пустого предложения не бывает — и это свойство
-        // устройства, а не внимательности вызывающего.
-        service.setJobOffer(
-          chatId: chatId,
-          uid: myUid,
-          eventDate: date,
-          eventType: type,
-          eventLocation: location,
-          eventNotes: notes,
-        );
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('📅 İş təklifi göndərildi'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      },
+    // ОДИН ЛИСТ НА ВСЕ ПЯТЬ ВХОДОВ (переключено 14.08, решение автора).
+    //
+    // Прежде здесь стоял `JobOfferDateSheet` — односуточный, писавший
+    // четырнадцать полей на документ чата. Переключены **все пять сразу**,
+    // а не чат первым: иначе на телефоне жили бы ДВЕ РАЗНЫЕ карточки
+    // предложения — из чата на несколько дней в подколлекцию, из календаря
+    // на один день по-старому. Два пути к одной операции в этом проекте
+    // чинились уже не раз, и каждый раз один из них молча делал не то.
+    //
+    // ЧЕТЫРЕ СЛУЧАЯ ПОКРЫВАЮТСЯ ДВУМЯ НЕОБЯЗАТЕЛЬНЫМИ ПАРАМЕТРАМИ, и новых
+    // заводить не пришлось: `toUid` знают чат и карточка музыканта,
+    // `onDay` — календарь и дневной экран, главный экран не знает ничего.
+    // Человека, если он неизвестен, спрашивает цикл выше; день, если
+    // известен, приходит сюда предвыбранным.
+    builder: (sheetContext) => JobOfferDaysSheet(
+      // День из календаря открывает лист НА ЭТОМ МЕСЯЦЕ и стоит
+      // предвыбранным — но снимается тапом, как любой другой. Иначе
+      // «открыл из календаря и передумал» давало бы предложение на день,
+      // которого человек не выбирал.
+      initialMonth: onDay == null ? null : DateTime(onDay.year, onDay.month),
+      initialDates: onDay == null ? const [] : [isoDay(onDay)],
+      onSend:
+          ({
+            required dates,
+            required eventType,
+            required eventTime,
+            required eventLocation,
+            required eventNotes,
+          }) async {
+            // Отправлено. Флаг ставится ЗДЕСЬ, потому что сам лист об этом
+            // никому не сообщает: `showModalBottomSheet` отдаёт `null` и при
+            // отправке, и при закрытии свайпом.
+            sent = true;
+            Navigator.of(sheetContext).pop();
+
+            // ПОРЯДОК ТРЁХ ЗАПИСЕЙ ЗНАЧИМ, и вот почему именно такой.
+            //
+            // `anchorMessageId` правилами менять нельзя — его нет ни в
+            // одной из трёх форм правки, — значит id якоря обязан быть
+            // известен ДО создания предложения. Отсюда: взять id → создать
+            // предложение с ним → отправить сообщение под тем же id.
+            //
+            // Оборвись цепочка на третьем шаге — останется предложение без
+            // якоря: карточки в ленте нет, данные целы. Неприятно и
+            // поправимо. Обратный порядок дал бы сообщение-якорь,
+            // указывающее в пустоту, — а это уже ложь на экране.
+            final anchorId = service.newMessageId(chatId);
+            final offerId = await repository.createOffer(
+              chatId: chatId,
+              myUid: myUid,
+              dates: dates,
+              eventType: eventType,
+              eventTime: eventTime,
+              eventLocation: eventLocation,
+              eventNotes: eventNotes,
+              anchorMessageId: anchorId,
+            );
+            await service.sendMessage(
+              chatId: chatId,
+              senderId: myUid,
+              // Текст — для СТАРОЙ сборки, которая про `offerId` не знает и
+              // покажет его как обычное сообщение. Пустой текст оставил бы
+              // ей пустой пузырь.
+              text: offerAnchorText(dates: dates, eventType: eventType),
+              messageId: anchorId,
+              offerId: offerId,
+            );
+          },
     ),
   );
   if (!context.mounted) return true;
