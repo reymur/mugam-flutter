@@ -242,8 +242,8 @@ void main() {
         o: offer(dates: month, answers: {player: month}),
         viewer: boss,
       );
-      // Восемь показаны, двадцать два спрятаны и названы.
-      expect(find.text('yenə 22 gün'), findsOneWidget);
+      // Шесть показаны, двадцать четыре спрятаны и названы числом.
+      expect(find.text('yenə 24 gün'), findsOneWidget);
     });
 
     testWidgets('свёрнутый список разворачивается нажатием', (tester) async {
@@ -263,6 +263,20 @@ void main() {
         o: offer(answers: {player: const ['2026-08-09', '2026-08-10']}),
         viewer: boss,
       );
+      expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
+    });
+
+    // ОТМЕЧАЮЩИЙ ВИДИТ ВСЁ ДАЖЕ ПОСЛЕ ТОГО, КАК УЖЕ ОТВЕЧАЛ. Раунд открыт,
+    // значит он может переотметить — а переотметить можно только то, что
+    // видно. Отдельной строкой, потому что случай «уже отвечал» ходит по
+    // другой ветке показа, чем «ещё не отвечал».
+    testWidgets('отмечающий видит всё и после своего ответа', (tester) async {
+      await pump(
+        tester,
+        o: offer(dates: month, answers: {player: month.take(3).toList()}),
+        viewer: player,
+      );
+      expect(renderedDays(tester).length, 30);
       expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
     });
   });
