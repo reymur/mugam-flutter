@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
-import 'package:audio_session/audio_session.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:file_picker/file_picker.dart';
@@ -22,9 +21,10 @@ import 'package:intl/intl.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:pasteboard/pasteboard.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:record/record.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:share_plus/share_plus.dart';
+import '../../../core/audio/audio_session_gate.dart';
+import '../../../core/audio/voice_recording_session.dart';
 import '../../../core/media/image_compressor.dart';
 import '../../../core/native_sound_effect.dart';
 import '../../../core/chat/chat_access.dart';
@@ -86,49 +86,15 @@ class ChatScreen extends ConsumerStatefulWidget {
 
 }
 
-// Neither `record` nor `just_audio` ever sends AVAudioSession the explicit
-// "I'm done" signal on stop/pause — they set category/options and activate
-// on start, but never deactivate. Without this, background audio (Spotify
-// etc.) stays ducked until the app is backgrounded/foregrounded, which
-// happens to force a session reset as a side effect. Calling this
-// ourselves right after stop/pause releases ducking immediately instead of
-// relying on that incidental reset. Shared by _ChatScreenState (recording)
-// and _VoiceMessagePlayerState (playback) below.
-Future<void> _deactivateAudioSession() async {
-  try {
-    final session = await AudioSession.instance;
-    await session.setActive(false);
-  } catch (e, st) {
-    FirebaseCrashlytics.instance.recordError(
-      e,
-      st,
-      reason: 'chat_screen: _deactivateAudioSession failed',
-    );
-  }
-}
-
-// Paired with _deactivateAudioSession above — needed because that manual
-// deactivate (on pause/natural-completion) isn't reliably followed by an
-// equally explicit reactivation anywhere: just_audio's own implicit
-// activate-on-start covers a message's first-ever play, but replaying an
-// already-completed voice message (play -> complete -> our deactivate ->
-// play again) hit the exact same silent-while-visually-playing race as the
-// loop/message-switch bugs fixed earlier — just triggered by replay instead
-// of looping or switching. Called explicitly (and awaited, unlike the
-// fire-and-forget deactivate calls) right before play() so the session is
-// genuinely active before playback starts producing audio.
-Future<void> _activateAudioSession() async {
-  try {
-    final session = await AudioSession.instance;
-    await session.setActive(true);
-  } catch (e, st) {
-    FirebaseCrashlytics.instance.recordError(
-      e,
-      st,
-      reason: 'chat_screen: _activateAudioSession failed',
-    );
-  }
-}
+// Обе функции сессии звука уехали в `core/audio/audio_session_gate.dart`
+// (13.08, вместе с выносом записи): здесь их звали из записи и из
+// проигрывания, а с общей записью зовущих стало трое.
+//
+// ЗАМЕЧЕНО ПРИ ВЫНОСЕ, НЕ ТРОНУТО: то же «отпустить сессию» написано
+// своими словами ещё в двух местах — `video_message_widgets.dart:115` и
+// `status_video_player.dart:180` (`grep -rn "setActive(" lib`). К записи
+// голоса они отношения не имеют, и трогать их этой работой значит
+// смешивать две правки в одном заходе.
 
 class _ChatScreenState extends ConsumerState<ChatScreen>
     with SingleTickerProviderStateMixin {
@@ -145,34 +111,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _uploadingImage = false;
   bool _uploadingVideo = false;
   final ImagePicker _picker = ImagePicker();
-  final AudioRecorder _audioRecorder = AudioRecorder();
+  // Сам сеанс записи (разрешение, отложенный старт, громкость, остановка,
+  // отбрасывание случайного тычка) живёт в `VoiceRecordingSession` — общий
+  // на три места, из которых чат первое. Экрану остаётся ПОКАЗ и
+  // НАЗНАЧЕНИЕ: `_isRecording` и подпись со временем — показ, отправка
+  // сообщением — назначение. Ни того ни другого в сеансе нет намеренно.
+  final VoiceRecordingSession _voiceSession = VoiceRecordingSession();
   bool _isRecording = false;
   bool _uploadingAudio = false;
-  // True from the moment a recording session starts until its underlying
-  // native recorder resource has fully settled — real start AND any
-  // pending stop/cancel are both done. _isRecording itself now flips
-  // instantly on release (see _stopAndSendRecording/_cancelRecording), so
-  // it no longer naturally serializes rapid re-taps the way the old
-  // fully-blocking flow did; this guards _startRecording against
-  // beginning a second session while a previous one's background
-  // teardown is still in flight — _audioRecorder is a single shared
-  // instance that can't run two sessions at once.
-  bool _recorderSessionBusy = false;
-  String? _recordingPath;
-  // Set only once the native recorder has actually started (end of
-  // _reallyStartRecorder) — deliberately separate from _recordingStopwatch,
-  // which starts at tap-down and therefore also counts the artificial
-  // _recordStartBeepGuard delay before real capture begins. Using the
-  // stopwatch for the min-duration check below would count that guard
-  // delay as "recording time", making an instant tap-release measure as
-  // 550ms+ of elapsed time despite capturing ~0ms of real audio.
-  DateTime? _actualRecordingStartedAt;
-  // Resolves once the native recorder has actually started — stop/cancel
-  // must await this before calling _audioRecorder.stop(), since the real
-  // start is deliberately deferred past the start-beep's length (see
-  // _recordStartBeepGuard) while the recording UI itself already shows
-  // instantly.
-  Future<void>? _recorderStartFuture;
   bool _hasText = false;
   final Stopwatch _recordingStopwatch = Stopwatch();
   Timer? _recordingTimer;
@@ -185,8 +131,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // DateTime.now(). Same 20s interval and reasoning as
   // about_contact_screen.dart's _presenceRefreshTimer.
   Timer? _presenceRefreshTimer;
-  StreamSubscription<Amplitude>? _amplitudeSub;
-  final List<double> _rawAmplitudes = [];
   bool _isLocked = false;
   double _dragX = 0.0;
   double _dragY = 0.0;
@@ -417,11 +361,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _itemPositionsListener.itemPositions.removeListener(
       _onItemPositionsChanged,
     );
-    _audioRecorder.dispose();
+    _voiceSession.dispose();
     _recordingTimer?.cancel();
     _presenceRefreshTimer?.cancel();
     _typingThrottleTimer?.cancel();
-    _amplitudeSub?.cancel();
     _pulseController.dispose();
     _highlightTimer?.cancel();
     for (final timer in _purgeTimers.values) {
@@ -2806,116 +2749,44 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
-  // record_start.wav's own real length (measured: 500ms) plus a small
-  // margin for the audio session's category switch (playback -> record)
-  // and the speaker's acoustic tail — the actual native recorder doesn't
-  // start until this elapses, so the mic can never physically pick up the
-  // start beep. The recording UI itself (see _startRecording) shows
-  // instantly regardless, matching WhatsApp's snappy feel; only the real
-  // capture is deferred.
-  static const Duration _recordStartBeepGuard = Duration(milliseconds: 550);
-
-  // Below this, a release is treated as an accidental tap rather than a
-  // deliberate voice message (WhatsApp-style) — see _stopAndSendRecording's
-  // early-discard branch. Compared against _actualRecordingStartedAt (real
-  // capture start), NOT physical tap-down — real capture only begins after
-  // _recordStartBeepGuard (550ms) plus AVAudioRecorder's own hardware
-  // startup, which on-device measured closer to ~850ms total (an earlier
-  // 300ms threshold — assuming a ~650-720ms offset — required a ~1.1-1.2s
-  // physical hold to send, confirming the real offset is larger than that
-  // initial estimate). 150ms of real content is recalibrated against the
-  // measured ~850ms offset: a genuine ~1s physical hold (1000ms - ~850ms
-  // ≈ 150ms of real content) just clears this, while a truly instant
-  // tap-release (~0ms real content, since release still happens well
-  // before _recorderStartFuture resolves) reliably doesn't.
-  static const Duration _minRecordingDuration = Duration(milliseconds: 150);
-
+  // Порог случайного тычка, отложенный старт, настройки записи и разбор
+  // громкости уехали в `VoiceRecordingSession` (13.08, работа 2). Здесь
+  // остался ТОЛЬКО показ: пульсация, подпись со временем, отклик пальцу.
   Future<void> _startRecording() async {
-    // A previous session's background stop/cancel teardown (see
-    // _finishStoppingRecorder/_finishCancellingRecorder) hasn't settled
-    // yet — _audioRecorder can't run two sessions at once, so a rapid
-    // re-tap here is ignored rather than stomping on it.
-    if (_recorderSessionBusy) return;
-    _recorderSessionBusy = true;
     // Fires before anything else, including the permission check below —
     // a tactile response the instant the finger presses down reinforces
     // the immediate visual feedback, same idea as WhatsApp's own haptic tap
     // on record start.
     unawaited(HapticFeedback.mediumImpact());
-    // hasPermission() also requests permission on first call on iOS
-    final hasPermission = await _audioRecorder.hasPermission();
-    if (!hasPermission) {
-      _recorderSessionBusy = false;
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Mikrofon icazəsi verilmədi'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      return;
-    }
-    // Instant visual feedback — matches WhatsApp's immediate response.
-    // The real _audioRecorder.start() below is deferred past the start
-    // beep's own length so recording never captures it; nothing here
-    // depends on that having happened yet.
-    if (mounted) setState(() => _isRecording = true);
-    _pulseController.repeat(reverse: true);
-    _recordingStopwatch.reset();
-    _recordingStopwatch.start();
-    _actualRecordingStartedAt = null;
-    _rawAmplitudes.clear();
-    _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        final s = _recordingStopwatch.elapsed.inSeconds;
-        setState(
-          () => _recordingDuration =
-              '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}',
-        );
-      }
-    });
-    unawaited(NativeSoundEffect.play('record_start'));
-    _recorderStartFuture = _reallyStartRecorder();
-    await _recorderStartFuture;
-  }
-
-  // Split out of _startRecording so _stopAndSendRecording/_cancelRecording
-  // can await this specific step (via _recorderStartFuture) before asking
-  // the native recorder to stop — without that guard, a very quick tap
-  // (shorter than _recordStartBeepGuard) could call stop() before start()
-  // has actually run.
-  Future<void> _reallyStartRecorder() async {
-    final dir = await getTemporaryDirectory();
-    _recordingPath =
-        '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
-    await Future.delayed(_recordStartBeepGuard);
-    if (!mounted || !_isRecording) return;
-    await _audioRecorder.start(
-      RecordConfig(
-        encoder: AudioEncoder.aacLc,
-        bitRate: 128000,
-        sampleRate: 44100,
-        // record sets its own AVAudioSessionCategoryOptions outright
-        // (replacing, not merging with, whatever main.dart's shared
-        // audio_session config set) — duckOthers has to be requested here
-        // explicitly too, alongside the package's existing defaults, or
-        // background audio wouldn't duck during recording specifically.
-        iosConfig: const IosRecordConfig(
-          categoryOptions: [
-            IosAudioCategoryOption.defaultToSpeaker,
-            IosAudioCategoryOption.allowBluetooth,
-            IosAudioCategoryOption.allowBluetoothA2DP,
-            IosAudioCategoryOption.duckOthers,
-          ],
-        ),
-      ),
-      path: _recordingPath!,
+    final outcome = await _voiceSession.start(
+      // Зовётся сразу после разрешения и ДО стартового звука — ровно та
+      // точка, где показ обязан подняться мгновенно. Настоящий захват
+      // отложен на длину звука и ничего здесь не ждёт.
+      onArmed: () {
+        if (!mounted) return;
+        setState(() => _isRecording = true);
+        _pulseController.repeat(reverse: true);
+        _recordingStopwatch.reset();
+        _recordingStopwatch.start();
+        _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+          if (mounted) {
+            final s = _recordingStopwatch.elapsed.inSeconds;
+            setState(
+              () => _recordingDuration =
+                  '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}',
+            );
+          }
+        });
+      },
     );
-    _actualRecordingStartedAt = DateTime.now();
-    _amplitudeSub = _audioRecorder
-        .onAmplitudeChanged(const Duration(milliseconds: 100))
-        .listen((amp) => _rawAmplitudes.add(amp.current));
+    if (outcome == VoiceStartOutcome.noPermission && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Mikrofon icazəsi verilmədi'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   // Instant, synchronous UI response to release — matches WhatsApp/
@@ -2948,50 +2819,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     unawaited(_finishStoppingRecorder());
   }
 
+  // НАЗНАЧЕНИЕ — и только оно. Сеанс записи сюда не заглядывает: он
+  // отдаёт файл с волной либо `null` (случайный тычок, пустая запись), а
+  // что с ними делать — дело этого экрана. У карточки предложения работы и
+  // у «Gələ bilmirəm» на этом месте будет свой хвост, и склеивать их
+  // переключателем нельзя (I58).
   Future<void> _finishStoppingRecorder() async {
     try {
-      // The native recorder itself may not have actually started yet (see
-      // _recordStartBeepGuard) if this was a very quick tap — wait for
-      // that before asking it to stop.
-      await _recorderStartFuture;
-      await _amplitudeSub?.cancel();
-      // Measured from when the native recorder actually started (set at
-      // the end of _reallyStartRecorder), NOT from _recordingStopwatch —
-      // that one starts at tap-down and would also count the artificial
-      // _recordStartBeepGuard delay as "recording time", making even a
-      // genuinely instant tap-release measure past the threshold below
-      // despite capturing ~0ms of real audio. A null start (recorder never
-      // actually began — e.g. !mounted/!_isRecording raced it in
-      // _reallyStartRecorder) counts as zero, correctly below threshold.
-      final startedAt = _actualRecordingStartedAt;
-      final actualRecordedDuration = startedAt == null
-          ? Duration.zero
-          : DateTime.now().difference(startedAt);
-      if (actualRecordedDuration < _minRecordingDuration) {
-        // Accidental tap-and-release — discard instead of sending a near-
-        // zero-length clip. No stop chime, no message, and no upload
-        // spinner (unlike the normal path below) — the release haptic and
-        // the instant UI reset in _stopAndSendRecording already fired, so
-        // this doesn't read as unresponsive, same "nothing happened" feel
-        // as any other cancelled gesture.
-        await _audioRecorder.stop();
-        unawaited(_deactivateAudioSession());
-        return;
-      }
-      // Fired before awaiting stop() below, not after — the mic itself
-      // stops capturing the instant .stop() is called; the Future only
-      // resolves once the encoder finishes finalizing the file on disk,
-      // which can take a perceptible moment and would otherwise delay
-      // this sound well past the actual button release.
-      unawaited(NativeSoundEffect.play('record_stop'));
-      final path = await _audioRecorder.stop();
-      unawaited(_deactivateAudioSession());
+      final recording = await _voiceSession.stopAndFinish();
+      if (recording == null) return;
       if (mounted) setState(() => _uploadingAudio = true);
-      if (path == null) {
-        if (mounted) setState(() => _uploadingAudio = false);
-        return;
-      }
-      final waveform = _downsampleWaveform(_rawAmplitudes, 40);
+      final path = recording.filePath;
+      final waveform = recording.waveform;
       final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
       final replyingTo = _replyingTo;
       if (mounted) _cancelReply();
@@ -3030,8 +2869,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       // No explicit _scrollToBottom() on the success path anymore — see
       // _sendMessage's own comment for why (centralized in build()'s
       // ref.listen instead).
-    } finally {
-      _recorderSessionBusy = false;
+    } catch (e, st) {
+      if (mounted) setState(() => _uploadingAudio = false);
+      FirebaseCrashlytics.instance.recordError(
+        e,
+        st,
+        reason: 'chat_screen: _finishStoppingRecorder failed',
+      );
     }
   }
 
@@ -3051,46 +2895,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _pulseController.reset();
     _recordingStopwatch.stop();
     _recordingTimer?.cancel();
-    unawaited(_finishCancellingRecorder());
-  }
-
-  Future<void> _finishCancellingRecorder() async {
-    try {
-      // Same guard as _finishStoppingRecorder — see _recordStartBeepGuard.
-      await _recorderStartFuture;
-      await _amplitudeSub?.cancel();
-      await _audioRecorder.stop();
-      unawaited(_deactivateAudioSession());
-    } finally {
-      _recorderSessionBusy = false;
-    }
-  }
-
-
-  // Collapses the raw dBFS samples captured during recording (one every
-  // 100ms via onAmplitudeChanged) into a fixed number of bars for the
-  // waveform display — WhatsApp shows the same bar count regardless of
-  // clip length. Takes the peak within each bucket rather than the
-  // average, matching how a waveform visually reads (loud transients
-  // stay visible instead of getting smoothed away). floorDb/ceilDb are a
-  // rough estimate of quiet-room/loud-speech mic levels; tune after
-  // checking real recordings on-device.
-  List<int> _downsampleWaveform(List<double> raw, int targetCount) {
-    if (raw.isEmpty) return List.filled(targetCount, 0);
-    const floorDb = -50.0;
-    const ceilDb = -5.0;
-    return List.generate(targetCount, (b) {
-      final start = (b * raw.length / targetCount).floor();
-      final end = (((b + 1) * raw.length / targetCount).ceil()).clamp(
-        start + 1,
-        raw.length,
-      );
-      final peak = raw.sublist(start, end).reduce((x, y) => x > y ? x : y);
-      final norm =
-          ((peak.clamp(floorDb, ceilDb) - floorDb) / (ceilDb - floorDb) * 100)
-              .round();
-      return norm.clamp(0, 100);
-    });
+    unawaited(_voiceSession.cancel());
   }
 
   void _lockRecording() {
@@ -5615,7 +5420,7 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
           if (_pausedByCoordinator) {
             _pausedByCoordinator = false;
           } else {
-            unawaited(_deactivateAudioSession());
+            unawaited(deactivateAudioSession());
           }
         }
         if (state.playing && !_listenedFired) {
@@ -5652,7 +5457,7 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
 
   @override
   void dispose() {
-    if (_isPlaying) unawaited(_deactivateAudioSession());
+    if (_isPlaying) unawaited(deactivateAudioSession());
     VoiceMessageCoordinator.instance._stopped(this);
     _player.dispose();
     super.dispose();
@@ -5680,7 +5485,7 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
           await _player.pause();
         } else {
           VoiceMessageCoordinator.instance._starting(this);
-          await _activateAudioSession();
+          await activateAudioSession();
           if (_hasCompletedAtLeastOnce) {
             // Replicates the manual seek-bar drag that reliably restored
             // sound during a silent replay on-device — a known just_audio/
