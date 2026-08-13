@@ -703,33 +703,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       shadowColor: Colors.transparent,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(menuRadius)),
       items: [
-        // Hidden once a job offer is already pending — mirrors mugam-v2's
-        // own {!jobOfferBy && (...)} gating; the negotiation banners (see
-        // build()) take over from here instead.
-        if (!hasActiveJobOffer)
-          PopupMenuItem<void>(
-            padding: EdgeInsets.zero,
-            // Чат — такой же ВХОД, как карточка музыканта или день в
-            // календаре, и зовёт ту же точку (пункт 6, `docs/plan.md`).
-            // Он знает человека и не знает дня, поэтому передаёт только
-            // `toUid`. Ни `chatId`, ни `setJobOffer` здесь больше нет — и
-            // это не стиль, а проверяемое правило: на него стоит сторож в
-            // `test/source_invariants_test.dart`.
-            onTap: () => proposeJobOffer(context, ref, toUid: otherUid),
-            child: glassItem(
-              const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.event_available, color: kGold, size: 18),
-                  SizedBox(width: 10),
-                  Text(
-                    'İş təklif et',
-                    style: TextStyle(color: kText, fontWeight: FontWeight.w600),
-                  ),
-                ],
-              ),
-            ),
-          ),
+        // ЗДЕСЬ БЫЛА СТРОКА «İş təklif et», И ОНА СНЯТА 14.08 ВМЕСТЕ С
+        // ПЕРЕЕЗДОМ В ЛИСТ ВЛОЖЕНИЙ (`_showAttachSheet`), а не оставлена
+        // вторым путём «пока пусть будет».
+        //
+        // Довод не про удобство: два пути к одной операции в этом проекте
+        // чинились уже не раз (N35, N40, `leaveGroup`/`removeGroupMember`,
+        // две дороги в чат), и каждый раз один из них молча делал не то.
+        // Оставленная «на время» вторая дорога переживает того, кто её
+        // оставил, — и следующий чинит один путь, не зная о другом.
+        //
+        // Заодно ушло условие `!hasActiveJobOffer`: предложений в чате
+        // теперь может быть несколько (каждое своим документом), и прятать
+        // вход, пока идёт раунд, больше не от чего.
         PopupMenuItem<void>(
           padding: EdgeInsets.zero,
           onTap: _confirmClearChat,
@@ -2690,7 +2676,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // own accent color (matching WhatsApp's own per-type color coding)
   // instead of every entry sharing kGold, which is what made the previous
   // plain list read as a single undifferentiated stack of rows.
-  void _showAttachSheet() {
+  /// `offerToUid` — собеседник, если чат один на один. В группе он `null`, и
+  /// строки «İş təklif et» в листе не будет вовсе: предложение адресуется
+  /// одному человеку, а «один документ — один ответ» — названная граница
+  /// этой работы. Показать строку в группе значило бы обещать ход, который
+  /// некому адресовать.
+  void _showAttachSheet({String? offerToUid}) {
     showModalBottomSheet(
       context: context,
       backgroundColor: kBg2,
@@ -2700,9 +2691,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       builder: (_) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
               _AttachOption(
                 icon: Icons.photo_library,
                 // Цвета Material для ТИПА вложения — фото, файл, локация. Чужие: по
@@ -2742,6 +2736,53 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   _pickAndSendLocation();
                 },
               ),
+                ],
+              ),
+              // ОТДЕЛЬНОЙ СТРОКОЙ, А НЕ ПЯТЫМ ЗНАЧКОМ В РЯДУ, и это не
+              // про тесноту.
+              //
+              // Четверо сверху — «вложить файл»: они добавляют к сообщению
+              // содержимое. Предложение работы — не вложение, а НАЧАЛО
+              // ХОДА: после него в переписке появляется карточка, у которой
+              // своё состояние и свои действия у обеих сторон. Поставь его
+              // пятым значком — и оно прочтётся как «приложить файл
+              // предложения», то есть вид соврёт про существо (I58, обратная
+              // сторона: сводить по задаче, а не по совпадению вида).
+              if (offerToUid != null) ...[
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Divider(color: kBorder, height: 1),
+              ),
+              InkWell(
+                key: const ValueKey('attach-job-offer'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  // Чат — такой же ВХОД, как карточка музыканта или день в
+                  // календаре, и зовёт ту же точку (`docs/plan.md`). Он
+                  // знает человека и не знает дня, поэтому передаёт только
+                  // `toUid`. Ни `chatId`, ни `setJobOffer` здесь нет — на
+                  // это стоит сторож в `test/source_invariants_test.dart`.
+                  proposeJobOffer(context, ref, toUid: offerToUid);
+                },
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                  child: Row(
+                    children: [
+                      Icon(Icons.event_available, color: kGold, size: 22),
+                      SizedBox(width: 14),
+                      Text(
+                        'İş təklif et',
+                        style: TextStyle(
+                          color: kText,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              ],
             ],
           ),
         ),
@@ -4094,7 +4135,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // Раунд переговоров ОТКРЫТ: предложение есть и согласие ещё не
     // получено (N16). Один выводимый признак на все места, где раньше
     // стояли две независимые проверки `jobOfferBy != null`, — плашка,
-    // кнопка «İş təklif et» в шапке и throttle записи «печатает».
+    // кнопка «İş təklif et» и throttle записи «печатает». **Кнопка с
+    // 14.08 живёт в листе вложений, а не в шапке, и на этот признак больше
+    // не смотрит:** предложений в чате может быть несколько, прятать вход
+    // на время раунда не от чего.
     //
     // До этой правки раунд завершался ровно одним способом — отменой:
     // согласие не трогает `jobOfferBy`, поэтому после состоявшейся сделки
@@ -4473,8 +4517,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               icon: const Icon(Icons.call, color: kGold),
               onPressed: _startingCall ? null : () => _startCall(otherUidResolved, CallType.audio),
             ),
-            // "..." → İş təklif et / Çatı təmizlə. Only makes sense for a
-            // 1:1 chat — groups get no equivalent.
+            // "..." → Çatı təmizlə. Only makes sense for a 1:1 chat —
+            // groups get no equivalent.
+            //
+            // «İş təklif et» стояло здесь до 14.08 и переехало в лист
+            // вложений (`_showAttachSheet`) — второй дороги не осталось.
             //
             // A plain IconButton + manual showMenu (anchored via
             // _moreMenuButtonKey) rather than PopupMenuButton's own built-in
@@ -4825,7 +4872,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           : const Icon(Icons.attach_file, color: kGold),
                       onPressed: (_uploadingImage || _uploadingVideo)
                           ? null
-                          : _showAttachSheet,
+                          : () => _showAttachSheet(
+                              // В группе — `null`, и строки предложения в
+                              // листе не будет: адресовать некому.
+                              offerToUid:
+                                  (chatMetaAsync.value?['isGroup'] ??
+                                          chatDataAsync.value?['isGroup']) !=
+                                      true
+                                  ? otherUidResolved
+                                  : null,
+                            ),
                     )
                   else if (_isLocked)
                     GestureDetector(
