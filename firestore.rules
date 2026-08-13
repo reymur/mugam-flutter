@@ -131,6 +131,25 @@ service cloud.firestore {
         allow read, write: if isSignedIn() && request.auth.uid == userId;
       }
 
+      // users/{uid}/seenInvitations/{eventId} — «я это приглашение видел».
+      // Заведено 12.08 для числа непросмотренных на клетке календаря.
+      //
+      // ЛЕЖИТ У ЧЕЛОВЕКА, А НЕ НА МЕРОПРИЯТИИ, и это разбор, а не удобство.
+      // Поле на самом вечере участнику писать НЕЛЬЗЯ: `answersForSelf()`
+      // требует `changedKeys().hasOnly(['answers'])`, и узость эта намеренная
+      // — ею же закрыт I54 (поле, по которому сервер судит о смысле
+      // произошедшего, отданное участнику). Расширять её ради пометки о
+      // просмотре — плохой размен. **И по существу: «я это видел» — факт про
+      // ЧЕЛОВЕКА, а не про вечер**, ему и место у человека.
+      //
+      // Форма та же, что у `starred` ниже: личная пометка, ключ — id
+      // документа, владелец в обе стороны. Второй такой же случай, и это
+      // довод за одинаковую форму, а не за общий блок: коллекции разные, и
+      // сводить их значило бы сводить по совпадению вида (I58).
+      match /seenInvitations/{eventId} {
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+
       // users/{uid}/friends/{friendUid} — "these two users are confirmed
       // friends," maintained exclusively by the onFriendRequestUpdated /
       // onFriendRequestDeleted triggers in functions/src/index.ts (Admin
