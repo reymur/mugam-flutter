@@ -22,6 +22,7 @@ library;
 
 import '../../firebase/models.dart';
 import '../time/az_date_format.dart';
+import 'day_role.dart';
 
 /// Форма пометки — то, чем «точно» отличается от «под вопросом».
 enum DayMarkShape {
@@ -33,21 +34,55 @@ enum DayMarkShape {
 }
 
 /// Пометка одного дня.
+///
+/// **ДВА НЕЗАВИСИМЫХ ОТВЕТА, А НЕ ОДИН (заведено 12.08, N126).** «День занят»
+/// и «на этот день меня зовут» — разные вопросы, и они бывают истинны
+/// одновременно: у человека свой вечер 14-го, и на 14-е же его позвали.
+/// Слить их в одно значение значит потерять одно из двух — ровно то, чем
+/// была N126, только с другой стороны.
 class DayMark {
   const DayMark({
-    required this.ownerUid,
-    required this.initials,
-    required this.shape,
+    this.ownerUid,
+    this.initials = '',
+    this.shape,
+    this.unseenInvitations = 0,
+    this.handledTrace = false,
   });
 
-  /// Чей вечер занял день. По нему берётся цвет — экран знает, кто «я», а
-  /// правило нет и знать не должно.
-  final String ownerUid;
+  /// Чей вечер занял день, **`null` — день никем не занят**. По нему берётся
+  /// цвет — экран знает, кто «я», а правило нет и знать не должно.
+  ///
+  /// `null` здесь значит ровно одно и ничего больше: занявшего нет. Пометка
+  /// при этом может существовать — она держится на [invited].
+  final String? ownerUid;
 
-  /// Три буквы имени владельца, заглавными.
+  /// Три буквы имени владельца, заглавными. Пусто, когда день не занят.
   final String initials;
 
-  final DayMarkShape shape;
+  /// Залито или рамкой. **`null`, когда день не занят** — форма описывает
+  /// занявший вечер, а у приглашения занявшего нет. Поставить сюда
+  /// `filled` «чтобы не было null» значило бы придумать вечеру состояние,
+  /// которого он не имеет.
+  final DayMarkShape? shape;
+
+  /// СКОЛЬКО ПРИГЛАШЕНИЙ ЖДЁТ ПРОСМОТРА — золотое число на клетке. `0` —
+  /// числа нет. Заменило точку 12.08 решением автора.
+  ///
+  /// **От занятости не зависит и её не отменяет:** день может быть занят
+  /// своим вечером и при этом нести три непросмотренных вопроса.
+  final int unseenInvitations;
+
+  /// Остался ли след разобранного вопроса — серая точка. Показывается
+  /// **только когда числа нет**: пока есть непросмотренные, говорить надо о
+  /// них.
+  final bool handledTrace;
+
+  /// Есть ли на этот день непросмотренное приглашение.
+  bool get invited => unseenInvitations > 0;
+
+  /// День занят. Отдельным именем, чтобы читатели не сравнивали с `null`
+  /// каждый по-своему.
+  bool get occupied => ownerUid != null;
 }
 
 /// Инициалы имени — правило одно на весь проект.
@@ -82,18 +117,70 @@ String initialsOf(String name, {int count = 3}) {
 /// **Отменённые сюда не доходят вовсе** — их выбрасывает `liveEvents` до
 /// раскладки по дням. Здесь это не проверяется второй раз: два места, решающих
 /// одно, разошлись бы молча.
-DayMark? dayMarkOf(List<PersonalEvent> dayEvents, Map<String, String> names) {
+/// **[currentUid] ОБЯЗАТЕЛЕН НАМЕРЕННО, а не для порядка** — тот же довод, что
+/// у `conflictEventsOnDay`. Необязательный параметр с умолчанием оставил бы
+/// забытому вызывающему СТАРОЕ поведение (красить по составу, не читая
+/// ответ), и оно ничем бы себя не выдало. **Старое поведение здесь и есть
+/// N126.** Обязательный требует от компилятора перечислить все места, и
+/// перечислять их не приходится памятью.
+///
+/// **Вечера, которые человеку НИ ЧТО (отказался, вышел, не позвали), в
+/// пометку не попадают вовсе** — ни в занятость, ни в приглашения. Это
+/// вторая половина N126: отказ помечал день наравне с согласием.
+/// **[seenInvitationIds] — то, чего нельзя вывести из документов.** Ответ
+/// лежит в самом мероприятии, а «я это видел» — факт про человека, и приходит
+/// он из `users/{uid}/seenInvitations`. Умолчание пустым набором дало бы
+/// забытому вызывающему полное число на всех днях — шумно, но **в безопасную
+/// сторону**: лучше позвать смотреть туда, где разобрано, чем промолчать о
+/// живом приглашении (I14).
+DayMark? dayMarkOf(
+  List<PersonalEvent> dayEvents,
+  Map<String, String> names, {
+  required String currentUid,
+  Set<String> seenInvitationIds = const {},
+}) {
   if (dayEvents.isEmpty) return null;
   final sorted = [...dayEvents]..sort((a, b) => a.date.compareTo(b.date));
-  final first = sorted.first;
+
+  // Разделение, а не отбор: приглашение обязано быть ВИДНО, оно просто не
+  // должно ЗАНИМАТЬ. Выбросить его отсюда значило бы сломать саму задачу.
+  final occupying = <PersonalEvent>[
+    for (final e in sorted)
+      if (dayRoleOf(e, currentUid) == DayRole.occupied) e,
+  ];
+
+  // ЧИСЛО И СЛЕД СЧИТАЮТСЯ ОБЩИМИ ПРАВИЛАМИ, а не заново здесь. Оба вопроса
+  // — «сколько ждёт» и «было ли что-то» — заданы и проверены в
+  // `day_role.dart`; повторить их тут значило бы завести второе место, где
+  // решается одно, и дать им разойтись (N49, N74).
+  final unseen = unseenInvitationsOn(sorted, currentUid, seenInvitationIds);
+  // ЧИСЛО СТАРШЕ СЛЕДА: пока есть непросмотренные, говорить надо о них.
+  // Серая точка ничего от человека не требует, золотое число требует;
+  // показать след поверх числа значило бы спрятать дело за отчётом о
+  // сделанном.
+  final trace = unseen == 0 &&
+      hasHandledInvitationOn(sorted, currentUid, seenInvitationIds);
+
+  if (occupying.isEmpty) {
+    // Занявшего нет. Пометка всё равно бывает — на ней держатся число и след.
+    if (unseen == 0 && !trace) return null;
+    return DayMark(unseenInvitations: unseen, handledTrace: trace);
+  }
+
+  final first = occupying.first;
   // «Под вопросом» показывается, если ХОТЬ ОДИН вечер дня под вопросом:
   // рамка — предупреждение, и терять его из-за того, что рядом стоит целый
   // вечер, нельзя.
-  final anyUnsettled = dayEvents.any((e) => e.status == 'unsettled');
+  //
+  // Считается по ЗАНИМАЮЩИМ, а не по всем: вечер, на который меня зовут,
+  // своим «под вопросом» ничего не говорит о моём дне, пока я не согласился.
+  final anyUnsettled = occupying.any((e) => e.status == 'unsettled');
   return DayMark(
     ownerUid: first.ownerUid,
     initials: initialsOf(names[first.ownerUid] ?? ''),
     shape: anyUnsettled ? DayMarkShape.outlined : DayMarkShape.filled,
+    unseenInvitations: unseen,
+    handledTrace: trace,
   );
 }
 
@@ -102,6 +189,7 @@ class MonthTally {
   const MonthTally({
     required this.byOwner,
     required this.unsettledDays,
+    required this.invitedOnlyDays,
     required this.freeDays,
     required this.daysInMonth,
   });
@@ -114,12 +202,31 @@ class MonthTally {
   /// посчитаны в нём (см. арифметику макета в шапке файла).
   final int unsettledDays;
 
+  /// Сколько дней, на которых ТОЛЬКО приглашения и ни одного занявшего
+  /// вечера. **Не подмножество [byOwner], а третья доля** — в этом отличие
+  /// от [unsettledDays], и в этом же вся правка счёта 12.08.
+  ///
+  /// Дни, где приглашение стоит РЯДОМ с занятым вечером, сюда не входят:
+  /// день уже посчитан занятым, и посчитать его вторично значило бы выйти
+  /// за число дней месяца.
+  final int invitedOnlyDays;
+
   final int freeDays;
   final int daysInMonth;
 
   /// Занятых дней всего. Отдельным именем, потому что на нём стоит сверка:
   /// занятые плюс свободные обязаны дать все дни месяца.
   int get busyDays => byOwner.values.fold(0, (a, b) => a + b);
+
+  /// СВЕРКА, КОТОРУЮ НАДО СКЛАДЫВАТЬ ВСЛУХ (I13).
+  ///
+  /// До 12.08 доли было две — занятые и свободные, — и сходились они
+  /// тождественно. Приглашения завели **третью**, и с ней тождество
+  /// перестаёт быть очевидным: день с одним лишь приглашением не занят и не
+  /// свободен. Поэтому равенство проверяется, а не подразумевается — ровно
+  /// та арифметика, на которой в самом макете «Rafael 8 + Teymur 6 + Şübhəli
+  /// 2 + Boş 17» даёт 33 при 31 дне, если сложить не то с не тем.
+  bool get addsUp => busyDays + invitedOnlyDays + freeDays == daysInMonth;
 }
 
 /// Счёт по месяцу из уже готовых пометок: день → пометка.
@@ -129,14 +236,31 @@ MonthTally monthTally({
 }) {
   final byOwner = <String, int>{};
   var unsettled = 0;
+  var invitedOnly = 0;
   for (final m in marks.values) {
-    byOwner[m.ownerUid] = (byOwner[m.ownerUid] ?? 0) + 1;
+    final owner = m.ownerUid;
+    // День без занявшего в счёт людей не идёт: приписать приглашение
+    // владельцу чужого вечера значило бы сказать, что он занял мой день.
+    if (owner == null) {
+      if (m.invited) invitedOnly++;
+      continue;
+    }
+    byOwner[owner] = (byOwner[owner] ?? 0) + 1;
     if (m.shape == DayMarkShape.outlined) unsettled++;
   }
+  final busy = byOwner.values.fold(0, (a, b) => a + b);
   return MonthTally(
     byOwner: byOwner,
     unsettledDays: unsettled,
-    freeDays: daysInMonth - marks.length,
+    invitedOnlyDays: invitedOnly,
+    // СВОБОДНЫЕ СЧИТАЮТСЯ ВЫЧИТАНИЕМ, А НЕ ПО ОТСУТСТВИЮ ПОМЕТКИ, и это
+    // поправка 12.08. Прежде стояло `daysInMonth - marks.length`, то есть
+    // «свободен тот, у кого пометки нет». С серой точкой это стало неверно:
+    // у дня, где человек ОТКАЗАЛСЯ, пометка есть, а день свободен — он не
+    // занят никем и открыт для другой работы. Старая формула записала бы его
+    // в занятые ни для кого: ни в `byOwner`, ни в свободные, и сумма
+    // недосчиталась бы на один день за каждый отказ.
+    freeDays: daysInMonth - busy - invitedOnly,
     daysInMonth: daysInMonth,
   );
 }

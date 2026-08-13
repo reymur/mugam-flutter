@@ -1,16 +1,20 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import '../../../core/agreements/agreement_cancel.dart';
 import '../../../core/agreements/agreement_card.dart';
 import '../../../core/agreements/event_answer_reply.dart';
 import '../../../core/agreements/event_answers.dart';
 import '../../../core/agreements/event_status_view.dart';
 import '../../../core/agreements/event_edit.dart';
+import '../../../core/agreements/left_member_actions.dart';
+import '../../../core/chat/open_direct_chat.dart';
 import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/agreements/day_buckets.dart';
@@ -46,6 +50,26 @@ import '../../user/screens/user_profile_screen.dart';
 String _azMonth(int month) => azMonthFull(month);
 String _fmtDate(String iso) => fmtEventDate(iso);
 String _fmtTime(String iso) => fmtEventTime(iso);
+
+String _fmtCreatedAt(dynamic ts) {
+  if (ts == null) return '';
+  try {
+    DateTime d;
+    if (ts is Timestamp) {
+      d = ts.toDate();
+    } else {
+      return '';
+    }
+    return DateFormat('d MMMM yyyy HH:mm', 'az').format(d);
+  } catch (_) {
+    if (ts is Timestamp) {
+      final d = ts.toDate();
+      return '${d.day} ${_azMonth(d.month)} ${d.year} '
+          '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    }
+    return '';
+  }
+}
 
 bool _sameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
@@ -325,16 +349,8 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
     }
 
     // If a detail screen is showing, render it on top
-    //
-    // СТАРЫЙ ЭКРАН КАРТОЧКИ ДОГОВОРА СНЯТ 13.08 вместе со вторым набором
-    // кнопок отмены по согласию. Договорённость перестала быть отдельной
-    // вещью, значит и отдельной карточки у неё нет.
-    //
-    // Договорённости открываются ТОЙ ЖЕ дорогой, что и вечера, — через
-    // `_PersonalEventDetailScreen` ниже. Это и было целью шага 6: одна
-    // карточка на всё.
     if (_selectedAgreementId != null) {
-      return _PersonalEventDetailScreen(
+      return _AgreementDetailScreen(
         eventId: _selectedAgreementId!,
         currentUid: uid,
         onBack: () => setState(() => _selectedAgreementId = null),
@@ -2243,6 +2259,130 @@ class _EventCard extends StatelessWidget {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Row widget for detail screens
+// ---------------------------------------------------------------------------
+class _DetailRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool last;
+  // Строка только что изменилась чужой правкой (см. _RemoteChangeFlash).
+  final bool flash;
+
+  const _DetailRow({
+    required this.label,
+    required this.value,
+    this.last = false,
+    this.flash = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Заливка, а не мигание: мигание в списке из пяти строк читается как
+    // сбой отрисовки. Гаснет плавно — момент, когда подсветка сходит на
+    // нет, сам по себе показывает, что изменение уже не новое.
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 600),
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      decoration: BoxDecoration(
+        color: flash ? kGold.withAlpha(46) : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        border: last ? null : const Border(bottom: BorderSide(color: kBorder)),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 90,
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 13, color: kMuted),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 13,
+                color: kText,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PartyRow extends StatelessWidget {
+  final String name;
+  final String label;
+  final bool highlighted;
+  final VoidCallback onTap;
+
+  // Ответ участника здесь БОЛЬШЕ НЕ ПОКАЗЫВАЕТСЯ: состав карточки вечера
+  // рисует `_PartyMemberRow` по макету (кружок с буквами, имя, ответ под
+  // ним). `_PartyRow` остался только у старой карточки договора, которая
+  // снимается после прогона, — и держать в ней второй способ показать ответ
+  // значило бы дать двум местам разойтись на время её жизни.
+
+  const _PartyRow({
+    required this.name,
+    required this.label,
+    required this.highlighted,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: highlighted ? kGold.withAlpha(20) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: kBg3,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Center(
+                child: Text('👤', style: TextStyle(fontSize: 18)),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: kText,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    label,
+                    style: const TextStyle(fontSize: 12, color: kMuted),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: kMuted, size: 20),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 /// МОЙ ОТВЕТ НА ПРИГЛАШЕНИЕ — шаг 4, пункт 3 (`docs/plan.md`).
 ///
@@ -2566,116 +2706,6 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
   }
 }
 
-// Подсветка изменения, ПРИЕХАВШЕГО ИЗВНЕ.
-//
-// Зачем. После N23 чужая правка доезжает до открытой карточки и молча
-// подменяет значение. Человек смотрит на экран, дата меняется — и если он
-// в этот момент моргнул, он не узнает, что договор вообще трогали, и
-// продолжит помнить старую дату. Живое обновление без признака хуже
-// устаревшего экрана: устаревший хотя бы честно показывает одно и то же.
-//
-// Почему только чужое. Своё сохранение человек только что сделал руками,
-// мигать ему незачем. А главное — признак, который загорается всегда,
-// перестают замечать за неделю, и тогда он не сработает там, где нужен.
-// Отличаем по значению, а не по флагу «я только что сохранял»: лист
-// возвращает то, что записал, и если пришедшее значение совпало с ним —
-// это наша собственная запись вернулась через поток. Флаг «подавить
-// следующее изменение» проглотил бы чужую правку, случившуюся в ту же
-// секунду; сравнение по значению — нет.
-class _RemoteChangeFlash {
-  static const _duration = Duration(seconds: 4);
-
-  Map<String, String>? _prev;
-  Map<String, String>? _selfSaved;
-  Timer? _timer;
-  Set<String> flashing = const {};
-
-  // Ключи — имена ПОЛЕЙ, а не подписи строк. Подписи у двух карточек
-  // разные («Vaxt» против «Saat», «Əlavələr» против «Qeyd»), и ключ по
-  // подписи молча перестал бы совпадать на второй из них. Дата с временем
-  // живут в одном поле, поэтому обе строки, нарисованные из него, просят
-  // один и тот же ключ и загораются вместе — это правда: сдвиг времени и
-  // есть изменение даты.
-  static Map<String, String> _fieldsOf(PersonalEvent e) => {
-    'type': e.type,
-    'date': e.date,
-    'location': e.location,
-    'notes': e.notes,
-  };
-
-  void rememberSelfSave(Map<String, String>? saved) => _selfSaved = saved;
-
-  // Вызывается в начале build. Значение flashing выставляется синхронно,
-  // поэтому текущая же перерисовка уже покажет подсветку; setState нужен
-  // только на её гашение, и он приходит из таймера — вне build.
-  void sync(PersonalEvent event, void Function() onExpire) {
-    final now = _fieldsOf(event);
-    final prev = _prev;
-    _prev = now;
-    // Первый кадр карточки: сравнивать не с чем, и подсвечивать при
-    // открытии нечего — иначе загоралось бы всё подряд на каждом входе.
-    if (prev == null) return;
-
-    final changed = now.keys.where((k) => now[k] != prev[k]).toSet();
-    if (changed.isEmpty) return;
-
-    final self = _selfSaved;
-    if (self != null) {
-      changed.removeWhere((k) => now[k] == self[k]);
-      // Своё сохранение засчитывается ровно один раз: следующее изменение
-      // тех же полей уже чужое.
-      _selfSaved = null;
-    }
-    if (changed.isEmpty) return;
-
-    flashing = changed;
-    _timer?.cancel();
-    _timer = Timer(_duration, () {
-      flashing = const {};
-      onExpire();
-    });
-  }
-
-  void dispose() => _timer?.cancel();
-}
-
-// Обе карточки ниже ищут своё событие так: сначала среди собственных, потом
-// среди тех, где человек участник. Дедупликация не нужна — берём первое
-// совпадение, а id уникален на всю базу.
-// Поиск переехал в `core/agreements/event_lookup.dart` — здесь остался
-// вызов. С публичной дверью по `eventId` у правила «искать в своих и в
-// тех, где я участник» появился ТРЕТИЙ читатель, а три места, ищущие
-// по-своему, разойдутся молча (I23).
-PersonalEvent? _findEvent(
-  String id,
-  List<PersonalEvent> own,
-  List<PersonalEvent> asParticipant,
-) => findEventById(id, own, asParticipant);
-
-// Событие исчезло, пока карточка открыта: владелец удалил его с другого
-// устройства. Отменённое сюда не попадает — у отменённого документ на
-// месте, меняется только `status`. Пустой экран с рабочей кнопкой «назад»
-// честнее, чем последний снимок: показывать нечего, а держать на экране
-// то, чего в базе уже нет, — ровно тот дефект, который здесь чинится.
-Widget _eventGoneScaffold(String title, VoidCallback onBack) {
-  return Scaffold(
-    backgroundColor: kBg,
-    appBar: AppBar(
-      backgroundColor: kBg2,
-      title: Text(title, style: GoogleFonts.nunito(color: kGold, fontSize: 18)),
-      leading: IconButton(
-        icon: const Icon(Icons.arrow_back, color: kGold),
-        onPressed: onBack,
-      ),
-    ),
-    body: const Center(
-      child: Text(
-        'Bu qeyd artıq mövcud deyil',
-        style: TextStyle(color: kMuted),
-      ),
-    ),
-  );
-}
 // ---------------------------------------------------------------------------
 // PersonalEventDetail screen
 // ---------------------------------------------------------------------------
@@ -2793,68 +2823,6 @@ class _PersonalEventDetailScreenState
     PresenceService.instance.setActiveEvent(null);
     _flash.dispose();
     super.dispose();
-  }
-
-  /// ОТМЕНА СВОЕГО ВЕЧЕРА — один ход, без согласия второй стороны (13.08).
-  ///
-  /// **Ход в правилах уже есть и остаётся жить: `ownerCancelsOwnEvent`**,
-  /// выложен 12.08. Из семи ходов отмены, которые эта работа делает мёртвыми,
-  /// он единственный уцелел — и теперь он единственный способ отменить вечер
-  /// вообще.
-  ///
-  /// **Договорённость отменяется ТЕМ ЖЕ ходом, что и личный вечер, и в этом
-  /// вся правка.** Прежде у неё была своя дорога — «попросить согласия»; она
-  /// снята вместе с самим различением. Владелец договорённости — такой же
-  /// владелец вечера.
-  ///
-  /// Подтверждение спрашивается один раз. **Причина словами или голосом
-  /// приедет отдельно**, вместе с окном «Gələ bilmirəm»: у них одно окно, и
-  /// писать его дважды нельзя.
-  Future<void> _cancelOwnEvent(
-    PersonalEvent event,
-    FirestoreService service,
-  ) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (d) => AlertDialog(
-        backgroundColor: kBg2,
-        title: const Text(
-          'Tədbiri ləğv etmək?',
-          style: TextStyle(color: kText, fontSize: 17),
-        ),
-        content: const Text(
-          'Tədbir ləğv olunacaq və heyət bundan xəbər tutacaq.',
-          style: TextStyle(color: kTextSecondary, fontSize: 14),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(d, false),
-            child: const Text('İmtina', style: TextStyle(color: kMuted)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(d, true),
-            child: const Text('Ləğv et', style: TextStyle(color: kRed)),
-          ),
-        ],
-      ),
-    );
-    if (ok != true || !mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      await service.setEventStatus(
-        event.id,
-        widget.currentUid,
-        kStatusCancelled,
-        // Поступок называется своим именем: сервер берёт отсюда автора и
-        // повод для уведомления, и «ownerCancelled» — единственный, который
-        // теперь бывает.
-        'ownerCancelled',
-      );
-    } catch (e) {
-      messenger.showSnackBar(
-        SnackBar(content: Text('Ləğv edilmədi: $e')),
-      );
-    }
   }
 
   User? _findUser(List<User> allUsers, String uid) {
@@ -2997,23 +2965,22 @@ class _PersonalEventDetailScreenState
                       ),
                     ],
 
-                    // 3. ПЛАШКА СОСТОЯНИЯ СНЯТА ЦЕЛИКОМ (решение автора
-                    // 13.08). Была: показывала «Dəqiq» и открывала окошко на
-                    // три пункта — в силе, под вопросом, отменён.
-                    //
-                    // **Довод автора: «под вопросом» музыканту не нужно —
-                    // вечер либо есть, либо отменён.** Третье состояние
-                    // заводилось приложением для себя: оно давало данным
-                    // сойтись, а человеку предлагало решение, которого он в
-                    // жизни не принимает.
-                    //
-                    // Отмена не пропала — переехала в подвал отдельной
-                    // кнопкой «Ləğv et», одним нажатием и без выбора из трёх.
-                    //
-                    // Значение `unsettled` в данных НЕ ТРОНУТО: в проде оно у
-                    // одного документа из 91 (перепись 13.08), и он теперь
-                    // покажется обычным. **Это решение, а не пропуск** —
-                    // разбор в `docs/plan.md`.
+                    // 3. ПЛАШКА СОСТОЯНИЯ (N116) и повод под ней.
+                    const SizedBox(height: 11),
+                    GestureDetector(
+                      // ПЛАШКА — КНОПКА (12.08). Прошедший вечер состояние не
+                      // меняет: спорить о том, состоялся ли вчерашний вечер,
+                      // приложению нечем, а данные оно испортит.
+                      onTap: (isOwner && !_isPast(event))
+                          ? () => _openStatusPicker(
+                              event,
+                              allUsers,
+                              firestoreService,
+                            )
+                          : null,
+                      behavior: HitTestBehavior.opaque,
+                      child: _statusPillFor(event, allUsers),
+                    ),
 
                     // 4. СОСТАВ — компактными строками: кружок с двумя буквами в
                     // обводке по ответу, имя, под ним ответ. Без крупных карточек и
@@ -3034,20 +3001,25 @@ class _PersonalEventDetailScreenState
                           name: _findUser(allUsers, uid)?.name ?? uid,
                           answer: event.answerFor(uid),
                           onTap: () => _openUserProfile(context, allUsers, uid),
-                          // КНОПКА «?» СНЯТА (решение автора 13.08). Была: у
-                          // вышедшего участника, два выбора — «Dəqiqləşdir»
-                          // (спросить в чате) и «Siyahıdan sil» (убрать из
-                          // состава).
-                          //
-                          // **Довод автора: вышедший помечен «İşdən çıxdı»,
-                          // этого достаточно, а спросить можно в чате.** То
-                          // есть окошко предлагало дорогу, которая и так есть,
-                          // и второй ход, которого никто не просил.
-                          //
-                          // Показать её всё равно было некому: значение
-                          // `left` не пишет ни одно место в `lib` (N121), и
-                          // условие показа кончалось на `answer == left`.
-                          onAsk: null,
+                          // Кнопка «?» — решает правило, а не эта строка.
+                          // Три uid, а не готовый `isOwner`: у владельца в
+                          // составе есть и своя строка, и кнопка на самом себе
+                          // навела бы оба хода на него (чат с собой, выход из
+                          // своего же вечера).
+                          onAsk:
+                              offersLeftMemberMenu(
+                                viewerUid: currentUid,
+                                memberUid: uid,
+                                ownerUid: event.ownerUid,
+                                answer: event.answerFor(uid),
+                              )
+                              ? () => _openLeftMemberMenu(
+                                  event,
+                                  uid,
+                                  allUsers,
+                                  firestoreService,
+                                )
+                              : null,
                         ),
                     ],
 
@@ -3146,31 +3118,19 @@ class _PersonalEventDetailScreenState
                       ),
                     ],
 
-                    // 5. СТРОКА ДОГОВОРЁННОСТИ СНЯТА ЦЕЛИКОМ, вместе с
-                    // раскрытием и отменой по согласию (решение автора 13.08).
-                    //
-                    // **Довод автора: в жизни нет взаимных подтверждений.**
-                    // Занят на дату, потом не смог — звонишь и говоришь «не
-                    // смогу»; работодатель либо ищет сам, либо просит найти
-                    // замену. Договорённость И ЕСТЬ согласие: согласился —
-                    // идёшь, не можешь — сказал.
-                    //
-                    // Снято отсюда: зелёная строка «Teymur razılaşdı · дата»,
-                    // раскрытие с историей и четыре хода отмены по согласию
-                    // («Müqaviləni ləğv et», «Razıyam ləğv edilsin», отзыв,
-                    // отказ).
-                    //
-                    // **`isAgree` НЕ ТРОНУТ** — он уже не решает, что
-                    // показывать, и 27 существующих договорённостей остаются
-                    // обычными вечерами. Строка исчезает у всех.
-                    //
-                    // На смену придёт «Gələ bilmirəm» у согласившегося
-                    // участника — ход односторонний, с ответом инициатора
-                    // (`docs/plan.md`, работа 13.08). **Ходы отмены по
-                    // согласию в правилах прода снимаются ОТДЕЛЬНОЙ выкладкой
-                    // и только после того, как «Gələ bilmirəm» готово:**
-                    // снять раньше значит оставить вечер, из которого не
-                    // выйти никак.
+                    // 5. СТРОКА ДОГОВОРЁННОСТИ — свёрнутая, раскрывается В ЭТОЙ ЖЕ
+                    // карточке. Договорённость это часть вечера, а не самостоятельная
+                    // вещь: музыкант открывает вечер и вспоминает — 14-го у Теймура,
+                    // договорились восьмого.
+                    if (event.isAgree) ...[
+                      const SizedBox(height: 18),
+                      _AgreementLine(
+                        event: event,
+                        currentUid: currentUid,
+                        allUsers: allUsers,
+                        firestoreService: firestoreService,
+                      ),
+                    ],
 
                     // Распорка: всё выше остаётся у верхнего края, кнопки уезжают к
                     // нижнему — как подвал макета на `margin-top: auto`.
@@ -3192,31 +3152,6 @@ class _PersonalEventDetailScreenState
                           firestoreService,
                         ),
                       ),
-                      // ОТМЕНА — ОДНИМ НАЖАТИЕМ, БЕЗ СОГЛАСИЙ (13.08).
-                      //
-                      // Прежде отмена жила в окошке на плашке и у
-                      // договорённости не отменяла, а ПРОСИЛА согласия второй
-                      // стороны. Согласий больше нет: владелец отменяет свой
-                      // вечер сам, как в жизни.
-                      //
-                      // **Причина словами или голосом сюда ещё не приделана** —
-                      // она приедет вместе с окном «Gələ bilmirəm»
-                      // (`docs/plan.md`, шаг 3 работы 13.08), у них одно и то
-                      // же окно. Пока стоит подтверждение: отмена необратима
-                      // для тех, кто уже согласился, и спросить один раз
-                      // дешевле, чем объяснять потом.
-                      if (!_isPast(event) && event.status != kStatusCancelled)
-                        ...[
-                          const SizedBox(height: 11),
-                          _CardButton(
-                            label: 'Ləğv et',
-                            tone: _CardButtonTone.plain,
-                            onTap: () => _cancelOwnEvent(
-                              event,
-                              firestoreService,
-                            ),
-                          ),
-                        ],
                       // «Şübhə altına al» и «Onsuz davam edirəm» СНЯТЫ
                       // 12.08: первую заменило окошко выбора на плашке, вторую
                       // — «убрать из состава» у вышедшего. Обе делали то, что
