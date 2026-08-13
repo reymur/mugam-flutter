@@ -1,0 +1,144 @@
+<!DOCTYPE html><html lang="az"><head><meta charset="utf-8"><title>Mugam 11</title><style>
+* { box-sizing: border-box; margin: 0; }
+body {
+  background: #0D0D0D;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  display: flex; justify-content: center; align-items: flex-start;
+  padding: 40px;
+}
+.stage { display: flex; }
+.phone + .phone { margin-left: 30px; }
+.phone {
+  width: 320px; height: 630px;
+  background: #1A1A1A;
+  border-radius: 14px;
+  padding: 32px 22px 22px;
+  display: flex; flex-direction: column;
+}
+p { margin: 0; }
+.mut { color: #8A8A85; }
+.dim { color: #5F5F5C; }
+.pri { color: #F5F3ED; }
+.sec { color: #A8A8A2; }
+.gold { color: #E09A2B; }
+.label { font-size: 13px; letter-spacing: 1.5px; color: #8A8A85; margin: 26px 0 12px; }
+.cap { font-size: 14px; letter-spacing: 1.8px; color: #E09A2B; margin-bottom: 30px; }
+.bar { border-left: 4px solid #E09A2B; padding: 2px 0 2px 16px; }
+.bar.off { border-left-color: #3A3A38; }
+.row { display: flex; justify-content: space-between; padding: 13px 0; border-bottom: 1px solid #262624; }
+.row:last-of-type { border-bottom: none; }
+.tabs { margin-top: auto; display: flex; justify-content: space-between; padding: 0; }
+.tabs span { font-size: 15px; color: #8A8A85; }
+.av { width: 46px; height: 46px; border-radius: 50%; border: 1.5px solid #3A3A38;
+  display: flex; align-items: center; justify-content: center; font-size: 13px; color: #A8A8A2; flex-shrink: 0; }
+.av.on { border-color: #E09A2B; color: #E09A2B; }
+.av { font-size: 14px; }
+.person { display: flex; align-items: center; margin-bottom: 16px; }
+.person > div:last-child { margin-left: 17px; }
+.btn { border: 1.5px solid #3A3A38; color: #C8C8C2; border-radius: 10px;
+  padding: 17px; text-align: center; font-size: 16px; margin-bottom: 14px; }
+.btn.g { border-color: #E09A2B; color: #E09A2B; }
+.btn.f { background: #C1811F; color: #F5F3ED; border-color: #C1811F; }
+.pill { align-self: flex-start; margin-top: 16px; border: 1.5px solid #7FA84A;
+  color: #9BC46A; font-size: 15px; padding: 8px 16px; border-radius: 22px; }
+.fld { border: 1.5px solid #3A3A38; border-radius: 10px; padding: 13px 16px; margin-bottom: 13px; }
+.fld p:first-child { font-size: 12px; letter-spacing: 1.6px; color: #8A8A85; }
+.fld p:last-child { font-size: 17px; color: #F5F3ED; margin-top: 6px; }
+.opt { border: 1.5px solid #3A3A38; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+  font-size: 15px; color: #C8C8C2; line-height: 1.45; }
+.opt.on { border-color: #E09A2B; color: #E09A2B; }
+.ta { border: 1.5px solid #3A3A38; border-radius: 10px; padding: 14px 16px; font-size: 15px;
+  color: #5F5F5C; min-height: 80px; }
+.ev { display: flex; margin-bottom: 22px; }
+.ev > div:last-child { margin-left: 14px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: #3A3A38; margin-top: 7px; flex-shrink: 0; }
+.dot.on { background: #E09A2B; }
+
+.av2 { width:36px;height:36px;border-radius:50%;border:1.5px solid #3A3A38;display:flex;align-items:center;justify-content:center;font-size:12px;color:#A8A8A2; }
+.av2.ok { border-color:#7FA84A; color:#9BC46A; }
+.av2.no { border-color:#8A4A3A; color:#C08070; }
+.st { font-size:13px; margin-top:2px; }
+.st.ok { color:#9BC46A; } .st.no { color:#C08070; }
+.opt { border:1.5px solid #3A3A38; border-radius:10px; padding:13px 15px; margin-bottom:10px; font-size:15px; color:#C8C8C2; }
+.ta { border:1.5px solid #3A3A38; border-radius:10px; padding:13px 15px; font-size:15px; color:#5F5F5C; min-height:74px; }
+.mic { width:60px;height:60px;border-radius:50%;background:#C1811F;display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto; }
+.msg { border-radius:14px; padding:11px 13px; font-size:14px; background:#1E1A15; color:#E8E4DC; }
+.vm { display:flex; align-items:center; border:1.5px solid #3A3A38; border-radius:9px; padding:8px 11px; margin-top:9px; }
+.vm .pl { width:24px;height:24px;border-radius:50%;background:#C1811F;color:#1A1408;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0; }
+.vm .wv { flex:1; display:flex; align-items:center; margin:0 9px; }
+.vm .wv i { display:inline-block; width:2px; margin:0 1.5px; background:#8A7A60; border-radius:2px; }
+</style></head><body><div class="stage">
+
+<div class="phone">
+  <p class="mut" style="font-size:15px; margin-bottom:14px;">← Geri</p>
+  <p class="pri" style="font-size:26px;">14 avqust, 20:00</p>
+  <p class="sec" style="font-size:15px; margin-top:6px;">Toy · İnci Qarayev</p>
+
+  <p class="label" style="margin:22px 0 11px;">İŞTİRAKÇILAR · 3 NƏFƏR</p>
+  <table style="width:100%; border-collapse:collapse;">
+    <tr><td style="width:50px; padding:0 0 14px 0; vertical-align:top;"><div class="av2 ok">RA</div></td>
+        <td style="padding:0 0 14px 0; vertical-align:top;"><p class="pri" style="font-size:16px;">Rafael Dagli</p><p class="st ok">gəlir</p></td></tr>
+    <tr><td style="padding:0 0 14px 0; vertical-align:top;"><div class="av2 ok">TE</div></td>
+        <td style="padding:0 0 14px 0; vertical-align:top;"><p class="pri" style="font-size:16px;">Teymur Orucov</p><p class="st ok">gəlir</p></td></tr>
+    <tr><td style="padding:0; vertical-align:top;"><div class="av2 ok">RM</div></td>
+        <td style="padding:0; vertical-align:top;"><p class="pri" style="font-size:16px;">Ramil</p><p class="st ok">gəlir</p></td></tr>
+  </table>
+
+  <div style="margin-top:auto;">
+    <div class="btn" style="padding:15px; margin-bottom:0; border-color:#8A4A3A; color:#C08070;">Gələ bilmirəm</div>
+  </div>
+</div>
+
+<div class="phone">
+  <p class="cap" style="margin-bottom:16px;">GƏLƏ BİLMİRƏM</p>
+  <p class="pri" style="font-size:20px;">14 avqust, 20:00</p>
+  <p class="sec" style="font-size:15px; margin-top:6px;">Rafael Dagli xəbər alacaq</p>
+
+  <p class="label" style="margin:24px 0 12px;">NƏ DEYİRSƏN</p>
+  <div style="text-align:center;">
+    <div class="mic">🎤</div>
+    <p class="mut" style="font-size:14px; margin-top:11px;">danış</p>
+  </div>
+
+  <p class="mut" style="font-size:14px; text-align:center; margin:18px 0 12px;">və ya yaz</p>
+  <div class="ta">Səbəbi yaz…</div>
+
+  <div style="margin-top:auto;">
+    <div class="btn f" style="padding:15px; margin-bottom:11px;">Göndər</div>
+    <div class="btn" style="padding:15px; margin-bottom:0;">Geri</div>
+  </div>
+</div>
+
+<div class="phone">
+  <p class="mut" style="font-size:15px; margin-bottom:14px;">← Geri</p>
+  <p class="pri" style="font-size:26px;">14 avqust, 20:00</p>
+  <p class="sec" style="font-size:15px; margin-top:6px;">Toy · İnci Qarayev</p>
+
+  <p class="label" style="margin:22px 0 11px;">İŞTİRAKÇILAR · 3 NƏFƏR</p>
+  <table style="width:100%; border-collapse:collapse;">
+    <tr><td style="width:50px; padding:0 0 14px 0; vertical-align:top;"><div class="av2 ok">RA</div></td>
+        <td style="padding:0 0 14px 0; vertical-align:top;"><p class="pri" style="font-size:16px;">Rafael Dagli</p><p class="st ok">gəlir</p></td>
+        <td style="padding:0 0 14px 0;"></td></tr>
+    <tr><td style="padding:0 0 14px 0; vertical-align:top;"><div class="av2 no">TE</div></td>
+        <td style="padding:0 0 14px 0; vertical-align:top;"><p style="font-size:16px; color:#C08070;">Teymur Orucov</p><p class="st no">gələ bilmir</p></td>
+        <td style="padding:0 0 14px 0; text-align:right; vertical-align:top;"><span class="mut" style="font-size:13px;">sil</span></td></tr>
+    <tr><td style="padding:0; vertical-align:top;"><div class="av2 ok">RM</div></td>
+        <td style="padding:0; vertical-align:top;"><p class="pri" style="font-size:16px;">Ramil</p><p class="st ok">gəlir</p></td>
+        <td style="padding:0;"></td></tr>
+  </table>
+
+  <p class="label" style="margin:20px 0 10px;">TEYMUR DEDİ</p>
+  <div class="msg">Bağışla, o gün başqa yerdə söz vermişəm</div>
+  <div class="vm">
+    <div class="pl">▶</div>
+    <div class="wv"><i style="height:8px"></i><i style="height:16px"></i><i style="height:22px"></i><i style="height:10px"></i><i style="height:18px"></i><i style="height:12px"></i></div>
+    <span class="mut" style="font-size:13px;">0:11</span>
+  </div>
+
+  <div style="margin-top:auto;">
+    <div class="btn g" style="padding:15px; margin-bottom:11px;">Dəyişiklik et</div>
+    <div class="btn" style="padding:15px; margin-bottom:0;">Ləğv et</div>
+  </div>
+</div>
+
+</div></body></html>

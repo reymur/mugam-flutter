@@ -43,7 +43,6 @@ import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../agreements/screens/agreements_screen.dart' show agreementsTabRequestProvider;
 import '../../../core/chat/job_offer_round.dart';
 import '../../job_offer/job_offer_entry.dart';
-import '../../job_offer/screens/job_offer_date_sheet.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import 'about_contact_screen.dart';
 import 'chat_attachment_viewer_screen.dart';
@@ -789,65 +788,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (mounted) _showCopySnackBar('🗑 Çat təmizləndi');
   }
 
-  // Один лист на два момента — создание предложения и правку уже
-  // отправленного. Различаются подписями и тем, куда уходит результат:
-  // по умолчанию (правка) это saveChatEventDate, при создании вызывающий
-  // передаёт свой onSubmit с setJobOffer.
-  void _openJobOfferDateSheet({
-    DateTime? initialDate,
-    String? initialType,
-    String? initialLocation,
-    String? initialNotes,
-    String title = 'Tədbir tarixi',
-    String submitLabel = 'Yadda saxla',
-    void Function(DateTime date, String type, String location, String notes)?
-        onSubmit,
-  }) {
-    final currentUid = FirebaseAuth.instance.currentUser?.uid;
-    if (currentUid == null) return;
-    showModalBottomSheet(
-      context: context,
-      // Прозрачный фон и никакой формы здесь: лист рисует свой контейнер
-      // сам, во весь экран с закреплёнными шапкой и кнопками — один в один
-      // с календарным окном (agreements_screen.dart → _openAddModal).
-      // Оставь тут kBg2 и скруглённую форму, и под собственным фоном листа
-      // проступил бы второй, со своим скруглением.
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      // ТАП ПО ЗАТЕМНЁННОМУ ФОНУ НЕ ЗАКРЫВАЕТ, свайп и «Ləğv et» —
-      // закрывают, молча и ничего не сохраняя.
-      //
-      // Разница в том, промахом это делается или намеренно. По фону легко
-      // попасть, целясь в поле формы, и терять введённое из-за промаха
-      // обидно. Свайп вниз — намеренное движение, кнопка — прицельный
-      // тап; их случайно не сделаешь, и спрашивать там не о чем.
-      //
-      // Вопрос «Dəyişikliklər itəcək» при закрытии был здесь и снят
-      // решением владельца 04.08: он спрашивал на каждом закрытии, а
-      // защищал ровно от того случая, который теперь закрыт запретом на
-      // тап по фону.
-      isDismissible: false,
-      builder: (_) => JobOfferDateSheet(
-        initialDate: initialDate,
-        initialType: initialType,
-        initialLocation: initialLocation,
-        initialNotes: initialNotes,
-        title: title,
-        submitLabel: submitLabel,
-        currentUid: currentUid,
-        onSave: onSubmit ??
-            (date, type, location, notes) {
-              _firestoreService.saveChatEventDate(
-                chatId: widget.chatId,
-                eventDate: date,
-                eventType: type,
-                eventLocation: location,
-                eventNotes: notes,
-              );
-            },
-      ),
-    );
-  }
+  // ЗДЕСЬ ЖИЛ `_openJobOfferDateSheet` — правка отправленного предложения
+  // через `JobOfferDateSheet`. Снят 14.08 вместе с самим листом.
+  //
+  // Правки предложения по новой схеме нет как хода: инициатору менять
+  // `dates` запрещено правилом (иначе отметки под старые дни молча
+  // означали бы согласие на новые). Передумал — отправляет новое
+  // предложение, у него свой документ и своя карточка в ленте.
+  //
+  // `saveChatEventDate` в сервисе после этого остался БЕЗ ВЫЗЫВАЮЩИХ —
+  // как и `setJobOffer` (N128). Оба снимаются вместе с четырнадцатью
+  // полями раунда, которые держат существующие предложения.
 
   // Cancelling only resets the negotiation fields (see
   // FirestoreService.cancelChat) — nothing was agreed, so the chat itself
@@ -1319,20 +1270,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             children: [
               Expanded(
                 child: isInitiator
-                    ? OutlinedButton(
-                        onPressed: () => _openJobOfferDateSheet(
-                          initialDate: eventDate,
-                          initialType: eventType,
-                          initialLocation: eventLocation,
-                          initialNotes: eventNotes,
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: kGold),
-                        ),
-                        child: Text(
-                          eventDate == null ? '📅 Tarix seç' : '📅 Tarix dəyiş',
-                          style: const TextStyle(color: kGold),
-                        ),
+                    // ПРАВКА ДАТЫ СНЯТА 14.08 ВМЕСТЕ СО СТАРЫМ ЛИСТОМ.
+                    //
+                    // Здесь стояла кнопка «Tarix dəyiş», открывавшая
+                    // `JobOfferDateSheet`. Лист снят целиком (655 строк), и
+                    // это решение автора, а не побочный эффект: по новой
+                    // схеме правки предложения НЕ СУЩЕСТВУЕТ вовсе —
+                    // инициатору менять `dates` запрещено правилом, иначе
+                    // отметки под старые дни молча означали бы согласие на
+                    // новые.
+                    //
+                    // ЦЕНА НАЗВАНА ПРЯМО: у предложений, созданных прежним
+                    // путём (они живут четырнадцатью полями на документе
+                    // чата), правки даты больше нет. Показ их не тронут —
+                    // плашка на месте, состояние видно, ответить можно.
+                    // Передумал — отправляет новое предложение.
+                    ? Text(
+                        eventDate == null
+                            ? 'Tarix seçilməyib'
+                            : '📅 ${(eventType ?? '').isEmpty ? '' : '$eventType · '}'
+                                  'təklif göndərilib',
+                        style: const TextStyle(color: kMuted),
                       )
                     : ElevatedButton(
                         // Пока договор создаётся, кнопка занята и об этом

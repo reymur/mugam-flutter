@@ -242,8 +242,8 @@ void main() {
         o: offer(dates: month, answers: {player: month}),
         viewer: boss,
       );
-      // Шесть показаны, двадцать четыре спрятаны и названы числом.
-      expect(find.text('yenə 24 gün'), findsOneWidget);
+      // Пять показаны, двадцать пять спрятаны и названы числом.
+      expect(find.text('yenə 25 gün'), findsOneWidget);
     });
 
     testWidgets('свёрнутый список разворачивается нажатием', (tester) async {
@@ -255,6 +255,38 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('offer-days-expand')));
       await tester.pump();
       expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
+    });
+
+    // ЭКОНОМИЯ ДОЛЖНА БЫТЬ НАСТОЯЩЕЙ: восемь дней не сворачиваются, хотя
+    // показываем мы пять. Свернуть их значило бы спрятать три ради одного
+    // нажатия — и «yenə 3 gün» под списком из пяти.
+    testWidgets('восемь дней не сворачиваются', (tester) async {
+      final eight = List.generate(
+        8,
+        (i) => '2026-09-0${i + 1}',
+      );
+      await pump(
+        tester,
+        o: offer(dates: eight, answers: {player: eight}),
+        viewer: boss,
+      );
+      expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
+    });
+
+    // А девять — сворачиваются, и прячут четыре: меньшее «yenə» из
+    // возможных. Пара к предыдущему: без неё «не сворачивается» было бы
+    // верно и для порога в тысячу.
+    testWidgets('девять дней сворачиваются и прячут четыре', (tester) async {
+      final nine = List.generate(
+        9,
+        (i) => '2026-09-0${i + 1}',
+      );
+      await pump(
+        tester,
+        o: offer(dates: nine, answers: {player: nine}),
+        viewer: boss,
+      );
+      expect(find.text('yenə 4 gün'), findsOneWidget);
     });
 
     testWidgets('короткий список не сворачивается вовсе', (tester) async {

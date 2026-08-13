@@ -177,7 +177,6 @@ void main() {
         'lib/features/agreements/screens/agreements_screen.dart',
         'lib/firebase/firestore_service.dart',
         'lib/features/day/screens/day_screen.dart',
-        'lib/features/job_offer/screens/job_offer_date_sheet.dart',
       ]) {
         final lines = readCode(path).split('\n');
         for (var i = 0; i < lines.length; i++) {
@@ -221,15 +220,26 @@ void main() {
       // Поиск по вызовам, сделанный однажды, — это память, а не защита.
       // Защита — вот она: второй вызов не пройдёт мимо, и тот, кто его
       // добавит, прочтёт этот текст.
+      // ОБНОВЛЕНО 14.08: ДОРОГ БОЛЬШЕ НЕ ОДНА, А НОЛЬ.
+      //
+      // Правка отправленного предложения снята вместе со старым листом:
+      // по новой схеме её нет как хода — инициатору менять `dates`
+      // запрещено правилом, иначе отметки под старые дни молча означали бы
+      // согласие на новые. Передумал — отправляет новое предложение.
+      //
+      // Сторож не снят, а ПЕРЕВЁРНУТ, и это важнее его прежней редакции:
+      // раньше он держал единственность дороги, теперь — её отсутствие.
+      // Вернётся вызов — вернётся и вывод автора на сервере, ничем, кроме
+      // единственности, не подкреплённый.
       final screen =
           readCode('lib/features/chat/screens/chat_screen.dart');
       final calls = 'saveChatEventDate('.allMatches(screen).length;
       expect(
         calls,
-        1,
-        reason: 'Вызовов saveChatEventDate: $calls. Дорога к правке '
-            'предложения обязана быть одна — сервер выводит её автора из '
-            'того, что она доступна только инициатору, и это ничем, кроме '
+        0,
+        reason: 'Вызовов saveChatEventDate: $calls, ожидалось ноль. Правка '
+            'отправленного предложения снята 14.08 вместе со старым листом. '
+            'Вернуть её нельзя молча: сервер выводил её автора из того, '
             'самой единственности, не подкреплено. Появилась вторая — '
             'либо закрыть автора правилом (приём namesOnlySelf в '
             'firestore.rules), либо писать автора в документ явно.',
@@ -303,23 +313,27 @@ void main() {
     final sheetCall = RegExp(r'(?<![A-Za-z_])JobOfferDateSheet\(');
     final daysSheetCall = RegExp(r'(?<![A-Za-z_])JobOfferDaysSheet\(');
 
-    test('б: лист предложения строится ровно в одном месте', () {
+    // ОБНОВЛЁН 14.08 ПОД СНЯТИЕ СТАРОГО ЛИСТА.
+    //
+    // Прежде здесь ожидалась ровно одна законная вторая дорога — экран
+    // чата, строивший `JobOfferDateSheet` для ПРАВКИ. Правка снята вместе
+    // с листом, значит законных мест не осталось ни одного: старого листа
+    // нет в проекте вовсе.
+    //
+    // А новый лист строится ровно в одном месте — в точке вызова, и это
+    // проверяется отдельно (соседка «г» ниже). Здесь остаётся сторож на
+    // ВОЗВРАТ СНЯТОГО: `JobOfferDateSheet(` не должен появиться нигде.
+    test('б: снятый лист предложения не строится нигде', () {
       final places = <String>[];
       for (final path in otherLibFiles()) {
-        // Файл самого листа пропускается: класс неизбежно называет себя
-        // в собственном объявлении, и считать это «показом листа» значит
-        // сторожить существование класса, а не дорогу к нему.
-        if (path.endsWith('job_offer_date_sheet.dart')) continue;
         final n = sheetCall.allMatches(readCode(path)).length;
         if (n > 0) places.add('$path ($n)');
       }
-      // Экран чата строит лист для ПРАВКИ — это законная вторая дорога,
-      // и она названа здесь поимённо, а не пропущена молча.
       expect(
         places,
-        ['lib/features/chat/screens/chat_screen.dart (1)'],
-        reason: 'Лист предложения показывают из нового места. Создание идёт '
-            'через proposeJobOffer; правка живёт в чате одной дорогой, и на '
+        isEmpty,
+        reason: 'Снятый лист предложения снова строится. Создание идёт '
+            'через proposeJobOffer новым листом; правки предложения как '
             'её единственность опирается вывод автора на сервере.',
       );
     });
@@ -454,11 +468,10 @@ void main() {
       final banner =
           readCode('lib/shared/widgets/event_conflict_banner.dart');
       final sheet =
-          readCode('lib/features/job_offer/screens/job_offer_date_sheet.dart');
+          '';  // лист снят 14.08 — читать нечего
       for (final entry in {
         'event_conflict_banner.dart': banner,
         'agreements_screen.dart': form,
-        'job_offer_date_sheet.dart': sheet,
       }.entries) {
         expect(
           RegExp(r'exactConflictAt\s*\(').hasMatch(entry.value),

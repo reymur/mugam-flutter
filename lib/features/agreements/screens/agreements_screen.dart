@@ -30,7 +30,7 @@ import '../../../shared/widgets/event_notes_picker.dart';
 import '../../../shared/widgets/wheel_date_time_picker.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../job_offer/job_offer_entry.dart';
-import '../../job_offer/screens/job_offer_date_sheet.dart';
+import '../../../core/job_offer/offer_draft.dart';
 import '../../search/screens/filter_sheet.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import '../../user/screens/user_profile_screen.dart';

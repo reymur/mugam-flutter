@@ -10,7 +10,7 @@ import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../agreements/screens/agreements_screen.dart';
 import '../../job_offer/job_offer_entry.dart';
-import '../../job_offer/screens/job_offer_date_sheet.dart';
+import '../../../core/job_offer/offer_draft.dart';
 
 /// Дневной экран — «что у меня сегодня».
 ///

@@ -1,0 +1,100 @@
+<!DOCTYPE html><html lang="az"><head><meta charset="utf-8"><title>Mugam 2</title><style>
+* { box-sizing: border-box; margin: 0; }
+body {
+  background: #0D0D0D;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  display: flex; justify-content: center; align-items: flex-start;
+  padding: 40px;
+}
+.stage { display: flex; }
+.phone + .phone { margin-left: 30px; }
+.phone {
+  width: 320px; height: 630px;
+  background: #1A1A1A;
+  border-radius: 14px;
+  padding: 38px 22px 24px;
+  display: flex; flex-direction: column;
+}
+p { margin: 0; }
+.mut { color: #8A8A85; }
+.dim { color: #5F5F5C; }
+.pri { color: #F5F3ED; }
+.sec { color: #A8A8A2; }
+.gold { color: #E09A2B; }
+.label { font-size: 13px; letter-spacing: 3px; color: #8A8A85; margin: 26px 0 12px; }
+.cap { font-size: 14px; letter-spacing: 3px; color: #E09A2B; margin-bottom: 30px; }
+.bar { border-left: 4px solid #E09A2B; padding: 2px 0 2px 16px; }
+.bar.off { border-left-color: #3A3A38; }
+.row { display: flex; justify-content: space-between; padding: 13px 0; border-bottom: 1px solid #262624; }
+.row:last-of-type { border-bottom: none; }
+.tabs { margin-top: auto; display: flex; justify-content: space-between; padding: 0 4px; }
+.tabs span { font-size: 15px; color: #8A8A85; }
+.av { width: 40px; height: 40px; border-radius: 50%; border: 1.5px solid #3A3A38;
+  display: flex; align-items: center; justify-content: center; font-size: 13px; color: #A8A8A2; flex-shrink: 0; }
+.av.on { border-color: #E09A2B; color: #E09A2B; }
+.person { display: flex; align-items: center; margin-bottom: 16px; }
+.person > div:last-child { margin-left: 14px; }
+.btn { border: 1.5px solid #3A3A38; color: #C8C8C2; border-radius: 10px;
+  padding: 17px; text-align: center; font-size: 16px; margin-bottom: 14px; }
+.btn.g { border-color: #E09A2B; color: #E09A2B; }
+.btn.f { background: #C1811F; color: #F5F3ED; border-color: #C1811F; }
+.pill { align-self: flex-start; margin-top: 16px; border: 1.5px solid #7FA84A;
+  color: #9BC46A; font-size: 15px; padding: 8px 16px; border-radius: 22px; }
+.fld { border: 1.5px solid #3A3A38; border-radius: 10px; padding: 13px 16px; margin-bottom: 13px; }
+.fld p:first-child { font-size: 12px; letter-spacing: 1.6px; color: #8A8A85; }
+.fld p:last-child { font-size: 17px; color: #F5F3ED; margin-top: 6px; }
+.opt { border: 1.5px solid #3A3A38; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+  font-size: 15px; color: #C8C8C2; line-height: 1.45; }
+.opt.on { border-color: #E09A2B; color: #E09A2B; }
+.ta { border: 1.5px solid #3A3A38; border-radius: 10px; padding: 14px 16px; font-size: 15px;
+  color: #5F5F5C; min-height: 80px; }
+.ev { display: flex; margin-bottom: 22px; }
+.ev > div:last-child { margin-left: 14px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: #3A3A38; margin-top: 7px; flex-shrink: 0; }
+.dot.on { background: #E09A2B; }
+</style></head><body><div class="stage">
+
+<div class="phone">
+  <p class="cap">D Ə Y İ Ş İ K L İ K</p>
+  <div class="fld"><p>T A R İ X</p><p>8 avqust 2026</p></div>
+  <div class="fld"><p>S A A T</p><p>17:30</p></div>
+  <div class="fld"><p>N Ö V</p><p>Toy</p></div>
+  <div class="fld"><p>M Ə K A N</p><p>İnci Qarayev, Bakı</p></div>
+  <div class="fld"><p>İ Ş T İ R A K Ç I</p><p>Teymur, Ramil</p></div>
+  <div style="margin-top:auto;">
+    <div class="btn f">Saxla</div>
+    <div class="btn" style="margin-bottom:0;">Ləğv et</div>
+  </div>
+</div>
+
+<div class="phone">
+  <p class="cap">M Ə N İ &nbsp;A Z A D &nbsp;E T</p>
+  <p class="pri" style="font-size:21px; line-height:1.45;">Teymura nə deyirsiniz?</p>
+  <p class="mut" style="font-size:16px; margin-top:10px; line-height:1.5;">O cavab verənə qədər tədbirdə qalırsınız.</p>
+  <p class="label">S Ə B Ə B</p>
+  <div class="opt on">Daha sərfəli təklif aldım — əvəzimə adam tapın</div>
+  <div class="opt">Daha sərfəli təklif aldım — özüm əvəz tapacağam</div>
+  <div class="opt">Şəxsi səbəbdən bacarmıram</div>
+  <div style="margin-top:auto;">
+    <div class="btn f">Göndər</div>
+    <div class="btn" style="margin-bottom:0;">Geri</div>
+  </div>
+</div>
+
+<div class="phone">
+  <p class="cap">T A R İ X Ç Ə</p>
+  <p class="mut" style="font-size:16px; margin-bottom:28px;">8 avqust · Toy</p>
+  <div class="ev"><div class="dot on"></div>
+    <div><p class="pri" style="font-size:17px;">Teymur dəvət göndərdi</p><p class="mut" style="font-size:15px; margin-top:5px;">2 avqust, 14:20</p></div></div>
+  <div class="ev"><div class="dot on"></div>
+    <div><p class="pri" style="font-size:17px;">Siz razılaşdınız</p><p class="mut" style="font-size:15px; margin-top:5px;">2 avqust, 14:47</p></div></div>
+  <div class="ev"><div class="dot"></div>
+    <div><p class="pri" style="font-size:17px;">Teymur məkanı dəyişdi</p><p class="mut" style="font-size:15px; margin-top:5px;">4 avqust, 09:12</p></div></div>
+  <div class="ev"><div class="dot"></div>
+    <div><p class="pri" style="font-size:17px;">Ramil əlavə olundu</p><p class="mut" style="font-size:15px; margin-top:5px;">4 avqust, 09:15</p></div></div>
+  <div style="margin-top:auto;">
+    <div class="btn" style="margin-bottom:0;">Geri</div>
+  </div>
+</div>
+
+</div></body></html>

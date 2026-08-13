@@ -1,0 +1,208 @@
+<!DOCTYPE html><html lang="az"><head><meta charset="utf-8"><title>Mugam 12</title><style>
+* { box-sizing: border-box; margin: 0; }
+body {
+  background: #0D0D0D;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  display: flex; justify-content: center; align-items: flex-start;
+  padding: 40px;
+}
+.stage { display: flex; }
+.phone + .phone { margin-left: 30px; }
+.phone {
+  width: 320px; height: 630px;
+  background: #1A1A1A;
+  border-radius: 14px;
+  padding: 32px 22px 22px;
+  display: flex; flex-direction: column;
+}
+p { margin: 0; }
+.mut { color: #8A8A85; }
+.dim { color: #5F5F5C; }
+.pri { color: #F5F3ED; }
+.sec { color: #A8A8A2; }
+.gold { color: #E09A2B; }
+.label { font-size: 13px; letter-spacing: 1.5px; color: #8A8A85; margin: 26px 0 12px; }
+.cap { font-size: 14px; letter-spacing: 1.8px; color: #E09A2B; margin-bottom: 30px; }
+.bar { border-left: 4px solid #E09A2B; padding: 2px 0 2px 16px; }
+.bar.off { border-left-color: #3A3A38; }
+.row { display: flex; justify-content: space-between; padding: 13px 0; border-bottom: 1px solid #262624; }
+.row:last-of-type { border-bottom: none; }
+.tabs { margin-top: auto; display: flex; justify-content: space-between; padding: 0; }
+.tabs span { font-size: 15px; color: #8A8A85; }
+.av { width: 46px; height: 46px; border-radius: 50%; border: 1.5px solid #3A3A38;
+  display: flex; align-items: center; justify-content: center; font-size: 13px; color: #A8A8A2; flex-shrink: 0; }
+.av.on { border-color: #E09A2B; color: #E09A2B; }
+.av { font-size: 14px; }
+.person { display: flex; align-items: center; margin-bottom: 16px; }
+.person > div:last-child { margin-left: 17px; }
+.btn { border: 1.5px solid #3A3A38; color: #C8C8C2; border-radius: 10px;
+  padding: 17px; text-align: center; font-size: 16px; margin-bottom: 14px; }
+.btn.g { border-color: #E09A2B; color: #E09A2B; }
+.btn.f { background: #C1811F; color: #F5F3ED; border-color: #C1811F; }
+.pill { align-self: flex-start; margin-top: 16px; border: 1.5px solid #7FA84A;
+  color: #9BC46A; font-size: 15px; padding: 8px 16px; border-radius: 22px; }
+.fld { border: 1.5px solid #3A3A38; border-radius: 10px; padding: 13px 16px; margin-bottom: 13px; }
+.fld p:first-child { font-size: 12px; letter-spacing: 1.6px; color: #8A8A85; }
+.fld p:last-child { font-size: 17px; color: #F5F3ED; margin-top: 6px; }
+.opt { border: 1.5px solid #3A3A38; border-radius: 10px; padding: 14px 16px; margin-bottom: 12px;
+  font-size: 15px; color: #C8C8C2; line-height: 1.45; }
+.opt.on { border-color: #E09A2B; color: #E09A2B; }
+.ta { border: 1.5px solid #3A3A38; border-radius: 10px; padding: 14px 16px; font-size: 15px;
+  color: #5F5F5C; min-height: 80px; }
+.ev { display: flex; margin-bottom: 22px; }
+.ev > div:last-child { margin-left: 14px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: #3A3A38; margin-top: 7px; flex-shrink: 0; }
+.dot.on { background: #E09A2B; }
+
+.wd { display:flex; margin-bottom:5px; }
+.wd span { flex:1; text-align:center; font-size:11px; color:#5F5F5C; }
+.rw { display:flex; }
+.cell { flex:1; height:38px; margin:2px; border-radius:8px; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative; }
+.cell .n { font-size:14px; color:#F5F3ED; line-height:1.05; }
+.cell .n.dim { color:#4A443C; }
+.cell .w { font-size:8px; letter-spacing:0.3px; margin-top:1px; }
+.T { color:#E09A2B; } .R { color:#6FA8DC; }
+.bgT { background:rgba(224,154,43,0.18); }
+.bgR { background:rgba(111,168,220,0.18); }
+.dot { width:6px; height:6px; border-radius:50%; background:#E09A2B; margin-top:2px; }
+.sel { border:1.5px solid #E09A2B; }
+.inv { display:flex; align-items:center; border:1.5px solid #5A4A28; border-radius:11px; padding:11px 13px; margin-bottom:9px; }
+.inv .av { width:34px;height:34px;border-radius:50%;border:1.5px solid #E09A2B;display:flex;align-items:center;justify-content:center;font-size:12px;color:#E09A2B;flex-shrink:0; }
+.inv .tx { margin-left:12px; flex:1; }
+</style></head><body><div class="stage">
+
+<div class="phone">
+  <p class="cap" style="margin-bottom:13px;">AVQUST 2026</p>
+  <div class="wd"><span>B.e</span><span>Ç.a</span><span>Ç</span><span>C.a</span><span>C</span><span>Ş</span><span>B</span></div>
+  <div class="rw">
+    <div class="cell"><span class="n dim">27</span></div><div class="cell"><span class="n dim">28</span></div>
+    <div class="cell"><span class="n dim">29</span></div><div class="cell"><span class="n dim">30</span></div>
+    <div class="cell"><span class="n dim">31</span></div>
+    <div class="cell bgR"><span class="n">1</span><span class="w R">RAF</span></div>
+    <div class="cell"><span class="n">2</span></div>
+  </div>
+  <div class="rw">
+    <div class="cell bgT"><span class="n">3</span><span class="w T">TEY</span></div>
+    <div class="cell"><span class="n">4</span></div>
+    <div class="cell"><span class="n">5</span><div class="dot"></div></div>
+    <div class="cell"><span class="n">6</span></div>
+    <div class="cell bgR"><span class="n">7</span><span class="w R">RAF</span></div>
+    <div class="cell"><span class="n">8</span></div>
+    <div class="cell"><span class="n">9</span><div class="dot"></div></div>
+  </div>
+  <div class="rw">
+    <div class="cell"><span class="n">10</span></div>
+    <div class="cell"><span class="n">11</span></div>
+    <div class="cell bgT"><span class="n">12</span><span class="w T">TEY</span></div>
+    <div class="cell"><span class="n">13</span></div>
+    <div class="cell"><span class="n">14</span><div class="dot"></div></div>
+    <div class="cell"><span class="n">15</span></div>
+    <div class="cell"><span class="n">16</span></div>
+  </div>
+  <div class="rw">
+    <div class="cell"><span class="n">17</span></div><div class="cell"><span class="n">18</span></div>
+    <div class="cell"><span class="n">19</span></div><div class="cell"><span class="n">20</span></div>
+    <div class="cell"><span class="n">21</span></div><div class="cell"><span class="n">22</span></div>
+    <div class="cell bgR"><span class="n">23</span><span class="w R">RAF</span></div>
+  </div>
+  <div class="rw">
+    <div class="cell"><span class="n">24</span></div><div class="cell"><span class="n">25</span></div>
+    <div class="cell"><span class="n">26</span></div><div class="cell"><span class="n">27</span></div>
+    <div class="cell"><span class="n">28</span></div><div class="cell"><span class="n">29</span></div>
+    <div class="cell"><span class="n">30</span></div>
+  </div>
+  <div class="rw">
+    <div class="cell"><span class="n">31</span></div>
+    <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+    <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+  </div>
+  <div style="margin-top:16px;">
+    <div style="display:flex; justify-content:space-between; padding:6px 0;"><span class="R" style="font-size:14px;">● Rafael</span><span class="sec" style="font-size:14px;">3 gün</span></div>
+    <div style="display:flex; justify-content:space-between; padding:6px 0;"><span class="T" style="font-size:14px;">● Teymur</span><span class="sec" style="font-size:14px;">2 gün</span></div>
+    <div style="display:flex; justify-content:space-between; padding:6px 0;"><span class="gold" style="font-size:14px;">● Dəvət</span><span class="sec" style="font-size:14px;">3 gün</span></div>
+    <div style="display:flex; justify-content:space-between; border-top:1px solid #262624; margin-top:4px; padding-top:9px;"><span class="mut" style="font-size:14px;">Boş</span><span class="sec" style="font-size:14px;">26 gün</span></div>
+  </div>
+</div>
+
+<div class="phone">
+  <p class="cap" style="margin-bottom:13px;">AVQUST 2026</p>
+  <div class="wd"><span>B.e</span><span>Ç.a</span><span>Ç</span><span>C.a</span><span>C</span><span>Ş</span><span>B</span></div>
+  <div class="rw">
+    <div class="cell"><span class="n dim">27</span></div><div class="cell"><span class="n dim">28</span></div>
+    <div class="cell"><span class="n dim">29</span></div><div class="cell"><span class="n dim">30</span></div>
+    <div class="cell"><span class="n dim">31</span></div>
+    <div class="cell bgR"><span class="n">1</span><span class="w R">RAF</span></div>
+    <div class="cell"><span class="n">2</span></div>
+  </div>
+  <div class="rw">
+    <div class="cell bgT"><span class="n">3</span><span class="w T">TEY</span></div>
+    <div class="cell"><span class="n">4</span></div>
+    <div class="cell"><span class="n">5</span><div class="dot"></div></div>
+    <div class="cell"><span class="n">6</span></div>
+    <div class="cell bgR"><span class="n">7</span><span class="w R">RAF</span></div>
+    <div class="cell"><span class="n">8</span></div>
+    <div class="cell sel"><span class="n">9</span><div class="dot"></div></div>
+  </div>
+  <div class="rw">
+    <div class="cell"><span class="n">10</span></div>
+    <div class="cell"><span class="n">11</span></div>
+    <div class="cell bgT"><span class="n">12</span><span class="w T">TEY</span></div>
+    <div class="cell"><span class="n">13</span></div>
+    <div class="cell"><span class="n">14</span><div class="dot"></div></div>
+    <div class="cell"><span class="n">15</span></div>
+    <div class="cell"><span class="n">16</span></div>
+  </div>
+  <div class="rw">
+    <div class="cell"><span class="n">17</span></div><div class="cell"><span class="n">18</span></div>
+    <div class="cell"><span class="n">19</span></div><div class="cell"><span class="n">20</span></div>
+    <div class="cell"><span class="n">21</span></div><div class="cell"><span class="n">22</span></div>
+    <div class="cell bgR"><span class="n">23</span><span class="w R">RAF</span></div>
+  </div>
+  <div class="rw">
+    <div class="cell"><span class="n">24</span></div><div class="cell"><span class="n">25</span></div>
+    <div class="cell"><span class="n">26</span></div><div class="cell"><span class="n">27</span></div>
+    <div class="cell"><span class="n">28</span></div><div class="cell"><span class="n">29</span></div>
+    <div class="cell"><span class="n">30</span></div>
+  </div>
+  <div class="rw">
+    <div class="cell"><span class="n">31</span></div>
+    <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+    <div class="cell"></div><div class="cell"></div><div class="cell"></div>
+  </div>
+
+  <p class="mut" style="font-size:14px; margin-top:16px;">9 avqust, şənbə</p>
+  <p class="mut" style="font-size:13px; margin:12px 0 9px; letter-spacing:1px;">SƏNİ ÇAĞIRIRLAR</p>
+  <div class="inv">
+    <div class="av">RA</div>
+    <div class="tx"><p class="pri" style="font-size:15px;">Rafael Dagli</p><p class="mut" style="font-size:13px; margin-top:2px;">Toy · 5 gündən biri</p></div>
+    <span class="gold" style="font-size:13px;">›</span>
+  </div>
+  <p class="mut" style="font-size:13px; margin-top:4px;">Bu gün boşsan</p>
+</div>
+
+<div class="phone">
+  <p class="cap" style="margin-bottom:13px;">AVQUST 2026</p>
+  <p class="mut" style="font-size:14px; margin-bottom:14px;">14 avqust, cümə</p>
+
+  <p class="mut" style="font-size:13px; margin-bottom:9px; letter-spacing:1px;">SƏNİ ÇAĞIRIRLAR · 2</p>
+  <div class="inv">
+    <div class="av">RA</div>
+    <div class="tx"><p class="pri" style="font-size:15px;">Rafael Dagli</p><p class="mut" style="font-size:13px; margin-top:2px;">Toy · 20:00</p></div>
+    <span class="gold" style="font-size:13px;">›</span>
+  </div>
+  <div class="inv">
+    <div class="av">EL</div>
+    <div class="tx"><p class="pri" style="font-size:15px;">Elçin Məmmədov</p><p class="mut" style="font-size:13px; margin-top:2px;">Konsert · 19:00</p></div>
+    <span class="gold" style="font-size:13px;">›</span>
+  </div>
+
+  <p class="label" style="margin:20px 0 10px;">BU GÜN SƏNDƏ</p>
+  <div class="bar">
+    <p class="pri" style="font-size:18px;">17:30</p>
+    <p class="sec" style="font-size:14px; margin-top:4px;">Toy · Teymur</p>
+  </div>
+
+  <p class="mut" style="font-size:13px; margin-top:14px; line-height:1.5;">Dəvət günü tutmur — cavab verənə qədər gün boş sayılır.</p>
+</div>
+
+</div></body></html>
