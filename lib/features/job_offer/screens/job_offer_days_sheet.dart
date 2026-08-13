@@ -84,77 +84,143 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
 
   static const _weekdayLabels = ['B.e', 'Ç.a', 'Ç', 'C.a', 'C', 'Ş', 'B'];
 
+  // ТРИ ЯРУСА, А НЕ ОДНА ПРОКРУТКА (правка 14.08 по снимку с устройства).
+  //
+  // Прежняя редакция складывала всё в один `SingleChildScrollView`: месяц с
+  // годом уезжали вверх при первом же движении пальца, а «Göndər» пряталась
+  // под полями. Человек, набирая заметку, переставал видеть и то, на каком
+  // он месяце, и чем это отправляется.
+  //
+  //   ВЕРХ (не двигается)  — «GÜNLƏRİ SEÇ», месяц с годом и стрелками,
+  //                          подписи дней недели;
+  //   СЕРЕДИНА (крутится)  — сетка месяца и четыре поля;
+  //   НИЗ (не двигается)   — строка «что отправляем» и «Göndər».
+  //
+  // Строка выбранных дней уехала ВНИЗ, к самой кнопке, и это не про
+  // симметрию: она отвечает на вопрос «что я сейчас отправлю», а задаётся
+  // он в момент нажатия. Наверху её пришлось бы вспоминать.
+  //
+  // СВОЙ НЕПРОЗРАЧНЫЙ ФОН ОБЯЗАТЕЛЕН. Точка вызова открывает лист с
+  // `backgroundColor: Colors.transparent` — так было заведено под прежний
+  // лист, рисовавший себя сам. Без собственной заливки сквозь лист видна
+  // переписка: снято с устройства 14.08, читалось как каша из двух экранов.
   @override
   Widget build(BuildContext context) {
     final canSend = canSendOffer(
       dates: _picked,
       eventType: _typeController.text,
     );
+    final media = MediaQuery.of(context);
 
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 16,
-          right: 16,
-          top: 16,
-          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                azUpperCase('günləri seç'),
-                style: const TextStyle(
-                  color: kGold,
-                  fontSize: 12,
-                  letterSpacing: 1.2,
-                ),
-              ),
-              const SizedBox(height: 12),
-              _monthHeader(),
-              const SizedBox(height: 8),
-              _weekdayRow(),
-              _grid(),
-              const SizedBox(height: 12),
-              // ТРЕБОВАНИЕ: человек видит, что отправляет, ДО нажатия.
-              if (_picked.isNotEmpty)
-                Text(
-                  offerSummaryLine(_picked),
-                  key: const ValueKey('offer-summary'),
-                  style: const TextStyle(
-                    color: kGold,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
+    return Container(
+      height: media.size.height * 0.92,
+      decoration: const BoxDecoration(
+        color: kBg2,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            // --- ВЕРХ, закреплён -------------------------------------
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 38,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: kMuted.withAlpha(90),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
                   ),
+                  const SizedBox(height: 12),
+                  Text(
+                    azUpperCase('günləri seç'),
+                    style: const TextStyle(
+                      color: kGold,
+                      fontSize: 12,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  _monthHeader(),
+                  const SizedBox(height: 4),
+                  _weekdayRow(),
+                ],
+              ),
+            ),
+            // --- СЕРЕДИНА, крутится ----------------------------------
+            Expanded(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 4,
+                  bottom: media.viewInsets.bottom + 12,
                 ),
-              const SizedBox(height: 14),
-              _field('NÖV', _typeController, key: 'offer-type'),
-              const SizedBox(height: 10),
-              // Три необязательных. Подпись говорит это словом, а не
-              // умолчанием: пустое поле само по себе не сообщает, обязано
-              // оно быть заполненным или нет.
-              _field(
-                'SAAT (məcburi deyil)',
-                _timeController,
-                key: 'offer-time',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _grid(),
+                    const SizedBox(height: 14),
+                    _field('NÖV', _typeController, key: 'offer-type'),
+                    const SizedBox(height: 10),
+                    // Три необязательных. Подпись говорит это словом, а не
+                    // умолчанием: пустое поле само по себе не сообщает,
+                    // обязано оно быть заполненным или нет.
+                    _field(
+                      'SAAT (məcburi deyil)',
+                      _timeController,
+                      key: 'offer-time',
+                    ),
+                    const SizedBox(height: 10),
+                    _field(
+                      'YER (məcburi deyil)',
+                      _locationController,
+                      key: 'offer-location',
+                    ),
+                    const SizedBox(height: 10),
+                    _field(
+                      'QEYD (məcburi deyil)',
+                      _notesController,
+                      key: 'offer-notes',
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 10),
-              _field(
-                'YER (məcburi deyil)',
-                _locationController,
-                key: 'offer-location',
+            ),
+            // --- НИЗ, закреплён --------------------------------------
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: kBorder)),
               ),
-              const SizedBox(height: 10),
-              _field(
-                'QEYD (məcburi deyil)',
-                _notesController,
-                key: 'offer-notes',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ТРЕБОВАНИЕ: человек видит, что отправляет, ДО нажатия.
+                  if (_picked.isNotEmpty) ...[
+                    Text(
+                      offerSummaryLine(_picked),
+                      key: const ValueKey('offer-summary'),
+                      style: const TextStyle(
+                        color: kGold,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  _sendButton(canSend),
+                ],
               ),
-              const SizedBox(height: 18),
-              _sendButton(canSend),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
