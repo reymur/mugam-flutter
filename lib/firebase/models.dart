@@ -571,6 +571,21 @@ class Message {
   final String? imageURL;
   final String? audioURL;
   final String? videoURL;
+
+  /// Ссылка на предложение работы в `chats/{chatId}/offers/{offerId}`.
+  ///
+  /// **Сообщение остаётся `type: 'text'`, и это живой шов, а не экономия.**
+  /// Старая сборка про `offerId` не знает и покажет `text` — «5 gün: 26, 27,
+  /// 28, 29, 30 avqust · Toy». Заведи мы новый `type` — у неё на этом месте
+  /// был бы пустой пузырь.
+  ///
+  /// Новая сборка отличает предложение по НАЛИЧИЮ этого поля, а не по типу,
+  /// и рисует вместо текста нажимаемую строку.
+  ///
+  /// Сообщения, отправленные до 14.08, ссылки не имеют и иметь не могут:
+  /// взяться ей неоткуда. Они остаются обычным текстом навсегда — это
+  /// решение, а не недоделка (см. `docs/plan.md`).
+  final String? offerId;
   // Real duration/as-displayed pixel size read from the source file's own
   // metadata at send time (flutter_video_info) — null for messages sent
   // before these fields existed. width/height are carried as plain data
@@ -727,6 +742,7 @@ class Message {
     this.imageURL,
     this.audioURL,
     this.videoURL,
+    this.offerId,
     this.videoDurationMs,
     this.videoWidth,
     this.videoHeight,
@@ -1058,6 +1074,10 @@ class Message {
       imageURL: data['imageURL'],
       audioURL: data['audioURL'],
       videoURL: data['videoURL'],
+      // Мягкое чтение, а не `as String?`: жёсткое приведение здесь роняло
+      // бы разбор ВСЕГО сообщения из-за одного поля, а документ пишут трое
+      // (наш клиент, наш сервер мимо правил, правка руками) — I49.
+      offerId: data['offerId'] is String ? data['offerId'] as String : null,
       videoDurationMs: data['videoDurationMs'] as int?,
       videoWidth: data['videoWidth'] as int?,
       videoHeight: data['videoHeight'] as int?,
