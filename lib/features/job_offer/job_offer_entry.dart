@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
@@ -6,6 +8,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/chat/direct_chat_lookup.dart';
 import '../../core/chat/job_offer_round.dart';
+import '../../core/audio/voice_recording_session.dart';
+import '../../core/job_offer/day_details.dart';
 import '../../core/job_offer/job_offer_repository.dart';
 import '../../core/job_offer/offer_draft.dart';
 import '../../firebase/firestore_service.dart';
@@ -186,6 +190,7 @@ Future<bool> _offerToPerson(
 }) async {
   final service = ref.read(firestoreServiceProvider);
   final repository = JobOfferRepository(FirebaseFirestore.instance);
+  final session = VoiceRecordingSession();
 
   // Чат ищется сперва в уже загруженном списке — там же, где его нашёл бы
   // экран «Mesaj», и по тому же правилу (`directChatIn`). Полный поиск с
@@ -271,53 +276,60 @@ Future<bool> _offerToPerson(
       // которого человек не выбирал.
       initialMonth: onDay == null ? null : DateTime(onDay.year, onDay.month),
       initialDates: onDay == null ? const [] : [isoDay(onDay)],
-      onSend:
-          ({
-            required dates,
-            required eventType,
-            required eventTime,
-            required eventLocation,
-            required eventNotes,
-          }) async {
-            // Отправлено. Флаг ставится ЗДЕСЬ, потому что сам лист об этом
-            // никому не сообщает: `showModalBottomSheet` отдаёт `null` и при
-            // отправке, и при закрытии свайпом.
-            sent = true;
-            Navigator.of(sheetContext).pop();
+      // ЗАПИСЬ ГОЛОСА ЛИСТ НЕ ДЕЛАЕТ САМ. Сеанс общий
+      // (`VoiceRecordingSession`), лист только просит; куда денется файл —
+      // решает эта функция. То же разделение, что у экрана чата: сеанс
+      // отдаёт файл, назначение живёт у зовущего (I58).
+      onRecordVoice: (isoDayOfRecord) =>
+          _recordVoiceForDay(context, session),
+      // Закрыл лист, не отправив, — записи пропадают. Удаляем явно, а не
+      // надеемся на систему: iOS чистит временную папку когда сочтёт
+      // нужным. Запись без предложения потом не найти и не удалить.
+      onDiscardVoiceFiles: (paths) {
+        for (final p in paths) {
+          try {
+            final f = File(p);
+            if (f.existsSync()) f.deleteSync();
+          } catch (_) {
+            // Файла нет или его уже убрала система — это норма, а не сбой.
+          }
+        }
+      },
+      onSend: ({required dates, required eventType, required details}) async {
+        sent = true;
+        Navigator.of(sheetContext).pop();
 
-            // ПОРЯДОК ТРЁХ ЗАПИСЕЙ ЗНАЧИМ, и вот почему именно такой.
-            //
-            // `anchorMessageId` правилами менять нельзя — его нет ни в
-            // одной из трёх форм правки, — значит id якоря обязан быть
-            // известен ДО создания предложения. Отсюда: взять id → создать
-            // предложение с ним → отправить сообщение под тем же id.
-            //
-            // Оборвись цепочка на третьем шаге — останется предложение без
-            // якоря: карточки в ленте нет, данные целы. Неприятно и
-            // поправимо. Обратный порядок дал бы сообщение-якорь,
-            // указывающее в пустоту, — а это уже ложь на экране.
-            final anchorId = service.newMessageId(chatId);
-            final offerId = await repository.createOffer(
-              chatId: chatId,
-              myUid: myUid,
-              dates: dates,
-              eventType: eventType,
-              eventTime: eventTime,
-              eventLocation: eventLocation,
-              eventNotes: eventNotes,
-              anchorMessageId: anchorId,
-            );
-            await service.sendMessage(
-              chatId: chatId,
-              senderId: myUid,
-              // Текст — для СТАРОЙ сборки, которая про `offerId` не знает и
-              // покажет его как обычное сообщение. Пустой текст оставил бы
-              // ей пустой пузырь.
-              text: offerAnchorText(dates: dates, eventType: eventType),
-              messageId: anchorId,
-              offerId: offerId,
-            );
-          },
+        // ПОРЯДОК ЗАПИСЕЙ ЗНАЧИМ. `anchorMessageId` правилами менять
+        // нельзя — его нет ни в одной из трёх форм правки, — значит id
+        // якоря обязан быть известен ДО создания предложения.
+        //
+        // Голос грузится ПЕРВЫМ: он относится к дню, и предложение без
+        // ссылки на уже загруженный файл было бы предложением с обещанием.
+        final withVoice = await _uploadVoices(
+          service: service,
+          chatId: chatId,
+          myUid: myUid,
+          details: details,
+        );
+        final anchorId = service.newMessageId(chatId);
+        final offerId = await repository.createOffer(
+          chatId: chatId,
+          myUid: myUid,
+          dates: dates,
+          eventType: eventType,
+          details: withVoice,
+          anchorMessageId: anchorId,
+        );
+        await service.sendMessage(
+          chatId: chatId,
+          senderId: myUid,
+          // Текст — для СТАРОЙ сборки, которая про `offerId` не знает и
+          // покажет его как обычное сообщение.
+          text: offerAnchorText(dates: dates, eventType: eventType),
+          messageId: anchorId,
+          offerId: offerId,
+        );
+      },
     ),
   );
   if (!context.mounted) return true;
@@ -328,4 +340,60 @@ Future<bool> _offerToPerson(
     sent: sent,
     personGivenByEntry: personGivenByEntry,
   );
+}
+
+
+/// Записать голос для дня. Возвращает деталь с путём и волной либо `null`,
+/// если человек передумал или отказал в разрешении.
+Future<DayDetails?> _recordVoiceForDay(
+  BuildContext context,
+  VoiceRecordingSession session,
+) async {
+  final outcome = await session.start();
+  if (outcome == VoiceStartOutcome.noPermission) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Mikrofon icazəsi verilmədi')),
+      );
+    }
+    return null;
+  }
+  if (outcome != VoiceStartOutcome.started) return null;
+  // Держим запись, пока человек не отпустит. Лист показывает своё состояние
+  // сам; здесь только сеанс.
+  final rec = await session.stopAndFinish();
+  if (rec == null) return null;
+  return DayDetails(voicePath: rec.filePath, voiceWaveform: rec.waveform);
+}
+
+/// Загрузка записей в хранилище — по одной на УНИКАЛЬНЫЙ файл.
+///
+/// После копирования деталей один и тот же файл принадлежит нескольким
+/// дням; грузить его столько же раз значило бы платить за одно и то же
+/// несколько раз и разложить по хранилищу копии, которые никто не сведёт.
+Future<Map<String, DayDetails>> _uploadVoices({
+  required FirestoreService service,
+  required String chatId,
+  required String myUid,
+  required Map<String, DayDetails> details,
+}) async {
+  final byPath = <String, String>{};
+  for (final path in voiceFilesIn(details)) {
+    final name = 'offer_${DateTime.now().millisecondsSinceEpoch}_'
+        '${path.hashCode.toUnsigned(32)}.m4a';
+    final url = await service.uploadChatAudio(
+      chatId: chatId,
+      filePath: path,
+      senderId: myUid,
+      fileName: name,
+    );
+    byPath[path] = url;
+  }
+  if (byPath.isEmpty) return details;
+  return {
+    for (final e in details.entries)
+      e.key: e.value.voicePath == null
+          ? e.value
+          : e.value.withUploadedUrl(byPath[e.value.voicePath!]),
+  };
 }

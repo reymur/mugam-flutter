@@ -1,24 +1,38 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/job_offer/day_details.dart';
 import '../../../core/job_offer/offer_draft.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/time/az_date_format.dart';
 
-// ЛИСТ ВЫБОРА ДНЕЙ — шаг 1 цепочки, макет `docs/design/mugam-10-secim`,
-// первый экран.
+// ЛИСТ ВЫБОРА ДНЕЙ — макет `docs/design/mugam-14-secim`, положен 14.08.
 //
-// ВСЁ В ОДНОМ ЛИСТЕ: дни, тип, время, место, заметка. Не мастером из
-// нескольких шагов — предложение уходит одной записью, и человек должен
-// видеть целиком то, что отправляет.
+// Он ЗАМЕНЯЕТ прежнюю редакцию: автор посмотрел её на трубке и назвал три
+// вещи неверными — заголовок занимал место зря, сетка была тусклой, три
+// пустых поля висели внизу всегда. Все три сняты.
 //
-// ВРЕМЯ, МЕСТО И ЗАМЕТКА НЕОБЯЗАТЕЛЬНЫ. Обязательны день и тип, и это
-// проверяет `canSendOffer`, у которой есть тест. Сделай их обязательными —
-// и предложение на пять дней отправить станет нельзя: на много дат деталей
-// обычно нет, их говорят голосом за день-два.
+// ТРИ ЯРУСА, из них двигается один:
+//   ВЕРХ (закреплён)    — месяц со стрелками и подписи дней недели. Без
+//                         заголовка: он не сообщал ничего, чего не видно;
+//   СЕРЕДИНА (крутится) — сетка, строка «N gün · …», строка последнего
+//                         тапнутого дня и его детали;
+//   НИЗ (закреплён)     — выбор типа работы и «Göndər».
 //
-// СЕТКОЙ МЕСЯЦА, А НЕ СПИСКОМ. Список не показывает, что 9-е и 15-е стоят
-// по разным концам месяца, а именно это человек и держит в голове, когда
-// зовёт на работу.
+// СВОЙ НЕПРОЗРАЧНЫЙ ФОН ОБЯЗАТЕЛЕН: точка вызова открывает лист прозрачным
+// (так было заведено под прежний лист, рисовавший себя сам). Без заливки
+// сквозь лист видна переписка — снято с устройства 14.08.
+//
+// ДЕТАЛИ У КАЖДОГО ДНЯ СВОИ. Общих полей нет вовсе, и это главное отличие
+// от прежней редакции: раньше одно время уходило на все пять вечеров.
+
+/// Типы работы. Три из макета плюс «Digər» со своим полем.
+///
+/// **ЗАМЕР ПРОДА 14.08** (`personalEvents`, 91 документ, без типа ноль):
+/// различных типов **два** — `Toy` 89, `Konsert` 2. `Məclis` не встречается
+/// ни разу. То есть трёх кнопок хватает с запасом, а «Digər» нужен не ради
+/// частоты, а ради того, чтобы человек с нестандартным поводом мог вообще
+/// отправить предложение.
+const List<String> kOfferTypes = ['Toy', 'Konsert', 'Məclis'];
 
 class JobOfferDaysSheet extends StatefulWidget {
   const JobOfferDaysSheet({
@@ -28,36 +42,40 @@ class JobOfferDaysSheet extends StatefulWidget {
     this.busyDays = const {},
     this.initialDates = const [],
     this.now,
+    this.onRecordVoice,
+    this.onDiscardVoiceFiles,
   });
 
-  /// «Сегодня» — прибивается снаружи только в тестах.
-  ///
-  /// Без него набор, тыкающий в конкретные числа, зависит от календарной
-  /// даты прогона: написанный сегодня, он через неделю тыкает в прошлое,
-  /// лист законно перестаёт принимать нажатие, и тест краснеет **не
-  /// потому, что код сломался**. Поймано ровно так, в первый же прогон.
-  final DateTime? now;
-
-  /// Отдаёт набор дней и детали. Лист сам ничего не пишет: запись — дело
-  /// хода, у которого своё правило (`JobOfferRepository.createOffer`).
+  /// Отдаёт набор дней, тип и детали КАЖДОГО дня. Лист сам ничего не пишет:
+  /// запись — дело хода, у которого своё правило.
   final void Function({
     required List<String> dates,
     required String eventType,
-    required String eventTime,
-    required String eventLocation,
-    required String eventNotes,
+    required Map<String, DayDetails> details,
   })
   onSend;
+
+  /// Записать голос для дня. Возвращает запись либо `null`, если человек
+  /// передумал. Сеанс записи общий (`VoiceRecordingSession`), и лист про
+  /// него ничего не знает — только просит.
+  final Future<DayDetails?> Function(String isoDay)? onRecordVoice;
+
+  /// Удалить временные файлы записей: лист закрыт без отправки, и записи
+  /// обязаны пропасть.
+  final void Function(Set<String> paths)? onDiscardVoiceFiles;
 
   final DateTime? initialMonth;
 
   /// Свои занятые дни. **ВИДНЫ, НО ВЫБРАТЬ ИХ МОЖНО** — приложение помнит и
-  /// показывает, а решает человек. Запретить значило бы решать за него в
-  /// случае, который он знает лучше нас: две работы в один вечер бывают
-  /// законны.
+  /// показывает, решает человек: две работы в один вечер бывают законны.
   final Set<String> busyDays;
 
   final List<String> initialDates;
+
+  /// «Сегодня» — прибивается снаружи только в тестах, иначе набор, тыкающий
+  /// в конкретные числа, через неделю бьёт в прошлое и краснеет не потому,
+  /// что код сломался.
+  final DateTime? now;
 
   @override
   State<JobOfferDaysSheet> createState() => _JobOfferDaysSheetState();
@@ -65,52 +83,88 @@ class JobOfferDaysSheet extends StatefulWidget {
 
 class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
   late DateTime _month =
-      widget.initialMonth ?? DateTime(DateTime.now().year, DateTime.now().month);
+      widget.initialMonth ??
+      DateTime(DateTime.now().year, DateTime.now().month);
   late final Set<String> _picked = widget.initialDates.toSet();
 
-  final _typeController = TextEditingController();
+  /// Детали по дням. **Источник правды — эта карта, а не контроллеры
+  /// полей.** Контроллеры перезаполняются при смене дня; держи правду в
+  /// них — вписанное 14-му перетекло бы на 20-й, и человек не заметил бы:
+  /// поля выглядят одинаково.
+  final Map<String, DayDetails> _details = {};
+
+  /// Последний тапнутый день — тот, чью строку и детали видно. Всегда один.
+  String? _openDay;
+
+  bool _detailsOpen = false;
+  bool _sent = false;
+
+  String _type = kOfferTypes.first;
+  bool _customType = false;
+
+  final _customTypeController = TextEditingController();
   final _timeController = TextEditingController();
   final _locationController = TextEditingController();
-  final _notesController = TextEditingController();
+  final _dressController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    if (_picked.isNotEmpty) {
+      final first = _picked.toList()..sort();
+      _selectDay(first.first, initial: true);
+    }
+  }
 
   @override
   void dispose() {
-    _typeController.dispose();
+    // ЗАКРЫЛ ЛИСТ, НЕ ОТПРАВИВ — ЗАПИСИ ПРОПАДАЮТ, И ЭТО ПРАВИЛЬНО.
+    //
+    // Удаляем явно, а не надеемся на систему: iOS чистит временную папку
+    // когда сочтёт нужным, и файл может пролежать неделю. Запись без
+    // предложения найти и удалить потом будет нечем.
+    if (!_sent) {
+      widget.onDiscardVoiceFiles?.call(voiceFilesIn(_details));
+    }
+    _customTypeController.dispose();
     _timeController.dispose();
     _locationController.dispose();
-    _notesController.dispose();
+    _dressController.dispose();
     super.dispose();
   }
 
   static const _weekdayLabels = ['B.e', 'Ç.a', 'Ç', 'C.a', 'C', 'Ş', 'B'];
 
-  // ТРИ ЯРУСА, А НЕ ОДНА ПРОКРУТКА (правка 14.08 по снимку с устройства).
-  //
-  // Прежняя редакция складывала всё в один `SingleChildScrollView`: месяц с
-  // годом уезжали вверх при первом же движении пальца, а «Göndər» пряталась
-  // под полями. Человек, набирая заметку, переставал видеть и то, на каком
-  // он месяце, и чем это отправляется.
-  //
-  //   ВЕРХ (не двигается)  — «GÜNLƏRİ SEÇ», месяц с годом и стрелками,
-  //                          подписи дней недели;
-  //   СЕРЕДИНА (крутится)  — сетка месяца и четыре поля;
-  //   НИЗ (не двигается)   — строка «что отправляем» и «Göndər».
-  //
-  // Строка выбранных дней уехала ВНИЗ, к самой кнопке, и это не про
-  // симметрию: она отвечает на вопрос «что я сейчас отправлю», а задаётся
-  // он в момент нажатия. Наверху её пришлось бы вспоминать.
-  //
-  // СВОЙ НЕПРОЗРАЧНЫЙ ФОН ОБЯЗАТЕЛЕН. Точка вызова открывает лист с
-  // `backgroundColor: Colors.transparent` — так было заведено под прежний
-  // лист, рисовавший себя сам. Без собственной заливки сквозь лист видна
-  // переписка: снято с устройства 14.08, читалось как каша из двух экранов.
+  /// Смена показанного дня: детали читаются ИЗ КАРТЫ в контроллеры.
+  ///
+  /// «Ətraflı» раскрывается сразу, если у дня что-то вписано — человек
+  /// видит вписанное без лишнего нажатия. Пустой день приходит свёрнутым.
+  void _selectDay(String iso, {bool initial = false}) {
+    final d = _details[iso] ?? const DayDetails();
+    _openDay = iso;
+    _timeController.text = d.time;
+    _locationController.text = d.location;
+    _dressController.text = d.dress;
+    _detailsOpen = d.isNotEmpty;
+    if (!initial) setState(() {});
+  }
+
+  /// Запись контроллеров обратно в карту — до всякой смены дня.
+  void _stashOpenDay() {
+    final iso = _openDay;
+    if (iso == null) return;
+    final was = _details[iso] ?? const DayDetails();
+    _details[iso] = was.copyWith(
+      time: _timeController.text.trim(),
+      location: _locationController.text.trim(),
+      dress: _dressController.text.trim(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final canSend = canSendOffer(
-      dates: _picked,
-      eventType: _typeController.text,
-    );
     final media = MediaQuery.of(context);
+    final canSend = canSendOffer(dates: _picked, eventType: _effectiveType);
 
     return Container(
       height: media.size.height * 0.92,
@@ -122,11 +176,9 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
         top: false,
         child: Column(
           children: [
-            // --- ВЕРХ, закреплён -------------------------------------
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Center(
                     child: Container(
@@ -138,23 +190,13 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    azUpperCase('günləri seç'),
-                    style: const TextStyle(
-                      color: kGold,
-                      fontSize: 12,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 10),
                   _monthHeader(),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 6),
                   _weekdayRow(),
                 ],
               ),
             ),
-            // --- СЕРЕДИНА, крутится ----------------------------------
             Expanded(
               child: SingleChildScrollView(
                 padding: EdgeInsets.only(
@@ -167,55 +209,36 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _grid(),
-                    const SizedBox(height: 14),
-                    _field('NÖV', _typeController, key: 'offer-type'),
-                    const SizedBox(height: 10),
-                    // Три необязательных. Подпись говорит это словом, а не
-                    // умолчанием: пустое поле само по себе не сообщает,
-                    // обязано оно быть заполненным или нет.
-                    _field(
-                      'SAAT (məcburi deyil)',
-                      _timeController,
-                      key: 'offer-time',
-                    ),
-                    const SizedBox(height: 10),
-                    _field(
-                      'YER (məcburi deyil)',
-                      _locationController,
-                      key: 'offer-location',
-                    ),
-                    const SizedBox(height: 10),
-                    _field(
-                      'QEYD (məcburi deyil)',
-                      _notesController,
-                      key: 'offer-notes',
-                    ),
+                    if (_picked.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        offerSummaryLine(_picked),
+                        key: const ValueKey('offer-summary'),
+                        style: const TextStyle(
+                          color: kGold,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    if (_openDay != null) ...[
+                      const SizedBox(height: 12),
+                      _dayLine(_openDay!),
+                      if (_detailsOpen) _dayFields(_openDay!),
+                    ],
                   ],
                 ),
               ),
             ),
-            // --- НИЗ, закреплён --------------------------------------
             Container(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
               decoration: const BoxDecoration(
                 border: Border(top: BorderSide(color: kBorder)),
               ),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ТРЕБОВАНИЕ: человек видит, что отправляет, ДО нажатия.
-                  if (_picked.isNotEmpty) ...[
-                    Text(
-                      offerSummaryLine(_picked),
-                      key: const ValueKey('offer-summary'),
-                      style: const TextStyle(
-                        color: kGold,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
+                  _typePicker(),
+                  const SizedBox(height: 12),
                   _sendButton(canSend),
                 ],
               ),
@@ -226,26 +249,27 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
     );
   }
 
+  String get _effectiveType =>
+      _customType ? _customTypeController.text.trim() : _type;
+
   Widget _monthHeader() => Row(
     mainAxisAlignment: MainAxisAlignment.spaceBetween,
     children: [
       IconButton(
         key: const ValueKey('offer-month-prev'),
         icon: const Icon(Icons.chevron_left, color: kMuted),
-        onPressed: () => setState(
-          () => _month = DateTime(_month.year, _month.month - 1),
-        ),
+        onPressed: () =>
+            setState(() => _month = DateTime(_month.year, _month.month - 1)),
       ),
       Text(
         '${azMonthFull(_month.month)} ${_month.year}',
-        style: const TextStyle(color: Colors.white, fontSize: 17),
+        style: const TextStyle(color: Colors.white, fontSize: 18),
       ),
       IconButton(
         key: const ValueKey('offer-month-next'),
         icon: const Icon(Icons.chevron_right, color: kMuted),
-        onPressed: () => setState(
-          () => _month = DateTime(_month.year, _month.month + 1),
-        ),
+        onPressed: () =>
+            setState(() => _month = DateTime(_month.year, _month.month + 1)),
       ),
     ],
   );
@@ -268,64 +292,257 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
   Widget _grid() {
     final days = monthGridDays(_month);
     return Column(
-      children: List.generate(6, (week) {
-        return Row(
-          children: List.generate(7, (i) {
-            final day = days[week * 7 + i];
-            return Expanded(child: _dayCell(day));
-          }),
-        );
-      }),
-    );
-  }
-
-  Widget _dayCell(DateTime day) {
-    final inMonth = day.month == _month.month;
-    final iso = isoDay(day);
-    final past = isPastDay(day, now: widget.now);
-    final picked = _picked.contains(iso);
-    final busy = widget.busyDays.contains(iso);
-
-    // Прошлые дни и чужие месяцы не выбираются. Занятые — выбираются:
-    // приложение помнит и показывает, решает человек.
-    final selectable = inMonth && !past;
-
-    return GestureDetector(
-      key: ValueKey('offer-cell-$iso'),
-      onTap: selectable
-          ? () => setState(() {
-              if (!_picked.remove(iso)) _picked.add(iso);
-            })
-          : null,
-      child: Container(
-        height: 42,
-        margin: const EdgeInsets.all(2),
-        decoration: BoxDecoration(
-          color: picked ? kGold : (busy ? kGoldDim : Colors.transparent),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          '${day.day}',
-          style: TextStyle(
-            fontSize: 15,
-            color: picked
-                ? kOnGold
-                : !inMonth || past
-                ? kMuted.withAlpha(110)
-                : Colors.white,
+      children: List.generate(
+        6,
+        (week) => Row(
+          children: List.generate(
+            7,
+            (i) => Expanded(child: _dayCell(days[week * 7 + i])),
           ),
         ),
       ),
     );
   }
 
+  // ЦВЕТА ВЗЯТЫ ИЗ МАКЕТА, А НЕ ПОДОБРАНЫ НА ГЛАЗ. Занятый день там —
+  // rgba(111,168,220,0.16), и это ровно `kOwnerOther` (0xFF6FA8DC), уже
+  // живущий в палитре как «чужой владелец». Берётся ИМЕНЕМ, а не числом:
+  // уедет палитра — уедет и здесь, а число осталось бы старым (N66).
+  Widget _dayCell(DateTime day) {
+    final inMonth = day.month == _month.month;
+    final iso = isoDay(day);
+    final past = isPastDay(day, now: widget.now);
+    final picked = _picked.contains(iso);
+    final busy = widget.busyDays.contains(iso);
+    final hasDetails = (_details[iso] ?? const DayDetails()).isNotEmpty;
+    final selectable = inMonth && !past;
+
+    return GestureDetector(
+      key: ValueKey('offer-cell-$iso'),
+      onTap: selectable ? () => _tapDay(iso) : null,
+      child: Container(
+        height: 40,
+        margin: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: picked
+              ? kGold
+              : (busy ? kOwnerOther.withAlpha(41) : Colors.transparent),
+          borderRadius: BorderRadius.circular(9),
+          border: _openDay == iso && !picked
+              ? Border.all(color: kGold, width: 1.5)
+              : null,
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Text(
+              '${day.day}',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: picked ? FontWeight.w500 : FontWeight.normal,
+                // Прошлые и чужие месяцы приглушены, НО ЧИТАЕМЫ: человек
+                // должен понимать, где он в месяце. Оттенок берётся от
+                // `kMuted` прозрачностью, а не новым числом.
+                color: picked
+                    ? kOnGold
+                    : (!inMonth || past ? kMuted.withAlpha(120) : Colors.white),
+              ),
+            ),
+            // Карандаш в углу — у дня что-то вписано. Единственный признак,
+            // по которому видно детали, не открывая день.
+            if (hasDetails)
+              Positioned(
+                top: 2,
+                right: 4,
+                child: Icon(
+                  Icons.edit,
+                  size: 9,
+                  color: picked ? kOnGold : kGold,
+                  key: ValueKey('offer-pen-$iso'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Тап по дню делает ДВА дела: выбирает/снимает и открывает его строку.
+  ///
+  /// Снятие выбора НЕ стирает вписанное: человек мог ткнуть мимо. Детали
+  /// снятого дня остаются в карте и уйдут только с отправкой, где берутся
+  /// детали лишь выбранных.
+  void _tapDay(String iso) {
+    _stashOpenDay();
+    setState(() {
+      if (!_picked.remove(iso)) _picked.add(iso);
+    });
+    _selectDay(iso);
+  }
+
+  /// Строка последнего тапнутого дня: «14 avqust · 🎤 · Ətraflı».
+  ///
+  /// МИКРОФОН СТОИТ ЗДЕСЬ, СНАРУЖИ «Ətraflı», И ЭТО НЕ УКРАШЕНИЕ. Голос —
+  /// быстрый путь: сказать словами быстрее, чем вписать время, место и
+  /// одежду. Спрячь его внутрь — и до него станет два касания из свёрнутого
+  /// состояния, то есть быстрый путь станет длиннее медленного.
+  Widget _dayLine(String iso) {
+    final d = DateTime.tryParse(iso);
+    final label = d == null
+        ? iso
+        : '${d.day} ${azMonthFull(d.month).toLowerCase()}';
+    final has = (_details[iso] ?? const DayDetails()).voicePath != null;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        border: Border.all(color: kGold.withAlpha(120), width: 1.5),
+        borderRadius: BorderRadius.circular(11),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
+          ),
+          GestureDetector(
+            key: ValueKey('offer-mic-$iso'),
+            onTap: () => _recordFor(iso),
+            child: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: has ? kGold : kGoldDim,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.mic, size: 20, color: has ? kOnGold : kGold),
+            ),
+          ),
+          const SizedBox(width: 12),
+          GestureDetector(
+            key: ValueKey('offer-details-toggle-$iso'),
+            onTap: () {
+              _stashOpenDay();
+              setState(() => _detailsOpen = !_detailsOpen);
+            },
+            child: Row(
+              children: [
+                const Text(
+                  'Ətraflı',
+                  style: TextStyle(color: kGold, fontSize: 14),
+                ),
+                Icon(
+                  _detailsOpen ? Icons.expand_less : Icons.expand_more,
+                  size: 18,
+                  color: kGold,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _recordFor(String iso) async {
+    final rec = await widget.onRecordVoice?.call(iso);
+    if (rec == null || !mounted) return;
+    setState(() {
+      final was = _details[iso] ?? const DayDetails();
+      _details[iso] = was.copyWith(
+        voicePath: rec.voicePath,
+        voiceWaveform: rec.voiceWaveform,
+      );
+    });
+  }
+
+  Widget _dayFields(String iso) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const SizedBox(height: 10),
+      _field('SAAT', _timeController, key: 'offer-time', dayField: true),
+      const SizedBox(height: 9),
+      _field(
+        'YER',
+        _locationController,
+        key: 'offer-location',
+        dayField: true,
+      ),
+      const SizedBox(height: 9),
+      _field('GEYİM', _dressController, key: 'offer-dress', dayField: true),
+      if (_picked.length > 1) ...[
+        const SizedBox(height: 10),
+        GestureDetector(
+          key: const ValueKey('offer-copy-all'),
+          onTap: () => _askCopyToAll(iso),
+          child: const Text(
+            'Bütün günlərə köçür',
+            style: TextStyle(color: kGold, fontSize: 14),
+          ),
+        ),
+      ],
+    ],
+  );
+
+  /// Копирование СПРАШИВАЕТ, И ВОПРОС НАЗЫВАЕТ ЧИСЛО.
+  ///
+  /// «Bu detallar 4 günə köçürüləcək. Davam?» — человек видит цифру ДО
+  /// нажатия. Кнопка, которая молча меняет четыре дня, хуже вопроса: отказ
+  /// без объяснения непонятнее самого вопроса.
+  Future<void> _askCopyToAll(String iso) async {
+    _stashOpenDay();
+    final n = copyTargetCount(selectedDays: _picked, fromDay: iso);
+    if (n == 0) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: kBg3,
+        content: Text(
+          'Bu detallar $n günə köçürüləcək. Davam?',
+          style: const TextStyle(color: Colors.white),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Xeyr', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            key: const ValueKey('offer-copy-confirm'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Bəli', style: TextStyle(color: kGold)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() {
+      final next = copyDetailsToDays(
+        details: _details,
+        fromDay: iso,
+        selectedDays: _picked,
+      );
+      _details
+        ..clear()
+        ..addAll(next);
+    });
+  }
+
+  /// [dayField] — поле принадлежит ДНЮ, а не листу.
+  ///
+  /// Такое поле складывается в карту деталей **на каждом нажатии клавиши**,
+  /// а не при уходе с дня. Иначе карта отстаёт от экрана, и всё, что по ней
+  /// считается, врёт до следующего тапа: карандаш в клетке не появляется,
+  /// «Ətraflı» у дня с текстом открывается свёрнутым, копирование берёт
+  /// вчерашнее. Поймано тестом, а не глазами.
   Widget _field(
     String label,
     TextEditingController controller, {
     required String key,
+    bool dayField = false,
   }) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
     decoration: BoxDecoration(
       borderRadius: BorderRadius.circular(10),
       border: Border.all(color: kBorder),
@@ -335,21 +552,85 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
       children: [
         Text(
           label,
-          style: const TextStyle(color: kMuted, fontSize: 11, letterSpacing: 1),
+          style: const TextStyle(
+            color: kMuted,
+            fontSize: 11,
+            letterSpacing: 1.2,
+          ),
         ),
         TextField(
           key: ValueKey(key),
           controller: controller,
           style: const TextStyle(color: Colors.white, fontSize: 15),
-          decoration: const InputDecoration(
+          onChanged: (_) {
+            if (dayField) _stashOpenDay();
+            setState(() {});
+          },
+          decoration: InputDecoration(
             isDense: true,
             border: InputBorder.none,
+            hintText: '—',
+            hintStyle: TextStyle(color: kMuted.withAlpha(120)),
           ),
-          // Тип решает, можно ли отправлять, поэтому кнопка обязана
-          // ожить в тот же миг, когда его начали набирать.
-          onChanged: (_) => setState(() {}),
         ),
       ],
+    ),
+  );
+
+  /// Тип работы — ВЫБОРОМ, а не пустым полем: три частых плюс «Digər».
+  Widget _typePicker() => Column(
+    children: [
+      Row(
+        children: [
+          for (final t in kOfferTypes)
+            Expanded(
+              child: _typeButton(
+                label: t,
+                on: !_customType && _type == t,
+                onTap: () => setState(() {
+                  _customType = false;
+                  _type = t;
+                }),
+                key: ValueKey('offer-type-$t'),
+              ),
+            ),
+          Expanded(
+            child: _typeButton(
+              label: 'Digər',
+              on: _customType,
+              onTap: () => setState(() => _customType = true),
+              key: const ValueKey('offer-type-other'),
+            ),
+          ),
+        ],
+      ),
+      if (_customType) ...[
+        const SizedBox(height: 9),
+        _field('NÖV', _customTypeController, key: 'offer-type-custom'),
+      ],
+    ],
+  );
+
+  Widget _typeButton({
+    required String label,
+    required bool on,
+    required VoidCallback onTap,
+    required Key key,
+  }) => GestureDetector(
+    key: key,
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(
+        color: on ? kGold : Colors.transparent,
+        border: Border.all(color: on ? kGold : kBorder),
+      ),
+      child: Center(
+        child: Text(
+          label,
+          style: TextStyle(color: on ? kOnGold : kMuted, fontSize: 14),
+        ),
+      ),
     ),
   );
 
@@ -357,15 +638,7 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
     opacity: canSend ? 1 : 0.4,
     child: GestureDetector(
       key: const ValueKey('offer-send-days'),
-      onTap: canSend
-          ? () => widget.onSend(
-              dates: _picked.toList()..sort(),
-              eventType: _typeController.text.trim(),
-              eventTime: _timeController.text.trim(),
-              eventLocation: _locationController.text.trim(),
-              eventNotes: _notesController.text.trim(),
-            )
-          : null,
+      onTap: canSend ? _send : null,
       child: Container(
         height: 48,
         alignment: Alignment.center,
@@ -384,4 +657,18 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
       ),
     ),
   );
+
+  void _send() {
+    _stashOpenDay();
+    _sent = true;
+    final days = _picked.toList()..sort();
+    // Уходят детали ТОЛЬКО выбранных дней: снятый день мог остаться в карте
+    // со вписанным, и тащить его в предложение значило бы отправить день,
+    // которого в наборе нет.
+    final details = <String, DayDetails>{
+      for (final d in days)
+        if ((_details[d] ?? const DayDetails()).isNotEmpty) d: _details[d]!,
+    };
+    widget.onSend(dates: days, eventType: _effectiveType, details: details);
+  }
 }

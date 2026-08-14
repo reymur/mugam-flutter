@@ -65,9 +65,11 @@ async function seedOffer(
       anchorMessageId: "msg-1",
       dates: DAYS,
       eventType: "Toy",
-      eventTime: "",
-      eventLocation: "",
-      eventNotes: "",
+      // ДЕТАЛИ У КАЖДОГО ДНЯ СВОИ (макет `mugam-14-secim`, 14.08). Прежде
+      // здесь стояли три поля на всё предложение — eventTime,
+      // eventLocation, eventNotes. Они остались в правилах ДОКУМЕНТА ЧАТА,
+      // где держат предложения прежней схемы, но в подколлекции их нет.
+      details: {},
       answers: {},
       ...over,
     });
@@ -80,9 +82,7 @@ const newOffer = (over: Record<string, unknown> = {}) => ({
   anchorMessageId: "msg-1",
   dates: DAYS,
   eventType: "Toy",
-  eventTime: "",
-  eventLocation: "",
-  eventNotes: "",
+  details: {},
   answers: {},
   ...over,
 });

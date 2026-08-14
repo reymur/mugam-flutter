@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'day_details.dart';
 import 'job_offer.dart';
 
 // ЧЕТЫРЕ ХОДА И ОДНО ЧТЕНИЕ — ровно то, что разрешают правила
@@ -54,10 +55,16 @@ class JobOfferRepository {
     required String myUid,
     required List<String> dates,
     required String eventType,
-    String eventTime = '',
-    String eventLocation = '',
-    String eventNotes = '',
     String? anchorMessageId,
+    // ДЕТАЛИ У КАЖДОГО ДНЯ СВОИ (макет `mugam-14-secim`). Прежде здесь были
+    // три поля на всё предложение — время, место, заметка, — и звали на
+    // пять вечеров с одним временем на всех.
+    //
+    // Ключ карты — тот же ISO-день, что лежит в `dates`. Дни без единой
+    // вписанной подробности в карту не попадают вовсе: пустая запись и
+    // отсутствие записи значат одно, а хранить одно двумя способами значит
+    // однажды прочитать их по-разному.
+    Map<String, DayDetails> details = const {},
   }) async {
     final ref = _offers(chatId).doc();
     await ref.set({
@@ -66,9 +73,9 @@ class JobOfferRepository {
       'anchorMessageId': anchorMessageId,
       'dates': dates,
       'eventType': eventType,
-      'eventTime': eventTime,
-      'eventLocation': eventLocation,
-      'eventNotes': eventNotes,
+      'details': {
+        for (final e in details.entries) e.key: e.value.toMap(),
+      },
       // Пустая карта обязательна: правило требует `answers` пустым при
       // создании. Отметка за музыканта, поставленная вперёд него, — тот же
       // подлог, что чужой `cancelledBy` (N37).

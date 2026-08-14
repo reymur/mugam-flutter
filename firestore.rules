@@ -735,8 +735,7 @@ service cloud.firestore {
           && request.resource.data.createdBy == request.auth.uid
           && request.resource.data.keys().hasOnly([
             'createdBy', 'createdAt', 'anchorMessageId', 'dates',
-            'eventType', 'eventTime', 'eventLocation', 'eventNotes',
-            'answers',
+            'eventType', 'details', 'answers',
           ])
           && request.resource.data.dates is list
           && request.resource.data.dates.size() > 0

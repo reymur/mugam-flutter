@@ -96,13 +96,7 @@ void main() {
               now: DateTime(2026, 8, 1),
               busyDays: busy,
               onSend:
-                  ({
-                    required dates,
-                    required eventType,
-                    required eventTime,
-                    required eventLocation,
-                    required eventNotes,
-                  }) {},
+                  ({required dates, required eventType, required details}) {},
             ),
           ),
         ),
@@ -159,7 +153,15 @@ void main() {
       await pump(tester);
       expect(find.byKey(const ValueKey('offer-summary')), findsNothing);
 
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-cell-2026-08-09')),
+      );
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-09')));
+      await tester.pump();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-cell-2026-08-11')),
+      );
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-11')));
       await tester.pump();
@@ -167,16 +169,173 @@ void main() {
       expect(find.text('2 gün · 9, 11'), findsOneWidget);
     });
 
-    // ТРЕБОВАНИЕ 1 — все поля в одном листе.
-    testWidgets('дни, тип, время, место и заметка — в одном листе', (
+    // ТИП РАБОТЫ — ВЫБОРОМ, А НЕ ПУСТЫМ ПОЛЕМ (макет `mugam-14-secim`).
+    // Замер прода 14.08: различных типов в `personalEvents` ДВА — Toy 89,
+    // Konsert 2. Трёх кнопок хватает, «Digər» нужен ради того, чтобы
+    // человек с нестандартным поводом мог вообще отправить.
+    testWidgets('тип выбирается кнопками, четвёртая открывает своё поле', (
       tester,
     ) async {
       await pump(tester);
-      expect(find.byKey(const ValueKey('offer-type')), findsOneWidget);
+      expect(find.byKey(const ValueKey('offer-type-Toy')), findsOneWidget);
+      expect(find.byKey(const ValueKey('offer-type-Konsert')), findsOneWidget);
+      expect(find.byKey(const ValueKey('offer-type-Məclis')), findsOneWidget);
+      // Своего поля нет, пока не выбрали «Digər».
+      expect(find.byKey(const ValueKey('offer-type-custom')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('offer-type-other')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('offer-type-custom')), findsOneWidget);
+    });
+
+    // ТРИ ПУСТЫХ ПОЛЯ БОЛЬШЕ НЕ ВИСЯТ ВНИЗУ ВСЕГДА — они принадлежат дню и
+    // живут под «Ətraflı».
+    testWidgets('полей нет, пока не выбран день', (tester) async {
+      await pump(tester);
+      expect(find.byKey(const ValueKey('offer-time')), findsNothing);
+      expect(find.byKey(const ValueKey('offer-location')), findsNothing);
+      expect(find.byKey(const ValueKey('offer-dress')), findsNothing);
+    });
+
+    // Пустой день приходит СВЁРНУТЫМ: полей нет, пока не раскрыли.
+    testWidgets('у пустого дня «Ətraflı» свёрнут', (tester) async {
+      await pump(tester);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-cell-2026-08-14')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-14')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('offer-time')), findsNothing);
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-details-toggle-2026-08-14')),
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('offer-details-toggle-2026-08-14')),
+      );
+      await tester.pump();
       expect(find.byKey(const ValueKey('offer-time')), findsOneWidget);
-      expect(find.byKey(const ValueKey('offer-location')), findsOneWidget);
-      expect(find.byKey(const ValueKey('offer-notes')), findsOneWidget);
-      expect(find.byKey(const ValueKey('offer-cell-2026-08-09')), findsOneWidget);
+      expect(find.byKey(const ValueKey('offer-dress')), findsOneWidget);
+    });
+
+    // САМОЕ ОПАСНОЕ МЕСТО ЛИСТА, и потому проверено отдельно.
+    //
+    // Детали живут В КАРТЕ ПО ДНЯМ, а контроллеры полей только показывают
+    // текущий день. Держи правду в контроллерах — вписанное 14-му
+    // перетекло бы на 20-й, и человек этого НЕ ЗАМЕТИЛ БЫ: поле выглядит
+    // одинаково, что со своим значением, что с чужим.
+    testWidgets('детали у каждого дня свои и не перетекают', (tester) async {
+      await pump(tester);
+
+      // Вписываем 14-му.
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-cell-2026-08-14')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-14')));
+      await tester.pump();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-details-toggle-2026-08-14')),
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('offer-details-toggle-2026-08-14')),
+      );
+      await tester.pump();
+      await tester.enterText(
+        find.byKey(const ValueKey('offer-time')),
+        '20:00',
+      );
+      await tester.pump();
+
+      // Переходим на 20-й — поля обязаны быть ПУСТЫМИ.
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-cell-2026-08-20')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-20')));
+      await tester.pump();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-details-toggle-2026-08-20')),
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('offer-details-toggle-2026-08-20')),
+      );
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(find.byKey(const ValueKey('offer-time')))
+            .controller!
+            .text,
+        '',
+        reason: 'время 14-го перетекло на 20-й',
+      );
+
+      // Возвращаемся на 14-й — вписанное на месте, и «Ətraflı» раскрыт САМ.
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-cell-2026-08-14')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-14')));
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('offer-time')),
+        findsOneWidget,
+        reason: 'день с деталями обязан открыться раскрытым',
+      );
+      expect(
+        tester.widget<TextField>(find.byKey(const ValueKey('offer-time')))
+            .controller!
+            .text,
+        '20:00',
+      );
+    });
+
+    // Карандаш в углу клетки — единственный признак, по которому детали
+    // видно, не открывая день.
+    testWidgets('у дня с деталями в клетке карандаш', (tester) async {
+      await pump(tester);
+      expect(find.byKey(const ValueKey('offer-pen-2026-08-14')), findsNothing);
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-cell-2026-08-14')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-14')));
+      await tester.pump();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-details-toggle-2026-08-14')),
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('offer-details-toggle-2026-08-14')),
+      );
+      await tester.pump();
+      await tester.enterText(
+        find.byKey(const ValueKey('offer-time')),
+        '20:00',
+      );
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('offer-pen-2026-08-14')), findsOneWidget);
+    });
+
+    // МИКРОФОН СНАРУЖИ «Ətraflı»: голос — быстрый путь, до него одно
+    // касание из любого состояния. Спрячь внутрь — быстрый путь станет
+    // длиннее медленного.
+    testWidgets('микрофон в строке дня, а не внутри «Ətraflı»', (tester) async {
+      await pump(tester);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-cell-2026-08-14')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-14')));
+      await tester.pump();
+      // Детали свёрнуты, а микрофон уже здесь.
+      expect(find.byKey(const ValueKey('offer-time')), findsNothing);
+      expect(find.byKey(const ValueKey('offer-mic-2026-08-14')), findsOneWidget);
     });
 
     // ТРЕБОВАНИЕ 2 — свои занятые дни видны, но выбрать их можно.
@@ -184,6 +343,10 @@ void main() {
       tester,
     ) async {
       await pump(tester, busy: {'2026-08-10'});
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-cell-2026-08-10')),
+      );
+      await tester.pump();
       await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-10')));
       await tester.pump();
       expect(find.text('1 gün · 10'), findsOneWidget);
