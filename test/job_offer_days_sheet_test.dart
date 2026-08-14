@@ -322,6 +322,77 @@ void main() {
       expect(find.byKey(const ValueKey('offer-pen-2026-08-14')), findsOneWidget);
     });
 
+    // НАЙДЕНО НА ТРУБКЕ 14.08, а не тестом: снятый день оставался в строке
+    // под сеткой. Сетка говорила «не выбран», строка — «мы про этот день»,
+    // и микрофон в ней записал бы голос дню, которого в предложении нет.
+    testWidgets('снятый день уходит из строки', (tester) async {
+      await pump(tester);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-cell-2026-08-14')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-14')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('offer-mic-2026-08-14')), findsOneWidget);
+
+      // Повторный тап по ОТКРЫТОМУ дню снимает его.
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-14')));
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('offer-mic-2026-08-14')),
+        findsNothing,
+        reason: 'строка снятого дня осталась внизу',
+      );
+      expect(find.byKey(const ValueKey('offer-summary')), findsNothing);
+    });
+
+    // Пара к предыдущему: если выбранные дни ещё есть, строка не исчезает,
+    // а переходит на оставшийся. Без этой пары «строка ушла» было бы верно
+    // и для случая, когда она не должна была уходить.
+    testWidgets('снятие одного из двух переводит строку на оставшийся', (
+      tester,
+    ) async {
+      await pump(tester);
+      for (final d in ['2026-08-14', '2026-08-20']) {
+        await tester.ensureVisible(find.byKey(ValueKey('offer-cell-$d')));
+        await tester.pump();
+        await tester.tap(find.byKey(ValueKey('offer-cell-$d')));
+        await tester.pump();
+      }
+      // Снимаем 20-е — строка обязана показать 14-е.
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-20')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('offer-mic-2026-08-20')), findsNothing);
+      expect(find.byKey(const ValueKey('offer-mic-2026-08-14')), findsOneWidget);
+    });
+
+    // ТРЕТИЙ ИСХОД ТАПА, заведённый после того, как тест упёрся в дыру
+    // замысла: к деталям уже выбранного дня надо как-то возвращаться, а
+    // прежде тап по нему день СНИМАЛ — вместе с невидимо уходящими часом и
+    // местом.
+    testWidgets('тап по выбранному, но не открытому дню открывает его', (
+      tester,
+    ) async {
+      await pump(tester);
+      for (final d in ['2026-08-14', '2026-08-20']) {
+        await tester.ensureVisible(find.byKey(ValueKey('offer-cell-$d')));
+        await tester.pump();
+        await tester.tap(find.byKey(ValueKey('offer-cell-$d')));
+        await tester.pump();
+      }
+      // Открыт 20-й. Тапаем 14-й — он ВЫБРАН, значит должен просто
+      // открыться, а не сняться.
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-14')));
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('offer-mic-2026-08-14')), findsOneWidget);
+      expect(
+        find.text('2 gün · 14, 20'),
+        findsOneWidget,
+        reason: 'день сняли вместо того, чтобы открыть',
+      );
+    });
+
     // МИКРОФОН СНАРУЖИ «Ətraflı»: голос — быстрый путь, до него одно
     // касание из любого состояния. Спрячь внутрь — быстрый путь станет
     // длиннее медленного.
