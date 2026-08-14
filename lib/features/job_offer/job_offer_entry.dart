@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
@@ -9,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/chat/direct_chat_lookup.dart';
 import '../../core/chat/job_offer_round.dart';
 import '../../core/audio/voice_recording_session.dart';
+import '../../core/audio/voice_temp_files.dart';
 import '../../core/job_offer/day_details.dart';
 import '../../core/job_offer/job_offer_repository.dart';
 import '../../core/job_offer/offer_draft.dart';
@@ -285,16 +284,10 @@ Future<bool> _offerToPerson(
       // Закрыл лист, не отправив, — записи пропадают. Удаляем явно, а не
       // надеемся на систему: iOS чистит временную папку когда сочтёт
       // нужным. Запись без предложения потом не найти и не удалить.
-      onDiscardVoiceFiles: (paths) {
-        for (final p in paths) {
-          try {
-            final f = File(p);
-            if (f.existsSync()) f.deleteSync();
-          } catch (_) {
-            // Файла нет или его уже убрала система — это норма, а не сбой.
-          }
-        }
-      },
+      // Уборка вынесена в `deleteVoiceTempFiles` и проверена НАСТОЯЩИМИ
+      // файлами: пока она стояла циклом здесь, «файл удалён» отличалось от
+      // «файла и не было» ровно ничем.
+      onDiscardVoiceFiles: deleteVoiceTempFiles,
       onSend: ({required dates, required eventType, required details}) async {
         sent = true;
         Navigator.of(sheetContext).pop();

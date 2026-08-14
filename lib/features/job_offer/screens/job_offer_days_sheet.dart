@@ -548,6 +548,18 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
     _stashOpenDay();
     final n = copyTargetCount(selectedDays: _picked, fromDay: iso);
     if (n == 0) return;
+
+    // СПРАШИВАЕМ ТОЛЬКО ТОГДА, КОГДА ЕСТЬ ЧТО ЗАТИРАТЬ (решение автора
+    // 14.08). Молчаливая замена ПУСТОГО — не потеря: человек ничего не
+    // вписывал, терять нечего, и вопрос защищал бы от того, чего не
+    // случилось.
+    //
+    // А вопрос, у которого ответ «нет» не имеет смысла, приучает жать «да»
+    // не читая — и следующий, настоящий, человек проскочит тоже.
+    if (_overwriteCount(iso) == 0) {
+      setState(() => _applyCopy(iso));
+      return;
+    }
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -570,16 +582,47 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
       ),
     );
     if (ok != true || !mounted) return;
-    setState(() {
-      final next = copyDetailsToDays(
-        details: _details,
-        fromDay: iso,
-        selectedDays: _picked,
-      );
-      _details
-        ..clear()
-        ..addAll(next);
-    });
+    setState(() => _applyCopy(iso));
+  }
+
+  void _applyCopy(String iso) {
+    final next = copyDetailsToDays(
+      details: _details,
+      fromDay: iso,
+      selectedDays: _picked,
+    );
+    _details
+      ..clear()
+      ..addAll(next);
+  }
+
+  /// Сколько выбранных дней ПОТЕРЯЮТ вписанное, если скопировать сюда.
+  ///
+  /// Считается не «сколько дней тронем», а «сколько дней лишатся своего»:
+  /// поле у источника заполнено И у дня оно тоже заполнено, но другим.
+  /// Совпадающие значения не считаются — там ничего не меняется.
+  int _overwriteCount(String from) {
+    final src = _details[from];
+    if (src == null || src.isEmpty) return 0;
+    var n = 0;
+    for (final day in _picked) {
+      if (day == from) continue;
+      final was = _details[day];
+      if (was == null || was.isEmpty) continue;
+      final loses =
+          (src.time.isNotEmpty && was.time.isNotEmpty && was.time != src.time) ||
+          (src.location.isNotEmpty &&
+              was.location.isNotEmpty &&
+              was.location != src.location) ||
+          (src.dress.isNotEmpty &&
+              was.dress.isNotEmpty &&
+              was.dress != src.dress) ||
+          (src.voicePath != null &&
+              was.voicePath != null &&
+              was.voicePath != src.voicePath);
+      if (loses) n += 1;
+    }
+    return n;
   }
 
   /// [dayField] — поле принадлежит ДНЮ, а не листу.

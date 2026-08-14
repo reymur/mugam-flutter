@@ -393,6 +393,79 @@ void main() {
       );
     });
 
+    // ВОПРОС ПОЯВЛЯЕТСЯ, ТОЛЬКО КОГДА ЕСТЬ ЧТО ЗАТИРАТЬ (решение автора
+    // 14.08). Молчаливая замена пустого — не потеря.
+    Future<void> fill(WidgetTester t, String day, String time) async {
+      await t.ensureVisible(find.byKey(ValueKey('offer-cell-$day')));
+      await t.pump();
+      await t.tap(find.byKey(ValueKey('offer-cell-$day')));
+      await t.pump();
+      final toggle = find.byKey(ValueKey('offer-details-toggle-$day'));
+      if (find.byKey(const ValueKey('offer-time')).evaluate().isEmpty) {
+        await t.ensureVisible(toggle);
+        await t.pump();
+        await t.tap(toggle);
+        await t.pump();
+      }
+      await t.enterText(find.byKey(const ValueKey('offer-time')), time);
+      await t.pump();
+    }
+
+    testWidgets('копирование в ПУСТЫЕ дни идёт без вопроса', (tester) async {
+      await pump(tester);
+      await fill(tester, '2026-08-14', '20:00');
+      // Второй день выбран, но пуст — затирать нечего.
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-cell-2026-08-20')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-20')));
+      await tester.pump();
+      // Возвращаемся на источник и копируем.
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-14')));
+      await tester.pump();
+      await tester.ensureVisible(find.byKey(const ValueKey('offer-copy-all')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('offer-copy-all')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining('köçürüləcək'),
+        findsNothing,
+        reason: 'вопрос задан там, где терять нечего',
+      );
+      // И копирование всё-таки произошло.
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-20')));
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(find.byKey(const ValueKey('offer-time')))
+            .controller!
+            .text,
+        '20:00',
+      );
+    });
+
+    testWidgets('копирование поверх вписанного СПРАШИВАЕТ и называет число', (
+      tester,
+    ) async {
+      await pump(tester);
+      await fill(tester, '2026-08-14', '20:00');
+      await fill(tester, '2026-08-20', '22:00');
+      // Назад на источник.
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('offer-cell-2026-08-14')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-14')));
+      await tester.pump();
+      await tester.ensureVisible(find.byKey(const ValueKey('offer-copy-all')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('offer-copy-all')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Bu detallar 1 günə köçürüləcək. Davam?'), findsOneWidget);
+    });
+
     // МИКРОФОН СНАРУЖИ «Ətraflı»: голос — быстрый путь, до него одно
     // касание из любого состояния. Спрячь внутрь — быстрый путь станет
     // длиннее медленного.
