@@ -157,9 +157,18 @@ class JobOfferAcceptSheet extends StatelessWidget {
               ),
               child: Column(
                 children: [
-                  // Принимать нечего, пока не ответили: кнопка до ответа
-                  // означала бы согласие с пустотой.
-                  if (answered)
+                  // ПРИНИМАТЬ НЕЧЕГО В ДВУХ СЛУЧАЯХ, и второй заметить
+                  // труднее первого.
+                  //
+                  //   до ответа        — согласие с пустотой;
+                  //   ОТВЕТ НУЛЁМ ДНЕЙ — кнопка создала бы НОЛЬ вечеров.
+                  //
+                  // Второй хуже: кнопка есть, нажимается, и после неё не
+                  // происходит ничего. Человек остаётся гадать, сработало
+                  // или нет, — а «Qəbul edirəm» обещало действие.
+                  //
+                  // Решает `canAcceptAnswer`, у неё тесты.
+                  if (canAcceptAnswer(offer, recipientUid: recipientUid))
                     GestureDetector(
                       key: const ValueKey('accept-confirm'),
                       onTap: onAccept,
@@ -180,15 +189,31 @@ class JobOfferAcceptSheet extends StatelessWidget {
                         ),
                       ),
                     ),
+                  // ПРИ ОТКАЗЕ ОТЗЫВ — ЕДИНСТВЕННЫЙ ХОД, и потому рядом
+                  // сказано, ЧТО ПОСЛЕ НЕГО БУДЕТ.
+                  //
+                  // Иначе человек нажмёт и не поймёт, куда всё делось:
+                  // предложение закрывается насовсем, отметки больше не
+                  // принимаются, и позвать заново — значит отправить НОВОЕ
+                  // предложение. Кнопка без этой строки выглядит как
+                  // «убрать с глаз», а убирает она ход целиком.
                   if (onWithdraw != null) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     GestureDetector(
                       key: const ValueKey('accept-withdraw'),
                       onTap: onWithdraw,
                       child: const Text(
                         'Təklifi geri götür',
-                        style: TextStyle(color: kMuted, fontSize: 13),
+                        style: TextStyle(color: kMuted, fontSize: 14),
                       ),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Təklif bağlanacaq. Yenidən çağırmaq üçün yeni təklif '
+                      'göndərməlisən.',
+                      key: ValueKey('accept-withdraw-note'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: kMuted, fontSize: 11),
                     ),
                   ],
                 ],

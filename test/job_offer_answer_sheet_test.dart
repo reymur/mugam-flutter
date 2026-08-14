@@ -218,12 +218,43 @@ void main() {
       expect(accepted, isTrue);
     });
 
-    // Ответ нулём дней — тоже ответ, и принять его можно: это решение
-    // работодателя, а не запрет приложения.
-    testWidgets('ответ нулём дней показывается и принимается', (tester) async {
+    // ОТВЕТ НУЛЁМ ДНЕЙ — ПРИНИМАТЬ НЕЧЕГО (решение автора 14.08).
+    //
+    // Прежняя редакция этого теста ждала кнопку и была неверна: «Qəbul
+    // edirəm» над пустым ответом создала бы НОЛЬ вечеров — обещание
+    // действия без последствий. Человек нажал бы и остался гадать,
+    // сработало или нет.
+    testWidgets('ответ нулём дней виден, но принимать нечего', (tester) async {
       await pump(tester, o: offer(answers: {player: const []}));
       expect(find.text('0 gün'), findsOneWidget);
-      expect(find.byKey(const ValueKey('accept-confirm')), findsOneWidget);
+      expect(find.byKey(const ValueKey('accept-confirm')), findsNothing);
+    });
+
+    // При нуле отзыв остаётся единственным ходом — и рядом обязано стоять,
+    // ЧТО ПОСЛЕ НЕГО БУДЕТ, иначе человек нажмёт и не поймёт, куда всё
+    // делось.
+    testWidgets('отзыв объясняет своё последствие словами', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: JobOfferAcceptSheet(
+              offer: offer(answers: {player: const []}),
+              recipientUid: player,
+              recipientName: 'Teymur',
+              now: DateTime(2026, 9, 1),
+              onAccept: () {},
+              onWithdraw: () {},
+            ),
+          ),
+        ),
+      );
+      expect(find.byKey(const ValueKey('accept-withdraw')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('accept-withdraw-note')),
+        findsOneWidget,
+        reason: 'отзыв не сказал, что предложение закроется',
+      );
+      expect(find.textContaining('yeni təklif'), findsOneWidget);
     });
   });
 }

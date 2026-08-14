@@ -47,7 +47,7 @@ class JobOfferAnswerSheet extends StatefulWidget {
 }
 
 class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
-  late Set<String> _picked = widget.offer.pickedBy(widget.myUid).toSet();
+  late final Set<String> _picked = widget.offer.pickedBy(widget.myUid).toSet();
   late DateTime _month = _monthOfFirstDate();
 
   DateTime _monthOfFirstDate() {

@@ -212,3 +212,41 @@ OfferCardActions offerCardActions(JobOffer offer, String viewerUid) {
     canRecordVoice: true,
   );
 }
+
+
+/// СТРОКА ПРЕДЛОЖЕНИЯ В ЛЕНТЕ — три состояния, и третье пришлось назвать
+/// отдельно.
+///
+///   «5 gün təklif»     — предложение отправлено, ответа нет;
+///   «3 gün cavab»      — ответили и назвали дни;
+///   «gələ bilmir»      — ответили НУЛЁМ дней.
+///
+/// **ТРЕТЬЕ НЕ СВОДИТСЯ КО ВТОРОМУ.** «0 gün cavab» было бы верно по числу
+/// и неверно по смыслу: ноль отмеченных — это ОТКАЗ, а не ответ с
+/// количеством. Человек, читающий ленту, должен видеть разницу между «он
+/// назвал три дня» и «он не может ни в один», не открывая экран.
+///
+/// Слово «təklif» / «cavab» стоит В ТЕКСТЕ, а не выводится из того, чьё
+/// сообщение: через месяц при прокрутке сторона и цвет читаются плохо, а
+/// слово читается всегда.
+String offerFeedLine(JobOffer offer, {required String recipientUid}) {
+  if (!offer.hasAnswered(recipientUid)) {
+    return '${offer.dates.length} gün təklif · ${offer.eventType}';
+  }
+  final picked = offer.pickedBy(recipientUid);
+  if (picked.isEmpty) return 'gələ bilmir';
+  return '${picked.length} gün cavab';
+}
+
+/// Можно ли инициатору принимать.
+///
+/// **НОЛЬ ОТМЕЧЕННЫХ — ПРИНИМАТЬ НЕЧЕГО.** Кнопка «Qəbul edirəm» над пустым
+/// ответом обещает действие без последствий: по нажатию создалось бы ноль
+/// вечеров, и человек остался бы гадать, сработало или нет.
+///
+/// Единственный ход инициатора при нуле — **отзыв**. Он и остаётся на
+/// экране, с прямо сказанным последствием.
+bool canAcceptAnswer(JobOffer offer, {required String recipientUid}) =>
+    offer.hasAnswered(recipientUid) &&
+    offer.pickedBy(recipientUid).isNotEmpty &&
+    offer.state == OfferState.answered;
