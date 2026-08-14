@@ -1,0 +1,168 @@
+import 'package:flutter/material.dart';
+
+import '../../../core/job_offer/offer_draft.dart';
+import '../../../core/theme/colors.dart';
+
+// ОБЩАЯ СЕТКА МЕСЯЦА — то единственное, что у трёх экранов предложения
+// совпадает НА САМОМ ДЕЛЕ.
+//
+// Три экрана: составление (лист выбора дней), ответ приглашённого, приём
+// инициатора. Свести их в один лист нельзя — у них разные поля, разные
+// кнопки и разные права, — и попытка дала бы виджет с переключателями «а
+// этому не показывать», то есть три склеенных дела (I58). Общей делается
+// часть ДО расхождения: клетки, недели, цвета, признаки.
+//
+// РАЗЛИЧИЕ ЗАДАЁТСЯ ДАННЫМИ, А НЕ ВЕТКАМИ: кто выбираем — приходит
+// множеством `selectable`, а не флагом «это экран ответа». Флаг пришлось бы
+// проверять внутри, и каждый новый экран добавлял бы свою ветку.
+
+class OfferMonthGrid extends StatelessWidget {
+  const OfferMonthGrid({
+    super.key,
+    required this.month,
+    required this.picked,
+    this.busy = const {},
+    this.withDetails = const {},
+    this.selectable,
+    this.onTapDay,
+    this.openDay,
+    this.now,
+  });
+
+  final DateTime month;
+
+  /// Выбранные дни — золотые.
+  final Set<String> picked;
+
+  /// Свои занятые дни — голубая заливка.
+  ///
+  /// **«ЗАНЯТ» ЗДЕСЬ ПРЕДУПРЕЖДЕНИЕ, А НЕ ЗАПРЕТ, и разница намеренная.**
+  /// В календаре своего вечера занятый день выбрать нельзя — там человек
+  /// ставит СЕБЕ работу и двойной записи быть не должно. Здесь можно:
+  /// решает человек, а не приложение. Две работы в один вечер бывают
+  /// законны — раннее торжество и позднее, — и знает об этом только он.
+  ///
+  /// Следующий, увидев разницу с календарём, сочтёт её ошибкой и «починит»
+  /// запретом. Не чинить: здесь занятость СООБЩАЕТСЯ, а не запрещает.
+  ///
+  /// **ПОКАЗ ЗАНЯТОСТИ ЖИВЁТ ТОЛЬКО НА КЛИЕНТЕ.** В правилах Firestore
+  /// списка занятых дней нет и не заводилось: сервер о занятости не знает
+  /// вовсе и отказать по ней не может. Это осознанно — иначе пришлось бы
+  /// держать на сервере копию чужого календаря и решать за человека то,
+  /// что решает он.
+  final Set<String> busy;
+
+  /// Дни, у которых что-то вписано — карандаш в углу.
+  final Set<String> withDetails;
+
+  /// Какие дни вообще нажимаются.
+  ///
+  /// `null` — любой будущий день месяца (лист составления). Множество —
+  /// **ровно эти и никакие другие** (экран ответа: приглашённый выбирает
+  /// только из предложенного).
+  ///
+  /// Это вторая половина правила `answerFitsOffer` из `firestore.rules`:
+  /// отметить день не из предложения запрещено сервером, и экран обязан
+  /// запрещать то же самое. Иначе человек тапает, а запись молча отказывает
+  /// — и выглядит это как «нажал, и ничего».
+  final Set<String>? selectable;
+
+  final void Function(String isoDay)? onTapDay;
+
+  /// День, чья строка сейчас раскрыта, — обводится.
+  final String? openDay;
+
+  final DateTime? now;
+
+  static const _weekdayLabels = ['B.e', 'Ç.a', 'Ç', 'C.a', 'C', 'Ş', 'B'];
+
+  @override
+  Widget build(BuildContext context) {
+    final days = monthGridDays(month);
+    return Column(
+      children: [
+        Row(
+          children: _weekdayLabels
+              .map(
+                (l) => Expanded(
+                  child: Center(
+                    child: Text(
+                      l,
+                      style: const TextStyle(color: kMuted, fontSize: 12),
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+        ...List.generate(
+          6,
+          (week) => Row(
+            children: List.generate(
+              7,
+              (i) => Expanded(child: _cell(days[week * 7 + i])),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _cell(DateTime day) {
+    final inMonth = day.month == month.month;
+    final iso = isoDay(day);
+    final past = isPastDay(day, now: now);
+    final on = picked.contains(iso);
+    final isBusy = busy.contains(iso);
+
+    // Ни одного лишнего дня нажимаемым быть не должно: сперва общее
+    // условие (свой месяц, не прошлое), затем — заданный список.
+    final allowed = inMonth && !past && (selectable?.contains(iso) ?? true);
+
+    return GestureDetector(
+      key: ValueKey('offer-cell-$iso'),
+      onTap: allowed && onTapDay != null ? () => onTapDay!(iso) : null,
+      child: Container(
+        height: 40,
+        margin: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          color: on
+              ? kGold
+              : (isBusy ? kOwnerOther.withAlpha(41) : Colors.transparent),
+          borderRadius: BorderRadius.circular(9),
+          border: openDay == iso && !on
+              ? Border.all(color: kGold, width: 1.5)
+              : null,
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Text(
+              '${day.day}',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: on ? FontWeight.w500 : FontWeight.normal,
+                color: on
+                    ? kOnGold
+                    // Ненажимаемое приглушено, НО ЧИТАЕМО: человек должен
+                    // видеть, где он в месяце, даже там, куда нельзя.
+                    : (!allowed ? kMuted.withAlpha(120) : Colors.white),
+              ),
+            ),
+            if (withDetails.contains(iso))
+              Positioned(
+                top: 2,
+                right: 4,
+                child: Icon(
+                  Icons.edit,
+                  size: 13,
+                  color: on ? kOnGold : kGold,
+                  key: ValueKey('offer-pen-$iso'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
