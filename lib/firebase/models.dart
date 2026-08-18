@@ -641,6 +641,15 @@ class Message {
   // which only mean the recipient scrolled past it. Written via
   // FirestoreService.markVoiceMessageListened.
   final List<String> listenedBy;
+  // ПОЛЕ ВРЕМЕНИ ЗОВЁТСЯ `timestamp`, А НЕ `createdAt` — и это стоило
+  // прохода 18.08. Разовый запрос по проду с `orderBy('createdAt')` вернул
+  // 0 документов на чате, где их 357: Firestore не падает на
+  // несуществующем поле, он молча отдаёт пусто (I44). Ноль прочитался как
+  // «сообщений в чате нет» — то есть как ответ на совсем другой вопрос.
+  // Соседние коллекции при этом пишут именно `createdAt` (`offers`,
+  // `pushTokens` — `updatedAt`), поэтому имя угадывается неверно легко.
+  // Проверка на месте: считать без `orderBy` — такой запрос ослепнуть на
+  // имени поля не может.
   final Timestamp? timestamp;
   // Per-chat monotonic sequence number, assigned atomically server-side by
   // FirestoreService._commitMessage — the ordering/pagination key
