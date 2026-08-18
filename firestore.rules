@@ -662,7 +662,12 @@ service cloud.firestore {
       // ФОРМА:
       //   createdBy/createdAt/anchorMessageId — кто, когда, где карточка
       //   dates            ['2026-08-09', …] — дни предложения
-      //   eventType/eventTime/eventLocation/eventNotes
+      //   eventType        один на всё предложение — Toy, Konsert
+      //   details          { '2026-08-09': {time, location, dress, …} }
+      //                    — У КАЖДОГО ДНЯ СВОИ, общих полей нет (14.08).
+      //                    Прежде здесь стояли eventTime/eventLocation/
+      //                    eventNotes — одни на все вечера предложения;
+      //                    звали на пять дней, время выходило одно.
       //   answers          { uid: ['2026-08-09', …] } — отмеченные дни
       //   acceptedBy/acceptedAt    — «Qəbul edirəm», ход инициатора
       //   withdrawnBy/withdrawnAt  — отзыв, ход инициатора
@@ -749,8 +754,10 @@ service cloud.firestore {
         //
         // ЧЕГО НИ ОДНА ИЗ ТРЁХ НЕ ПОЗВОЛЯЕТ — и это важнее самих форм:
         //
-        //   • музыканту тронуть dates, eventType, eventTime,
-        //     eventLocation, eventNotes: их нет в его `hasOnly`;
+        //   • музыканту тронуть dates, eventType, details: их нет в его
+        //     `hasOnly`. `details` назван здесь ИМЕННО ПОТОМУ, что он
+        //     один держит время, место и одежду всех дней сразу — до
+        //     14.08 на его месте стояли три поля, и запрет перечислял их;
         //   • ИНИЦИАТОРУ переписать dates задним числом — САМЫЙ ТИХИЙ ИЗ
         //     ЗАПРЕТОВ. Отметки, поставленные под старые дни, молча
         //     означали бы согласие на новые: экран показал бы «согласен на

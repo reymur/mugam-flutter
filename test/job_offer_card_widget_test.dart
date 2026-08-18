@@ -36,6 +36,7 @@ Future<void> pump(
   required JobOffer o,
   required String viewer,
   void Function(List<String>)? onSend,
+  VoidCallback? onOpenAnswer,
   VoidCallback? onAccept,
   Set<String> busy = const {},
 }) async {
@@ -51,6 +52,7 @@ Future<void> pump(
             recipientName: 'Teymur',
             busyDates: busy,
             onSendAnswer: onSend,
+            onOpenAnswer: onOpenAnswer,
             onAccept: onAccept,
           ),
         ),
@@ -101,62 +103,70 @@ void main() {
     expect(find.textContaining('11 avqust'), findsOneWidget);
   });
 
-  // ТРЕБОВАНИЕ 2 — ОТМЕТКА НУЛЯ ДНЕЙ ЗАКОННА, КНОПКА ОБЯЗАНА РАБОТАТЬ.
-  // Серая кнопка здесь означала бы, что ответить «не могу ни на один день»
-  // нельзя вовсе: отдельного отказа в этой работе нет, неотмеченные дни и
-  // значат «нет».
-  testWidgets('«Göndər» работает при ПУСТОМ наборе отметок', (tester) async {
-    List<String>? sent;
-    await pump(tester, o: offer(), viewer: player, onSend: (p) => sent = p);
+  // ТРИ ТЕСТА СНЯТЫ ЗДЕСЬ 19.08, И ПРИЧИНА ВАЖНЕЕ САМОГО СНЯТИЯ.
+  //
+  // Они проверяли отметку дней ВНУТРИ карточки: «Göndər» при пустом наборе,
+  // отмеченные дни доходят до отправки, повторное нажатие снимает отметку.
+  // Развилка хода 2 решена в пользу экрана (`docs/plan.md`), и путь, по
+  // которому они ходили, стал недостижим: `canPickDays` ложен во всех
+  // восьми клетках таблицы.
+  //
+  // **Оставить их живыми было нельзя ни одним честным способом.** Дойти до
+  // квадратиков теперь можно только подсунув карточке `OfferCardActions`
+  // мимо `offerCardActions` — то есть проверяя не то, что делает
+  // приложение, а то, что мы сами же и собрали. Такой тест зелен всегда и
+  // не может провалиться (I9).
+  //
+  // **Что стоит вместо них:** `job_offer_card_test.dart`, «отметка внутри
+  // карточки мертва во всех клетках таблицы» — сторож на саму мёртвость.
+  // Он падает, если отметка оживёт где угодно, а прежние три этого не
+  // ловили: они падали, только если она сломается там, куда они смотрят.
+  //
+  // Код отметки остаётся в карточке до уборки после шага 2 (I51); эти три
+  // теста уходят вместе с ним, и возвращать их поштучно не нужно.
 
-    await tester.tap(find.byKey(const ValueKey('offer-send')));
-    await tester.pump();
-
-    expect(sent, isNotNull, reason: 'нажатие не дошло — кнопка мертва');
-    expect(sent, isEmpty);
-  });
-
-  testWidgets('отмеченные дни доходят до отправки', (tester) async {
-    List<String>? sent;
-    await pump(tester, o: offer(), viewer: player, onSend: (p) => sent = p);
-
-    await tester.tap(find.byKey(const ValueKey('offer-day-2026-08-09')));
-    await tester.tap(find.byKey(const ValueKey('offer-day-2026-08-11')));
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('offer-send')));
-    await tester.pump();
-
-    expect(sent, ['2026-08-09', '2026-08-11']);
-  });
-
-  testWidgets('повторное нажатие снимает отметку', (tester) async {
-    List<String>? sent;
-    await pump(tester, o: offer(), viewer: player, onSend: (p) => sent = p);
-
-    await tester.tap(find.byKey(const ValueKey('offer-day-2026-08-09')));
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('offer-day-2026-08-09')));
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('offer-send')));
-    await tester.pump();
-
-    expect(sent, isEmpty);
-  });
-
-  // ЭТОТ ТЕСТ — ПРЯМОЙ НАСЛЕДНИК N125.
-  testWidgets('получателю кнопка ответа НАРИСОВАНА, а не только разрешена', (
+  // ЭТОТ ТЕСТ — ПРЯМОЙ НАСЛЕДНИК N125: мало разрешить действие, оно обязано
+  // быть НАРИСОВАНО.
+  testWidgets('получателю кнопка ответа нарисована, когда есть куда вести', (
     tester,
   ) async {
+    await pump(tester, o: offer(), viewer: player, onOpenAnswer: () {});
+    expect(find.byKey(const ValueKey('offer-open-answer')), findsOneWidget);
+    expect(find.text('Cavab ver'), findsOneWidget);
+  });
+
+  testWidgets('нажатие на кнопку ответа доходит', (tester) async {
+    var opened = 0;
+    await pump(tester, o: offer(), viewer: player, onOpenAnswer: () => opened++);
+
+    await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+    await tester.pump();
+
+    expect(opened, 1, reason: 'нажатие не дошло — кнопка мертва');
+  });
+
+  // СОСТОЯНИЕ ШАГА 1, И ОНО ЗАПИСАНО ТЕСТОМ, А НЕ ТОЛЬКО СЛОВАМИ.
+  //
+  // Экран ответа не подключён, вести кнопке некуда — и тогда её нет вовсе.
+  // Нарисованная кнопка, которая никуда не ведёт, неотличима от поломки:
+  // человек нажимает, ничего не происходит, и объяснить это можно чем
+  // угодно. Отсутствие объясняется однозначно.
+  //
+  // **При этом ход остаётся ПРЕДЛОЖЕННЫМ** — `canAnswer` истинен, — и
+  // проверяется это здесь же: иначе «кнопки нет» слилось бы с «ход не
+  // предложен», а это два разных факта (I47).
+  testWidgets('вести некуда — кнопки нет, но ход предложен', (tester) async {
     await pump(tester, o: offer(), viewer: player);
-    expect(find.byKey(const ValueKey('offer-send')), findsOneWidget);
-    expect(find.text('Göndər'), findsOneWidget);
+
+    expect(find.byKey(const ValueKey('offer-open-answer')), findsNothing);
+    expect(offerCardActions(offer(), player).canAnswer, isTrue);
   });
 
   testWidgets('инициатору ответа не предлагают, показывают ожидание', (
     tester,
   ) async {
-    await pump(tester, o: offer(), viewer: boss);
-    expect(find.byKey(const ValueKey('offer-send')), findsNothing);
+    await pump(tester, o: offer(), viewer: boss, onOpenAnswer: () {});
+    expect(find.byKey(const ValueKey('offer-open-answer')), findsNothing);
     expect(find.byKey(const ValueKey('offer-accept')), findsNothing);
     expect(find.textContaining('cavabı gözlənilir'), findsOneWidget);
   });
@@ -226,12 +236,18 @@ void main() {
       (i) => '2026-09-${(i + 1).toString().padLeft(2, '0')}',
     );
 
-    // У ТОГО, КТО ОТМЕЧАЕТ, СПИСОК ПОЛНЫЙ И НЕ СВОРАЧИВАЕТСЯ. Свёрнутый
-    // прячет ровно то, что он обязан протыкать.
-    testWidgets('отмечающий видит все тридцать дней сразу', (tester) async {
+    // ПЕРЕВЁРНУТО 19.08 — И ЭТО ТА САМАЯ ПРИЧИНА, ПО КОТОРОЙ ОТВЕТ УЕХАЛ НА
+    // ЭКРАН.
+    //
+    // Прежде здесь стояло «отмечающий видит все тридцать дней сразу»:
+    // свёрнутый список прятал бы то, что он обязан протыкать. Это верно,
+    // пока тыкают в ленте, — и ровно поэтому лента получала тридцать строк
+    // с квадратиками. Развилка решена в пользу экрана, значит в ленте
+    // тыкать не нужно, и список сворачивается У ВСЕХ.
+    testWidgets('получателю длинный список тоже свёрнут', (tester) async {
       await pump(tester, o: offer(dates: month), viewer: player);
-      expect(renderedDays(tester).length, 30);
-      expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
+      expect(renderedDays(tester).length, 5);
+      expect(find.text('yenə 25 gün'), findsOneWidget);
     });
 
     testWidgets('нередактируемый список свёрнут, и остаток назван числом', (
@@ -298,18 +314,40 @@ void main() {
       expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
     });
 
-    // ОТМЕЧАЮЩИЙ ВИДИТ ВСЁ ДАЖЕ ПОСЛЕ ТОГО, КАК УЖЕ ОТВЕЧАЛ. Раунд открыт,
-    // значит он может переотметить — а переотметить можно только то, что
-    // видно. Отдельной строкой, потому что случай «уже отвечал» ходит по
-    // другой ветке показа, чем «ещё не отвечал».
-    testWidgets('отмечающий видит всё и после своего ответа', (tester) async {
+    // ПОСЛЕ ОТВЕТА КАРТОЧКА СТАЛА СВОДКОЙ И У ПОЛУЧАТЕЛЯ ТОЖЕ — следствие
+    // того же решения, и найдено оно этим тестом, а не предугадано.
+    //
+    // Список строится как «ответил и тронуть нельзя → только отмеченные».
+    // Пока отмечали в ленте, вторая половина условия была ложна у
+    // получателя, и он после ответа видел все тридцать дней — иначе
+    // переотметить было бы нечего. Ответ уехал на экран, тронуть нельзя
+    // никому, и обе стороны видят одно: три дня, на которые согласились,
+    // плюс мелкую строку «— yox» под ними.
+    //
+    // Это не потеря: переответить по-прежнему можно, и все тридцать дней
+    // человек увидит там, где и отвечает, — на экране.
+    testWidgets('после ответа получателю показаны ТОЛЬКО отмеченные дни', (
+      tester,
+    ) async {
       await pump(
         tester,
         o: offer(dates: month, answers: {player: month.take(3).toList()}),
         viewer: player,
       );
-      expect(renderedDays(tester).length, 30);
+
+      expect(renderedDays(tester), month.take(3).toSet());
+      // Три меньше порога сворачивания — прятать нечего.
       expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
+    });
+
+    // КАНАРЕЙКА К ДВУМ ПРЕДЫДУЩИМ: разворот по-прежнему работает и у
+    // получателя. Без неё «свёрнут» было бы верно и для списка, который не
+    // разворачивается вовсе, — то есть для поломки.
+    testWidgets('получатель разворачивает список нажатием', (tester) async {
+      await pump(tester, o: offer(dates: month), viewer: player);
+      await tester.tap(find.byKey(const ValueKey('offer-days-expand')));
+      await tester.pump();
+      expect(renderedDays(tester).length, 30);
     });
   });
 }

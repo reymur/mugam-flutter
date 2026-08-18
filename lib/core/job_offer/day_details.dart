@@ -37,8 +37,21 @@ class DayDetails {
   /// существует, загруженный файл был бы мусором без владельца.
   final String? voiceUrl;
 
+  /// **ДВА ПОЛЯ ПРО ГОЛОС, А НЕ ОДНО, и спрашивать надо оба.** `voicePath`
+  /// есть только у ЧЕРНОВИКА (запись лежит во временной папке, ещё не
+  /// отправлена), `voiceUrl` — только у ПРОЧИТАННОГО ИЗ БАЗЫ (файл уже в
+  /// хранилище, временного пути на этом телефоне нет и не будет).
+  ///
+  /// До 19.08 здесь стоял один `voicePath`, и на черновике это было верно —
+  /// другого состояния у деталей тогда и не бывало. С появлением читателя
+  /// (N139) день, где записано только голосовое, приходил бы из базы
+  /// «пустым» и не показывался вовсе.
   bool get isEmpty =>
-      time.isEmpty && location.isEmpty && dress.isEmpty && voicePath == null;
+      time.isEmpty &&
+      location.isEmpty &&
+      dress.isEmpty &&
+      voicePath == null &&
+      voiceUrl == null;
 
   bool get isNotEmpty => !isEmpty;
 
@@ -75,6 +88,29 @@ class DayDetails {
     if (voiceUrl != null && voiceWaveform.isNotEmpty)
       'voiceWaveform': voiceWaveform,
   };
+
+  /// Обратный ход к `toMap`. **Его не было вовсе до 19.08** — писатель
+  /// существовал, читателя не существовало, и записанное в базу никто не
+  /// доставал обратно (N139).
+  ///
+  /// **`voicePath` здесь не восстанавливается и восстановлен быть не
+  /// может:** это путь во временной папке ТОГО телефона, где записывали.
+  /// Из базы приходит `voiceUrl` — адрес в хранилище. Два разных поля для
+  /// двух разных вещей, и подставлять одно вместо другого нельзя.
+  ///
+  /// Чтение защитное, а не жёсткое (I49): документ пишет наш клиент, но
+  /// правкой руками в консоли сюда может лечь что угодно, а пустая строка
+  /// вместо падения здесь безвредна — поле необязательное по смыслу.
+  static DayDetails fromMap(Map<String, dynamic> map) => DayDetails(
+    time: map['time'] as String? ?? '',
+    location: map['location'] as String? ?? '',
+    dress: map['dress'] as String? ?? '',
+    voiceUrl: map['voiceUrl'] as String?,
+    voiceWaveform: (map['voiceWaveform'] as List<dynamic>? ?? const [])
+        .whereType<num>()
+        .map((n) => n.toInt())
+        .toList(growable: false),
+  );
 }
 
 /// Сколько дней затронет копирование — считается ДО нажатия, потому что

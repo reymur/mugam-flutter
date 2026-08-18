@@ -7,6 +7,8 @@
 // у каждого хода свой вызов в сервисе, и правила разрешают ровно четыре
 // (создание, отметки, принятие, отзыв).
 
+import 'day_details.dart';
+
 /// Роль в ОДНОМ предложении. Роль принадлежит предложению, а не человеку:
 /// в чате нет ни работодателей, ни музыкантов — есть двое участников, и
 /// позвать на работу может любой (N127, поймано парным тестом).
@@ -41,9 +43,7 @@ class JobOffer {
     required this.createdBy,
     required this.dates,
     required this.eventType,
-    this.eventTime = '',
-    this.eventLocation = '',
-    this.eventNotes = '',
+    this.details = const {},
     this.anchorMessageId,
     this.answers = const {},
     this.acceptedBy,
@@ -54,9 +54,21 @@ class JobOffer {
   final String createdBy;
   final List<String> dates;
   final String eventType;
-  final String eventTime;
-  final String eventLocation;
-  final String eventNotes;
+
+  /// Подробности ПО ДНЯМ: ключ — тот же ISO-день, что лежит в `dates`.
+  ///
+  /// **Здесь до 19.08 стояли три плоские строки** —
+  /// `eventTime`/`eventLocation`/`eventNotes`, одни на всё предложение.
+  /// Писатель перестал их писать 14.08 (`71d2ae9`), а читатель остался и
+  /// продолжал их спрашивать: чтение по несуществующему полю не падает, оно
+  /// возвращает пусто (I44), поэтому «Ətraflı» на карточке не показывался
+  /// НИ РАЗУ и никто не покраснел (N139).
+  ///
+  /// **Дни без единой вписанной подробности в карту не попадают вовсе** —
+  /// так их пишет `createOffer`, и читателю это переживать обязательно:
+  /// отсутствие ключа здесь законно и означает «ничего не вписано».
+  final Map<String, DayDetails> details;
+
   final String? anchorMessageId;
 
   /// Отмеченные дни по uid. **Карта, а не общий список**, и это не про
@@ -111,14 +123,24 @@ class JobOffer {
         }
       });
     }
+    // Тем же мягким чтением, что и `answers` выше, и по той же причине.
+    // Ключ — ISO-день; чужая запись под нестроковым ключом или не-картой в
+    // значении просто не попадает в результат, а не роняет карточку.
+    final rawDetails = data['details'];
+    final details = <String, DayDetails>{};
+    if (rawDetails is Map) {
+      rawDetails.forEach((key, value) {
+        if (key is String && value is Map) {
+          details[key] = DayDetails.fromMap(Map<String, dynamic>.from(value));
+        }
+      });
+    }
     return JobOffer(
       id: id,
       createdBy: data['createdBy'] as String? ?? '',
       dates: (data['dates'] as List?)?.whereType<String>().toList() ?? const [],
       eventType: data['eventType'] as String? ?? '',
-      eventTime: data['eventTime'] as String? ?? '',
-      eventLocation: data['eventLocation'] as String? ?? '',
-      eventNotes: data['eventNotes'] as String? ?? '',
+      details: details,
       anchorMessageId: data['anchorMessageId'] as String?,
       answers: answers,
       acceptedBy: data['acceptedBy'] as String?,
@@ -142,6 +164,7 @@ class JobOffer {
 /// ослепни она — вернёт пустой набор, а пустого не ждёт ни одна строка.
 class OfferCardActions {
   const OfferCardActions({
+    required this.canAnswer,
     required this.canPickDays,
     required this.canSend,
     required this.canAccept,
@@ -149,10 +172,32 @@ class OfferCardActions {
     required this.canRecordVoice,
   });
 
+  /// **ОТВЕТИТЬ НА ПРЕДЛОЖЕНИЕ — ход есть, и делается он НА ЭКРАНЕ**
+  /// (`JobOfferAnswerSheet`), а не в карточке.
+  ///
+  /// Поле отвечает на «предложен ли человеку этот ход», а НЕ на «показывать
+  /// ли что-то этой карточке». Разница решает: второе — свойство места
+  /// показа, и такому свойству здесь не место (I58, переключатель «а этому
+  /// не показывать» есть признак склейки двух дел). Первое — свойство
+  /// состояния и роли, то есть ровно то, что эта функция и разбирает.
+  ///
+  /// Поэтому карточка, которой некуда открыть экран, просто не рисует
+  /// ничего: `canAnswer` остаётся `true` — ход-то предложен, — а вести
+  /// его некуда, и вешать тап в пустоту хуже, чем не вешать.
+  final bool canAnswer;
+
   /// Квадратики у дат живые.
+  ///
+  /// **МЁРТВОЕ ПОЛЕ С 19.08: всегда `false`.** Отметка дней уехала на
+  /// экран (`canAnswer` выше), и внутри карточки этот ход больше не
+  /// делается. Поле оставлено намеренно — снимается одним заходом ПОСЛЕ
+  /// шага 2 вместе с `canSend`, `_checkbox`, `_picked` и их тестами (I51).
   final bool canPickDays;
 
   /// Кнопка «Göndər» под отметками.
+  ///
+  /// **МЁРТВОЕ ПОЛЕ С 19.08: всегда `false`**, по той же причине и с той же
+  /// судьбой, что `canPickDays`.
   final bool canSend;
 
   /// Кнопка «Qəbul edirəm».
@@ -166,7 +211,12 @@ class OfferCardActions {
 
   /// Ничего не предложено — карточка только смотрится.
   bool get isReadOnly =>
-      !canPickDays && !canSend && !canAccept && !canWithdraw && !canRecordVoice;
+      !canAnswer &&
+      !canPickDays &&
+      !canSend &&
+      !canAccept &&
+      !canWithdraw &&
+      !canRecordVoice;
 }
 
 /// Разбор один на обе стороны: обе смотрят на ОДИН документ, и разойтись
@@ -181,6 +231,7 @@ OfferCardActions offerCardActions(JobOffer offer, String viewerUid) {
   // выглядела бы обычной (I34).
   if (state == OfferState.accepted || state == OfferState.withdrawn) {
     return const OfferCardActions(
+      canAnswer: false,
       canPickDays: false,
       canSend: false,
       canAccept: false,
@@ -190,12 +241,17 @@ OfferCardActions offerCardActions(JobOffer offer, String viewerUid) {
   }
 
   if (role == OfferRole.recipient) {
-    // Отметки живые, пока раунд открыт, — включая переотметку после
+    // ОТВЕТ ПРЕДЛОЖЕН, ПОКА РАУНД ОТКРЫТ, — включая переответ после
     // отправки: «не устраивает — говорят голосом, музыкант меняет отметки и
-    // шлёт снова» (docs/plan.md).
+    // шлёт снова» (docs/plan.md). Условие не смотрит на то, отвечал ли он
+    // уже: `answered` — это состояние ПРЕДЛОЖЕНИЯ, а не запрет человеку.
+    //
+    // `canPickDays`/`canSend` здесь `false` с 19.08: ход тот же, место
+    // другое — экран, а не карточка.
     return const OfferCardActions(
-      canPickDays: true,
-      canSend: true,
+      canAnswer: true,
+      canPickDays: false,
+      canSend: false,
       canAccept: false,
       canWithdraw: false,
       canRecordVoice: true,
@@ -205,6 +261,7 @@ OfferCardActions offerCardActions(JobOffer offer, String viewerUid) {
   // Инициатор. Принять можно только то, на что уже ответили: до ответа
   // принимать нечего, и кнопка там означала бы согласие с пустотой.
   return OfferCardActions(
+    canAnswer: false,
     canPickDays: false,
     canSend: false,
     canAccept: state == OfferState.answered,
@@ -236,6 +293,32 @@ String offerFeedLine(JobOffer offer, {required String recipientUid}) {
   final picked = offer.pickedBy(recipientUid);
   if (picked.isEmpty) return 'gələ bilmir';
   return '${picked.length} gün cavab';
+}
+
+/// ПОКАЗЫВАТЬ ЛИ ЭТО СООБЩЕНИЕ КАРТОЧКОЙ — и если да, то какое предложение
+/// в неё класть.
+///
+/// **Вынесено из разметки НАМЕРЕННО, и это прямое применение I32:** на
+/// порядок ветвей, в котором экран решает, что показать, в проекте нет ни
+/// одного сторожа, и цена этого уже заплачена — N125, тринадцать часов в
+/// проде при 569 зелёных тестах. Механически порядок не выразим; выразимо
+/// следствие — решение, которое можно позвать из теста.
+///
+/// Три исхода, и они РАЗНЫЕ (I47), хотя два последних дают на экране одно:
+///
+///   • ссылки нет            → обычное сообщение, карточке взяться неоткуда;
+///   • ссылка есть, документ пришёл → карточка;
+///   • **ссылка есть, документа НЕТ** → обычное сообщение, и это НЕ
+///     поломка. Так выглядят те миллисекунды, пока идёт первая выдача
+///     потока, а ещё — предложение, удалённое из базы руками. Показать
+///     здесь заглушку значило бы мигать ею при каждом открытии чата.
+///
+/// Возврат `null` во втором и третьем случае одинаков **на экране** и
+/// различим **в разборе**: спросив `msg.offerId`, вызывающий отличит «это
+/// не якорь» от «якорь, но документа нет».
+JobOffer? offerCardFor(String? offerId, Map<String, JobOffer> offersById) {
+  if (offerId == null) return null;
+  return offersById[offerId];
 }
 
 /// Можно ли инициатору принимать.

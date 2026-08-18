@@ -111,20 +111,48 @@ void main() {
 
   group('таблица: состояние × роль → что предложено', () {
     // ЭТА СТРОКА ПОЙМАЛА БЫ N125.
-    test('получателю предложены отметки и отправка, пока раунд открыт', () {
+    test('получателю предложен ОТВЕТ, пока раунд открыт', () {
       final a = offerCardActions(offer(), player);
-      expect(a.canPickDays, isTrue);
-      expect(a.canSend, isTrue);
+      expect(a.canAnswer, isTrue);
       expect(a.canRecordVoice, isTrue);
     });
 
-    test('получатель переотмечает и после своего ответа', () {
+    test('получатель отвечает снова и после своего ответа', () {
       final a = offerCardActions(
         offer(answers: {player: const ['2026-08-09']}),
         player,
       );
-      expect(a.canPickDays, isTrue);
-      expect(a.canSend, isTrue);
+      // `answered` — состояние ПРЕДЛОЖЕНИЯ, а не запрет человеку: раунд
+      // открыт, значит переответить можно.
+      expect(a.canAnswer, isTrue);
+    });
+
+    // ОТМЕТКА ВНУТРИ КАРТОЧКИ МЕРТВА С 19.08 — развилка хода 2 решена в
+    // пользу экрана (`docs/plan.md`). Проверяется ПО ВСЕЙ ТАБЛИЦЕ, а не у
+    // одной клетки: поле, оставленное мёртвым до уборки после шага 2,
+    // обязано быть мёртвым везде, иначе «мёртвое» — это про то место, куда
+    // посмотрели.
+    //
+    // Сторож держится ровно до той уборки и снимается вместе с полями.
+    test('отметка внутри карточки мертва во всех клетках таблицы', () {
+      final cells = <OfferCardActions>[
+        offerCardActions(offer(), player),
+        offerCardActions(offer(), boss),
+        offerCardActions(offer(answers: {player: const []}), player),
+        offerCardActions(offer(answers: {player: const []}), boss),
+        offerCardActions(offer(acceptedBy: boss), player),
+        offerCardActions(offer(acceptedBy: boss), boss),
+        offerCardActions(offer(withdrawnBy: boss), player),
+        offerCardActions(offer(withdrawnBy: boss), boss),
+      ];
+
+      // Число названо вслух: восемь клеток — две роли на четыре состояния
+      // (I13, состав и счёт, а не «хоть что-то проверили»).
+      expect(cells.length, 8);
+      for (final a in cells) {
+        expect(a.canPickDays, isFalse);
+        expect(a.canSend, isFalse);
+      }
     });
 
     test('получателю НЕ предложено ни принять, ни отозвать', () {
@@ -136,8 +164,13 @@ void main() {
       expect(a.canWithdraw, isFalse);
     });
 
-    test('инициатору не предложено отмечать дни', () {
-      expect(offerCardActions(offer(), boss).canPickDays, isFalse);
+    // Было «инициатору не предложено отмечать дни» и проверяло
+    // `canPickDays`. После 19.08 отметок не предложено НИКОМУ, поэтому
+    // прежнее утверждение стало верным по причине, к роли отношения не
+    // имеющей, — то есть перестало проверять роль. Спрашивать надо про
+    // ответ: его инициатору и правда не предлагают, и это про роль.
+    test('инициатору ОТВЕТ не предложен', () {
+      expect(offerCardActions(offer(), boss).canAnswer, isFalse);
     });
 
     // Принимать нечего, пока не ответили: кнопка там означала бы согласие с
@@ -222,7 +255,7 @@ void main() {
       );
       expect(theirs.roleOf(player), OfferRole.initiator);
       expect(theirs.roleOf(boss), OfferRole.recipient);
-      expect(offerCardActions(theirs, boss).canPickDays, isTrue);
+      expect(offerCardActions(theirs, boss).canAnswer, isTrue);
     });
   });
 

@@ -33,6 +33,7 @@ class JobOfferCard extends StatefulWidget {
     required this.recipientName,
     this.busyDates = const {},
     this.onSendAnswer,
+    this.onOpenAnswer,
     this.onAccept,
     this.onWithdraw,
     this.onRecordVoice,
@@ -54,7 +55,39 @@ class JobOfferCard extends StatefulWidget {
   /// приватность, а не краткость (`docs/design/README.md`).
   final Set<String> busyDates;
 
+  /// МЁРТВЫЙ ВХОД С 19.08 — решение владельца по развилке хода 2.
+  ///
+  /// Ход «музыкант отмечает дни» написан в проекте **дважды**: здесь, внутри
+  /// карточки, и отдельным экраном `JobOfferAnswerSheet`. Выбран **экран**;
+  /// карточка в ленте отдаёт дни только на просмотр, и `onSendAnswer` при
+  /// вставке в ленту НЕ ПОДКЛЮЧАЕТСЯ.
+  ///
+  /// Три довода, полностью — `docs/plan.md`, «РАЗВИЛКА ХОДА 2»; короче
+  /// всего третий, потому что он живёт прямо в этом файле: условие
+  /// сворачивания `collapsible = !canPick && …` (:249) у получателя даёт
+  /// `canPick == true`, то есть список **не сворачивается никогда** —
+  /// тридцать строк с квадратиками в переписке.
+  ///
+  /// **НЕ УДАЛЯТЬ СЕЙЧАС, и это тоже решение, а не забывчивость** (I51):
+  /// снятие идёт одним заходом ПОСЛЕ шага 2, вместе с `canPickDays`,
+  /// `canSend`, `_checkbox`, `_picked` и их тестами. Убрать по одному
+  /// значит оставить половину и заставить следующего гадать, что тут
+  /// задумано, а что забыто.
   final void Function(List<String> picked)? onSendAnswer;
+
+  /// Открыть экран ответа (`JobOfferAnswerSheet`) — ход музыканта.
+  ///
+  /// **`null` означает «открывать некуда», и тогда кнопка НЕ РИСУЕТСЯ
+  /// вовсе.** Это не оплошность вызывающего, а условие владельца 19.08:
+  /// нарисованная кнопка, которая никуда не ведёт, неотличима от поломки —
+  /// человек нажимает, ничего не происходит, и объяснить это можно чем
+  /// угодно. Отсутствие кнопки объясняется однозначно: экран ещё не
+  /// подключён (шаг 2).
+  ///
+  /// `canAnswer` при этом остаётся `true`: ход человеку **предложен**, и
+  /// разбор про это не врёт — просто вести его пока некуда.
+  final VoidCallback? onOpenAnswer;
+
   final VoidCallback? onAccept;
   final VoidCallback? onWithdraw;
   final VoidCallback? onRecordVoice;
@@ -256,7 +289,13 @@ class _JobOfferCardState extends State<JobOfferCard> {
     return shown.map((iso) {
       final busy = widget.busyDates.contains(iso);
       final on = _picked.contains(iso);
+      // КЛЮЧ НА САМОЙ СТРОКЕ, А НЕ НА НАЖИМАЕМОЙ ОБЁРТКЕ. До 19.08 он стоял
+      // на `InkWell`, то есть появлялся только там, где день можно отметить;
+      // когда отметка уехала на экран, список перестал быть перечислимым
+      // снаружи — и тесты, считавшие дни, стали считать ноль. Строка есть
+      // всегда, ключ обязан быть при ней.
       final row = Padding(
+        key: ValueKey('offer-day-$iso'),
         padding: const EdgeInsets.symmetric(vertical: 7),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -287,7 +326,6 @@ class _JobOfferCardState extends State<JobOfferCard> {
       );
       if (!canPick) return row;
       return InkWell(
-        key: ValueKey('offer-day-$iso'),
         onTap: () => setState(() {
           if (!_picked.remove(iso)) _picked.add(iso);
         }),
@@ -319,10 +357,22 @@ class _JobOfferCardState extends State<JobOfferCard> {
     return '$days — yox';
   }
 
+  /// Спрашивается `isNotEmpty` У ДНЯ, а не `details.isNotEmpty` у карты.
+  /// Карта с днём, у которого все поля пустые, — законное состояние (так
+  /// приходит правка руками либо запись прежней сборки), и «Ətraflı» над
+  /// пустотой был бы обещанием без содержимого.
   bool _hasDetails(JobOffer offer) =>
-      offer.eventTime.isNotEmpty ||
-      offer.eventLocation.isNotEmpty ||
-      offer.eventNotes.isNotEmpty;
+      offer.details.values.any((d) => d.isNotEmpty);
+
+  /// Дни с подробностями, в порядке календаря. Сортировка по ISO-строке —
+  /// это и есть хронологический порядок, потому что формат `YYYY-MM-DD`
+  /// лексикографически совпадает с временным.
+  List<String> _detailDays(JobOffer offer) =>
+      offer.details.entries
+          .where((e) => e.value.isNotEmpty)
+          .map((e) => e.key)
+          .toList()
+        ..sort();
 
   Widget _details(JobOffer offer) {
     return Column(
@@ -350,12 +400,34 @@ class _JobOfferCardState extends State<JobOfferCard> {
             ],
           ),
         ),
-        if (_detailsOpen) ...[
-          if (offer.eventTime.isNotEmpty) _detailRow('Saat', offer.eventTime),
-          if (offer.eventLocation.isNotEmpty)
-            _detailRow('Yer', offer.eventLocation),
-          if (offer.eventNotes.isNotEmpty) _detailRow('Qeyd', offer.eventNotes),
-        ],
+        // ПОДРОБНОСТИ СГРУППИРОВАНЫ ПО ДНЯМ, потому что они и хранятся по
+        // дням. Прежде здесь было три строки на всё предложение — время,
+        // место, заметка, — и звали на пять вечеров с одним временем на
+        // всех; заголовка дня не было за ненадобностью.
+        //
+        // Заголовок дня стоит даже когда день такой один: без него строка
+        // «Saat 20:00» под списком из трёх дат читается как «у всех трёх»,
+        // то есть ровно как прежнее поведение, от которого и уходили.
+        if (_detailsOpen)
+          for (final iso in _detailDays(offer)) ...[
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                _fmtDay(iso),
+                style: const TextStyle(
+                  color: kGold,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            if (offer.details[iso]!.time.isNotEmpty)
+              _detailRow('Saat', offer.details[iso]!.time),
+            if (offer.details[iso]!.location.isNotEmpty)
+              _detailRow('Yer', offer.details[iso]!.location),
+            if (offer.details[iso]!.dress.isNotEmpty)
+              _detailRow('Geyim', offer.details[iso]!.dress),
+          ],
       ],
     );
   }
@@ -408,7 +480,21 @@ class _JobOfferCardState extends State<JobOfferCard> {
       children.add(const SizedBox(width: 12));
     }
 
-    if (actions.canSend) {
+    // ОТВЕТ — ПЕРВЫМ, И ТОЛЬКО КОГДА ЕСТЬ КУДА ВЕСТИ. Пары «предложено» и
+    // «есть чем сделать» здесь две разные, и сведение их в одну было бы
+    // ровно той ложью, которой опасается I47: «кнопки нет» тогда означало
+    // бы и «ход не предложен», и «экран не подключён».
+    if (actions.canAnswer && widget.onOpenAnswer != null) {
+      children.add(
+        Expanded(
+          child: _goldButton(
+            key: const ValueKey('offer-open-answer'),
+            label: 'Cavab ver',
+            onTap: widget.onOpenAnswer,
+          ),
+        ),
+      );
+    } else if (actions.canSend) {
       children.add(
         Expanded(
           child: _goldButton(

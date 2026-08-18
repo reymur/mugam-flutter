@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart' hide User;
@@ -44,6 +45,9 @@ import '../../agreements/screens/agreements_screen.dart' show agreementsTabReque
 import '../../../core/chat/job_offer_round.dart';
 import '../../job_offer/job_offer_entry.dart';
 import '../../status/screens/status_viewer_screen.dart';
+import '../../../core/job_offer/job_offer.dart';
+import '../../../core/job_offer/job_offer_repository.dart';
+import '../../job_offer/widgets/job_offer_card.dart';
 import 'about_contact_screen.dart';
 import 'chat_attachment_viewer_screen.dart';
 import 'custom_camera_backup/camera_capture_screen.dart';
@@ -228,10 +232,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // with something deliberate and bounded.
   DateTime? _lastUnreadRepairAt;
 
+  /// Предложения работы этого чата — ОДИН поток на весь экран.
+  ///
+  /// **Создаётся здесь, а не в `build`, и это не стиль.** `snapshots()`
+  /// возвращает новый поток при каждом вызове; собери его в `build` — и
+  /// каждая перерисовка заводила бы новую подписку, а старую бросала.
+  /// Заметно это не сразу, а числом чтений.
+  ///
+  /// Отменять вручную не нужно и НЕЛЬЗЯ забыть: подписан на него
+  /// `StreamBuilder`, он же и отпишется, когда экран уйдёт. Ручного
+  /// `listen` здесь нет намеренно — у него отмена на совести пишущего.
+  late final Stream<List<JobOffer>> _offersStream;
+
   @override
   void initState() {
     super.initState();
     _firestoreService = ref.read(firestoreServiceProvider);
+    _offersStream = JobOfferRepository(
+      FirebaseFirestore.instance,
+    ).watchOffers(widget.chatId);
     _messageController.addListener(() {
       final hasText = _messageController.text.trim().isNotEmpty;
       if (hasText != _hasText) {
@@ -1694,6 +1713,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     return chatData?['name'] as String? ?? '';
   }
 
+  /// Имя человека по uid — тем же способом, что и `_replySenderName` выше,
+  /// и намеренно не «лучше».
+  ///
+  /// В переписке двоих других имён взяться неоткуда: чужое лежит на самом
+  /// чате (`chatDataProvider`), своё — в учётной записи. Заводить сюда
+  /// отдельное чтение `users` значило бы завести ВТОРОЙ источник имени,
+  /// который однажды разойдётся с первым, — а показывают их рядом, в одной
+  /// карточке.
+  String _displayNameOf(String uid, String currentUid) {
+    if (uid == currentUid) {
+      return FirebaseAuth.instance.currentUser?.displayName ?? '';
+    }
+    return ref.read(chatDataProvider(widget.chatId)).value?['name'] as String? ??
+        '';
+  }
+
   String? _replyImageURL(Message msg) {
     return msg.type == 'image' ? msg.imageURL : null;
   }
@@ -2962,8 +2997,71 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     Map<String, dynamic> deliveredSeq,
     Map<String, dynamic> lastReadMsgId,
     String? prevSenderId,
+    Map<String, JobOffer> offersById,
   ) {
     final isMe = msg.senderId == currentUid;
+
+    // ЯКОРЬ ПРЕДЛОЖЕНИЯ РАБОТЫ — КАРТОЧКА ВМЕСТО ПУЗЫРЯ.
+    //
+    // Опознаётся по НАЛИЧИЮ `offerId`, а не по типу: сообщение остаётся
+    // `type: 'text'` намеренно, чтобы старая сборка показала текст, а не
+    // пустой пузырь (`models.dart`, поле `offerId`).
+    //
+    // **Ранний выход, потому что карточка — сама себе пузырь:** она рисует
+    // свой фон, скругление и рамку. Вложенная в пузырь, она получила бы
+    // вторую рамку поверх первой и золотую заливку у отправителя под своим
+    // тёмным фоном.
+    //
+    // **ЦЕНА ЭТОГО ВЫХОДА НАЗВАНА, А НЕ ОБОЙДЕНА (решение владельца
+    // 19.08): на якоре ПРОПАДАЮТ ГАЛОЧКИ ДОСТАВКИ** и долгое нажатие —
+    // всё это собирается ниже по функции, и сюда не попадает. Свайп-ответ
+    // и подсветку возвращает обёртка ниже; галочки не возвращает никто.
+    // Довод: у карточки своё состояние важнее галочек — она сама говорит,
+    // что стало с предложением. Записано, потому что пропажа галочек на
+    // одном виде сообщений выглядит поломкой, и следующий начнёт чинить
+    // исправное (`docs/plan.md`, шаг 1).
+    //
+    // **Предложение ещё не доехало — рисуем обычный пузырь**, а не пустое
+    // место: `offerId` есть, а документа нет ровно в те миллисекунды, пока
+    // идёт первая выдача потока. Показать тут заглушку значило бы мигать
+    // ею на каждом открытии чата.
+    final offer = offerCardFor(msg.offerId, offersById);
+    if (offer != null) {
+      // Ключ на обёртке, а не на самом виджете: `_SwipeableMessageBubble`
+      // его не принимает, а списку он нужен, чтобы не перепутать строки.
+      return KeyedSubtree(
+        key: ValueKey(msg.id),
+        child: _SwipeableMessageBubble(
+          onReply: () => _startReply(msg),
+          child: Builder(
+            builder: (_) {
+              // Получатель — тот участник, который предложение НЕ создавал.
+              // Сегодня в чате их двое, и это записанная граница работы:
+              // «один документ — один ответ». Позвать нескольких одним
+              // предложением — другая работа (`firestore.rules`, `offers`).
+              final iAmInitiator = offer.createdBy == currentUid;
+              final recipientUid = iAmInitiator
+                  ? (otherUids.isNotEmpty ? otherUids.first : currentUid)
+                  : currentUid;
+
+              return JobOfferCard(
+                offer: offer,
+                viewerUid: currentUid,
+                recipientUid: recipientUid,
+                initiatorName: _displayNameOf(offer.createdBy, currentUid),
+                recipientName: _displayNameOf(recipientUid, currentUid),
+                // ЭКРАН ОТВЕТА НЕ ПОДКЛЮЧЁН — ЭТО ШАГ 2, и здесь он НЕ
+                // ПЕРЕДАН намеренно: карточка тогда не рисует кнопку
+                // вовсе. Кнопка, которая никуда не ведёт, неотличима от
+                // поломки; отсутствие кнопки объясняется однозначно.
+                //
+                // onOpenAnswer: — появится в шаге 2.
+              );
+            },
+          ),
+        ),
+      );
+    }
 
     // System announcements ("X created the group", "X left the group") get
     // no bubble, no avatar, no sender-side distinction — just centered gray
@@ -4630,47 +4728,74 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                       final allMsgIds = combinedMessages
                           .map((m) => m.id)
                           .toList();
-                      return ScrollablePositionedList.builder(
-                        itemScrollController: _itemScrollController,
-                        itemPositionsListener: _itemPositionsListener,
-                        reverse: true,
-                        itemCount: combinedMessages.length,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        itemBuilder: (ctx, i) {
-                          // Defensive against scrollable_positioned_list's
-                          // own internal position-tracking state
-                          // requesting a stale/out-of-bounds index
-                          // (including -1) when combinedMessages collapses
-                          // from N to ~0 in a single frame while this
-                          // screen is still mounted — first reachable via
-                          // leaveGroup/deleteGroupChat/removeGroupMember
-                          // (the chat's messages becoming instantly
-                          // inaccessible mid-rebuild/pop), none of which
-                          // existed before groups did. Not a bug in our
-                          // own list-building logic: combinedMessages and
-                          // itemCount above are always consistent with
-                          // each other in this same closure — it's the
-                          // package's own internal state that goes stale.
-                          if (i < 0 || i >= combinedMessages.length) {
-                            return const SizedBox.shrink();
-                          }
-                          return _buildMessageBubble(
-                            combinedMessages[i],
-                            i,
-                            allMsgIds,
-                            currentUid,
-                            otherUids,
-                            deliveredTo,
-                            deliveredSeq,
-                            lastReadMsgId,
-                            // Chronologically-previous message: with index
-                            // 0 = newest, that's the NEXT index, not i - 1.
-                            i < combinedMessages.length - 1
-                                ? combinedMessages[i + 1].senderId
-                                : null,
+                      // ПРЕДЛОЖЕНИЯ РАБОТЫ — ОДНА ПОДПИСКА НА ВЕСЬ ЭКРАН,
+                      // а не по одной на карточку: карточек в ленте бывает
+                      // много, и подписка у каждой означала бы столько же
+                      // живых слушателей, растущих с прокруткой вглубь.
+                      //
+                      // `StreamBuilder`, а не ручной `listen`: отписка на
+                      // нём самом, и забыть её нельзя. Сам поток собран
+                      // один раз в `initState` — собери его здесь, и
+                      // каждая перерисовка заводила бы новый.
+                      //
+                      // **ОТСУТСТВИЕ ДАННЫХ — НЕ ОЖИДАНИЕ И НЕ ПУСТОЙ
+                      // ЭКРАН.** Пока предложения не пришли (или их нет
+                      // вовсе), лента рисуется целиком, а якорь показан
+                      // обычным текстом — ровно тем, что видит старая
+                      // сборка. Крутилки здесь быть не должно: она
+                      // задержала бы ВСЮ переписку ради одной карточки.
+                      return StreamBuilder<List<JobOffer>>(
+                        stream: _offersStream,
+                        builder: (offersCtx, offersSnap) {
+                          final offersById = <String, JobOffer>{
+                            for (final o
+                                in offersSnap.data ?? const <JobOffer>[])
+                              o.id: o,
+                          };
+                          return ScrollablePositionedList.builder(
+                            itemScrollController: _itemScrollController,
+                            itemPositionsListener: _itemPositionsListener,
+                            reverse: true,
+                            itemCount: combinedMessages.length,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            itemBuilder: (ctx, i) {
+                              // Defensive against scrollable_positioned_list's
+                              // own internal position-tracking state
+                              // requesting a stale/out-of-bounds index
+                              // (including -1) when combinedMessages collapses
+                              // from N to ~0 in a single frame while this
+                              // screen is still mounted — first reachable via
+                              // leaveGroup/deleteGroupChat/removeGroupMember
+                              // (the chat's messages becoming instantly
+                              // inaccessible mid-rebuild/pop), none of which
+                              // existed before groups did. Not a bug in our
+                              // own list-building logic: combinedMessages and
+                              // itemCount above are always consistent with
+                              // each other in this same closure — it's the
+                              // package's own internal state that goes stale.
+                              if (i < 0 || i >= combinedMessages.length) {
+                                return const SizedBox.shrink();
+                              }
+                              return _buildMessageBubble(
+                                combinedMessages[i],
+                                i,
+                                allMsgIds,
+                                currentUid,
+                                otherUids,
+                                deliveredTo,
+                                deliveredSeq,
+                                lastReadMsgId,
+                                // Chronologically-previous message: with index
+                                // 0 = newest, that's the NEXT index, not i - 1.
+                                i < combinedMessages.length - 1
+                                    ? combinedMessages[i + 1].senderId
+                                    : null,
+                                offersById,
+                              );
+                            },
                           );
                         },
                       );
