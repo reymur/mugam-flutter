@@ -819,6 +819,10 @@ class Message {
     imageURL: imageURL,
     audioURL: audioURL,
     videoURL: videoURL,
+    // Ссылка на предложение работы — поле СИНХРОНИЗИРУЕМОЕ, переносится
+    // как есть. Забытая здесь, она пропадает молча, а лента отличает
+    // карточку от обычного текста только по ней (N140).
+    offerId: offerId,
     videoDurationMs: videoDurationMs,
     videoWidth: videoWidth,
     videoHeight: videoHeight,
@@ -873,6 +877,10 @@ class Message {
     imageURL: imageURL,
     audioURL: audioURL,
     videoURL: videoURL,
+    // Ссылка на предложение работы — поле СИНХРОНИЗИРУЕМОЕ, переносится
+    // как есть. Забытая здесь, она пропадает молча, а лента отличает
+    // карточку от обычного текста только по ней (N140).
+    offerId: offerId,
     videoDurationMs: videoDurationMs,
     videoWidth: videoWidth,
     videoHeight: videoHeight,
@@ -936,6 +944,10 @@ class Message {
     imageURL: imageURL,
     audioURL: audioURL,
     videoURL: videoURL,
+    // Ссылка на предложение работы — поле СИНХРОНИЗИРУЕМОЕ, переносится
+    // как есть. Забытая здесь, она пропадает молча, а лента отличает
+    // карточку от обычного текста только по ней (N140).
+    offerId: offerId,
     videoDurationMs: videoDurationMs,
     videoWidth: videoWidth,
     videoHeight: videoHeight,
@@ -1018,6 +1030,12 @@ class Message {
     imageURL: real.imageURL,
     audioURL: real.audioURL,
     videoURL: real.videoURL,
+    // Из `real`, а не из `this`: это синхронизируемое поле, и правду о нём
+    // знает сервер. Через ЭТОТ метод проходит каждое уже лежащее на
+    // телефоне сообщение, когда сервер присылает его снова, — то есть вся
+    // старая переписка. Потерянная здесь ссылка не восстановится ничем
+    // (N140).
+    offerId: real.offerId,
     videoDurationMs: real.videoDurationMs,
     videoWidth: real.videoWidth,
     videoHeight: real.videoHeight,
