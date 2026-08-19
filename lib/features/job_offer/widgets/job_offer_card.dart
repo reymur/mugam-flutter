@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/job_offer/job_offer.dart';
+import '../../../core/text/az_case.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/time/az_date_format.dart';
 
@@ -523,7 +524,11 @@ class _JobOfferCardState extends State<JobOfferCard> {
       children.add(
         Expanded(
           child: Text(
-            '${widget.recipientName}un cavabı gözlənilir',
+            // ИСХОДНЫЙ ПАДЕЖ, а не притяжательный: ждут ответа ОТ
+            // человека. Окончание считает `azAwaitingAnswerFrom` по
+            // гармонии гласных — приклеенное к имени `un` было неверно и
+            // вдобавок неподвижно: «Teymurdan», но «Rafaeldən».
+            azAwaitingAnswerFrom(widget.recipientName),
             style: const TextStyle(color: kMuted, fontSize: 13),
           ),
         ),

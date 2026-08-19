@@ -168,7 +168,12 @@ void main() {
     await pump(tester, o: offer(), viewer: boss, onOpenAnswer: () {});
     expect(find.byKey(const ValueKey('offer-open-answer')), findsNothing);
     expect(find.byKey(const ValueKey('offer-accept')), findsNothing);
-    expect(find.textContaining('cavabı gözlənilir'), findsOneWidget);
+    // ФРАЗА ЦЕЛИКОМ, А НЕ ПОДСТРОКА. Прежде здесь стояло
+    // `textContaining('cavabı gözlənilir')`, и оно прошло бы при любом
+    // окончании у имени — а именно окончание и было неверным
+    // («Teymurun» вместо «Teymurdan», исправлено владельцем 19.08).
+    // Подстрока проверяла ту часть фразы, которая не менялась.
+    expect(find.text('Teymurdan cavab gözlənilir'), findsOneWidget);
   });
 
   testWidgets('после ответа инициатору нарисовано «Qəbul edirəm»', (

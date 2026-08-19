@@ -104,7 +104,8 @@ void main() {
     testWidgets('работодатель видит ожидание и может отозвать', (tester) async {
       await pumpInFeed(tester, viewer: boss);
 
-      expect(find.textContaining('cavabı gözlənilir'), findsOneWidget);
+      // Фраза целиком: подстрока не поймала бы неверное окончание у имени.
+      expect(find.text('Teymurdan cavab gözlənilir'), findsOneWidget);
       expect(find.byKey(const ValueKey('offer-withdraw')), findsOneWidget);
     });
   });

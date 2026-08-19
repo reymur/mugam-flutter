@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/job_offer/job_offer.dart';
+import '../../../core/text/az_case.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/time/az_date_format.dart';
 import '../widgets/offer_month_grid.dart';
@@ -86,10 +87,16 @@ class JobOfferAcceptSheet extends StatelessWidget {
                   ),
                   const SizedBox(height: 10),
                   Text(
+                    // ТА ЖЕ ФРАЗА, ЧТО В КАРТОЧКЕ, И СЧИТАЕТСЯ ТЕМ ЖЕ
+                    // СПОСОБОМ. До 19.08 она была написана здесь и там
+                    // ПО-РАЗНОМУ — `-in` против `un`, — и оба варианта
+                    // неверны: ждут ответа ОТ человека, то есть исходный
+                    // падеж, а окончание зависит от последней гласной
+                    // имени.
                     azUpperCase(
                       answered
                           ? '$recipientName cavab verdi'
-                          : '$recipientName-in cavabı gözlənilir',
+                          : azAwaitingAnswerFrom(recipientName),
                     ),
                     style: const TextStyle(
                       color: kMuted,
