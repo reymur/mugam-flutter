@@ -771,9 +771,28 @@ class LocalMessageStore {
   // Re-encodes an already-built Message back into a Firestore-shaped map so
   // upsertFromFirestore can reuse Message.fromFirestore's own field
   // extraction for the "no existing local row" branch, instead of a fourth
-  // near-duplicate constructor call listing every field again. Only ever
-  // fed data Message.fromFirestore itself already parsed, so this round
-  // trip is lossless for every field that factory reads.
+  // near-duplicate constructor call listing every field again.
+  //
+  // **ЭТОТ КРУГ ТЕРЯЕТ ВСЁ, ЧЕГО НЕТ В СПИСКЕ НИЖЕ, И ТЕРЯЕТ МОЛЧА.**
+  //
+  // Здесь стояло: «this round trip is lossless for every field that factory
+  // reads». **Это было неправдой с 14.08 и обнаружено 19.08** (N140).
+  // `Message.fromFirestore` научился читать `offerId` — ссылку на
+  // предложение работы, — а сюда его дописать забыли. Каждое сообщение
+  // приезжало со ссылкой и ложилось на диск без неё; лента отличает якорь
+  // от обычного текста ровно по ней, поэтому карточка предложения не
+  // появилась НИ РАЗУ, и никто не покраснел.
+  //
+  // Утверждение о полноте опаснее отсутствия комментария: оно **сходится с
+  // проверкой ровно в тот день, когда его писали**, а дальше живёт само по
+  // себе и останавливает поиск — читающий видит «lossless» и идёт искать
+  // причину в другом месте. Поэтому оно заменено на утверждение о том, что
+  // здесь есть список и список надо пополнять.
+  //
+  // **Полноту держит не этот комментарий, а тест** —
+  // `test/local_store_keeps_offer_link_test.dart`, круг через настоящее
+  // хранилище. Добавили полю дорогу из Firestore — добавьте его в ЭТИ ТРИ
+  // списка (`_reencode`, `_toJson`, `_fromJson`) и в тот тест.
   Map<String, dynamic> _reencode(Message m) => {
     'senderId': m.senderId,
     'text': m.text,
@@ -795,6 +814,10 @@ class LocalMessageStore {
     'longitude': m.longitude,
     'waveform': m.waveform,
     'listenedBy': m.listenedBy,
+    // Ссылка на предложение работы. По ней и только по ней лента отличает
+    // сообщение-якорь от обычного текста, поэтому потеря её здесь — это
+    // не «поле не сохранилось», а «карточка не появится никогда».
+    'offerId': m.offerId,
     'timestamp': m.timestamp,
     'seq': m.seq,
     'type': m.type,
@@ -845,6 +868,7 @@ class LocalMessageStore {
     'longitude': m.longitude,
     'waveform': m.waveform,
     'listenedBy': m.listenedBy,
+    'offerId': m.offerId,
     'timestampMillis': m.timestamp?.millisecondsSinceEpoch,
     'seq': m.seq,
     'type': m.type,
@@ -898,6 +922,7 @@ class LocalMessageStore {
     longitude: (json['longitude'] as num?)?.toDouble(),
     waveform: (json['waveform'] as List?)?.cast<int>(),
     listenedBy: List<String>.from(json['listenedBy'] as List? ?? const []),
+    offerId: json['offerId'] as String?,
     timestamp: json['timestampMillis'] != null
         ? Timestamp.fromMillisecondsSinceEpoch(json['timestampMillis'] as int)
         : null,
