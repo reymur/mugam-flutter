@@ -241,99 +241,44 @@ void main() {
       (i) => '2026-09-${(i + 1).toString().padLeft(2, '0')}',
     );
 
-    // ПЕРЕВЁРНУТО 19.08 — И ЭТО ТА САМАЯ ПРИЧИНА, ПО КОТОРОЙ ОТВЕТ УЕХАЛ НА
-    // ЭКРАН.
+    // СВОРАЧИВАНИЕ СНЯТО 19.08, И ЗДЕСЬ ПРОВЕРЯЕТСЯ ОБРАТНОЕ.
     //
-    // Прежде здесь стояло «отмечающий видит все тридцать дней сразу»:
-    // свёрнутый список прятал бы то, что он обязан протыкать. Это верно,
-    // пока тыкают в ленте, — и ровно поэтому лента получала тридцать строк
-    // с квадратиками. Развилка решена в пользу экрана, значит в ленте
-    // тыкать не нужно, и список сворачивается У ВСЕХ.
-    testWidgets('получателю длинный список тоже свёрнут', (tester) async {
+    // Прежде тут стояли пять проверок: список свёрнут у нередактируемого,
+    // разворачивается нажатием, восемь не сворачиваются, девять прячут
+    // четыре, получателю тоже свёрнут. Все пять описывали устройство,
+    // заведённое ради ЛЕНТЫ — тридцать строк внутри переписки.
+    //
+    // Ленты у карточки больше нет: в переписке короткая строка, карточка
+    // открывается листом, у листа своя прокрутка. Проверять теперь надо
+    // не «свернулось ли», а «показаны ли ВСЕ».
+
+    testWidgets('все тридцать дней показаны, ничего не спрятано', (
+      tester,
+    ) async {
       await pump(tester, o: offer(dates: month), viewer: player);
-      expect(renderedDays(tester).length, 5);
-      expect(find.text('yenə 25 gün'), findsOneWidget);
+
+      expect(renderedDays(tester).length, 30);
+      expect(
+        find.byKey(const ValueKey('offer-days-expand')),
+        findsNothing,
+        reason: 'строка разворачивания снята вместе со сворачиванием',
+      );
+      expect(
+        find.textContaining('yenə'),
+        findsNothing,
+        reason: 'остаток числом больше не показывается',
+      );
     });
 
-    testWidgets('нередактируемый список свёрнут, и остаток назван числом', (
-      tester,
-    ) async {
-      await pump(
-        tester,
-        o: offer(dates: month, answers: {player: month}),
-        viewer: boss,
-      );
-      // Пять показаны, двадцать пять спрятаны и названы числом.
-      expect(find.text('yenə 25 gün'), findsOneWidget);
+    testWidgets('все тридцать и у второй стороны', (tester) async {
+      await pump(tester, o: offer(dates: month), viewer: boss);
+      expect(renderedDays(tester).length, 30);
     });
 
-    testWidgets('свёрнутый список разворачивается нажатием', (tester) async {
-      await pump(
-        tester,
-        o: offer(dates: month, answers: {player: month}),
-        viewer: boss,
-      );
-      await tester.tap(find.byKey(const ValueKey('offer-days-expand')));
-      await tester.pump();
-      expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
-    });
-
-    // ЭКОНОМИЯ ДОЛЖНА БЫТЬ НАСТОЯЩЕЙ: восемь дней не сворачиваются, хотя
-    // показываем мы пять. Свернуть их значило бы спрятать три ради одного
-    // нажатия — и «yenə 3 gün» под списком из пяти.
-    testWidgets('восемь дней не сворачиваются', (tester) async {
-      final eight = List.generate(
-        8,
-        (i) => '2026-09-0${i + 1}',
-      );
-      await pump(
-        tester,
-        o: offer(dates: eight, answers: {player: eight}),
-        viewer: boss,
-      );
-      expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
-    });
-
-    // А девять — сворачиваются, и прячут четыре: меньшее «yenə» из
-    // возможных. Пара к предыдущему: без неё «не сворачивается» было бы
-    // верно и для порога в тысячу.
-    testWidgets('девять дней сворачиваются и прячут четыре', (tester) async {
-      final nine = List.generate(
-        9,
-        (i) => '2026-09-0${i + 1}',
-      );
-      await pump(
-        tester,
-        o: offer(dates: nine, answers: {player: nine}),
-        viewer: boss,
-      );
-      expect(find.text('yenə 4 gün'), findsOneWidget);
-    });
-
-    testWidgets('короткий список не сворачивается вовсе', (tester) async {
-      await pump(
-        tester,
-        o: offer(answers: {player: const ['2026-08-09', '2026-08-10']}),
-        viewer: boss,
-      );
-      expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
-    });
-
-    // ПОСЛЕ ОТВЕТА КАРТОЧКА СТАЛА СВОДКОЙ И У ПОЛУЧАТЕЛЯ ТОЖЕ — следствие
-    // того же решения, и найдено оно этим тестом, а не предугадано.
-    //
-    // Список строится как «ответил и тронуть нельзя → только отмеченные».
-    // Пока отмечали в ленте, вторая половина условия была ложна у
-    // получателя, и он после ответа видел все тридцать дней — иначе
-    // переотметить было бы нечего. Ответ уехал на экран, тронуть нельзя
-    // никому, и обе стороны видят одно: три дня, на которые согласились,
-    // плюс мелкую строку «— yox» под ними.
-    //
-    // Это не потеря: переответить по-прежнему можно, и все тридцать дней
-    // человек увидит там, где и отвечает, — на экране.
-    testWidgets('после ответа получателю показаны ТОЛЬКО отмеченные дни', (
-      tester,
-    ) async {
+    // ПОСЛЕ ОТВЕТА КАРТОЧКА — СВОДКА: перечисляются только отмеченные дни,
+    // неотмеченные уходят в мелкую строку «— yox». Это не сворачивание, а
+    // другое правило, и снятие сворачивания его не задело.
+    testWidgets('после ответа показаны ТОЛЬКО отмеченные дни', (tester) async {
       await pump(
         tester,
         o: offer(dates: month, answers: {player: month.take(3).toList()}),
@@ -341,18 +286,6 @@ void main() {
       );
 
       expect(renderedDays(tester), month.take(3).toSet());
-      // Три меньше порога сворачивания — прятать нечего.
-      expect(find.byKey(const ValueKey('offer-days-expand')), findsNothing);
-    });
-
-    // КАНАРЕЙКА К ДВУМ ПРЕДЫДУЩИМ: разворот по-прежнему работает и у
-    // получателя. Без неё «свёрнут» было бы верно и для списка, который не
-    // разворачивается вовсе, — то есть для поломки.
-    testWidgets('получатель разворачивает список нажатием', (tester) async {
-      await pump(tester, o: offer(dates: month), viewer: player);
-      await tester.tap(find.byKey(const ValueKey('offer-days-expand')));
-      await tester.pump();
-      expect(renderedDays(tester).length, 30);
     });
   });
 }
