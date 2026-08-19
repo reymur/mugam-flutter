@@ -56,11 +56,17 @@ void main() {
     });
   });
 
-  group('что карточка показывает в ленте на шаге 1', () {
+  // ГРУППА ПЕРЕИМЕНОВАНА 19.08: карточки в ленте больше нет.
+  //
+  // В переписке стоит короткая строка, карточка переехала в
+  // `JobOfferSheet`. Проверки те же и остались верными — они всегда
+  // были про КАРТОЧКУ, а не про место, где она стоит.
+  group('что карточка показывает в листе', () {
     Future<void> pumpInFeed(
       WidgetTester tester, {
       required String viewer,
       VoidCallback? onOpenAnswer,
+      VoidCallback? onWithdraw,
     }) async {
       final o = offerWith();
       await tester.pumpWidget(
@@ -74,6 +80,7 @@ void main() {
                 initiatorName: 'Rafael',
                 recipientName: 'Teymur',
                 onOpenAnswer: onOpenAnswer,
+                onWithdraw: onWithdraw,
               ),
             ),
           ),
@@ -86,7 +93,7 @@ void main() {
     // Экран ответа не подключён, значит `onOpenAnswer` не передаётся, и
     // кнопки нет. Когда шаг 2 её подключит, ЭТОТ тест обязан покраснеть —
     // и тем самым напомнить, что состояние изменилось.
-    testWidgets('музыкант видит карточку, но кнопки ответа ещё нет', (
+    testWidgets('музыкант видит содержимое, но кнопки ответа ещё нет', (
       tester,
     ) async {
       await pumpInFeed(tester, viewer: player);
@@ -99,10 +106,12 @@ void main() {
       expect(find.byKey(const ValueKey('offer-open-answer')), findsNothing);
     });
 
-    // Работодателю на шаге 1 доступно ВСЁ, что не требует чужого экрана:
-    // отзыв — его собственный ход и в подключении не нуждается.
+    // ОТЗЫВ РИСУЕТСЯ ТОЛЬКО ТОГДА, КОГДА ЕМУ ЕСТЬ КУДА ВЕСТИ — то же
+    // правило, что у кнопки ответа, распространённое 19.08 на приём и
+    // отзыв. Поэтому здесь обработчик ПЕРЕДАЁТСЯ: без него кнопки не
+    // будет, и это верно, а не сломано.
     testWidgets('работодатель видит ожидание и может отозвать', (tester) async {
-      await pumpInFeed(tester, viewer: boss);
+      await pumpInFeed(tester, viewer: boss, onWithdraw: () {});
 
       // Фраза целиком: подстрока не поймала бы неверное окончание у имени.
       expect(find.text('Teymurdan cavab gözlənilir'), findsOneWidget);

@@ -453,7 +453,7 @@ class _JobOfferCardState extends State<JobOfferCard> {
           ),
         ),
       );
-    } else if (actions.canAccept) {
+    } else if (actions.canAccept && widget.onAccept != null) {
       children.add(
         Expanded(
           child: _goldButton(
@@ -479,7 +479,17 @@ class _JobOfferCardState extends State<JobOfferCard> {
     }
 
     final row = Row(children: children);
-    if (!actions.canWithdraw) return row;
+    // ТО ЖЕ ПРАВИЛО, ЧТО У КНОПКИ ОТВЕТА, И ОНО ЗДЕСЬ НЕ НОВОЕ.
+    //
+    // Кнопка, которой некуда вести, неотличима от поломки: человек
+    // нажимает, ничего не происходит, и объяснить это можно чем угодно.
+    // Правило заведено 19.08 для «Cavab ver»; здесь оно просто применено
+    // ровно — к приёму (выше) и к отзыву.
+    //
+    // Без него лист предложения нарисовал бы инициатору после ответа
+    // мёртвую «Qəbul edirəm»: разбор её разрешает, а вести пока некуда —
+    // приём подключается шагом 3.
+    if (!actions.canWithdraw || widget.onWithdraw == null) return row;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

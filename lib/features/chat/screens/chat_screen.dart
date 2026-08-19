@@ -47,7 +47,7 @@ import '../../job_offer/job_offer_entry.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import '../../../core/job_offer/job_offer.dart';
 import '../../../core/job_offer/job_offer_repository.dart';
-import '../../job_offer/widgets/job_offer_card.dart';
+import '../../job_offer/screens/job_offer_sheet.dart';
 import 'about_contact_screen.dart';
 import 'chat_attachment_viewer_screen.dart';
 import 'custom_camera_backup/camera_capture_screen.dart';
@@ -1713,26 +1713,100 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     return chatData?['name'] as String? ?? '';
   }
 
-  /// Имя человека по uid — из КАРТОЧКИ ПОЛЬЗОВАТЕЛЯ, а не из документа чата.
+  /// СТРОКА ПРЕДЛОЖЕНИЯ В ЛЕНТЕ — то, что заменило развёрнутую карточку.
   ///
-  /// **Первая редакция брала `chatData['name']`, и это было неверно — так
-  /// на трубке 19.08 вышло «un cavabı gözlənilir», без имени вовсе.**
-  /// Причина названа прямо здесь же, в комментарии у заголовка экрана
-  /// (`AppBar`): поле `name` на документе чата пишет mugam-v2 **с точки
-  /// зрения того, кто чат создал**, и больше не трогает никогда. Вторая
-  /// сторона читает там **своё собственное** имя, а в чатах, заведённых
-  /// новым приложением, — пустоту.
-  ///
-  /// Поэтому источник тот же, что у заголовка и у остальных мест этого
-  /// экрана: `_otherUserCached` — карточка собеседника из `users`. Второго
-  /// источника имени здесь не заводится: он бы разошёлся с заголовком, а
-  /// показаны они на одном экране.
-  String _displayNameOf(String uid, String currentUid) {
-    if (uid == currentUid) {
-      return FirebaseAuth.instance.currentUser?.displayName ?? '';
-    }
-    return _otherUserCached?.name ?? '';
+  /// Текст даёт `offerFeedLine` (пять состояний), и он же единственное
+  /// место, где эти слова живут: здесь их нет ни одного.
+  Widget _offerFeedRow(
+    JobOffer offer,
+    String currentUid,
+    List<String> otherUids,
+  ) {
+    // Получатель — тот участник, который предложение НЕ создавал. Сегодня
+    // в чате их двое, и это записанная граница работы: «один документ —
+    // один ответ» (`firestore.rules`, блок `offers`).
+    final iAmInitiator = offer.createdBy == currentUid;
+    final recipientUid = iAmInitiator
+        ? (otherUids.isNotEmpty ? otherUids.first : currentUid)
+        : currentUid;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+      child: InkWell(
+        key: ValueKey('offer-line-${offer.id}'),
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _openOfferSheet(offer, currentUid),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: kBg3,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: kBorder),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.work_outline, size: 18, color: kGold),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  offerFeedLine(offer, recipientUid: recipientUid),
+                  style: const TextStyle(color: kText, fontSize: 14),
+                ),
+              ),
+              const Icon(Icons.chevron_right, size: 18, color: kMuted),
+            ],
+          ),
+        ),
+      ),
+    );
   }
+
+  /// КУДА ВЕДЁТ НАЖАТИЕ — решает `offerSheetFor`, а не это место.
+  ///
+  /// Здесь только сопоставление «какой лист → какой виджет открыть», и оно
+  /// нарочно оставлено голым: правило про роль и состояние живёт в одной
+  /// функции, у неё восемь проверенных клеток, и дублировать его условиями
+  /// здесь значило бы завести второе место, где решается то же самое.
+  ///
+  /// **СЕГОДНЯ ВСЕ ТРИ ВЕДУТ В ОДИН ЛИСТ, И ЭТО ВРЕМЕННО.** Подключён
+  /// только лист предложения; лист ответа и лист приёма ждут шагов 2 и 3.
+  ///
+  /// Довод, по которому выбран именно такой временный вид (решение 19.08):
+  ///
+  ///   • **не открывать вовсе** — тап работал бы через раз, а строка во
+  ///     всех состояниях выглядит одинаково. Неотличимо от поломки. И
+  ///     хуже: музыкант сегодня видит дни и «Ətraflı» в ленте, а со
+  ///     строкой, которая не открывается, потерял бы и это;
+  ///   • **открыть лист ответа как есть** — в нём нет «Ətraflı», и
+  ///     музыкант ответил бы, НЕ УВИДЕВ времени и места. Это не нехватка,
+  ///     а неверный ответ;
+  ///   • **лист предложения** — показывает всё, что показывала карточка,
+  ///     и не предлагает ходов, которым некуда вести. Ни регресса, ни
+  ///     мёртвых кнопок.
+  void _openOfferSheet(JobOffer offer, String currentUid) {
+    switch (offerSheetFor(offer, currentUid)) {
+      case OfferSheet.offer:
+      case OfferSheet.answer:
+      case OfferSheet.accept:
+        showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (_) => JobOfferSheet(
+            chatId: widget.chatId,
+            offerId: offer.id,
+          ),
+        );
+    }
+  }
+
+  // `_displayNameOf` снята 19.08 вместе с карточкой из ленты: строка имён
+  // не показывает, а лист (`JobOfferSheet`) разрешает их сам — он обязан
+  // работать и там, где открывшего нет (уведомление, шаг 4).
+  //
+  // Довод N141 не потерян, он переехал вместе с работой: имя берётся из
+  // КАРТОЧКИ ПОЛЬЗОВАТЕЛЯ, а не из документа чата, где `name` пишет
+  // mugam-v2 с точки зрения создавшего и никогда не обновляет.
 
   String? _replyImageURL(Message msg) {
     return msg.type == 'image' ? msg.imageURL : null;
@@ -3006,16 +3080,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   ) {
     final isMe = msg.senderId == currentUid;
 
-    // ЯКОРЬ ПРЕДЛОЖЕНИЯ РАБОТЫ — КАРТОЧКА ВМЕСТО ПУЗЫРЯ.
+    // ЯКОРЬ ПРЕДЛОЖЕНИЯ РАБОТЫ — КОРОТКАЯ СТРОКА ВМЕСТО ПУЗЫРЯ.
     //
     // Опознаётся по НАЛИЧИЮ `offerId`, а не по типу: сообщение остаётся
     // `type: 'text'` намеренно, чтобы старая сборка показала текст, а не
     // пустой пузырь (`models.dart`, поле `offerId`).
     //
-    // **Ранний выход, потому что карточка — сама себе пузырь:** она рисует
-    // свой фон, скругление и рамку. Вложенная в пузырь, она получила бы
-    // вторую рамку поверх первой и золотую заливку у отправителя под своим
-    // тёмным фоном.
+    // **Ранний выход, потому что строка — не реплика:** у неё своя рамка,
+    // свой фон и своё нажатие, а сторона отправителя ей безразлична.
+    // Вложенная в пузырь, она получила бы вторую рамку поверх первой и
+    // золотую заливку под своим тёмным фоном.
+    //
+    // **ДО 19.08 ЗДЕСЬ СТОЯЛА РАЗВЁРНУТАЯ КАРТОЧКА.** Решение автора 14.08
+    // (занесено в план 19.08) отменяет это: «открывается НАЖАТИЕМ на
+    // строку предложения в ленте, а не разворачивается в переписке… лента
+    // не забивается списками на двадцать дат». Карточка не удалена — она
+    // переехала в `JobOfferSheet` и жива там целиком.
     //
     // **ЦЕНА ЭТОГО ВЫХОДА НАЗВАНА, А НЕ ОБОЙДЕНА (решение владельца
     // 19.08): на якоре ПРОПАДАЮТ ГАЛОЧКИ ДОСТАВКИ** и долгое нажатие —
@@ -3038,32 +3118,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         key: ValueKey(msg.id),
         child: _SwipeableMessageBubble(
           onReply: () => _startReply(msg),
-          child: Builder(
-            builder: (_) {
-              // Получатель — тот участник, который предложение НЕ создавал.
-              // Сегодня в чате их двое, и это записанная граница работы:
-              // «один документ — один ответ». Позвать нескольких одним
-              // предложением — другая работа (`firestore.rules`, `offers`).
-              final iAmInitiator = offer.createdBy == currentUid;
-              final recipientUid = iAmInitiator
-                  ? (otherUids.isNotEmpty ? otherUids.first : currentUid)
-                  : currentUid;
-
-              return JobOfferCard(
-                offer: offer,
-                viewerUid: currentUid,
-                recipientUid: recipientUid,
-                initiatorName: _displayNameOf(offer.createdBy, currentUid),
-                recipientName: _displayNameOf(recipientUid, currentUid),
-                // ЭКРАН ОТВЕТА НЕ ПОДКЛЮЧЁН — ЭТО ШАГ 2, и здесь он НЕ
-                // ПЕРЕДАН намеренно: карточка тогда не рисует кнопку
-                // вовсе. Кнопка, которая никуда не ведёт, неотличима от
-                // поломки; отсутствие кнопки объясняется однозначно.
-                //
-                // onOpenAnswer: — появится в шаге 2.
-              );
-            },
-          ),
+          child: _offerFeedRow(offer, currentUid, otherUids),
         ),
       );
     }
