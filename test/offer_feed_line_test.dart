@@ -12,57 +12,137 @@ import 'package:mugam_flutter/core/job_offer/job_offer.dart';
 const boss = 'boss-uid';
 const player = 'player-uid';
 
-JobOffer offer({Map<String, List<String>> answers = const {}}) => JobOffer(
+JobOffer offer({
+  Map<String, List<String>> answers = const {},
+  String? acceptedBy,
+  String? withdrawnBy,
+}) => JobOffer(
   id: 'o',
   createdBy: boss,
   dates: const ['2026-09-14', '2026-09-15', '2026-09-20'],
   eventType: 'Toy',
   answers: answers,
+  acceptedBy: acceptedBy,
+  withdrawnBy: withdrawnBy,
 );
 
 void main() {
   group('строка в ленте', () {
-    test('без ответа — предложение с числом дней и типом', () {
+    // ПЯТЬ СОСТОЯНИЙ, И СПИСОК ВЗЯТ ИЗ БАЗЫ, А НЕ ИЗ ФУНКЦИИ (N144).
+    //
+    // Правила разрешают ровно три хода записи — `answers`,
+    // `acceptedBy`+`acceptedAt`, `withdrawnBy`+`withdrawnAt`, — значит
+    // признаков в документе три; их сочетания дают четыре состояния, а
+    // внутри «ответили» есть расщепление по пустому списку дней. Пять.
+    //
+    // До 19.08 функция знала три, и восемь тестов этого не ловили: список
+    // состояний был взят из той же головы, что писала функцию. Поэтому
+    // здесь он выписан ПОИМЁННО и сверяется весь, а не выборочно.
+
+    test('ответа нет — ждём ответа', () {
       expect(
         offerFeedLine(offer(), recipientUid: player),
-        '3 gün təklif · Toy',
+        '3 gün · Toy · cavab gözlənilir',
       );
     });
 
-    test('ответили днями — «cavab» с их числом', () {
+    test('ответили днями — число ОТМЕЧЕННЫХ', () {
       expect(
         offerFeedLine(
           offer(answers: {player: const ['2026-09-14', '2026-09-20']}),
           recipientUid: player,
         ),
-        '2 gün cavab',
+        '2 gün · Toy · cavab',
       );
     });
 
-    // ТРЕТЬЕ СОСТОЯНИЕ, названное отдельно.
+    // ТРЕТЬЕ НЕ СВОДИТСЯ КО ВТОРОМУ.
     test('ответили нулём — это ОТКАЗ, а не «0 gün cavab»', () {
       final line = offerFeedLine(
         offer(answers: {player: const []}),
         recipientUid: player,
       );
-      expect(line, 'gələ bilmir');
-      expect(line.contains('0'), isFalse, reason: 'отказ показан числом');
+      expect(line, '3 gün · Toy · gələ bilmir');
+      expect(
+        line.contains('0 gün'),
+        isFalse,
+        reason: 'отказ показан числом отмеченных',
+      );
     });
 
-    // Слово стоит В ТЕКСТЕ, а не выводится из того, чьё сообщение: через
-    // месяц при прокрутке сторона и цвет читаются плохо, слово — всегда.
-    test('предложение и ответ различаются словом, а не только стороной', () {
-      // Сравнение ТОЧНОЕ, а не по вхождению: `contains` по голому слову
-      // прошёл бы и на строке, где это слово оказалось случайно, — и на
-      // такую слабость справедливо ругается `guards_are_guards_test`.
-      expect(offerFeedLine(offer(), recipientUid: player), '3 gün təklif · Toy');
+    // ЧЕТВЁРТОЕ И ПЯТОЕ — ИХ ФУНКЦИЯ НЕ ЗНАЛА ВОВСЕ.
+    test('принято — своё слово, а не «cavab»', () {
+      final line = offerFeedLine(
+        offer(answers: {player: const ['2026-09-14', '2026-09-20']},
+            acceptedBy: boss),
+        recipientUid: player,
+      );
+      expect(line, '2 gün · Toy · qəbul edildi');
+    });
+
+    test('отозвано — своё слово, и число ПРЕДЛОЖЕННЫХ', () {
+      // Отозвать можно и до ответа, поэтому отмеченных может не быть
+      // вовсе: показывается то, на сколько звали.
       expect(
+        offerFeedLine(offer(withdrawnBy: boss), recipientUid: player),
+        '3 gün · Toy · geri götürüldü',
+      );
+    });
+
+    test('отозвано ПОСЛЕ ответа — всё равно отозвано', () {
+      // Порядок ветвей в `JobOffer.state` значим: отзыв старше ответа.
+      expect(
+        offerFeedLine(
+          offer(answers: {player: const ['2026-09-14']}, withdrawnBy: boss),
+          recipientUid: player,
+        ),
+        '3 gün · Toy · geri götürüldü',
+      );
+    });
+
+    // КАНАРЕЙКА НА ПОЛНОТУ РАЗБОРА, БЕЗУСЛОВНАЯ.
+    //
+    // Пять состояний обязаны дать ПЯТЬ РАЗНЫХ строк. Без этой проверки
+    // достаточно было бы вернуть одно и то же слово из двух веток, и
+    // каждая отдельная проверка выше осталась бы зелёной ровно у той,
+    // которую ей показали.
+    test('пять состояний дают пять разных строк', () {
+      final lines = <String>{
+        offerFeedLine(offer(), recipientUid: player),
         offerFeedLine(
           offer(answers: {player: const ['2026-09-14']}),
           recipientUid: player,
         ),
-        '1 gün cavab',
-      );
+        offerFeedLine(offer(answers: {player: const []}), recipientUid: player),
+        offerFeedLine(
+          offer(answers: {player: const ['2026-09-14']}, acceptedBy: boss),
+          recipientUid: player,
+        ),
+        offerFeedLine(offer(withdrawnBy: boss), recipientUid: player),
+      };
+      expect(lines.length, 5, reason: 'состояния слились: $lines');
+    });
+
+    // Тип работы стоит в КАЖДОМ состоянии: через месяц при прокрутке надо
+    // понять, о чём речь, не открывая, — а исход к тому времени любой.
+    test('тип работы назван во всех пяти', () {
+      final all = [
+        offerFeedLine(offer(), recipientUid: player),
+        offerFeedLine(
+          offer(answers: {player: const ['2026-09-14']}),
+          recipientUid: player,
+        ),
+        offerFeedLine(offer(answers: {player: const []}), recipientUid: player),
+        offerFeedLine(
+          offer(answers: {player: const ['2026-09-14']}, acceptedBy: boss),
+          recipientUid: player,
+        ),
+        offerFeedLine(offer(withdrawnBy: boss), recipientUid: player),
+      ];
+      expect(all.length, 5);
+      for (final line in all) {
+        expect(line, contains('· Toy ·'), reason: 'тип потерян: $line');
+      }
     });
   });
 
