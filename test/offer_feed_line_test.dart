@@ -46,13 +46,13 @@ void main() {
       );
     });
 
-    test('ответили днями — число ОТМЕЧЕННЫХ', () {
+    test('ответили днями — ДВА числа: отмеченные из предложенных', () {
       expect(
         offerFeedLine(
           offer(answers: {player: const ['2026-09-14', '2026-09-20']}),
           recipientUid: player,
         ),
-        '2 gün · Toy · cavab',
+        '2/3 gün · Toy · cavab',
       );
     });
 
@@ -77,7 +77,58 @@ void main() {
             acceptedBy: boss),
         recipientUid: player,
       );
-      expect(line, '2 gün · Toy · qəbul edildi');
+      expect(line, '2/3 gün · Toy · qəbul edildi');
+    });
+
+    // КАНАРЕЙКА НА ВТОРОЕ ЧИСЛО, БЕЗУСЛОВНАЯ.
+    //
+    // Ловит функцию, которая показывает два числа ВСЕГДА: в трёх
+    // состояниях второго числа быть не должно — до ответа отмечать нечего,
+    // у отказа отмеченных ноль по смыслу, у отозванного ответа могло не
+    // быть вовсе. «0/3» там верно по числу и неверно по смыслу.
+    //
+    // Без неё достаточно было бы поставить двойную форму везде, и обе
+    // проверки выше остались бы зелёными.
+    test('в трёх состояниях число ОДНО, а не два', () {
+      final single = <String, String>{
+        'ждём ответа': offerFeedLine(offer(), recipientUid: player),
+        'gələ bilmir': offerFeedLine(
+          offer(answers: {player: const []}),
+          recipientUid: player,
+        ),
+        'отозвано': offerFeedLine(offer(withdrawnBy: boss), recipientUid: player),
+      };
+
+      expect(single.length, 3);
+      single.forEach((state, line) {
+        expect(
+          line.contains('/'),
+          isFalse,
+          reason: 'в состоянии «$state» второго числа быть не должно: $line',
+        );
+      });
+    });
+
+    test('в двух состояниях число ДВА, а не одно', () {
+      final paired = <String, String>{
+        'ответили': offerFeedLine(
+          offer(answers: {player: const ['2026-09-14']}),
+          recipientUid: player,
+        ),
+        'принято': offerFeedLine(
+          offer(answers: {player: const ['2026-09-14']}, acceptedBy: boss),
+          recipientUid: player,
+        ),
+      };
+
+      expect(paired.length, 2);
+      paired.forEach((state, line) {
+        expect(
+          line.contains('1/3 gün'),
+          isTrue,
+          reason: 'в состоянии «$state» нужны оба числа: $line',
+        );
+      });
     });
 
     test('отозвано — своё слово, и число ПРЕДЛОЖЕННЫХ', () {
