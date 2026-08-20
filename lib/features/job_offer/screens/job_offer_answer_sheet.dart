@@ -25,6 +25,7 @@ class JobOfferAnswerSheet extends StatefulWidget {
     required this.initiatorName,
     required this.onSend,
     this.busyDays = const {},
+    this.busyUnknown = false,
     this.now,
   });
 
@@ -39,6 +40,27 @@ class JobOfferAnswerSheet extends StatefulWidget {
   /// Свои занятые дни — ПРЕДУПРЕЖДЕНИЕ, не запрет: выбрать их можно,
   /// решает человек (см. `OfferMonthGrid.busy`).
   final Set<String> busyDays;
+
+  /// **ЗАНЯТОСТЬ НЕ ПОДКЛЮЧЕНА — сказать это словами, а не промолчать.**
+  ///
+  /// Пустой `busyDays` двусмыслен, и обе стороны двусмыслицы на экране
+  /// выглядят одинаково: «у меня всё свободно» и «мы не знаем». Сегодня
+  /// верно второе — поставщика занятости у листа нет ни одного (замер
+  /// 20.08: `grep -rn "busyDays\|busyDates" lib` → 13 совпадений,
+  /// потребителей три, передач **ноль**), — а пустая сетка утверждает
+  /// первое.
+  ///
+  /// **Различие здесь решает не показ, а на что человек соглашается**
+  /// (I47). Промолчать значило бы дать ему отметить день, на котором он
+  /// уже занят, и узнать об этом на шаге 3 — чужими руками.
+  ///
+  /// **Вред НОВЫЙ, и потому строка ставится сразу:** до шага 2 музыкант
+  /// ответить не мог вовсе; с шагом 2 он может ответить вслепую.
+  ///
+  /// **Снимается вместе с подключением занятости** — третьим заходом. У
+  /// строки для этого есть ключ `answer-busy-unknown`, чтобы снятие
+  /// проверялось тестом, а не памятью.
+  final bool busyUnknown;
 
   final DateTime? now;
 
@@ -145,6 +167,18 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
                         // Занятость — сведения, а не преграда. Сказано и на
                         // экране, чтобы человек не думал, будто ему не дают.
                         'məşğul günləri də seçə bilərsən',
+                        style: TextStyle(color: kMuted, fontSize: 12),
+                      ),
+                    ],
+                    // ВЗАИМНО ИСКЛЮЧАЮЩЕ С ПРЕДЫДУЩЕЙ, И НЕ СЛУЧАЙНО: та
+                    // говорит «занятые дни выбирать можно», эта — «занятых
+                    // дней мы не знаем». Показать обе разом значило бы
+                    // сказать про одно и то же два разных.
+                    if (widget.busyUnknown && widget.busyDays.isEmpty) ...[
+                      const SizedBox(height: 8),
+                      const Text(
+                        'məşğul günlərin hələ göstərilmir',
+                        key: ValueKey('answer-busy-unknown'),
                         style: TextStyle(color: kMuted, fontSize: 12),
                       ),
                     ],

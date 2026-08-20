@@ -8,6 +8,7 @@ import '../../../core/job_offer/job_offer_repository.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../widgets/job_offer_card.dart';
+import 'job_offer_answer_sheet.dart';
 
 // ЛИСТ ПРЕДЛОЖЕНИЯ — то, что раньше стояло развёрнутой карточкой в ленте.
 //
@@ -33,6 +34,7 @@ class JobOfferSheet extends ConsumerStatefulWidget {
     required this.offerId,
     this.debugOffers,
     this.debugViewerUid,
+    this.debugWriteAnswer,
   });
 
   /// ОТ ВЫЗЫВАЮЩЕГО — ТОЛЬКО ЭТИ ДВА, и это не аскетизм.
@@ -65,6 +67,22 @@ class JobOfferSheet extends ConsumerStatefulWidget {
   /// живое обновление становится нечем.
   @visibleForTesting
   final String? debugViewerUid;
+
+  /// Третья подмена ДЛЯ ТЕСТА — куда уходит ответ музыканта (шаг 2).
+  ///
+  /// **Заведена ровно затем, чтобы порчу гнать по НАСТОЯЩЕМУ пути** (I55):
+  /// без неё проверить можно было бы только чистую функцию рядом, а прод
+  /// идёт кнопка → лист ответа → `onSend` → `setMyAnswer`.
+  ///
+  /// **ГРАНИЦА НАЗВАНА ЧЕСТНО, И ОНА УЗКАЯ (I50):** шов доводит проверку до
+  /// вызова записи с точными доводами — и **ни на шаг дальше**. Последний
+  /// стык, `setMyAnswer` → Firestore, тестом не достаётся: подделки
+  /// Firestore в проекте нет (`fake_cloud_firestore`, `mocktail`, `mockito`
+  /// — ни одной в `pubspec.yaml`, замер 20.08), а эмулятор есть только у
+  /// `functions`. **Порча тела `setMyAnswer` не уронит ничего**, и зелёный
+  /// прогон не означает «в базу записалось».
+  @visibleForTesting
+  final Future<void> Function(List<String> picked)? debugWriteAnswer;
 
   @override
   ConsumerState<JobOfferSheet> createState() => _JobOfferSheetState();
@@ -229,6 +247,21 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
         recipientUid: recipientUid,
         initiatorName: _nameOf(offer.createdBy, viewerUid),
         recipientName: _nameOf(recipientUid, viewerUid),
+        // ШАГ 2 — ОТВЕТ МУЗЫКАНТА. Обработчик передаётся ТОЛЬКО тогда,
+        // когда экрану ответа есть куда вести; кнопку рисует сама карточка
+        // по своему условию `canAnswer && onOpenAnswer != null`.
+        //
+        // ПОЧЕМУ ЛИСТ ОТВЕТА ОТКРЫВАЕТСЯ ПОВЕРХ, А НЕ ВМЕСТО (решение
+        // владельца 20.08): подробности («Ətraflı» — время, место,
+        // заметки) остаются жить ЗДЕСЬ и никуда не переносятся. Перенести
+        // их в лист ответа значило бы завести второе место, где рисуются
+        // те же данные, — и они разойдутся, как разошлись `eventTime` с
+        // `details` (N139). Порядок «сперва читаю, что предлагают, потом
+        // отвечаю» — не лишнее нажатие, а сам смысл.
+        //
+        // Закрыв лист ответа, человек возвращается сюда, и здесь уже
+        // виден его ответ: лист живёт потоком, а не снимком (N143).
+        onOpenAnswer: () => _openAnswerSheet(offer, viewerUid),
         onWithdraw: () async {
           await JobOfferRepository(FirebaseFirestore.instance).withdraw(
             chatId: widget.chatId,
@@ -240,6 +273,67 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
         // живёт в листе составления, и переносить её сюда без разбора
         // значило бы завести вторую копию (N129 про временные файлы).
       ),
+    );
+  }
+
+  /// Открыть лист ответа и записать то, что человек отметил.
+  ///
+  /// **`busyDays` НЕ ПЕРЕДАЁТСЯ, и это отложено, а не забыто** (N147 по
+  /// духу, третий заход): поставщика занятости у листа нет ни одного
+  /// (`grep -rn "busyDays\|busyDates" lib` → 13 совпадений, передач **0**,
+  /// замер 20.08). Готовое правило занятости в проекте есть —
+  /// `dayRoleOf(e, uid) == DayRole.occupied` плюс потоки
+  /// `personalEventsProvider` / `eventsAsParticipantProvider`, — но
+  /// соединение их тянет свой вопрос: лист листается по месяцам, и
+  /// «занятости нет» обязано отличаться от «ещё не загрузилось» (I47).
+  /// Пока не соединено — лист говорит об этом словами, см.
+  /// `busyUnknown` ниже.
+  void _openAnswerSheet(JobOffer offer, String viewerUid) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => JobOfferAnswerSheet(
+        offer: offer,
+        myUid: viewerUid,
+        initiatorName: _nameOf(offer.createdBy, viewerUid),
+        // ЗАНЯТОСТЬ НЕ ПОДКЛЮЧЕНА — И ЛИСТ ОБЯЗАН СКАЗАТЬ ЭТО, А НЕ
+        // ПРОМОЛЧАТЬ. Пустая сетка читается как «всё свободно», то есть
+        // как утверждение, которого мы не делали.
+        busyUnknown: true,
+        onSend: (picked) async {
+          // ЗАКРЫВАЕМ ДО ЗАПИСИ, А НЕ ПОСЛЕ. Запись уходит в сеть, и ждать
+          // её с открытым листом значит держать человека перед экраном,
+          // который уже ничего не решает. Ответ он увидит на листе
+          // предложения — тот обновится потоком сам (N143).
+          Navigator.of(sheetContext).pop();
+          await _writeAnswer(offer, viewerUid, picked);
+        },
+      ),
+    );
+  }
+
+  /// Настоящий путь записи ответа — `setMyAnswer`, и только он.
+  ///
+  /// Правило на этот ход **уже выложено** (`firestore.rules:801-806`:
+  /// не инициатор, `changedKeys().hasOnly(['answers'])`,
+  /// `touchesOnlyOwnAnswer()`, `answerFitsOffer()`), новых не нужно.
+  ///
+  /// **Пустой `picked` передаётся как есть.** Ноль отмеченных дней — это
+  /// ответ «не могу ни на один», а не отсутствие ответа; перехватить его
+  /// здесь значило бы отнять у человека единственный способ отказаться.
+  Future<void> _writeAnswer(
+    JobOffer offer,
+    String viewerUid,
+    List<String> picked,
+  ) {
+    final write = widget.debugWriteAnswer;
+    if (write != null) return write(picked);
+    return JobOfferRepository(FirebaseFirestore.instance).setMyAnswer(
+      chatId: widget.chatId,
+      offerId: offer.id,
+      myUid: viewerUid,
+      picked: picked,
     );
   }
 
