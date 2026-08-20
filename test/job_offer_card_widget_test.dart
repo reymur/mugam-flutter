@@ -39,6 +39,7 @@ Future<void> pump(
   VoidCallback? onOpenAnswer,
   VoidCallback? onAccept,
   VoidCallback? onRecordVoice,
+  VoidCallback? onWithdraw,
   Set<String> busy = const {},
 }) async {
   await tester.pumpWidget(
@@ -56,6 +57,7 @@ Future<void> pump(
             onOpenAnswer: onOpenAnswer,
             onAccept: onAccept,
             onRecordVoice: onRecordVoice,
+            onWithdraw: onWithdraw,
           ),
         ),
       ),
@@ -223,6 +225,59 @@ void main() {
     // («Teymurun» вместо «Teymurdan», исправлено владельцем 19.08).
     // Подстрока проверяла ту часть фразы, которая не менялась.
     expect(find.text('Teymurdan cavab gözlənilir'), findsOneWidget);
+  });
+
+  // ПАРА К ТЕСТУ ВЫШЕ, И СТОИТ ВПЛОТНУЮ К НЕМУ НАРОЧНО (I42).
+  //
+  // Тот утверждает «ответа нет → ожидание показывают» и служит этому
+  // канарейкой: без него «ожидания нет» неотличимо от «подвал перестал
+  // рисоваться вовсе». Второй раз его писать не стали — это был бы дубль
+  // ровно того рода, что записан в N151.
+  //
+  // ЭТОТ ТЕСТ БЕРЁТ СОСТОЯНИЕ ПРОДА, КОТОРОГО НЕ БРАЛ НИ ОДИН ДРУГОЙ
+  // (N155): «ответ ЕСТЬ» и «`onAccept` НЕ передан» одновременно. Три
+  // соседних теста брали либо «ответа нет», либо «ответ есть и `onAccept`
+  // передан» — оба состояния КОДА, ни одного состояния прода, где шаг 3
+  // ещё не подключён.
+  //
+  // Цена пропуска была видна на трубке 20.08: под шапкой «TEYMUR ORUCOV
+  // CAVAB VERDİ» и крупным «0 gün» стояло «Teymur Orucovdan cavab
+  // gözlənilir» — экран спорил сам с собой (N154).
+  testWidgets('ответ пришёл, а принять некуда — ожидание больше не показывают', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      o: offer(answers: {player: const []}),
+      viewer: boss,
+      // `onAccept` НЕ передаётся — это и есть прод: шаг 3 не подключён.
+      onWithdraw: () {},
+    );
+
+    // Ответ нулём дней — законный ответ, и шапка про него не врёт.
+    expect(find.text('Teymurdan cavab gözlənilir'), findsNothing);
+
+    // ВТОРОЕ УТВЕРЖДЕНИЕ ОБЯЗАТЕЛЬНО: без него «строки нет» прошло бы и
+    // тогда, когда карточка перестала рисовать подвал целиком, и тогда,
+    // когда она вовсе не построилась (I14).
+    expect(find.byKey(const ValueKey('offer-withdraw')), findsOneWidget);
+  });
+
+  // ЗАЩИТА ШАГА 3 ОТ ЭТОЙ ЖЕ ПРАВКИ: сузив ветку ожидания, легко задеть
+  // соседнюю. Когда приём подключат, «Qəbul edirəm» обязана рисоваться —
+  // и ожидания рядом с ней быть не должно.
+  testWidgets('ответ пришёл и принять есть куда — «Qəbul edirəm», а не ожидание', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      o: offer(answers: {player: const ['2026-08-09']}),
+      viewer: boss,
+      onAccept: () {},
+    );
+
+    expect(find.text('Qəbul edirəm'), findsOneWidget);
+    expect(find.text('Teymurdan cavab gözlənilir'), findsNothing);
   });
 
   testWidgets('после ответа инициатору нарисовано «Qəbul edirəm»', (
