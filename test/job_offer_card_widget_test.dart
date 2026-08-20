@@ -38,6 +38,7 @@ Future<void> pump(
   void Function(List<String>)? onSend,
   VoidCallback? onOpenAnswer,
   VoidCallback? onAccept,
+  VoidCallback? onRecordVoice,
   Set<String> busy = const {},
 }) async {
   await tester.pumpWidget(
@@ -54,6 +55,7 @@ Future<void> pump(
             onSendAnswer: onSend,
             onOpenAnswer: onOpenAnswer,
             onAccept: onAccept,
+            onRecordVoice: onRecordVoice,
           ),
         ),
       ),
@@ -160,6 +162,53 @@ void main() {
 
     expect(find.byKey(const ValueKey('offer-open-answer')), findsNothing);
     expect(offerCardActions(offer(), player).canAnswer, isTrue);
+  });
+
+  // КАНАРЕЙКА К СТОРОЖУ НИЖЕ (I31), И БЕЗ НЕЁ ТОТ СТОРОЖ НИЧЕГО НЕ
+  // ДОКАЗЫВАЕТ: он утверждает ОТСУТСТВИЕ, а отсутствие выглядит одинаково и
+  // когда правило соблюдено, и когда ключ переименовали, кружок унесли или
+  // карточка вовсе перестала рисовать подвал. Здесь тем же ключом ищется
+  // заведомо существующее, и на нуле тест краснеет.
+  testWidgets('кружок записи нарисован, когда есть куда вести', (tester) async {
+    var recorded = 0;
+    await pump(
+      tester,
+      o: offer(),
+      viewer: player,
+      onRecordVoice: () => recorded++,
+    );
+
+    expect(find.byKey(const ValueKey('offer-voice')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('offer-voice')));
+    await tester.pump();
+
+    expect(recorded, 1, reason: 'нажатие не дошло — кружок мёртв');
+  });
+
+  // ТО ЖЕ ПРАВИЛО, ЧТО У КНОПКИ ОТВЕТА, И ЗАВЕДЕНО ОНО ПОТОМУ, ЧТО ЗДЕСЬ
+  // ОНО БЫЛО НАРУШЕНО.
+  //
+  // Правило «кнопка без адресата не рисуется» записано в
+  // `job_offer_card.dart` дважды словами и соблюдено у трёх действий из
+  // четырёх: ответ (`onOpenAnswer`), приём (`onAccept`), отзыв
+  // (`onWithdraw`). Четвёртое — запись голоса — выпало молча: условие
+  // спрашивало только `actions.canRecordVoice`.
+  //
+  // Цена была видна на телефоне 20.08: у получателя на листе предложения
+  // кружок с микрофоном был ЕДИНСТВЕННЫМ нажимаемым местом, и он не делал
+  // ничего — ровно тот случай, от которого файл сам же предостерегает.
+  //
+  // **`canRecordVoice` при этом остаётся `true`** и проверяется здесь же:
+  // ход голосом человеку предложен, вести его пока некуда, и слить эти два
+  // факта в один значило бы соврать обоими (I47).
+  testWidgets('записи некуда вести — кружка нет, но голос предложен', (
+    tester,
+  ) async {
+    await pump(tester, o: offer(), viewer: player);
+
+    expect(find.byKey(const ValueKey('offer-voice')), findsNothing);
+    expect(offerCardActions(offer(), player).canRecordVoice, isTrue);
   });
 
   testWidgets('инициатору ответа не предлагают, показывают ожидание', (
