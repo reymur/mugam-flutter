@@ -905,6 +905,28 @@ class MediaOverlayChip extends StatelessWidget {
 // indeterminate spin rather than a fake 0% ring. Tapping the square button
 // cancels the upload via onCancel (wired to the same offline-queue
 // remove() already used by the "Sil" option on a pending message).
+//
+// КВАДРАТ «СТОП» РИСУЕТСЯ ТОЛЬКО ТАМ, ГДЕ ПЕРЕДАН `onCancel` (N149,
+// решение владельца 22.08). То же правило, что в `topbar.dart` и
+// `job_offer_card.dart`: кнопка без адресата не рисуется — нажимаемое,
+// которое ничего не делает, хуже отсутствия кнопки.
+//
+// **Замер, ради которого стоит условие.** Вызывающих пять
+// (`grep -rn "UploadProgressOverlay" lib --include='*.dart'`): четверо
+// передают `onCancelUpload` — `file_message_widgets.dart:318`,
+// `location_message_widgets.dart:235`, здесь же `:502` и `:746`; пятый,
+// `create_status_screen.dart:1898`, не передаёт ничего, и там квадрат был
+// мёртв. У четверых ничего не пропадает: их виджеты-владельцы строятся
+// ровно по одному разу каждый, все в `chat_screen.dart`, и все получают
+// `_cancelUploadCallback(msg)`, который отдаёт `null` лишь при
+// `localSendStatus == null` — а этот наложенный кружок рисуется только
+// при `queued`/`uploading`, то есть ровно тогда, когда `localSendStatus`
+// не `null` (см. `deliveryStatusFor` выше в этом файле).
+//
+// ОТМЕНА ЗАГРУЗКИ СТАТУСА НЕ ПОДКЛЮЧЕНА, И ЭТО РЕШЕНИЕ, А НЕ ЗАБЫВЧИВОСТЬ.
+// Подключение — своя работа со своим вопросом: что делать с уже
+// выгруженной в Storage частью и с очередью. Тащить её сюда значило бы
+// нести две переменные разом (I48).
 class UploadProgressOverlay extends StatelessWidget {
   final double? progress;
   final VoidCallback? onCancel;
@@ -934,18 +956,20 @@ class UploadProgressOverlay extends StatelessWidget {
                 valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
               ),
             ),
-            GestureDetector(
-              onTap: onCancel,
-              behavior: HitTestBehavior.opaque,
-              child: Container(
-                width: 14,
-                height: 14,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(2),
+            if (onCancel != null)
+              GestureDetector(
+                key: const ValueKey('upload-cancel'),
+                onTap: onCancel,
+                behavior: HitTestBehavior.opaque,
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
               ),
-            ),
           ],
         ),
       ),
