@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/job_offer/accept_batch.dart';
 import 'package:mugam_flutter/core/job_offer/day_details.dart';
@@ -126,10 +127,14 @@ void main() {
       final e = build().events.first.data;
 
       expect(e['jobOfferAt'], '2026-09-01T12:00:00.000');
+      // А `createdAt` вечера — ОТМЕТКА СЕРВЕРА, не наша строка и не часы
+      // телефона: так пишут оба существующих писателя этой коллекции.
+      // Проверяется тип, потому что значения у неё до записи нет вовсе.
+      expect(e['createdAt'], isA<FieldValue>());
       expect(
         e['createdAt'],
-        '2026-09-05T18:30:00.000',
-        reason: 'createdAt вечера — это момент принятия, и он ДРУГОЙ',
+        isNot('2026-09-05T18:30:00.000'),
+        reason: 'момент принятия ставит сервер, а не клиент',
       );
     });
 
@@ -155,6 +160,28 @@ void main() {
 
       expect(e['lastActionType'], 'agreed');
       expect(e['lastActionBy'], boss);
+    });
+
+    // ПОЛЕ, РАДИ КОТОРОГО ВСЯ ЗАПИСЬ И ДЕЛАЕТСЯ, И ПОТОМУ ОНО ЗДЕСЬ ПЕРВЫМ
+    // СРЕДИ РАВНЫХ.
+    //
+    // Договор из принятого предложения рождается ИЗ СОСТОЯВШЕГОСЯ СОГЛАСИЯ:
+    // музыкант отметил этот день сам, работодатель нажал «Qəbul edirəm».
+    // Спрашивать музыканта заново — «Gəlirəm / Bacarmıram» — значит
+    // спрашивать о том, на что он уже ответил, и хуже: дать ему отказаться
+    // от работы, которую отозвать уже нельзя.
+    //
+    // Проверяются ОБА ключа, а не только музыкантов: карта, где владельца
+    // нет вовсе, прошла бы проверку «музыкант going» и оставила бы
+    // работодателя ждущим ответа на собственном вечере (N112).
+    test('оба участника going — согласие уже состоялось', () {
+      final e = build().events.first.data;
+
+      expect(e['answers'], {boss: 'going', player: 'going'});
+      // Карта заполнена ЦЕЛИКОМ по составу — значит отсутствующий в ней
+      // человек не «неизвестен», а не спрошен (N115). Ставит только тот,
+      // кто пишет карту целиком.
+      expect(e['answersWrittenByOwner'], isTrue);
     });
 
     // ПОЛЯ ОТМЕНЫ ОБЯЗАНЫ БЫТЬ, ХОТЬ И ПУСТЫЕ. Оба существующих писателя
@@ -228,6 +255,10 @@ void main() {
 
       expect(patch.keys.toSet(), {'acceptedBy', 'acceptedAt'});
       expect(patch['acceptedBy'], boss);
+      // ЗДЕСЬ ИМЕННО ISO-СТРОКА, А НЕ ОТМЕТКА СЕРВЕРА, и это не забытая
+      // половина правки `createdAt` выше. У предложений своё соседство:
+      // `createOffer` пишет `createdAt` строкой, `withdraw` — `withdrawnAt`
+      // строкой. Две коллекции — два уговора, и каждое поле держится своего.
       expect(patch['acceptedAt'], '2026-09-05T18:30:00.000');
     });
 
