@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'accept_batch.dart';
 import 'day_details.dart';
 import 'job_offer.dart';
 
@@ -110,15 +111,41 @@ class JobOfferRepository {
   /// Ход 3 — принятие. По нему создаются вечера, и потому это ход
   /// инициатора, а не получателя: «звали на пять, дали три, и работодатель
   /// часто не соглашается».
+  ///
+  /// **ЗДЕСЬ НЕТ НИ ОДНОГО РЕШЕНИЯ — ТОЛЬКО ЗАПИСЬ**, и это не аскетизм, а
+  /// условие проверяемости. Что именно пишется, решает `buildAcceptBatch`;
+  /// подделки Firestore в проекте нет, значит эту функцию тестом не
+  /// достать, и всё, что можно проверить, обязано лежать ТАМ. Появится
+  /// здесь хоть одно `if` — оно окажется вне досягаемости любого сторожа
+  /// (I55: портить надо настоящий путь, а не удобного соседа).
+  ///
+  /// **ОДНОЙ ОПЕРАЦИЕЙ.** `WriteBatch` проходит целиком или не проходит
+  /// вовсе. По одному — при обрыве связи половина дней созданы, а
+  /// предложение не принято: человек видит часть вечеров в календаре и
+  /// кнопку «Cavaba bax» на месте.
   Future<void> accept({
     required String chatId,
-    required String offerId,
+    required JobOffer offer,
     required String myUid,
+    required String recipientUid,
+    required String recipientName,
+    DateTime? now,
   }) {
-    return _offers(chatId).doc(offerId).update({
-      'acceptedBy': myUid,
-      'acceptedAt': DateTime.now().toIso8601String(),
-    });
+    final plan = buildAcceptBatch(
+      offer: offer,
+      chatId: chatId,
+      initiatorUid: myUid,
+      recipientUid: recipientUid,
+      recipientName: recipientName,
+      acceptedAt: now ?? DateTime.now(),
+    );
+
+    final batch = _db.batch();
+    for (final e in plan.events) {
+      batch.set(_db.collection('personalEvents').doc(e.id), e.data);
+    }
+    batch.update(_offers(chatId).doc(offer.id), plan.offerPatch);
+    return batch.commit();
   }
 
   /// Ход 4 — отзыв. Нужен затем, что без него ошибочное предложение висит;

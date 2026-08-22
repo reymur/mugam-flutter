@@ -424,4 +424,118 @@ void main() {
       expect(written, isEmpty);
     });
   });
+
+  // ШАГ 3 — ПРОВОДКА ПРИЁМА, И ЭТО ИМЕННО ТЕСТ ПРОВОДКИ, А НЕ КАРТОЧКИ.
+  //
+  // Заведён по N156: сторож шага 3 в `job_offer_card_widget_test.dart:269`
+  // сам передаёт `onAccept: () {}` и потому утверждает «карточка при
+  // поданном обработчике рисует кнопку», а не «обработчик кто-то подаёт».
+  // N154 родилась ровно в этом зазоре. Здесь поднимается НАСТОЯЩИЙ
+  // поставщик — `JobOfferSheet`, — и обработчик не подаётся руками теста.
+  //
+  // МЕТКА НА КАРТОЧКЕ — «Cavaba bax», А НЕ «Qəbul edirəm», и это не
+  // придирка к слову. Кнопка ОТКРЫВАЕТ ЭКРАН, а принимают на нём; две
+  // одинаковые метки на два разных дела — та же ловушка, из-за которой на
+  // шаге 1 «Göndər» стала «Cavab ver». «Qəbul edirəm» остаётся ровно там,
+  // где действительно принимают, — в листе приёма.
+  group('шаг 3: приём подключён (проводка, а не карточка)', () {
+    String iso(int day) => '2026-09-${day.toString().padLeft(2, '0')}';
+
+    JobOffer answeredOffer() => JobOffer(
+      id: 'offer-1',
+      createdBy: boss,
+      dates: [iso(10), iso(11), iso(12)],
+      eventType: 'Toy',
+      answers: {
+        player: [iso(10), iso(11)],
+      },
+    );
+
+    JobOffer awaitingOffer() => JobOffer(
+      id: 'offer-1',
+      createdBy: boss,
+      dates: [iso(10), iso(11), iso(12)],
+      eventType: 'Toy',
+    );
+
+    // КАНАРЕЙКА БЕЗУСЛОВНАЯ И ПЕРВАЯ, как у шага 2 выше: остальные
+    // проверки нажимают эту кнопку, и без неё они упали бы по причине «не
+    // нашли кнопку», а не по своей.
+    testWidgets('инициатору после ответа кнопка приёма нарисована', (
+      tester,
+    ) async {
+      await pumpSheet(
+        tester,
+        Stream.value([answeredOffer()]),
+        viewerUid: boss,
+      );
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('offer-accept')), findsOneWidget);
+      expect(find.text('Cavaba bax'), findsOneWidget);
+    });
+
+    // ДО ОТВЕТА ПРИНИМАТЬ НЕЧЕГО, и кнопки быть не должно.
+    //
+    // Без этой проверки «кнопка есть после ответа» не отличалось бы от
+    // «кнопка есть всегда»; а кнопка до ответа вела бы на экран, где
+    // крупно стоит «0 gün» и принимать нечего (`canAcceptAnswer`).
+    testWidgets('инициатору до ответа кнопки приёма нет', (tester) async {
+      await pumpSheet(
+        tester,
+        Stream.value([awaitingOffer()]),
+        viewerUid: boss,
+      );
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('offer-accept')), findsNothing);
+    });
+
+    // ХОД ИНИЦИАТОРА, А НЕ ЛЮБОГО. Принимает тот, кто звал: создание
+    // вечеров — его ход, и держит это правило (`isInitiator()` в
+    // `firestore.rules:810`), а не только экран.
+    testWidgets('получателю кнопки приёма не рисуют', (tester) async {
+      await pumpSheet(
+        tester,
+        Stream.value([answeredOffer()]),
+        viewerUid: player,
+      );
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('offer-accept')), findsNothing);
+    });
+
+    testWidgets('нажатие на «Cavaba bax» открывает лист приёма', (
+      tester,
+    ) async {
+      await pumpSheet(
+        tester,
+        Stream.value([answeredOffer()]),
+        viewerUid: boss,
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('offer-accept')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // Лист приёма открыт — и открыт ПРО НАШЕ предложение: два
+      // отмеченных дня, а не какое-то другое их число.
+      //
+      // ИСКАТЬ НАДО ПО КЛЮЧУ, А НЕ ПО ТЕКСТУ, и это выяснилось прогоном:
+      // `find.text('2 gün')` находит ДВА совпадения — на листе приёма и на
+      // карточке позади него. Совпадений два именно потому, что лист
+      // открылся ПОВЕРХ, а не вместо; то есть первая же неудача теста была
+      // не поломкой, а доказательством задуманного поведения.
+      expect(find.byKey(const ValueKey('accept-count')), findsOneWidget);
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('accept-count'))).data,
+        '2 gün',
+      );
+      // Настоящее «Qəbul edirəm» живёт на листе приёма, и оно одно на весь
+      // экран: на карточке позади теперь «Cavaba bax».
+      expect(find.text('Qəbul edirəm'), findsOneWidget);
+      expect(find.text('Cavaba bax'), findsOneWidget);
+    });
+  });
 }

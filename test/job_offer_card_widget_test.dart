@@ -264,9 +264,21 @@ void main() {
   });
 
   // ЗАЩИТА ШАГА 3 ОТ ЭТОЙ ЖЕ ПРАВКИ: сузив ветку ожидания, легко задеть
-  // соседнюю. Когда приём подключат, «Qəbul edirəm» обязана рисоваться —
-  // и ожидания рядом с ней быть не должно.
-  testWidgets('ответ пришёл и принять есть куда — «Qəbul edirəm», а не ожидание', (
+  // соседнюю. Приём подключён 22.08, и кнопка обязана рисоваться — а
+  // ожидания рядом с ней быть не должно.
+  //
+  // МЕТКА СМЕНЕНА НА «Cavaba bax» 22.08 ВМЕСТЕ С ПОДКЛЮЧЕНИЕМ: кнопка
+  // ОТКРЫВАЕТ лист приёма, а принимают уже на нём, и там стоит своя
+  // «Qəbul edirəm». Две одинаковые метки на два разных дела — та же
+  // ловушка, из-за которой на шаге 1 «Göndər» стала «Cavab ver».
+  //
+  // **ЧЕГО ЭТОТ ТЕСТ НЕ СТОРОЖИТ, СКАЗАНО ПРЯМО — N156.** Он сам
+  // передаёт `onAccept`, то есть утверждает «карточка ПРИ ПОДАННОМ
+  // обработчике рисует кнопку». Что обработчик кто-то подаёт, он не
+  // утверждает и поймать N154 не мог. Проводка сторожится там, где
+  // строится настоящий поставщик, — `job_offer_sheet_live_test.dart`,
+  // группа «шаг 3: приём подключён».
+  testWidgets('ответ пришёл и принять есть куда — кнопка, а не ожидание', (
     tester,
   ) async {
     await pump(
@@ -276,11 +288,11 @@ void main() {
       onAccept: () {},
     );
 
-    expect(find.text('Qəbul edirəm'), findsOneWidget);
+    expect(find.text('Cavaba bax'), findsOneWidget);
     expect(find.text('Teymurdan cavab gözlənilir'), findsNothing);
   });
 
-  testWidgets('после ответа инициатору нарисовано «Qəbul edirəm»', (
+  testWidgets('после ответа инициатору нарисована «Cavaba bax»', (
     tester,
   ) async {
     var accepted = false;
@@ -291,7 +303,7 @@ void main() {
       onAccept: () => accepted = true,
     );
 
-    expect(find.text('Qəbul edirəm'), findsOneWidget);
+    expect(find.text('Cavaba bax'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('offer-accept')));
     await tester.pump();
     expect(accepted, isTrue);

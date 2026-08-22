@@ -8,6 +8,7 @@ import '../../../core/job_offer/job_offer_repository.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../widgets/job_offer_card.dart';
+import 'job_offer_accept_sheet.dart';
 import 'job_offer_answer_sheet.dart';
 
 // ЛИСТ ПРЕДЛОЖЕНИЯ — то, что раньше стояло развёрнутой карточкой в ленте.
@@ -23,9 +24,27 @@ import 'job_offer_answer_sheet.dart';
 // то, что решил автор 19.08: «человек захочет увидеть, на каких днях
 // сошлись, а идти в календарь — не одно касание».
 //
-// РАЗВОДКИ ПО ЛИСТАМ ВНУТРИ НЕТ И НЕ НУЖНО: сюда ведёт `offerSheetFor`
-// только в тех клетках, где «Qəbul edirəm» не предлагается (инициатор до
-// ответа и закрытый раунд у обеих сторон). Ответ и приём — другие листы.
+// ЭТОТ ЛИСТ — ДВЕРЬ ВО ВСЕ ТРИ, И ТАК РЕШЕНО, А НЕ ВЫШЛО САМО (владелец,
+// 22.08). Здесь стояло обратное — «сюда ведёт `offerSheetFor` только в тех
+// клетках, где «Qəbul edirəm» не предлагается; ответ и приём — другие
+// листы», — и запись эта устарела дважды: шагом 2 (ответ открывается
+// отсюда кнопкой «Cavab ver») и шагом 3 (приём — кнопкой «Cavaba bax»).
+//
+// **Довод, по которому дверь одна.** Лист приёма и лист ответа — виджеты
+// без своих данных: им подают предложение и имена. Живой поток и
+// разрешение имён есть ТОЛЬКО здесь. Вести в них прямо из переписки
+// значило бы либо питать их снимком — и потерять живое обновление, ради
+// которого делалась N143, — либо завести второй источник тех же данных. А
+// «Ətraflı» есть только здесь, и принимать без подробностей не лучше, чем
+// отвечать без них.
+//
+// **`offerSheetFor` при этом НЕ выброшена и не переписана.** Её восемь
+// клеток по-прежнему верны как ответ на вопрос «в каком состоянии человек
+// и что ему сейчас предложено», и на ней стоят тесты. Изменилось лишь то,
+// что переключатель в `chat_screen` открывает одну дверь, а какие кнопки
+// за ней нарисованы, решает `offerCardActions`. **Если однажды покажется,
+// что эта функция мертва, — сперва прочитать этот абзац: она не мертва, у
+// неё другой потребитель.**
 
 class JobOfferSheet extends ConsumerStatefulWidget {
   const JobOfferSheet({
@@ -35,6 +54,7 @@ class JobOfferSheet extends ConsumerStatefulWidget {
     this.debugOffers,
     this.debugViewerUid,
     this.debugWriteAnswer,
+    this.debugWriteAccept,
   });
 
   /// ОТ ВЫЗЫВАЮЩЕГО — ТОЛЬКО ЭТИ ДВА, и это не аскетизм.
@@ -83,6 +103,16 @@ class JobOfferSheet extends ConsumerStatefulWidget {
   /// прогон не означает «в базу записалось».
   @visibleForTesting
   final Future<void> Function(List<String> picked)? debugWriteAnswer;
+
+  /// Четвёртая подмена ДЛЯ ТЕСТА — запись принятия, и граница у неё та же
+  /// (I50). С ней проверяется, что нажатие «Qəbul edirəm» доводит ДО
+  /// ПИСАТЕЛЯ то самое предложение, которое открыто. Она НЕ проверяет
+  /// дорогу `WriteBatch` → Firestore: подделки Firestore в проекте нет,
+  /// эмулятор только у `functions`. Что именно уходит в пачку,
+  /// проверяется отдельно — у `buildAcceptBatch`, который и есть путь
+  /// прода.
+  @visibleForTesting
+  final Future<void> Function(JobOffer offer)? debugWriteAccept;
 
   @override
   ConsumerState<JobOfferSheet> createState() => _JobOfferSheetState();
@@ -262,6 +292,20 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
         // Закрыв лист ответа, человек возвращается сюда, и здесь уже
         // виден его ответ: лист живёт потоком, а не снимком (N143).
         onOpenAnswer: () => _openAnswerSheet(offer, viewerUid),
+        // ШАГ 3 — ПРИЁМ. Тот же приём, что у ответа строкой выше:
+        // обработчик передаётся, кнопку рисует сама карточка по своему
+        // условию `canAccept && onAccept != null`.
+        //
+        // ПОЧЕМУ ДВЕРЬ ОСТАЛАСЬ ЗДЕСЬ, А НЕ В `chat_screen` (решение
+        // владельца 22.08). Расплести переключатель так, чтобы клетка
+        // «инициатор × ответили» вела прямо в лист приёма, значило бы либо
+        // питать тот лист снимком из ленты — и потерять живое обновление,
+        // ради которого делалась N143, — либо завести второй источник тех
+        // же данных. А ещё инициатор потерял бы «Ətraflı»: в листе приёма
+        // его нет (замер 22.08: `grep -c "Ətraflı"` по тому файлу — 0 при
+        // канарейке `accept-confirm` — 1). Принимать без подробностей не
+        // лучше, чем отвечать без них.
+        onAccept: () => _openAcceptSheet(offer, viewerUid),
         onWithdraw: () async {
           await JobOfferRepository(FirebaseFirestore.instance).withdraw(
             chatId: widget.chatId,
@@ -310,6 +354,65 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
           await _writeAnswer(offer, viewerUid, picked);
         },
       ),
+    );
+  }
+
+  /// Открыть лист приёма и, если инициатор примет, записать пачку.
+  ///
+  /// **ЛИСТ ОТКРЫВАЕТСЯ ПОВЕРХ, А НЕ ВМЕСТО**, по тому же доводу, что у
+  /// ответа: подробности живут здесь и никуда не переносятся. Закрыв лист
+  /// приёма, человек возвращается сюда, и здесь уже видно «Təklif qəbul
+  /// edildi» — лист живёт потоком, а не снимком (N143).
+  ///
+  /// **`onWithdraw` НЕ ПЕРЕДАЁТСЯ, и это не пропуск.** Отзыв уже предложен
+  /// на карточке позади; продублировать его здесь значило бы завести
+  /// второе место для одного хода. Лист приёма рисует отзыв только тому,
+  /// кто его передал (`if (onWithdraw != null)`), — то самое правило
+  /// «кнопка без адресата не рисуется».
+  void _openAcceptSheet(JobOffer offer, String viewerUid) {
+    final recipientUid = _recipientUid(offer, viewerUid);
+    final recipientName = _nameOf(recipientUid, viewerUid);
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => JobOfferAcceptSheet(
+        offer: offer,
+        recipientUid: recipientUid,
+        recipientName: recipientName,
+        onAccept: () async {
+          // ЗАКРЫВАЕМ ДО ЗАПИСИ, как и при ответе: пачка уходит в сеть, и
+          // держать человека перед экраном, который уже ничего не решает,
+          // незачем. Итог он увидит здесь — поток обновит лист сам.
+          Navigator.of(sheetContext).pop();
+          await _writeAccept(offer, viewerUid, recipientUid, recipientName);
+        },
+      ),
+    );
+  }
+
+  /// Настоящий путь записи принятия — `accept`, и только он.
+  ///
+  /// **ЧЕГО ЗЕЛЁНЫЙ ПРОГОН ПРО ЭТО НЕ ГОВОРИТ:** подделки Firestore в
+  /// проекте нет (`fake_cloud_firestore`, `mocktail`, `mockito` — ни одной
+  /// в `pubspec.yaml`), эмулятор есть только у `functions`. Тест доходит до
+  /// этой границы и дальше не идёт. Значит зелёный означает «пачка собрана
+  /// верно и дошла до писателя целой», а НЕ «пачка в базе».
+  Future<void> _writeAccept(
+    JobOffer offer,
+    String viewerUid,
+    String recipientUid,
+    String recipientName,
+  ) {
+    final write = widget.debugWriteAccept;
+    if (write != null) return write(offer);
+    return JobOfferRepository(FirebaseFirestore.instance).accept(
+      chatId: widget.chatId,
+      offer: offer,
+      myUid: viewerUid,
+      recipientUid: recipientUid,
+      recipientName: recipientName,
     );
   }
 

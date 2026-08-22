@@ -48,10 +48,26 @@ class JobOffer {
     this.answers = const {},
     this.acceptedBy,
     this.withdrawnBy,
+    this.createdAt,
   });
 
   final String id;
   final String createdBy;
+
+  /// КОГДА ПРЕДЛОЖЕНИЕ УШЛО — ISO-строка, как её пишет `createOffer`.
+  ///
+  /// **Поле писалось с самого начала и не читалось никем до 22.08** — это
+  /// та же форма, что N139 наизнанку: там читатель пережил писателя, здесь
+  /// писатель ждал читателя. Читатель появился на шаге 3: из него берётся
+  /// `jobOfferAt` каждого созданного вечера.
+  ///
+  /// Зачем оно вечеру: `agreementStampValue` и `agreementArrivalValue`
+  /// (`core/agreements/agreement_card.dart`) сортируют карточки договоров и
+  /// печатают на каждой дату прихода, беря `jobOfferAt ?? createdAt`.
+  /// Оставь мы здесь пусто — на всех N карточках встал бы **момент
+  /// принятия**, а предложение уходит раньше, «иногда на минуту, иногда на
+  /// дни» (довод записан там же).
+  final String? createdAt;
   final List<String> dates;
   final String eventType;
 
@@ -145,6 +161,13 @@ class JobOffer {
       answers: answers,
       acceptedBy: data['acceptedBy'] as String?,
       withdrawnBy: data['withdrawnBy'] as String?,
+      // Мягко, как соседи: у документов, написанных не нами, тип этого
+      // поля не гарантирован (I49). Чужая запись даёт `null`, и вечер
+      // получит `jobOfferAt: null` — то есть откатится на запасной путь
+      // `createdAt` карточки, а не уронит приём.
+      createdAt: data['createdAt'] is String
+          ? data['createdAt'] as String
+          : null,
     );
   }
 }
