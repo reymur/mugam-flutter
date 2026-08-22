@@ -402,3 +402,148 @@ describe("предложение работы: права на подколле�
     );
   });
 });
+
+// ВЕРХНИЕ ПРЕДЕЛЫ НА СОЗДАНИЕ — ПЯТЬ ПРОВЕРОК, И ВСЕ ПЯТЬ ЗАВЕДЕНЫ 22.08,
+// ДО ВЫКЛАДКИ ПРЕДЕЛОВ В ПРОД.
+//
+// **Почему без них выкладывать нельзя было честно.** Существующий тест
+// «инициатор создаёт предложение на три дня» проходит ОДИНАКОВО с пределом
+// и без него — он утверждает наличие разрешения, а нужен сторож отказа
+// (I31). А на трубке отказ человеку не виден вовсе: `job_offer_entry.dart`
+// закрывает лист ДО записи (`Navigator.pop()` первой строкой) и `catch` не
+// ставит, поэтому «предел сработал» и «предел отбивает всё» выглядят
+// одинаково — лист закрылся, в переписке ничего не появилось.
+//
+// **ГРАНИЦА ПРОВЕРЯЕТСЯ С ОБЕИХ СТОРОН — 31/32 и 24/25.** Только «32
+// отбивается» не отличило бы предела в 31 от предела в 3; только «31
+// проходит» не отличило бы предела от его отсутствия.
+describe("предложение работы: верхние пределы на создание", () => {
+  const rulesPath = path.resolve(__dirname, "../../firestore.rules");
+  const realRules = fs.readFileSync(rulesPath, "utf8");
+
+  // ТЕ САМЫЕ ДВЕ СТРОКИ, ДОСЛОВНО. Ниже из них собирается вторая редакция
+  // правил — БЕЗ пределов, — и на ней отказные проверки обязаны
+  // проваливаться. Это проверка возвратом, сделанная постоянной: она
+  // доказывает, что отказ идёт ИМЕННО от этих строк, а не от чего-то
+  // ещё в блоке создания.
+  const LIMIT_DATES = "&& request.resource.data.dates.size() <= 31";
+  const LIMIT_TYPE = "&& request.resource.data.eventType.size() <= 24";
+
+  const days = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      `2026-10-${String(i + 1).padStart(2, "0")}`,
+    );
+
+  let env: RulesTestEnvironment;
+  let envNoLimits: RulesTestEnvironment;
+
+  beforeAll(async () => {
+    // ПОРЧА ПРОВЕРЯЕТСЯ НА МЕСТЕ, А НЕ НА ВЕРУ (I56). Не найдись образец —
+    // замена прошла бы вхолостую, «правила без пределов» оказались бы
+    // обычными правилами, и проверка возвратом молча подтвердила бы, что
+    // всё в порядке. Поэтому здесь бросок, а не тихое `replace`.
+    if (!realRules.includes(LIMIT_DATES) || !realRules.includes(LIMIT_TYPE)) {
+      throw new Error(
+        "в firestore.rules не найдены строки пределов дословно — " +
+          "проверка возвратом ниже стала бы пустой",
+      );
+    }
+    const noLimits = realRules
+      .replace(LIMIT_DATES, "")
+      .replace(LIMIT_TYPE, "");
+
+    env = await initializeTestEnvironment({
+      projectId: PROJECT_ID,
+      firestore: {
+        host: "localhost",
+        port: FIRESTORE_EMULATOR_PORT,
+        rules: realRules,
+      },
+    });
+    envNoLimits = await initializeTestEnvironment({
+      projectId: `${PROJECT_ID}-nolimits`,
+      firestore: {
+        host: "localhost",
+        port: FIRESTORE_EMULATOR_PORT,
+        rules: noLimits,
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await env?.cleanup();
+    await envNoLimits?.cleanup();
+  });
+
+  beforeEach(async () => {
+    await env.clearFirestore();
+    await seedChat(env);
+    await envNoLimits.clearFirestore();
+    await seedChat(envNoLimits);
+  });
+
+  // КАНАРЕЙКА, И ОНА ЗЕЛЕНА КАК ДО ВЫКЛАДКИ, ТАК И ПОСЛЕ.
+  //
+  // Без неё «длинное отбивается» не отличалось бы от «отбивается всё»: на
+  // трубке оба выглядят одинаково — лист закрылся, предложения нет. Здесь
+  // же названо, что обычное предложение сегодняшнего вида проходит.
+  // Замер прода 19.08: 14 предложений, тип «Toy» у 13.
+  it("канарейка: обычное предложение — 3 дня, «Toy» — проходит", async () => {
+    const db = env.authenticatedContext(BOSS).firestore();
+    await assertSucceeds(setDoc(doc(db, OFFER_PATH), newOffer()));
+  });
+
+  it("31 день — граница, проходит", async () => {
+    const db = env.authenticatedContext(BOSS).firestore();
+    await assertSucceeds(
+      setDoc(doc(db, OFFER_PATH), newOffer({ dates: days(31) })),
+    );
+  });
+
+  it("32 дня — отбивается", async () => {
+    const db = env.authenticatedContext(BOSS).firestore();
+    await assertFails(
+      setDoc(doc(db, OFFER_PATH), newOffer({ dates: days(32) })),
+    );
+  });
+
+  it("тип работы в 24 знака — граница, проходит", async () => {
+    const db = env.authenticatedContext(BOSS).firestore();
+    await assertSucceeds(
+      setDoc(doc(db, OFFER_PATH), newOffer({ eventType: "x".repeat(24) })),
+    );
+  });
+
+  it("тип работы в 25 знаков — отбивается", async () => {
+    const db = env.authenticatedContext(BOSS).firestore();
+    await assertFails(
+      setDoc(doc(db, OFFER_PATH), newOffer({ eventType: "x".repeat(25) })),
+    );
+  });
+
+  // ------------------------------------------------------------------
+  // ПРОВЕРКА ВОЗВРАТОМ, СДЕЛАННАЯ ПОСТОЯННОЙ — две
+  // ------------------------------------------------------------------
+  //
+  // На правилах БЕЗ двух строк те же записи обязаны ПРОХОДИТЬ. Иначе два
+  // отказных теста выше отбивают что-то другое — длину поля, состав
+  // ключей, роль, — и к пределам отношения не имеют.
+  //
+  // Это ровно тот прогон, который иначе пришлось бы делать руками, правя
+  // файл туда и обратно. Здесь он повторяем и не трогает `firestore.rules`
+  // ни на секунду: вторая редакция собирается из ТОЙ ЖЕ прочитанной строки.
+
+  it("без предела дней 32 дня проходят — значит отбивает именно предел", async () => {
+    const db = envNoLimits.authenticatedContext(BOSS).firestore();
+    await assertSucceeds(
+      setDoc(doc(db, OFFER_PATH), newOffer({ dates: days(32) })),
+    );
+  });
+
+  it("без предела длины тип в 25 знаков проходит — значит отбивает именно предел", async () => {
+    const db = envNoLimits.authenticatedContext(BOSS).firestore();
+    await assertSucceeds(
+      setDoc(doc(db, OFFER_PATH), newOffer({ eventType: "x".repeat(25) })),
+    );
+  });
+});
