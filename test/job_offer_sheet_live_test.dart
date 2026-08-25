@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/job_offer/job_offer.dart';
+import 'package:mugam_flutter/core/theme/colors.dart';
+import 'package:mugam_flutter/features/job_offer/busy_days.dart';
 import 'package:mugam_flutter/firebase/firestore_service.dart';
+import 'package:mugam_flutter/firebase/models.dart';
 import 'package:mugam_flutter/features/job_offer/screens/job_offer_sheet.dart';
 
 // ЖИВОЕ ОБНОВЛЕНИЕ ЛИСТА — N143.
@@ -40,6 +43,17 @@ JobOffer offer({Map<String, List<String>> answers = const {}}) => JobOffer(
   answers: answers,
 );
 
+/// Вечер календаря — тот путь внутрь модели, которым он приходит в проде
+/// (карта ответов у `PersonalEvent` закрыта, конструктором её не передать).
+PersonalEvent calendarEvent(String id, {required String owner, required String date}) =>
+    PersonalEvent.fromFirestore(id, {
+      'ownerUid': owner,
+      'date': date,
+      'musicians': const <String>[],
+      'answersWrittenByOwner': true,
+      'status': 'agreed',
+    });
+
 Future<void> pumpSheet(
   WidgetTester tester,
   Stream<List<JobOffer>> stream, {
@@ -49,14 +63,40 @@ Future<void> pumpSheet(
   // шагом 2 значило бы смешать две правки. Шаг 2 передаёт `player` явно.
   String viewerUid = boss,
   Future<void> Function(List<String> picked)? onWrite,
+  // КАЛЕНДАРЬ, ключом — ЧЕЙ. Ключ здесь несёт проверку: лист обязан спросить
+  // календарь СМОТРЯЩЕГО, и «спросил не того» видно по тому, что у остальных
+  // ключей поток пуст.
+  //
+  // `null` — поток НЕ ОТВЕТИЛ (не пустой список: пустой список это ответ
+  // «ничего нет»). Умолчание `null` у обоих оставлено нарочно: проверки, для
+  // которых занятость безразлична, не должны молча получать «знаем, что
+  // свободно» — утверждение, которого они не делают.
+  Map<String, List<PersonalEvent>>? own,
+  Map<String, List<PersonalEvent>>? asParticipant,
 }) async {
+  Stream<List<PersonalEvent>> calendar(
+    Map<String, List<PersonalEvent>>? map,
+    String uid,
+  ) {
+    if (map == null) return StreamController<List<PersonalEvent>>().stream;
+    return Stream.value(map[uid] ?? const <PersonalEvent>[]);
+  }
+
   await tester.pumpWidget(
     ProviderScope(
-      // ПОДМЕНЁН ОДИН ПРОВАЙДЕР — СОСТАВ ЧАТА, и только он нужен.
+      // ПОДМЕНЕНЫ ТРИ ПРОВАЙДЕРА — СОСТАВ ЧАТА И ДВА ПОТОКА КАЛЕНДАРЯ.
       //
       // Из состава лист берёт uid получателя, а без него `pickedBy` не
       // найдёт ответа и заголовок остался бы «3 gün» даже после ответа —
       // то есть главная проверка набора прошла бы по неверной причине.
+      //
+      // ПОТОКИ КАЛЕНДАРЯ ПОДМЕНЕНЫ С 25.08, И БЕЗ ЭТОГО СТОРОЖ ЗАНЯТОСТИ БЫЛ
+      // БЫ СЛЕПЫМ. Не подмени их — `FirestoreService()` трогает
+      // `FirebaseFirestore.instance` прямо в поле, Firebase в тесте не поднят,
+      // создатель провайдера бросает, riverpod превращает это в `AsyncError`,
+      // и лист показывает «занятости не знаем». То есть тот же экран, что при
+      // работающей проводке в состоянии загрузки: проверка зелена и при
+      // целой проводке, и при вырванной (N160).
       //
       // Имена НЕ подменяются намеренно: провайдер карточки пользователя
       // без Firestore отдаёт ошибку, `.value` даёт `null`, имя выходит
@@ -68,6 +108,12 @@ Future<void> pumpSheet(
           (ref) async => <String, dynamic>{
             'members': [boss, player],
           },
+        ),
+        personalEventsProvider.overrideWith(
+          (ref, uid) => calendar(own, uid),
+        ),
+        eventsAsParticipantProvider.overrideWith(
+          (ref, uid) => calendar(asParticipant, uid),
         ),
       ],
       child: MaterialApp(
@@ -317,13 +363,100 @@ void main() {
       expect(find.byKey(const ValueKey('answer-summary')), findsOneWidget);
     });
 
-    // ЗАНЯТОСТЬ НЕ ПОДКЛЮЧЕНА, И ЛИСТ ГОВОРИТ ЭТО СЛОВАМИ.
+    // ЗАНЯТОСТЬ — ПРОВОДКА ОТ ПОТОКОВ КАЛЕНДАРЯ ДО КЛЕТКИ СЕТКИ.
     //
-    // Проверка стоит здесь, а не в наборе листа ответа, потому что
-    // утверждение здесь про ПРОВОДКУ: `busyUnknown: true` ставит
-    // `job_offer_sheet.dart`, а не сам лист. Снимут занятость с полки —
-    // этот тест обязан покраснеть, и это уже правильная нить.
-    testWidgets('занятость не показана — сказано словами', (tester) async {
+    // Проверки стоят здесь, а не в наборе листа ответа, потому что
+    // утверждение здесь про ПРОВОДКУ: `busyDays`/`busyUnknown` ставит
+    // `job_offer_sheet.dart`, а не сам лист. Лист свою половину знает —
+    // `job_offer_answer_sheet_test.dart` подаёт занятость руками.
+    //
+    // ПЕРЕПИСАНЫ 25.08 ВМЕСТЕ С ПОДКЛЮЧЕНИЕМ. Прежде здесь стояла одна
+    // проверка — «строка про незнание нарисована», — и она пережила бы
+    // подключение НЕ ЗАМЕТИВ ЕГО: потоки в тесте не подменялись, Firebase не
+    // поднят, провайдер отдавал ошибку, лист говорил «не знаем», и строка
+    // оставалась на месте. Зелено и при целой проводке, и при вырванной
+    // (N160). Поэтому первой теперь стоит канарейка.
+    Color? cellColor(WidgetTester tester, String iso) {
+      final container = tester.widget<Container>(
+        find
+            .descendant(
+              of: find.byKey(ValueKey('offer-cell-$iso')),
+              matching: find.byType(Container),
+            )
+            .first,
+      );
+      return (container.decoration as BoxDecoration?)?.color;
+    }
+
+    // КАНАРЕЙКА: занятость ДОЕЗЖАЕТ до клетки. Без неё «строки нет» ничего не
+    // доказывает — строка исчезает и от вырванной проводки тоже.
+    testWidgets('занятый день из календаря покрашен в сетке ответа', (
+      tester,
+    ) async {
+      await pumpSheet(
+        tester,
+        Stream.value([futureOffer()]),
+        viewerUid: player,
+        // Свой вечер музыканта ровно на один из предложенных дней.
+        own: {
+          player: [
+            calendarEvent('busy-1', owner: player, date: '${iso(11)}T15:00:00.000'),
+          ],
+        },
+        asParticipant: const {},
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(
+        cellColor(tester, iso(11)),
+        kOwnerOther.withAlpha(41),
+        reason: 'занятый день не покрашен — занятость до сетки не доехала',
+      );
+      expect(
+        cellColor(tester, iso(10)),
+        Colors.transparent,
+        reason: 'покрашены все дни подряд — красится не занятость',
+      );
+      expect(
+        find.byKey(const ValueKey('answer-busy-unknown')),
+        findsNothing,
+        reason: 'занятость известна — молчать про незнание',
+      );
+      expect(
+        find.text(kBusyPickableLine),
+        findsOneWidget,
+        reason: 'занятый день выбрать можно, и это сказано',
+      );
+    });
+
+    // ЗАНЯТЫХ НЕТ — ЭТО ОТВЕТ, И ЛИСТ МОЛЧИТ. Молчание значит «посмотрели,
+    // предупреждать не о чем»; строка про незнание здесь была бы неправдой.
+    testWidgets('календарь пуст — ни слова про незнание', (tester) async {
+      await pumpSheet(
+        tester,
+        Stream.value([futureOffer()]),
+        viewerUid: player,
+        own: const {},
+        asParticipant: const {},
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byKey(const ValueKey('answer-busy-unknown')), findsNothing);
+      expect(find.text(kBusyPickableLine), findsNothing);
+      expect(cellColor(tester, iso(11)), Colors.transparent);
+    });
+
+    // ПОТОКИ МОЛЧАТ — ЛИСТ ГОВОРИТ СЛОВАМИ. Пустая сетка утверждала бы «всё
+    // свободно», а этого мы не знаем.
+    testWidgets('календарь ещё не ответил — сказано словами', (tester) async {
       await pumpSheet(
         tester,
         Stream.value([futureOffer()]),
@@ -340,6 +473,70 @@ void main() {
         findsOneWidget,
         reason: 'пустая сетка утверждает «всё свободно» — а мы не знаем',
       );
+    });
+
+    // N143 В ТРЕТИЙ РАЗ, И ЭТО ГЛАВНАЯ ПРОВЕРКА ЗДЕСЬ.
+    //
+    // Лист открывается модалкой — отдельным поддеревом, которое от
+    // перестройки экрана позади не зависит. Возьми занятость снаружи, из
+    // `build` листа предложения, — человек, открывший лист на секунду раньше,
+    // чем ответили потоки, остался бы с «не знаем» НАВСЕГДА, до закрытия и
+    // повторного открытия. Тест с уже готовыми данными этого не поймал бы:
+    // там первый же кадр приходит с ответом.
+    testWidgets('данные пришли при открытом листе — пометки появились сами', (
+      tester,
+    ) async {
+      final calendar = StreamController<List<PersonalEvent>>();
+      addTearDown(calendar.close);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            chatDataProvider('chat-1').overrideWith(
+              (ref) async => <String, dynamic>{
+                'members': [boss, player],
+              },
+            ),
+            personalEventsProvider.overrideWith((ref, uid) => calendar.stream),
+            eventsAsParticipantProvider.overrideWith(
+              (ref, uid) => Stream.value(const <PersonalEvent>[]),
+            ),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: JobOfferSheet(
+                chatId: 'chat-1',
+                offerId: 'offer-1',
+                debugOffers: Stream.value([futureOffer()]),
+                debugViewerUid: player,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // Лист открыт РАНЬШЕ данных — и честно молчит о занятости.
+      expect(find.byKey(const ValueKey('answer-busy-unknown')), findsOneWidget);
+      expect(cellColor(tester, iso(11)), Colors.transparent);
+
+      // Календарь ответил. Лист НЕ закрывался и не открывался заново.
+      calendar.add([
+        calendarEvent('busy-1', owner: player, date: '${iso(11)}T15:00:00.000'),
+      ]);
+      await tester.pump();
+
+      expect(
+        cellColor(tester, iso(11)),
+        kOwnerOther.withAlpha(41),
+        reason: 'занятость пришла, а модалка её не увидела — Consumer внутри '
+            'листа потерян, и человек остался с устаревшим',
+      );
+      expect(find.byKey(const ValueKey('answer-busy-unknown')), findsNothing);
     });
 
     // --- ЧЕГО ДВЕ ПРОВЕРКИ НИЖЕ НЕ ДОКАЗЫВАЮТ (I50) ---

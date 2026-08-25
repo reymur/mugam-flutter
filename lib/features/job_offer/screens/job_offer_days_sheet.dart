@@ -4,6 +4,7 @@ import '../../../core/job_offer/day_details.dart';
 import '../../../core/job_offer/offer_draft.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/time/az_date_format.dart';
+import '../busy_days.dart';
 
 // ЛИСТ ВЫБОРА ДНЕЙ — макет `docs/design/mugam-14-secim`, положен 14.08.
 //
@@ -40,6 +41,7 @@ class JobOfferDaysSheet extends StatefulWidget {
     required this.onSend,
     this.initialMonth,
     this.busyDays = const {},
+    this.busyUnknown = false,
     this.initialDates = const [],
     this.now,
     this.onRecordVoice,
@@ -68,7 +70,21 @@ class JobOfferDaysSheet extends StatefulWidget {
 
   /// Свои занятые дни. **ВИДНЫ, НО ВЫБРАТЬ ИХ МОЖНО** — приложение помнит и
   /// показывает, решает человек: две работы в один вечер бывают законны.
+  ///
+  /// **ПОДКЛЮЧЕНО 25.08**, вместе с листом ответа и по тому же доводу
+  /// владельца: работодатель набирал дни так же вслепую, как музыкант их
+  /// отмечал. Поставщик общий — `busyDaysProvider`
+  /// (`features/job_offer/busy_days.dart`), передаётся из точки вызова
+  /// (`job_offer_entry.dart`).
   final Set<String> busyDays;
+
+  /// **ЗАНЯТОСТИ МЫ НЕ ЗНАЕМ — и лист обязан сказать это, а не промолчать.**
+  ///
+  /// Ровно тот же признак и ровно та же причина, что у листа ответа
+  /// (`JobOfferAnswerSheet.busyUnknown`): пустая сетка утверждает «всё
+  /// свободно», а из готового набора дней «мы не смотрели» не выводится.
+  /// Умолчание `false` — виджет показывает то, что подали.
+  final bool busyUnknown;
 
   final List<String> initialDates;
 
@@ -209,6 +225,30 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _grid(),
+                    // ЗАНЯТОСТЬ — СРАЗУ ПОД СЕТКОЙ, до строки выбора: она про
+                    // то, что в сетке нарисовано, а не про то, что человек уже
+                    // набрал.
+                    //
+                    // ВЗАИМНО ИСКЛЮЧАЮЩИЕ, и не случайно: первая говорит
+                    // «занятые дни выбирать можно», вторая — «занятых дней мы
+                    // не знаем». Показать обе разом значило бы сказать про одно
+                    // и то же два разных.
+                    if (_busyVisibleThisMonth) ...[
+                      const SizedBox(height: 12),
+                      const Text(
+                        kBusyPickableLine,
+                        key: ValueKey('offer-busy-pickable'),
+                        style: TextStyle(color: kMuted, fontSize: 12),
+                      ),
+                    ] else if (widget.busyUnknown &&
+                        widget.busyDays.isEmpty) ...[
+                      const SizedBox(height: 12),
+                      const Text(
+                        kBusyUnknownLine,
+                        key: ValueKey('offer-busy-unknown'),
+                        style: TextStyle(color: kMuted, fontSize: 12),
+                      ),
+                    ],
                     if (_picked.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Text(
@@ -303,6 +343,19 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
       ),
     );
   }
+
+  /// Видно ли на ПОКАЗАННОМ месяце хоть один занятый день.
+  ///
+  /// **Не `busyDays.isNotEmpty`:** занятость приходит на весь календарь сразу,
+  /// и пояснение «занятые дни тоже можно выбрать» на месяце, где не покрашено
+  /// ни одной клетки, объясняло бы то, чего человек не видит.
+  ///
+  /// У листа ответа гейт другой — пересечение с предложенными днями, — и это
+  /// не разнобой: там сетка ограничена днями предложения, здесь месяцем. Гейт
+  /// отвечает на один и тот же вопрос («видит ли человек занятое прямо
+  /// сейчас»), а видит он в двух листах разное.
+  bool get _busyVisibleThisMonth =>
+      monthGridDays(_month).any((d) => widget.busyDays.contains(isoDay(d)));
 
   // ЦВЕТА ВЗЯТЫ ИЗ МАКЕТА, А НЕ ПОДОБРАНЫ НА ГЛАЗ. Занятый день там —
   // rgba(111,168,220,0.16), и это ровно `kOwnerOther` (0xFF6FA8DC), уже

@@ -7,6 +7,7 @@ import '../../../core/job_offer/job_offer.dart';
 import '../../../core/job_offer/job_offer_repository.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
+import '../busy_days.dart';
 import '../widgets/job_offer_card.dart';
 import 'job_offer_accept_sheet.dart';
 import 'job_offer_answer_sheet.dart';
@@ -322,36 +323,48 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
 
   /// Открыть лист ответа и записать то, что человек отметил.
   ///
-  /// **`busyDays` НЕ ПЕРЕДАЁТСЯ, и это отложено, а не забыто** (N147 по
-  /// духу, третий заход): поставщика занятости у листа нет ни одного
-  /// (`grep -rn "busyDays\|busyDates" lib` → 13 совпадений, передач **0**,
-  /// замер 20.08). Готовое правило занятости в проекте есть —
-  /// `dayRoleOf(e, uid) == DayRole.occupied` плюс потоки
-  /// `personalEventsProvider` / `eventsAsParticipantProvider`, — но
-  /// соединение их тянет свой вопрос: лист листается по месяцам, и
-  /// «занятости нет» обязано отличаться от «ещё не загрузилось» (I47).
-  /// Пока не соединено — лист говорит об этом словами, см.
-  /// `busyUnknown` ниже.
+  /// **ЗАНЯТОСТЬ ПОДКЛЮЧЕНА 25.08** — до неё здесь стоял литерал
+  /// `busyUnknown: true`, и вся неправда была в нём: он утверждал «мы не
+  /// знаем» независимо от того, знаем мы или нет. Цена измерена на трубке
+  /// 22.08: музыкант отметил день, на котором у него уже стоял «Toy · 15:00»,
+  /// и узнал об этом ПОСЛЕ приёма, когда отказаться нельзя.
+  ///
+  /// Поставщик — `busyDaysProvider` (`features/job_offer/busy_days.dart`),
+  /// один на этот лист и на лист набора дней; там же разобрано, чем «занятых
+  /// нет» отличается от «ещё не загрузилось».
+  ///
+  /// **`Consumer` ВНУТРИ МОДАЛКИ ОБЯЗАТЕЛЕН, и это не украшение.** Модалка —
+  /// отдельное поддерево, её `builder` от перестройки этого экрана не
+  /// зависит. Возьми занятость снаружи, из `build` листа предложения, — и
+  /// человек, открывший лист на секунду раньше, чем ответили потоки, остался
+  /// бы с «не знаем» НАВСЕГДА, до закрытия и повторного открытия. Это N143 в
+  /// третий раз: лист живого обновления даром не получает.
   void _openAnswerSheet(JobOffer offer, String viewerUid) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (sheetContext) => JobOfferAnswerSheet(
-        offer: offer,
-        myUid: viewerUid,
-        initiatorName: _nameOf(offer.createdBy, viewerUid),
-        // ЗАНЯТОСТЬ НЕ ПОДКЛЮЧЕНА — И ЛИСТ ОБЯЗАН СКАЗАТЬ ЭТО, А НЕ
-        // ПРОМОЛЧАТЬ. Пустая сетка читается как «всё свободно», то есть
-        // как утверждение, которого мы не делали.
-        busyUnknown: true,
-        onSend: (picked) async {
-          // ЗАКРЫВАЕМ ДО ЗАПИСИ, А НЕ ПОСЛЕ. Запись уходит в сеть, и ждать
-          // её с открытым листом значит держать человека перед экраном,
-          // который уже ничего не решает. Ответ он увидит на листе
-          // предложения — тот обновится потоком сам (N143).
-          Navigator.of(sheetContext).pop();
-          await _writeAnswer(offer, viewerUid, picked);
+      builder: (sheetContext) => Consumer(
+        builder: (context, ref, _) {
+          final busy = ref.watch(busyDaysProvider(viewerUid));
+          return JobOfferAnswerSheet(
+            offer: offer,
+            myUid: viewerUid,
+            initiatorName: _nameOf(offer.createdBy, viewerUid),
+            busyDays: busy.days,
+            // «Не знаем» — это НЕ «набор пуст»: пустой набор бывает и
+            // законным ответом «занятых нет». Признак отдельный и приходит
+            // от поставщика.
+            busyUnknown: !busy.known,
+            onSend: (picked) async {
+              // ЗАКРЫВАЕМ ДО ЗАПИСИ, А НЕ ПОСЛЕ. Запись уходит в сеть, и
+              // ждать её с открытым листом значит держать человека перед
+              // экраном, который уже ничего не решает. Ответ он увидит на
+              // листе предложения — тот обновится потоком сам (N143).
+              Navigator.of(sheetContext).pop();
+              await _writeAnswer(offer, viewerUid, picked);
+            },
+          );
         },
       ),
     );

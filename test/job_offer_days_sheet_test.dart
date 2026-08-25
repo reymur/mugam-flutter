@@ -83,12 +83,17 @@ void main() {
   });
 
   group('лист целиком', () {
-    Future<void> pump(WidgetTester tester, {Set<String> busy = const {}}) async {
+    Future<void> pump(
+      WidgetTester tester, {
+      Set<String> busy = const {},
+      bool busyUnknown = false,
+    }) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: JobOfferDaysSheet(
               initialMonth: DateTime(2026, 8),
+              busyUnknown: busyUnknown,
               // «Сегодня» прибито намеренно: без этого набор тыкает в
               // конкретные числа и через неделю бьёт в прошлое, которое
               // лист законно не принимает. Тест покраснел бы не потому,
@@ -494,6 +499,68 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-10')));
       await tester.pump();
       expect(find.text('1 gün · 10'), findsOneWidget);
+    });
+
+    // ЗАНЯТОСТЬ РАБОТОДАТЕЛЯ, ПОДКЛЮЧЕНА 25.08.
+    //
+    // До этого дня работодатель набирал дни так же вслепую, как музыкант их
+    // отмечал: параметр `busyDays` у листа был, поставщика не было ни одного.
+    // Проверки ниже — про ПОКАЗ; что занятость доезжает сюда из потоков
+    // календаря, сторожится по исходникам в `source_invariants_test.dart`
+    // (точка вызова `proposeJobOffer` тестом не достаётся: она ходит в Auth и
+    // Firestore до показа листа).
+    group('занятость: три состояния, и молчание — только одно из них', () {
+      testWidgets('занятости не знаем — сказано словами', (tester) async {
+        await pump(tester, busyUnknown: true);
+        expect(
+          find.byKey(const ValueKey('offer-busy-unknown')),
+          findsOneWidget,
+          reason: 'пустая сетка утверждает «всё свободно» — а мы не знаем',
+        );
+        expect(find.byKey(const ValueKey('offer-busy-pickable')), findsNothing);
+      });
+
+      testWidgets('занятых нет — ни слова, и это ответ, а не молчание', (
+        tester,
+      ) async {
+        await pump(tester);
+        expect(find.byKey(const ValueKey('offer-busy-unknown')), findsNothing);
+        expect(find.byKey(const ValueKey('offer-busy-pickable')), findsNothing);
+      });
+
+      testWidgets('занятый день на этом месяце — сказано, что выбрать можно', (
+        tester,
+      ) async {
+        await pump(tester, busy: {'2026-08-10'});
+        expect(
+          find.byKey(const ValueKey('offer-busy-pickable')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const ValueKey('offer-busy-unknown')), findsNothing);
+      });
+
+      // ВЗАИМНО ИСКЛЮЧАЮЩИЕ: «занятые выбирать можно» и «занятых не знаем» —
+      // про одно и то же два разных. Проверка держит именно это, а не то, что
+      // какая-то из строк вообще есть.
+      testWidgets('две строки разом не показываются', (tester) async {
+        await pump(tester, busy: {'2026-08-10'}, busyUnknown: true);
+        expect(
+          find.byKey(const ValueKey('offer-busy-pickable')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const ValueKey('offer-busy-unknown')), findsNothing);
+      });
+
+      // Занятость приходит на ВЕСЬ календарь, а сетка показывает один месяц.
+      // Пояснение про месяц, где не покрашено ни одной клетки, объясняло бы
+      // то, чего человек не видит.
+      testWidgets('занятый день в другом месяце — про этот молчим', (
+        tester,
+      ) async {
+        await pump(tester, busy: {'2026-12-10'});
+        expect(find.byKey(const ValueKey('offer-busy-pickable')), findsNothing);
+        expect(find.byKey(const ValueKey('offer-busy-unknown')), findsNothing);
+      });
     });
   });
 }

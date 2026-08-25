@@ -12,6 +12,7 @@ import '../../core/job_offer/day_details.dart';
 import '../../core/job_offer/job_offer_repository.dart';
 import '../../core/job_offer/offer_draft.dart';
 import '../../firebase/firestore_service.dart';
+import 'busy_days.dart';
 import 'screens/job_offer_days_sheet.dart';
 import 'screens/pick_person_sheet.dart';
 
@@ -268,59 +269,84 @@ Future<bool> _offerToPerson(
     // `onDay` — календарь и дневной экран, главный экран не знает ничего.
     // Человека, если он неизвестен, спрашивает цикл выше; день, если
     // известен, приходит сюда предвыбранным.
-    builder: (sheetContext) => JobOfferDaysSheet(
-      // День из календаря открывает лист НА ЭТОМ МЕСЯЦЕ и стоит
-      // предвыбранным — но снимается тапом, как любой другой. Иначе
-      // «открыл из календаря и передумал» давало бы предложение на день,
-      // которого человек не выбирал.
-      initialMonth: onDay == null ? null : DateTime(onDay.year, onDay.month),
-      initialDates: onDay == null ? const [] : [isoDay(onDay)],
-      // ЗАПИСЬ ГОЛОСА ЛИСТ НЕ ДЕЛАЕТ САМ. Сеанс общий
-      // (`VoiceRecordingSession`), лист только просит; куда денется файл —
-      // решает эта функция. То же разделение, что у экрана чата: сеанс
-      // отдаёт файл, назначение живёт у зовущего (I58).
-      onRecordVoice: (isoDayOfRecord) =>
-          _recordVoiceForDay(context, session),
-      // Закрыл лист, не отправив, — записи пропадают. Удаляем явно, а не
-      // надеемся на систему: iOS чистит временную папку когда сочтёт
-      // нужным. Запись без предложения потом не найти и не удалить.
-      // Уборка вынесена в `deleteVoiceTempFiles` и проверена НАСТОЯЩИМИ
-      // файлами: пока она стояла циклом здесь, «файл удалён» отличалось от
-      // «файла и не было» ровно ничем.
-      onDiscardVoiceFiles: deleteVoiceTempFiles,
-      onSend: ({required dates, required eventType, required details}) async {
-        sent = true;
-        Navigator.of(sheetContext).pop();
+    // `Consumer` ВНУТРИ МОДАЛКИ, А НЕ `ref` СНАРУЖИ, и это не стиль.
+    //
+    // Модалка — отдельное поддерево: её `builder` от перестройки экрана, из
+    // которого её открыли, не зависит вовсе. Возьми занятость через внешний
+    // `ref` — человек, открывший лист раньше, чем ответили потоки календаря,
+    // остался бы с «занятости не знаем» НАВСЕГДА, до закрытия и повторного
+    // открытия. Это N143 в третий раз: живого обновления лист даром не
+    // получает.
+    builder: (sheetContext) => Consumer(
+      builder: (context, ref, _) {
+        final busy = ref.watch(busyDaysProvider(myUid));
+        return JobOfferDaysSheet(
+          // ЗАНЯТОСТЬ РАБОТОДАТЕЛЯ, ПОДКЛЮЧЕНА 25.08. До этого дня он
+          // набирал дни так же вслепую, как музыкант их отмечал: параметр у
+          // листа был, поставщика не было ни одного. Поставщик общий с
+          // листом ответа — `busyDaysProvider`.
+          busyDays: busy.days,
+          // «Не знаем» — это НЕ «набор пуст»: пустой набор бывает и законным
+          // ответом «занятых нет». Признак отдельный и приходит от
+          // поставщика.
+          busyUnknown: !busy.known,
+          // День из календаря открывает лист НА ЭТОМ МЕСЯЦЕ и стоит
+          // предвыбранным — но снимается тапом, как любой другой. Иначе
+          // «открыл из календаря и передумал» давало бы предложение на день,
+          // которого человек не выбирал.
+          initialMonth:
+              onDay == null ? null : DateTime(onDay.year, onDay.month),
+          initialDates: onDay == null ? const [] : [isoDay(onDay)],
+          // ЗАПИСЬ ГОЛОСА ЛИСТ НЕ ДЕЛАЕТ САМ. Сеанс общий
+          // (`VoiceRecordingSession`), лист только просит; куда денется
+          // файл — решает эта функция. То же разделение, что у экрана чата:
+          // сеанс отдаёт файл, назначение живёт у зовущего (I58).
+          onRecordVoice: (isoDayOfRecord) =>
+              _recordVoiceForDay(context, session),
+          // Закрыл лист, не отправив, — записи пропадают. Удаляем явно, а не
+          // надеемся на систему: iOS чистит временную папку когда сочтёт
+          // нужным. Запись без предложения потом не найти и не удалить.
+          // Уборка вынесена в `deleteVoiceTempFiles` и проверена НАСТОЯЩИМИ
+          // файлами: пока она стояла циклом здесь, «файл удалён» отличалось
+          // от «файла и не было» ровно ничем.
+          onDiscardVoiceFiles: deleteVoiceTempFiles,
+          onSend:
+              ({required dates, required eventType, required details}) async {
+                sent = true;
+                Navigator.of(sheetContext).pop();
 
-        // ПОРЯДОК ЗАПИСЕЙ ЗНАЧИМ. `anchorMessageId` правилами менять
-        // нельзя — его нет ни в одной из трёх форм правки, — значит id
-        // якоря обязан быть известен ДО создания предложения.
-        //
-        // Голос грузится ПЕРВЫМ: он относится к дню, и предложение без
-        // ссылки на уже загруженный файл было бы предложением с обещанием.
-        final withVoice = await _uploadVoices(
-          service: service,
-          chatId: chatId,
-          myUid: myUid,
-          details: details,
-        );
-        final anchorId = service.newMessageId(chatId);
-        final offerId = await repository.createOffer(
-          chatId: chatId,
-          myUid: myUid,
-          dates: dates,
-          eventType: eventType,
-          details: withVoice,
-          anchorMessageId: anchorId,
-        );
-        await service.sendMessage(
-          chatId: chatId,
-          senderId: myUid,
-          // Текст — для СТАРОЙ сборки, которая про `offerId` не знает и
-          // покажет его как обычное сообщение.
-          text: offerAnchorText(dates: dates, eventType: eventType),
-          messageId: anchorId,
-          offerId: offerId,
+                // ПОРЯДОК ЗАПИСЕЙ ЗНАЧИМ. `anchorMessageId` правилами менять
+                // нельзя — его нет ни в одной из трёх форм правки, — значит
+                // id якоря обязан быть известен ДО создания предложения.
+                //
+                // Голос грузится ПЕРВЫМ: он относится к дню, и предложение
+                // без ссылки на уже загруженный файл было бы предложением с
+                // обещанием.
+                final withVoice = await _uploadVoices(
+                  service: service,
+                  chatId: chatId,
+                  myUid: myUid,
+                  details: details,
+                );
+                final anchorId = service.newMessageId(chatId);
+                final offerId = await repository.createOffer(
+                  chatId: chatId,
+                  myUid: myUid,
+                  dates: dates,
+                  eventType: eventType,
+                  details: withVoice,
+                  anchorMessageId: anchorId,
+                );
+                await service.sendMessage(
+                  chatId: chatId,
+                  senderId: myUid,
+                  // Текст — для СТАРОЙ сборки, которая про `offerId` не знает
+                  // и покажет его как обычное сообщение.
+                  text: offerAnchorText(dates: dates, eventType: eventType),
+                  messageId: anchorId,
+                  offerId: offerId,
+                );
+              },
         );
       },
     ),
