@@ -103,7 +103,7 @@ void main() {
       expect(tappableDays(tester).contains('2026-09-15'), isTrue);
       await tester.tap(find.byKey(const ValueKey('offer-cell-2026-09-15')));
       await tester.pump();
-      expect(find.text('1 gün · 15'), findsOneWidget);
+      expect(find.text('1 gün · 15 sentyabr'), findsOneWidget);
     });
 
     testWidgets('занятый день ВНЕ предложения всё равно не нажимается', (
@@ -403,7 +403,7 @@ void main() {
         tester,
         o: offer(answers: {player: const ['2026-09-15']}),
       );
-      expect(find.text('1 gün · 15'), findsOneWidget);
+      expect(find.text('1 gün · 15 sentyabr'), findsOneWidget);
     });
   });
 

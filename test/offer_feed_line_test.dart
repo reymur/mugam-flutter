@@ -42,7 +42,7 @@ void main() {
     test('ответа нет — ждём ответа', () {
       expect(
         offerFeedLine(offer(), recipientUid: player),
-        '3 gün · Toy · cavab gözlənilir',
+        '14–15, 20 sentyabr · 3 gün · Toy · cavab gözlənilir',
       );
     });
 
@@ -52,7 +52,7 @@ void main() {
           offer(answers: {player: const ['2026-09-14', '2026-09-20']}),
           recipientUid: player,
         ),
-        '2/3 gün · Toy · cavab',
+        '14, 20 sentyabr · 2/3 gün · Toy · cavab',
       );
     });
 
@@ -62,7 +62,7 @@ void main() {
         offer(answers: {player: const []}),
         recipientUid: player,
       );
-      expect(line, '3 gün · Toy · gələ bilmir');
+      expect(line, '14–15, 20 sentyabr · 3 gün · Toy · gələ bilmir');
       expect(
         line.contains('0 gün'),
         isFalse,
@@ -77,7 +77,7 @@ void main() {
             acceptedBy: boss),
         recipientUid: player,
       );
-      expect(line, '2/3 gün · Toy · qəbul edildi');
+      expect(line, '14, 20 sentyabr · 2/3 gün · Toy · qəbul edildi');
     });
 
     // КАНАРЕЙКА НА ВТОРОЕ ЧИСЛО, БЕЗУСЛОВНАЯ.
@@ -136,7 +136,7 @@ void main() {
       // вовсе: показывается то, на сколько звали.
       expect(
         offerFeedLine(offer(withdrawnBy: boss), recipientUid: player),
-        '3 gün · Toy · geri götürüldü',
+        '14–15, 20 sentyabr · 3 gün · Toy · geri götürüldü',
       );
     });
 
@@ -147,7 +147,7 @@ void main() {
           offer(answers: {player: const ['2026-09-14']}, withdrawnBy: boss),
           recipientUid: player,
         ),
-        '3 gün · Toy · geri götürüldü',
+        '14–15, 20 sentyabr · 3 gün · Toy · geri götürüldü',
       );
     });
 

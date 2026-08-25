@@ -44,7 +44,7 @@ void main() {
           '2026-08-12',
           '2026-08-15',
         ]),
-        '5 gün · 9, 10, 11, 12, 15',
+        '5 gün · 9–12, 15 avqust',
       );
     });
 
@@ -53,7 +53,7 @@ void main() {
     test('дни упорядочены, как бы их ни тыкали', () {
       expect(
         offerSummaryLine(['2026-08-15', '2026-08-09', '2026-08-10']),
-        '3 gün · 9, 10, 15',
+        '3 gün · 9–10, 15 avqust',
       );
     });
 
@@ -182,7 +182,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-11')));
       await tester.pump();
 
-      expect(find.text('2 gün · 9, 11'), findsOneWidget);
+      expect(find.text('2 gün · 9, 11 avqust'), findsOneWidget);
     });
 
     // ТИП РАБОТЫ — ВЫБОРОМ, А НЕ ПУСТЫМ ПОЛЕМ (макет `mugam-14-secim`).
@@ -403,7 +403,7 @@ void main() {
 
       expect(find.byKey(const ValueKey('offer-mic-2026-08-14')), findsOneWidget);
       expect(
-        find.text('2 gün · 14, 20'),
+        find.text('2 gün · 14, 20 avqust'),
         findsOneWidget,
         reason: 'день сняли вместо того, чтобы открыть',
       );
@@ -509,7 +509,7 @@ void main() {
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-10')));
       await tester.pump();
-      expect(find.text('1 gün · 10'), findsOneWidget);
+      expect(find.text('1 gün · 10 avqust'), findsOneWidget);
     });
 
     // ЗАНЯТОСТЬ РАБОТОДАТЕЛЯ, ПОДКЛЮЧЕНА 25.08.

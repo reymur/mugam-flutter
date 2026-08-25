@@ -8,6 +8,7 @@
 // (создание, отметки, принятие, отзыв).
 
 import 'day_details.dart';
+import 'offer_draft.dart';
 
 /// Роль в ОДНОМ предложении. Роль принадлежит предложению, а не человеку:
 /// в чате нет ни работодателей, ни музыкантов — есть двое участников, и
@@ -408,26 +409,59 @@ String offerFeedLine(JobOffer offer, {required String recipientUid}) {
   final picked = offer.pickedBy(recipientUid);
   final type = offer.eventType;
 
-  /// Одно число — предложенные дни. Там, где второго нет ещё или уже.
-  final one = '${offer.dates.length} gün · $type';
+  /// Предложенные дни и их число. Там, где второго числа нет ещё или уже.
+  final all = '${offerDatesLine(offer.dates)} · ${offer.dates.length} gün · $type';
 
-  /// Два числа — отмеченные из предложенных. Только там, где их два.
-  final two = '${picked.length}/${offer.dates.length} gün · $type';
+  /// Отмеченные дни и два числа — сколько из скольких. Только там, где
+  /// отмеченные вообще есть.
+  final mine =
+      '${offerDatesLine(picked)} · ${picked.length}/${offer.dates.length} gün · $type';
 
   switch (offer.state) {
     case OfferState.withdrawn:
-      // Отозвать можно и до ответа: отмеченных может не быть вовсе.
-      return '$one · geri götürüldü';
+      // Отозвать можно и до ответа: отмеченных может не быть вовсе. Здесь
+      // даты отвечают «что отзывали», в силе не осталось ничего.
+      return '$all · geri götürüldü';
     case OfferState.accepted:
-      return '$two · qəbul edildi';
+      return '$mine · qəbul edildi';
     case OfferState.answered:
       // Ноль отмеченных — отказ, а не ответ с количеством. «0/5» было бы
       // верно по числу и неверно по смыслу, поэтому здесь число одно —
       // предложенное: «на сколько звали, туда не смог».
-      return picked.isEmpty ? '$one · gələ bilmir' : '$two · cavab';
+      return picked.isEmpty ? '$all · gələ bilmir' : '$mine · cavab';
     case OfferState.awaitingAnswer:
-      return '$one · cavab gözlənilir';
+      return '$all · cavab gözlənilir';
   }
+}
+
+/// ЧЬЁ ЭТО ПРЕДЛОЖЕНИЕ — верхняя строка над строкой ленты (N164).
+///
+/// **Заведено 25.08, и вот чего не было до него.** Строка предложения
+/// рисуется во всю ширину, одинаковой заливкой, без стороны и без имени, а
+/// пять слов состояния не говорят о направлении ничего. То есть **своё и
+/// чужое предложение выглядели одинаково** — в ленте, где обычные сообщения
+/// различаются стороной.
+///
+/// **Слово, а не сторона, и довод взят у соседа по файлу:** «через месяц при
+/// прокрутке сторона и цвет читаются плохо, а слово читается всегда». Довод
+/// был записан про состояние — и применён только к нему; у направления не
+/// оказалось ни стороны, ни слова.
+///
+/// **Обе стороны названы вслух, ни одна не держится на умолчании.** «Не
+/// написано — значит моё» короче на строку и опирается ровно на то, чего в
+/// ленте нет; умолчания в этом проекте уже подводили (N13, I47).
+///
+/// [initiatorName] — имя того, кто предложил, каким его знает экран. Пустое
+/// имя даёт «Naməlum»: не знать зовущего неприятно, но строка «‌ təklif edir»
+/// выглядела бы поломкой.
+String offerAuthorLine(
+  JobOffer offer, {
+  required String viewerUid,
+  required String initiatorName,
+}) {
+  if (offer.createdBy == viewerUid) return 'Sən təklif etdin';
+  final name = initiatorName.trim().isEmpty ? 'Naməlum' : initiatorName.trim();
+  return '$name təklif edir';
 }
 
 /// ПОКАЗЫВАТЬ ЛИ ЭТО СООБЩЕНИЕ КАРТОЧКОЙ — и если да, то какое предложение

@@ -48,6 +48,7 @@ import '../../status/screens/status_viewer_screen.dart';
 import '../../../core/job_offer/job_offer.dart';
 import '../../../core/job_offer/job_offer_repository.dart';
 import '../../job_offer/screens/job_offer_sheet.dart';
+import '../../job_offer/widgets/offer_feed_row.dart';
 import 'about_contact_screen.dart';
 import 'chat_attachment_viewer_screen.dart';
 import 'custom_camera_backup/camera_capture_screen.dart';
@@ -1730,34 +1731,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ? (otherUids.isNotEmpty ? otherUids.first : currentUid)
         : currentUid;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-      child: InkWell(
-        key: ValueKey('offer-line-${offer.id}'),
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _openOfferSheet(offer, currentUid),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          decoration: BoxDecoration(
-            color: kBg3,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: kBorder),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.work_outline, size: 18, color: kGold),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  offerFeedLine(offer, recipientUid: recipientUid),
-                  style: const TextStyle(color: kText, fontSize: 14),
-                ),
-              ),
-              const Icon(Icons.chevron_right, size: 18, color: kMuted),
-            ],
-          ),
-        ),
-      ),
+    // ИМЯ ПРЕДЛОЖИВШЕГО — из состава чата, тем же способом, что у цитаты
+    // (`_replySenderName`): второго источника имён здесь не заводится.
+    // ГРАНИЦА: `chatData['name']` в прямом чате — имя собеседника, а в
+    // группе — имя группы. Предложения живут только в прямых чатах («один
+    // документ — один ответ»), и на групповом это сломается заметно.
+    final chatData = ref.read(chatDataProvider(widget.chatId)).value;
+    final initiatorName = iAmInitiator
+        ? (FirebaseAuth.instance.currentUser?.displayName ?? '')
+        : (chatData?['name'] as String? ?? '');
+
+    return OfferFeedRow(
+      offer: offer,
+      viewerUid: currentUid,
+      recipientUid: recipientUid,
+      initiatorName: initiatorName,
+      onTap: () => _openOfferSheet(offer, currentUid),
     );
   }
 

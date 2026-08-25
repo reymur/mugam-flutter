@@ -25,7 +25,92 @@ String isoDay(DateTime d) =>
     '${d.month.toString().padLeft(2, '0')}-'
     '${d.day.toString().padLeft(2, '0')}';
 
-/// Строка под сеткой: «5 gün · 9, 10, 11, 12, 15».
+/// СПИСОК ДАТ ЧЕЛОВЕЧЕСКИМИ СЛОВАМИ — одна форма на весь проект.
+///
+/// «14–31 avqust», «24–27, 31 avqust», «30 avqust, 2 sentyabr».
+///
+/// Заведено 25.08. До него список дат собирался **двумя способами**:
+/// [offerSummaryLine] перечисляла дни без месяца («9, 10, 11, 12, 15»), а
+/// [offerAnchorText] — с месяцем, названным один раз по первой дате. Оба
+/// теперь зовут эту функцию: двум формам одного списка разойтись нечем, если
+/// формы одна.
+///
+/// --- ОТРЕЗКАМИ, А НЕ ПЕРЕЧИСЛЕНИЕМ, И ЭТО ИЗМЕРЕНО ---
+///
+/// Замер прода 25.08 (`runQuery` по `offers`, 19 предложений): **13 наборов
+/// из 19 — один сплошной отрезок**, остальные шесть — два. Самый длинный
+/// набор — 18 дат, 14–31 августа: перечислением это **77 знаков**, отрезком
+/// — **12**.
+///
+/// Строка ленты держит **43 знака** (ширина под текст 295 pt при кегле 14,
+/// 6,84 pt на знак — снято по снимку с трубки, а не на глаз). Перечислением
+/// не влезает **1 набор из 19**, отрезками — **0 из 19**.
+///
+/// **Поэтому хвоста «и ещё N» здесь нет.** Он честнее не стал бы: «19, 20,
+/// 21 və daha 15» прячет пятнадцать дней, а «14–31» называет все.
+///
+/// --- МЕСЯЦ НАЗЫВАЕТСЯ ПРИ СМЕНЕ, А НЕ ОДИН РАЗ ---
+///
+/// Прежняя редакция [offerAnchorText] брала месяц **по первой дате** с
+/// оговоркой «набор через границу месяца редок, а строка нужна короткая». В
+/// проде таких наборов **0 из 19** — то есть оговорка ещё ни разу не
+/// соврала. Но набрать такой набор лист позволяет: выбор переживает листание
+/// месяцев, и тогда «30, 2 avqust» назвало бы сентябрьский день августовским.
+///
+/// **Отрезки считаются ВНУТРИ месяца**, поэтому сплошная полоса через границу
+/// выходит как «30–31 avqust, 1–2 sentyabr». Слитная запись
+/// («31 avqust – 1 sentyabr») читается хуже и требует второго разделителя.
+///
+/// --- ГРАНИЦЫ ---
+///
+/// **Год не называется** — как и везде в проекте. Набор через Новый год даст
+/// «31 dekabr, 1 yanvar», и который это год, строка не скажет. Сегодня
+/// недостижимо: предложить можно только вперёд, а лист не листается дальше,
+/// чем человек нажмёт.
+///
+/// **Неразбираемая дата выбрасывается**, а не печатается как есть. Так делала
+/// [offerAnchorText]; [offerSummaryLine] печатала сырую строку, и это
+/// расхождение снято в пользу выбрасывания: «2026-08-0X» в строке для
+/// человека — не дата, а мусор.
+String offerDatesLine(Iterable<String> isoDates) {
+  final parsed = (isoDates.toList()..sort())
+      .map(DateTime.tryParse)
+      .whereType<DateTime>()
+      .map((d) => DateTime(d.year, d.month, d.day))
+      .toList();
+  if (parsed.isEmpty) return '';
+
+  final parts = <String>[];
+  var i = 0;
+  while (i < parsed.length) {
+    // Месяц целиком: все подряд идущие даты одного месяца одного года.
+    final monthStart = i;
+    while (i + 1 < parsed.length &&
+        parsed[i + 1].month == parsed[monthStart].month &&
+        parsed[i + 1].year == parsed[monthStart].year) {
+      i++;
+    }
+    final inMonth = parsed.sublist(monthStart, i + 1);
+    i++;
+
+    final runs = <String>[];
+    var runStart = 0;
+    for (var k = 0; k < inMonth.length; k++) {
+      final last = k + 1 == inMonth.length;
+      final gap = !last && inMonth[k + 1].day != inMonth[k].day + 1;
+      if (!last && !gap) continue;
+      final a = inMonth[runStart].day;
+      final b = inMonth[k].day;
+      runs.add(a == b ? '$a' : '$a–$b');
+      runStart = k + 1;
+    }
+    parts.add('${runs.join(', ')} '
+        '${azMonthFull(inMonth.first.month).toLowerCase()}');
+  }
+  return parts.join(', ');
+}
+
+/// Строка под сеткой: «5 gün · 9–12, 15 avqust».
 ///
 /// **Человек должен видеть, что отправляет, ДО нажатия.** Сетка показывает
 /// выбор пятнами по месяцу, и пересчитать их глазами — работа; строка
@@ -33,14 +118,15 @@ String isoDay(DateTime d) =>
 ///
 /// Дни идут по возрастанию независимо от того, в каком порядке их тыкали:
 /// «9, 15, 10» читалось бы как ошибка ввода.
+///
+/// **МЕСЯЦ ЗДЕСЬ ПОЯВИЛСЯ 25.08 вместе с общей формой** — раньше строка
+/// печатала голые числа, потому что месяц написан в шапке сетки. Но выбор
+/// переживает листание месяцев: отметив 30 августа и 2 сентября, человек
+/// видел «2 gün · 30, 2» и не мог понять, про какой сентябрь речь.
 String offerSummaryLine(Iterable<String> isoDates) {
-  final sorted = isoDates.toList()..sort();
-  if (sorted.isEmpty) return '';
-  final days = sorted.map((iso) {
-    final d = DateTime.tryParse(iso);
-    return d == null ? iso : '${d.day}';
-  }).join(', ');
-  return '${sorted.length} gün · $days';
+  final line = offerDatesLine(isoDates);
+  if (line.isEmpty) return '';
+  return '${isoDates.length} gün · $line';
 }
 
 /// Можно ли отправлять.
@@ -68,15 +154,14 @@ String offerAnchorText({
   required List<String> dates,
   required String eventType,
 }) {
-  final sorted = dates.toList()..sort();
-  if (sorted.isEmpty) return eventType;
-  final parsed = sorted.map(DateTime.tryParse).whereType<DateTime>().toList();
-  if (parsed.isEmpty) return '${sorted.length} gün · $eventType';
-  final days = parsed.map((d) => '${d.day}').join(', ');
-  // Месяц называется один раз, по первому дню: набор через границу месяца
-  // редок, а строка нужна короткая.
-  final month = azMonthFull(parsed.first.month).toLowerCase();
-  return '${sorted.length} gün: $days $month · $eventType';
+  if (dates.isEmpty) return eventType;
+  // ДАТЫ СОБИРАЕТ ОБЩАЯ ФОРМА (25.08). Здесь стоял свой разбор — дни через
+  // запятую и месяц один раз по первой дате; он же стоял вторым в
+  // `offerSummaryLine`, только без месяца. Две формы одного списка держались
+  // ровно до первой правки одной из них.
+  final line = offerDatesLine(dates);
+  if (line.isEmpty) return '${dates.length} gün · $eventType';
+  return '${dates.length} gün: $line · $eventType';
 }
 
 /// Прошлые дни выбирать нельзя — тот же запрет, что и у прежнего листа
