@@ -1706,6 +1706,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     }
   }
 
+  /// ИМЯ АВТОРА ЦИТИРУЕМОГО СООБЩЕНИЯ.
+  ///
+  /// **ИСТОЧНИК ЗДЕСЬ НЕГОДНЫЙ, И ЭТО ИЗВЕСТНО — N141, не починено.**
+  /// `chatData['name']` — поле документа чата, названное негодным в этом же
+  /// файле у заголовка (:4418): **mugam-v2 пишет его со стороны СОЗДАТЕЛЯ
+  /// чата и никогда не обновляет**, поэтому вторая сторона читает там своё
+  /// собственное имя, а в чатах нового приложения — пустоту.
+  ///
+  /// **Цена здесь выше, чем у показа: имя ЗАПИСЫВАЕТСЯ в документ сообщения**
+  /// (`replyTo.senderName`), то есть неправда закрепляется в данных навсегда,
+  /// а не только рисуется на экране. Перепись прода 25.08: **10 цитат, у
+  /// одной имя расходится** («Q1» против «Rafael Dagli»); пустых имён **ноль**
+  /// — дорога открыта, но по ней ещё не проходили.
+  ///
+  /// **Чинить тем же приёмом, что подпись автора предложения:** взять
+  /// `_otherUserCached` — живое имя из `currentUserProvider`, тот же источник,
+  /// которым живёт заголовок (:4464). Отложено решением владельца 25.08:
+  /// отдельная работа, отдельная переменная.
   String _replySenderName(Message msg, String currentUid) {
     if (msg.senderId == currentUid) {
       return FirebaseAuth.instance.currentUser?.displayName ?? '';
@@ -1731,21 +1749,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         ? (otherUids.isNotEmpty ? otherUids.first : currentUid)
         : currentUid;
 
-    // ИМЯ ПРЕДЛОЖИВШЕГО — из состава чата, тем же способом, что у цитаты
-    // (`_replySenderName`): второго источника имён здесь не заводится.
-    // ГРАНИЦА: `chatData['name']` в прямом чате — имя собеседника, а в
-    // группе — имя группы. Предложения живут только в прямых чатах («один
-    // документ — один ответ»), и на групповом это сломается заметно.
-    final chatData = ref.read(chatDataProvider(widget.chatId)).value;
-    final initiatorName = iAmInitiator
+    // ИМЯ ПРЕДЛОЖИВШЕГО — ИЗ ТОГО ЖЕ ИСТОЧНИКА, ЧТО У ЗАГОЛОВКА ЧАТА, и это
+    // поправка 25.08, сделанная по виду на трубке.
+    //
+    // Первая редакция брала `chatData['name']`, и это оказалось неправдой,
+    // записанной в этом же файле двумя тысячами строк ниже (:4418):
+    // **mugam-v2 пишет `name` прямого чата со стороны СОЗДАТЕЛЯ и никогда
+    // не обновляет**, поэтому получатель читает оттуда своё собственное имя,
+    // а не имя собеседника. На трубке Рафаэля это дало «Naməlum təklif edir»
+    // (поле пустое), но с непустым полем вышло бы хуже: строка уверенно
+    // назвала бы предложившим самого читателя.
+    //
+    // `_otherUserCached` — живое имя из `currentUserProvider`, тот же
+    // источник, которым живут заголовок (:4464), подпись пересылки (:4373)
+    // и выделение имени (:1157). Второго источника имён здесь не заводится.
+    final offerInitiatorName = iAmInitiator
         ? (FirebaseAuth.instance.currentUser?.displayName ?? '')
-        : (chatData?['name'] as String? ?? '');
+        : (_otherUserCached?.name ?? '');
 
     return OfferFeedRow(
       offer: offer,
       viewerUid: currentUid,
       recipientUid: recipientUid,
-      initiatorName: initiatorName,
+      initiatorName: offerInitiatorName,
       onTap: () => _openOfferSheet(offer, currentUid),
     );
   }
