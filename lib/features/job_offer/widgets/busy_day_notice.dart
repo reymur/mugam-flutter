@@ -85,7 +85,9 @@ class BusyDayNotice extends StatelessWidget {
                   'Bu gün məşğulsan',
                   style: TextStyle(
                     color: kWarnTitle,
-                    fontSize: 14,
+                    // 26.08, по виду на трубке: предупреждение обязано
+                    // читаться раньше того, что оно объясняет.
+                    fontSize: 17,
                     fontWeight: FontWeight.w600,
                   ),
                 ),

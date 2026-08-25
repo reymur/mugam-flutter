@@ -118,7 +118,7 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
                     ),
                     style: const TextStyle(
                       color: kGold,
-                      fontSize: 12,
+                      fontSize: 14,
                       letterSpacing: 1.1,
                     ),
                   ),
@@ -162,9 +162,14 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
                           ? 'Gələ bildiyin günləri seç'
                           : offerSummaryLine(_picked),
                       key: const ValueKey('answer-summary'),
+                      // РАЗМЕР ПОДНЯТ 26.08 ПО ВИДУ НА ТРУБКЕ, вместе со всем
+                      // текстом под сеткой. Кегль равен заголовку в виде
+                      // ответа (18): это одна и та же строка по смыслу —
+                      // «что сейчас выбрано», — и в двух местах она обязана
+                      // весить одинаково.
                       style: TextStyle(
                         color: _picked.isEmpty ? kMuted : kGold,
-                        fontSize: 15,
+                        fontSize: 18,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -193,7 +198,7 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
                         // читаться, иначе предупреждение остаётся без
                         // объяснения и выглядит запретом.
                         kBusyPickableLine,
-                        style: TextStyle(color: kWarnHint, fontSize: 13),
+                        style: TextStyle(color: kWarnHint, fontSize: 15),
                       ),
                     ],
                     // ВЗАИМНО ИСКЛЮЧАЮЩЕ С ПРЕДЫДУЩЕЙ, И НЕ СЛУЧАЙНО: та
@@ -205,7 +210,7 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
                       const Text(
                         kBusyUnknownLine,
                         key: ValueKey('answer-busy-unknown'),
-                        style: TextStyle(color: kWarnHint, fontSize: 13),
+                        style: TextStyle(color: kWarnHint, fontSize: 15),
                       ),
                     ],
                   ],

@@ -207,7 +207,7 @@ class _OfferAnswerViewState extends State<OfferAnswerView> {
           const SizedBox(height: 13),
           Container(
             width: double.infinity,
-            constraints: const BoxConstraints(minHeight: 92),
+            constraints: const BoxConstraints(minHeight: 112),
             padding: const EdgeInsets.only(top: 12),
             decoration: const BoxDecoration(
               border: Border(top: BorderSide(color: kBorder)),
@@ -253,32 +253,42 @@ class _OfferAnswerViewState extends State<OfferAnswerView> {
       // Строка согласия — только когда согласованные дни есть. При ответе
       // нулём («ни на один не могу») «Gələ bilirəm» рядом с пустотой
       // прочлось бы прямо наоборот.
+      // РАЗМЕРЫ ПОДНЯТЫ 26.08 ПО ВИДУ НА ТРУБКЕ, вслед за подробностями и по
+      // той же причине: числа брались из браузерного макета, где телефон
+      // нарисован шире настоящего.
+      //
+      // Держатся В ПАРЕ С ПОДРОБНОСТЯМИ, потому что стоят на ОДНОМ И ТОМ ЖЕ
+      // месте и сменяют друг друга: разойдись кегли — блок при каждом
+      // переключении менял бы не только содержимое, но и вес.
+      //   «Gələ bilirəm» 18 = заголовок дня в подробностях;
+      //   числа          20 — крупнее всего в блоке: за ними сюда и смотрят;
+      //   «N gün · тип»  15 = подпись поля в подробностях, самая тихая строка.
       if (picked.isNotEmpty) ...[
         const Text(
           'Gələ bilirəm',
           style: TextStyle(
             color: kGold,
-            fontSize: 15,
+            fontSize: 18,
             fontWeight: FontWeight.w600,
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         Text(
           _numbers(picked),
           key: const ValueKey('answer-picked-numbers'),
           style: const TextStyle(
             color: kText,
-            fontSize: 17,
+            fontSize: 20,
             fontWeight: FontWeight.w600,
             fontFeatures: [FontFeature.tabularFigures()],
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
       ],
       Text(
         '${picked.length} gün · ${widget.offer.eventType}',
         key: const ValueKey('answer-total'),
-        style: const TextStyle(color: kMuted, fontSize: 12),
+        style: const TextStyle(color: kMuted, fontSize: 15),
       ),
     ],
   );
@@ -296,37 +306,65 @@ class _OfferAnswerViewState extends State<OfferAnswerView> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        // РАЗМЕРЫ ПОДНЯТЫ 26.08 ПО ВИДУ НА ТРУБКЕ — макет ошибся, и вот чем.
+        //
+        // Числа брались из браузерного макета один в один: заголовок 14,
+        // строки 13. В макете телефон нарисован ШИРЕ НАСТОЯЩЕГО и смотрят на
+        // него с расстояния монитора, поэтому мелкость там не читалась как
+        // мелкость. На устройстве владелец назвал подробности нечитаемыми.
+        //
+        // **Признак на будущее: размер шрифта — единственное, что макет в
+        // браузере проверить не может.** Всё остальное — порядок, цвет,
+        // состав — переносится один в один; кегль обязан проверяться глазами
+        // на трубке, и до этого он не проверен ничем.
+        //
+        // Мера взята не с потолка: значение равно дню месяца в сетке (16), а
+        // заголовок — имени вверху (20 у «Sən», здесь 18: он не главнее).
+        //
+        // **ЭТОТ РАЗМЕР ПРОВЕРЕН ГЛАЗАМИ НА ТРУБКЕ 26.08 и принят.** Следом
+        // пробовали ещё +20% (22/20/18) — владелец остановил на этом. Не
+        // поднимать «для читаемости» без взгляда на устройство: прошлый раз
+        // и мелкость, и её мера появились от того, что кегль брали из
+        // браузерного макета.
         Text(
           fmtEventDate(iso),
           key: const ValueKey('answer-details-day'),
           style: const TextStyle(
             color: kGold,
-            fontSize: 14,
+            fontSize: 18,
             fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
         ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 240),
+          constraints: const BoxConstraints(maxWidth: 260),
           child: Column(
             children: [
               for (final r in rows)
                 Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  padding: const EdgeInsets.symmetric(vertical: 5),
                   child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
                     children: [
                       SizedBox(
-                        width: 56,
+                        width: 66,
                         child: Text(
                           r.$1,
-                          style: const TextStyle(color: kMuted, fontSize: 13),
+                          style: const TextStyle(color: kMuted, fontSize: 15),
                         ),
                       ),
+                      // ЗНАЧЕНИЕ КРУПНЕЕ ПОДПИСИ, а не вровень с ней: человек
+                      // пришёл сюда за временем и местом, а не за словом
+                      // «Saat». Подпись объясняет, значение отвечает.
                       Expanded(
                         child: Text(
                           r.$2,
-                          style: const TextStyle(color: kText, fontSize: 13),
+                          style: const TextStyle(
+                            color: kText,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ],
@@ -335,7 +373,7 @@ class _OfferAnswerViewState extends State<OfferAnswerView> {
             ],
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 10),
         // ВОЗВРАТ НАЗВАН СЛОВОМ, а не оставлен на догадку. Повторное нажатие
         // на день работает тоже, но о нём никто не знает: способ, который
         // нельзя увидеть, — это не способ.
@@ -344,7 +382,7 @@ class _OfferAnswerViewState extends State<OfferAnswerView> {
           onTap: () => setState(() => _openDay = null),
           child: const Text(
             '← nəticəyə qayıt',
-            style: TextStyle(color: kMuted, fontSize: 11),
+            style: TextStyle(color: kMuted, fontSize: 13),
           ),
         ),
       ],
