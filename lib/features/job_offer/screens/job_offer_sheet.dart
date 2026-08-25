@@ -10,7 +10,7 @@ import '../../../firebase/firestore_service.dart';
 import '../../agreements/screens/agreements_screen.dart';
 import '../busy_days.dart';
 import '../widgets/job_offer_card.dart';
-import 'job_offer_accept_sheet.dart';
+import '../widgets/offer_answer_view.dart';
 import 'job_offer_answer_sheet.dart';
 
 // ЛИСТ ПРЕДЛОЖЕНИЯ — то, что раньше стояло развёрнутой карточкой в ленте.
@@ -191,7 +191,25 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
                       .firstOrNull;
                   if (offer == null) return _deleted(context);
 
-                  return _card(offer);
+                  // ОТВЕТ ЕСТЬ — РИСУЕМ ОТВЕТ, А НЕ КАРТОЧКУ (25.08, макет
+                  // владельца). Промежуточной карточки с «Cavaba bax» и
+                  // «Cavab ver» между лентой и ответом больше нет: строка в
+                  // ленте ведёт прямо сюда.
+                  //
+                  // **Дверь при этом осталась одна, и это условие того же
+                  // решения владельца от 22.08.** Оно запрещало вести из
+                  // ленты прямо в лист приёма — потому что тот пришлось бы
+                  // питать СНИМКОМ и потерять живое обновление (N143). Здесь
+                  // снимка нет: содержимое сменилось внутри двери, у того же
+                  // потока.
+                  //
+                  // Состояние спрашивается у самого предложения, а не у
+                  // `offerSheetFor`: та отвечает на «в каком состоянии
+                  // человек и что ему предложено», и у неё другой
+                  // потребитель — см. шапку файла.
+                  return offer.state == OfferState.answered
+                      ? _answer(offer)
+                      : _card(offer);
                 },
               ),
             ),
@@ -264,6 +282,55 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
     ),
   );
 
+  /// ВИД ОТВЕТА — то, что видят обе стороны, когда музыкант ответил.
+  ///
+  /// Кнопки раздаются ПО СТОРОНЕ, и раздача живёт здесь, а не в виджете:
+  /// виджет рисует то, чему передан обработчик, и не знает про роли.
+  ///
+  ///   инициатору  — «Qəbul edirəm» (её же гасит `canAcceptAnswer` внутри,
+  ///                 когда согласованных дней ноль) и «Təklifi geri götür»;
+  ///   отвечавшему — «Cavabı dəyiş», та самая дверь в лист ответа, которой
+  ///                 раньше была кнопка на карточке.
+  ///
+  /// **Отзыв не предлагается отвечавшему, и это не забывчивость:** отозвать
+  /// предложение может только тот, кто его сделал. Правило то же и в
+  /// `firestore.rules`.
+  Widget _answer(JobOffer offer) {
+    final viewerUid =
+        widget.debugViewerUid ??
+        FirebaseAuth.instance.currentUser?.uid ??
+        '';
+    final recipientUid = _recipientUid(offer, viewerUid);
+    final viewerAnswered = viewerUid == recipientUid;
+
+    return OfferAnswerView(
+      offer: offer,
+      viewerUid: viewerUid,
+      recipientUid: recipientUid,
+      recipientName: _nameOf(recipientUid, viewerUid),
+      onAccept: viewerAnswered
+          ? null
+          : () => _writeAccept(
+              offer,
+              viewerUid,
+              recipientUid,
+              _nameOf(recipientUid, viewerUid),
+            ),
+      onWithdraw: viewerAnswered
+          ? null
+          : () async {
+              await JobOfferRepository(FirebaseFirestore.instance).withdraw(
+                chatId: widget.chatId,
+                offerId: offer.id,
+                myUid: viewerUid,
+              );
+            },
+      onChangeAnswer: viewerAnswered
+          ? () => _openAnswerSheet(offer, viewerUid)
+          : null,
+    );
+  }
+
   Widget _card(JobOffer offer) {
     final viewerUid =
         widget.debugViewerUid ??
@@ -294,20 +361,20 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
         // Закрыв лист ответа, человек возвращается сюда, и здесь уже
         // виден его ответ: лист живёт потоком, а не снимком (N143).
         onOpenAnswer: () => _openAnswerSheet(offer, viewerUid),
-        // ШАГ 3 — ПРИЁМ. Тот же приём, что у ответа строкой выше:
-        // обработчик передаётся, кнопку рисует сама карточка по своему
-        // условию `canAccept && onAccept != null`.
+        // ШАГ 3 — ПРИЁМ. `onAccept` СЮДА БОЛЬШЕ НЕ ПЕРЕДАЁТСЯ (25.08).
         //
-        // ПОЧЕМУ ДВЕРЬ ОСТАЛАСЬ ЗДЕСЬ, А НЕ В `chat_screen` (решение
-        // владельца 22.08). Расплести переключатель так, чтобы клетка
-        // «инициатор × ответили» вела прямо в лист приёма, значило бы либо
-        // питать тот лист снимком из ленты — и потерять живое обновление,
-        // ради которого делалась N143, — либо завести второй источник тех
-        // же данных. А ещё инициатор потерял бы «Ətraflı»: в листе приёма
-        // его нет (замер 22.08: `grep -c "Ətraflı"` по тому файлу — 0 при
-        // канарейке `accept-confirm` — 1). Принимать без подробностей не
-        // лучше, чем отвечать без них.
-        onAccept: () => _openAcceptSheet(offer, viewerUid),
+        // Карточка рисует «Cavaba bax» по условию `canAccept && onAccept !=
+        // null`, а `canAccept` истинен ровно в одном состоянии — `answered`.
+        // В нём дверь теперь рисует не карточку, а сам ответ (`_answer`),
+        // значит эта ветка карточки отсюда недостижима, и обработчик,
+        // переданный ей, был бы обещанием без адресата.
+        //
+        // **Довод владельца от 22.08, стоявший здесь, снят макетом, а не
+        // отменён.** Он звучал так: вести из ленты прямо в приём нельзя,
+        // потому что лист пришлось бы питать снимком (потеря N143) и потому
+        // что инициатор потерял бы «Ətraflı» — в листе приёма его не было.
+        // Обе половины закрыты: содержимое сменилось ВНУТРИ двери, у того же
+        // потока, а подробности в новом виде есть, и лежат они по дням.
         onWithdraw: () async {
           await JobOfferRepository(FirebaseFirestore.instance).withdraw(
             chatId: widget.chatId,
@@ -385,40 +452,17 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
     );
   }
 
-  /// Открыть лист приёма и, если инициатор примет, записать пачку.
-  ///
-  /// **ЛИСТ ОТКРЫВАЕТСЯ ПОВЕРХ, А НЕ ВМЕСТО**, по тому же доводу, что у
-  /// ответа: подробности живут здесь и никуда не переносятся. Закрыв лист
-  /// приёма, человек возвращается сюда, и здесь уже видно «Təklif qəbul
-  /// edildi» — лист живёт потоком, а не снимком (N143).
-  ///
-  /// **`onWithdraw` НЕ ПЕРЕДАЁТСЯ, и это не пропуск.** Отзыв уже предложен
-  /// на карточке позади; продублировать его здесь значило бы завести
-  /// второе место для одного хода. Лист приёма рисует отзыв только тому,
-  /// кто его передал (`if (onWithdraw != null)`), — то самое правило
-  /// «кнопка без адресата не рисуется».
-  void _openAcceptSheet(JobOffer offer, String viewerUid) {
-    final recipientUid = _recipientUid(offer, viewerUid);
-    final recipientName = _nameOf(recipientUid, viewerUid);
-
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => JobOfferAcceptSheet(
-        offer: offer,
-        recipientUid: recipientUid,
-        recipientName: recipientName,
-        onAccept: () async {
-          // ЗАКРЫВАЕМ ДО ЗАПИСИ, как и при ответе: пачка уходит в сеть, и
-          // держать человека перед экраном, который уже ничего не решает,
-          // незачем. Итог он увидит здесь — поток обновит лист сам.
-          Navigator.of(sheetContext).pop();
-          await _writeAccept(offer, viewerUid, recipientUid, recipientName);
-        },
-      ),
-    );
-  }
+  // `_openAcceptSheet` СНЯТ 25.08 ВМЕСТЕ С ПРОМЕЖУТОЧНОЙ КАРТОЧКОЙ.
+  //
+  // Он открывал лист приёма ПОВЕРХ карточки, по кнопке «Cavaba bax». Теперь
+  // ответ рисует сама дверь (`_answer` выше), и открывать поверх нечего:
+  // строка в ленте ведёт прямо к ответу.
+  //
+  // Кнопка «Cavaba bax» при этом ЖИВА в самой карточке и покрыта тестом —
+  // карточка просто больше не показывается в состоянии `answered`. Снимать
+  // её оттуда не стали: карточка — отдельный виджет, её показывают и другие
+  // места, и правило «после ответа инициатору предлагают посмотреть ответ»
+  // от смены двери не изменилось.
 
   /// Настоящий путь записи принятия — `accept`, и только он.
   ///

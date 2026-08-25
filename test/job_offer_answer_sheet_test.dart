@@ -3,8 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/job_offer/job_offer.dart';
 import 'package:mugam_flutter/core/theme/colors.dart';
 import 'package:mugam_flutter/features/job_offer/busy_days.dart';
-import 'package:mugam_flutter/features/job_offer/screens/job_offer_accept_sheet.dart';
+import 'package:mugam_flutter/core/job_offer/day_details.dart';
 import 'package:mugam_flutter/features/job_offer/screens/job_offer_answer_sheet.dart';
+import 'package:mugam_flutter/features/job_offer/widgets/offer_answer_view.dart';
 import 'package:mugam_flutter/firebase/models.dart';
 
 // ЭКРАНЫ ОТВЕТА И ПРИЁМА.
@@ -23,12 +24,14 @@ const player = 'player-uid';
 JobOffer offer({
   List<String>? dates,
   Map<String, List<String>> answers = const {},
+  Map<String, DayDetails> details = const {},
 }) => JobOffer(
   id: 'offer-1',
   createdBy: boss,
   dates: dates ?? const ['2026-09-14', '2026-09-15', '2026-09-20'],
   eventType: 'Toy',
   answers: answers,
+  details: details,
 );
 
 Set<String> tappableDays(WidgetTester tester) {
@@ -407,110 +410,174 @@ void main() {
     });
   });
 
-  group('экран приёма инициатора', () {
+
+  // ВИД ОТВЕТА — то, что видят обе стороны после ответа музыканта.
+  //
+  // Пришёл 25.08 на смену `JobOfferAcceptSheet` по макету владельца. Прежняя
+  // группа тестов держала старую разметку целиком — «2 gün» крупно сверху,
+  // «14, 20 sentyabr» словами, «15 sentyabr — yox» тихой строкой — и снята
+  // вместе с ней, а не «поправлена»: проверять там больше нечего.
+  //
+  // ЧТО ЭТИ ТЕСТЫ ДЕРЖАТ, а что нет:
+  //   держат  — кто назван и как; что числа остались числами; что отказ
+  //             помечен значком; какие кнопки кому предложены;
+  //   НЕ держат — размеры и цвета. Проверять «21 больше 12» значило бы
+  //             закрепить макет, а не правило: следующая правка вида
+  //             покраснела бы, не сломав ничего.
+  group('вид ответа', () {
     Future<void> pump(
       WidgetTester tester, {
       required JobOffer o,
+      String viewer = boss,
       VoidCallback? onAccept,
+      VoidCallback? onWithdraw,
+      VoidCallback? onChangeAnswer,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: JobOfferAcceptSheet(
+            body: OfferAnswerView(
               offer: o,
+              viewerUid: viewer,
               recipientUid: player,
               recipientName: 'Teymur',
-              now: DateTime(2026, 9, 1),
-              onAccept: onAccept ?? () {},
+              onAccept: onAccept,
+              onWithdraw: onWithdraw,
+              onChangeAnswer: onChangeAnswer,
             ),
           ),
         ),
       );
     }
 
-    // Крупно — согласие, тише — отказ. Отказ не поступок, а сведения.
-    testWidgets('согласие показано крупно, отказ отдельной тихой строкой', (
+    final answered = offer(answers: {
+      player: const ['2026-09-14', '2026-09-20'],
+    });
+
+    // N141/I64 В НОВОМ МЕСТЕ: своей стороне — «Sən», чужой — имя.
+    //
+    // Утверждается И НАЛИЧИЕ нужного, И ОТСУТСТВИЕ лишнего. Одного первого
+    // мало: имя могло бы остаться рядом с «Sən», и неправда осталась бы.
+    testWidgets('инициатор читает имя ответившего', (tester) async {
+      await pump(tester, o: answered, viewer: boss);
+      expect(find.text('Teymur'), findsOneWidget);
+      expect(find.text('cavab verdi'), findsOneWidget);
+      expect(find.text('Sən'), findsNothing);
+    });
+
+    testWidgets('ответивший читает о себе во втором лице', (tester) async {
+      await pump(tester, o: answered, viewer: player);
+      expect(find.text('Sən'), findsOneWidget);
+      expect(find.text('cavab verdin'), findsOneWidget);
+      expect(find.text('Teymur'), findsNothing);
+    });
+
+    testWidgets('месяц назван один раз, дни — только числами', (tester) async {
+      await pump(tester, o: answered);
+
+      expect(find.text('SENTYABR'), findsOneWidget);
+      for (final n in ['14', '15', '20']) {
+        expect(find.text(n), findsOneWidget, reason: 'нет числа $n');
+      }
+      // Слов при числах не осталось: ни дня недели, ни месяца у каждого.
+      expect(find.textContaining('sentyabr'), findsNothing);
+      expect(find.textContaining('şənbə'), findsNothing);
+    });
+
+    // ГРУПП МОЖЕТ БЫТЬ БОЛЬШЕ ОДНОЙ, и без этого теста ошибка была бы тихой:
+    // «31, 1» под одним заголовком «Avqust» назвало бы сентябрьский день
+    // августовским, и вид остался бы правдоподобным.
+    testWidgets('дни двух месяцев названы каждый своим', (tester) async {
+      await pump(
+        tester,
+        o: offer(
+          dates: const ['2026-08-31', '2026-09-01'],
+          answers: {player: const ['2026-08-31']},
+        ),
+      );
+      expect(find.text('AVQUST'), findsOneWidget);
+      expect(find.text('SENTYABR'), findsOneWidget);
+    });
+
+    testWidgets('день отказа помечен значком, согласованный — нет', (
+      tester,
+    ) async {
+      await pump(tester, o: answered);
+      expect(
+        find.byKey(const ValueKey('answer-day-no-2026-09-15')),
+        findsOneWidget,
+        reason: 'на дне отказа нет значка',
+      );
+      expect(
+        find.byKey(const ValueKey('answer-day-no-2026-09-14')),
+        findsNothing,
+        reason: 'значок отказа встал на согласованный день',
+      );
+    });
+
+    testWidgets('числа согласия и подпись — одной строкой', (tester) async {
+      await pump(tester, o: answered);
+      expect(find.text('14, 20'), findsOneWidget);
+      expect(find.text('Gələ bilirəm'), findsOneWidget);
+    });
+
+    // Итог внизу и тихий. Проверяется НАЛИЧИЕ строки, а не её размер.
+    testWidgets('итог называет и число дней, и тип работы', (tester) async {
+      await pump(tester, o: answered);
+      expect(find.text('2 gün · Toy'), findsOneWidget);
+    });
+
+    // ОТВЕТ НУЛЁМ ДНЕЙ — законный ответ, и принимать после него нечего:
+    // «Qəbul edirəm» создала бы НОЛЬ вечеров.
+    testWidgets('ответ нулём: строки согласия нет и принимать нечего', (
       tester,
     ) async {
       await pump(
         tester,
-        o: offer(answers: {player: const ['2026-09-14', '2026-09-20']}),
+        o: offer(answers: {player: const []}),
+        onAccept: () {},
       );
-
-      expect(find.text('2 gün'), findsOneWidget);
-      expect(find.text('14, 20 sentyabr'), findsOneWidget);
-      expect(find.text('15 sentyabr — yox'), findsOneWidget);
-
-      final big = tester.widget<Text>(find.byKey(const ValueKey('accept-count')));
-      final quiet = tester.widget<Text>(
-        find.byKey(const ValueKey('accept-declined')),
-      );
-      expect(
-        big.style!.fontSize! > quiet.style!.fontSize! * 2,
-        isTrue,
-        reason: 'отказ показан наравне с согласием',
-      );
-    });
-
-    // На экране приёма выбирать нечего: инициатору править отметки
-    // музыканта запрещено правилом.
-    testWidgets('ни одна клетка не нажимается', (tester) async {
-      await pump(
-        tester,
-        o: offer(answers: {player: const ['2026-09-14']}),
-      );
-      expect(tappableDays(tester), isEmpty);
-    });
-
-    testWidgets('до ответа принимать нечего — кнопки нет', (tester) async {
-      await pump(tester, o: offer());
+      expect(find.text('Gələ bilirəm'), findsNothing);
       expect(find.byKey(const ValueKey('accept-confirm')), findsNothing);
-            // Шапка проходит через azUpperCase, поэтому ищем верхним регистром.
-      expect(find.textContaining('GÖZLƏN'), findsOneWidget);
+      expect(find.text('0 gün · Toy'), findsOneWidget);
     });
 
-    testWidgets('после ответа кнопка есть и нажатие доходит', (tester) async {
+    testWidgets('кнопка приёма есть и нажатие доходит', (tester) async {
       var accepted = false;
-      await pump(
-        tester,
-        o: offer(answers: {player: const ['2026-09-14']}),
-        onAccept: () => accepted = true,
-      );
+      await pump(tester, o: answered, onAccept: () => accepted = true);
       await tester.tap(find.byKey(const ValueKey('accept-confirm')));
       await tester.pump();
       expect(accepted, isTrue);
     });
 
-    // ОТВЕТ НУЛЁМ ДНЕЙ — ПРИНИМАТЬ НЕЧЕГО (решение автора 14.08).
-    //
-    // Прежняя редакция этого теста ждала кнопку и была неверна: «Qəbul
-    // edirəm» над пустым ответом создала бы НОЛЬ вечеров — обещание
-    // действия без последствий. Человек нажал бы и остался гадать,
-    // сработало или нет.
-    testWidgets('ответ нулём дней виден, но принимать нечего', (tester) async {
-      await pump(tester, o: offer(answers: {player: const []}));
-      expect(find.text('0 gün'), findsOneWidget);
-      expect(find.byKey(const ValueKey('accept-confirm')), findsNothing);
+    // I9: без нажатия проверка смотрела бы на текст и не могла провалиться
+    // от снятого обработчика — ровно N146.
+    testWidgets('«Cavabı dəyiş» нарисована отвечавшему и нажимается', (
+      tester,
+    ) async {
+      var changed = false;
+      await pump(
+        tester,
+        o: answered,
+        viewer: player,
+        onChangeAnswer: () => changed = true,
+      );
+      expect(find.text('Cavabı dəyiş'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('answer-change')));
+      await tester.pump();
+      expect(changed, isTrue);
     });
 
-    // При нуле отзыв остаётся единственным ходом — и рядом обязано стоять,
-    // ЧТО ПОСЛЕ НЕГО БУДЕТ, иначе человек нажмёт и не поймёт, куда всё
-    // делось.
+    // ОБРАТНАЯ СТОРОНА: кнопка без адресата не рисуется (N146).
+    testWidgets('без обработчиков ни одной кнопки нет', (tester) async {
+      await pump(tester, o: answered);
+      expect(find.byKey(const ValueKey('accept-confirm')), findsNothing);
+      expect(find.byKey(const ValueKey('answer-change')), findsNothing);
+      expect(find.byKey(const ValueKey('accept-withdraw')), findsNothing);
+    });
+
     testWidgets('отзыв объясняет своё последствие словами', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: JobOfferAcceptSheet(
-              offer: offer(answers: {player: const []}),
-              recipientUid: player,
-              recipientName: 'Teymur',
-              now: DateTime(2026, 9, 1),
-              onAccept: () {},
-              onWithdraw: () {},
-            ),
-          ),
-        ),
-      );
+      await pump(tester, o: answered, onWithdraw: () {});
       expect(find.byKey(const ValueKey('accept-withdraw')), findsOneWidget);
       expect(
         find.byKey(const ValueKey('accept-withdraw-note')),
@@ -518,6 +585,50 @@ void main() {
         reason: 'отзыв не сказал, что предложение закроется',
       );
       expect(find.textContaining('yeni təklif'), findsOneWidget);
+    });
+
+    // ПОДРОБНОСТИ ПО ДНЮ — то, ради чего дверь и позволили сменить: прежний
+    // лист приёма «Ətraflı» не показывал вовсе.
+    group('подробности дня', () {
+      final withDetails = offer(
+        answers: {player: const ['2026-09-14', '2026-09-20']},
+        details: const {
+          '2026-09-14': DayDetails(time: '20:00', location: 'Şəki'),
+        },
+      );
+
+      testWidgets('нажатие на день открывает его подробности', (tester) async {
+        await pump(tester, o: withDetails);
+        await tester.tap(find.byKey(const ValueKey('answer-day-2026-09-14')));
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const ValueKey('answer-details-day')), findsOneWidget);
+        expect(find.text('20:00'), findsOneWidget);
+        expect(find.text('Şəki'), findsOneWidget);
+        // Пустых полей нет: «Geyim» не вписан, значит строки быть не должно.
+        expect(find.text('Geyim'), findsNothing);
+      });
+
+      testWidgets('день без подробностей не нажимается', (tester) async {
+        await pump(tester, o: withDetails);
+        expect(
+          find.byKey(const ValueKey('answer-day-2026-09-20')),
+          findsNothing,
+          reason: 'день без подробностей обещает нажатие и не делает ничего',
+        );
+      });
+
+      // Подсказка — только когда нажимать есть на что. Иначе она зовёт в
+      // пустоту, а это то же обещание без адресата.
+      testWidgets('подсказка есть при подробностях и молчит без них', (
+        tester,
+      ) async {
+        await pump(tester, o: withDetails);
+        expect(find.byKey(const ValueKey('answer-tap-hint')), findsOneWidget);
+
+        await pump(tester, o: answered);
+        expect(find.byKey(const ValueKey('answer-tap-hint')), findsNothing);
+      });
     });
   });
 }

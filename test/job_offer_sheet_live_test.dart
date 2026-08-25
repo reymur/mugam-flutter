@@ -63,6 +63,10 @@ Future<void> pumpSheet(
   // шагом 2 значило бы смешать две правки. Шаг 2 передаёт `player` явно.
   String viewerUid = boss,
   Future<void> Function(List<String> picked)? onWrite,
+  /// Подмена записи ПРИЁМА. Появилась 25.08 вместе с тем, что приём
+  /// предлагается прямо в двери: без неё нажатие «Qəbul edirəm» ушло бы в
+  /// настоящий `JobOfferRepository`, то есть в неподнятый Firestore.
+  Future<void> Function(JobOffer offer)? writeAccept,
   // КАЛЕНДАРЬ, ключом — ЧЕЙ. Ключ здесь несёт проверку: лист обязан спросить
   // календарь СМОТРЯЩЕГО, и «спросил не того» видно по тому, что у остальных
   // ключей поток пуст.
@@ -124,6 +128,7 @@ Future<void> pumpSheet(
             debugOffers: stream,
             debugViewerUid: viewerUid,
             debugWriteAnswer: onWrite,
+            debugWriteAccept: writeAccept,
           ),
         ),
       ),
@@ -155,11 +160,25 @@ void main() {
       ]);
       await tester.pump();
 
+      // ПРИЗНАК СМЕНИЛСЯ ВМЕСТЕ С ДВЕРЬЮ (25.08), А ПРОВЕРКА — НЕТ.
+      //
+      // Прежде здесь искали текст «2 gün» на карточке. Теперь ответ рисует
+      // не карточка, а вид ответа, и «2 gün» в нём стоит вместе с типом
+      // работы. Проверка стала СИЛЬНЕЕ, а не мягче: спрашиваются оба —
+      // и итог, и сами числа, — потому что итог мог бы совпасть случайно,
+      // а «9, 10» приходит только из этой выдачи.
       expect(
-        find.text('2 gün'),
+        find.text('2 gün · Toy'),
         findsOneWidget,
         reason: 'лист остался на первом снимке — правка с другой трубки не '
             'доехала, и человек видит устаревшее',
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('answer-picked-numbers')))
+            .data,
+        '9, 10',
+        reason: 'вид ответа показал не те дни, что пришли выдачей',
       );
     });
 
@@ -701,7 +720,16 @@ void main() {
     // КАНАРЕЙКА БЕЗУСЛОВНАЯ И ПЕРВАЯ, как у шага 2 выше: остальные
     // проверки нажимают эту кнопку, и без неё они упали бы по причине «не
     // нашли кнопку», а не по своей.
-    testWidgets('инициатору после ответа кнопка приёма нарисована', (
+    // ПЕРЕПИСАН 25.08 ВМЕСТЕ СО СНЯТИЕМ ПРОМЕЖУТОЧНОЙ КАРТОЧКИ.
+    //
+    // Прежде здесь ждали `offer-accept` и «Cavaba bax» — кнопку НА КАРТОЧКЕ,
+    // которая открывала лист приёма поверх. Теперь дверь в состоянии
+    // `answered` рисует сам ответ, и «Qəbul edirəm» стоит прямо в нём.
+    //
+    // Проверка утверждает И НАЛИЧИЕ нового, И ОТСУТСТВИЕ старого: без
+    // второй половины она прошла бы и в том случае, если бы карточка
+    // осталась висеть под новым видом.
+    testWidgets('инициатору после ответа приём предложен сразу', (
       tester,
     ) async {
       await pumpSheet(
@@ -709,10 +737,25 @@ void main() {
         Stream.value([answeredOffer()]),
         viewerUid: boss,
       );
-      await tester.pump();
+      // ДВУХ КАДРОВ ЗДЕСЬ МАЛО, И ЭТО НЕ ПРИДИРКА ТЕСТА К СЕБЕ.
+      //
+      // «Qəbul edirəm» решает `canAcceptAnswer`, а ей нужен НАСТОЯЩИЙ uid
+      // получателя — он приходит из состава чата, то есть асинхронно.
+      // Прежняя кнопка на карточке спрашивала только состояние предложения
+      // и обходилась одним кадром.
+      //
+      // Поведение это правильное: пока состав не пришёл, неизвестно, КТО
+      // ответил, и предлагать принять нечего. Молчание тут честнее кнопки.
+      await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('offer-accept')), findsOneWidget);
-      expect(find.text('Cavaba bax'), findsOneWidget);
+      expect(find.byKey(const ValueKey('accept-confirm')), findsOneWidget);
+      expect(find.text('Qəbul edirəm'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('offer-accept')),
+        findsNothing,
+        reason: 'промежуточная карточка с «Cavaba bax» снова между лентой и '
+            'ответом',
+      );
     });
 
     // ДО ОТВЕТА ПРИНИМАТЬ НЕЧЕГО, и кнопки быть не должно.
@@ -745,37 +788,80 @@ void main() {
       expect(find.byKey(const ValueKey('offer-accept')), findsNothing);
     });
 
-    testWidgets('нажатие на «Cavaba bax» открывает лист приёма', (
+    // ПРИЁМ БЕЗ ПРОМЕЖУТОЧНОГО ЛИСТА — ЗАМЕНА ПРЕЖНЕМУ «нажатие на
+    // «Cavaba bax» открывает лист приёма».
+    //
+    // Тот тест доказывал, что лист приёма открывается ПОВЕРХ карточки и
+    // говорит про наше предложение. Ни листа, ни карточки в этой клетке
+    // больше нет, поэтому проверяется то же по существу, но на один шаг
+    // короче: дверь показывает НАШ ответ, и нажатие доходит до писателя.
+    // НОВЫЙ ВХОД В ЛИСТ ОТВЕТА, И БЕЗ ЭТОГО ТЕСТА ОН ОСТАЛСЯ БЫ НЕПОКРЫТЫМ.
+    //
+    // До 25.08 переответ начинался кнопкой «Cavab ver» на карточке, и все
+    // проверки занятости идут именно оттуда — на предложении БЕЗ ответа.
+    // Теперь у ответившего карточки нет, и дверь в лист ответа — «Cavabı
+    // dəyiş». Дорога за дверью та же самая (`_openAnswerSheet`, тот же
+    // `busyDaysProvider`), но САМ ВХОД новый, и проверять его нечем, кроме
+    // этого: зелёный прогон без него означал бы «старый вход цел», а не
+    // «новый работает».
+    testWidgets('«Cavabı dəyiş» открывает лист ответа с занятостью', (
       tester,
     ) async {
       await pumpSheet(
         tester,
         Stream.value([answeredOffer()]),
-        viewerUid: boss,
+        viewerUid: player,
+        own: const {},
+        asParticipant: const {},
       );
-      await tester.pump();
+      await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('offer-accept')));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.byKey(const ValueKey('answer-change')));
+      await tester.pumpAndSettle();
 
-      // Лист приёма открыт — и открыт ПРО НАШЕ предложение: два
-      // отмеченных дня, а не какое-то другое их число.
-      //
-      // ИСКАТЬ НАДО ПО КЛЮЧУ, А НЕ ПО ТЕКСТУ, и это выяснилось прогоном:
-      // `find.text('2 gün')` находит ДВА совпадения — на листе приёма и на
-      // карточке позади него. Совпадений два именно потому, что лист
-      // открылся ПОВЕРХ, а не вместо; то есть первая же неудача теста была
-      // не поломкой, а доказательством задуманного поведения.
-      expect(find.byKey(const ValueKey('accept-count')), findsOneWidget);
+      // Лист ответа открыт: клетки месяца нажимаются — это его, а не вида
+      // ответа (там нажатие открывает подробности, а не выбирает день).
       expect(
-        tester.widget<Text>(find.byKey(const ValueKey('accept-count'))).data,
-        '2 gün',
+        find.byKey(ValueKey('offer-cell-${iso(12)}')),
+        findsOneWidget,
+        reason: 'лист ответа не открылся — переответ стал недостижим',
       );
-      // Настоящее «Qəbul edirəm» живёт на листе приёма, и оно одно на весь
-      // экран: на карточке позади теперь «Cavaba bax».
-      expect(find.text('Qəbul edirəm'), findsOneWidget);
-      expect(find.text('Cavaba bax'), findsOneWidget);
+      // Занятость ДОЕХАЛА: строки незнания быть не должно. Она и есть
+      // признак того, что поставщик спрошен, а не забыт при смене двери.
+      expect(find.text(kBusyUnknownLine), findsNothing);
+    });
+
+    testWidgets('приём открыт сразу и принимает НАШЕ предложение', (
+      tester,
+    ) async {
+      JobOffer? written;
+      await pumpSheet(
+        tester,
+        Stream.value([answeredOffer()]),
+        viewerUid: boss,
+        writeAccept: (o) async => written = o,
+      );
+      // Состав чата приходит асинхронно — см. довод у соседнего теста.
+      await tester.pumpAndSettle();
+
+      // Показано наше предложение: два отмеченных дня, и именно те.
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('answer-picked-numbers')))
+            .data,
+        '10, 11',
+      );
+
+      // I9: без нажатия проверка смотрела бы на текст и не могла бы
+      // провалиться от снятого обработчика — ровно N146.
+      await tester.tap(find.byKey(const ValueKey('accept-confirm')));
+      await tester.pump();
+
+      expect(
+        written?.id,
+        answeredOffer().id,
+        reason: 'нажатие «Qəbul edirəm» не довело предложение до писателя',
+      );
     });
   });
 }
