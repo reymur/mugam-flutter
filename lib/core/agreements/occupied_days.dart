@@ -59,7 +59,8 @@ import 'day_buckets.dart';
 import 'day_role.dart';
 
 /// Сутки, занятые у [uid], из двух его потоков — своих вечеров и тех, где он
-/// в составе.
+/// в составе. Чем именно занят каждый день — [occupiedEventsByDayOf], оно же
+/// и считает; здесь только ключи.
 ///
 /// **Отдаёт СУТКИ, а не вечера, и это решение.** Сетке нужен ответ «этот день
 /// покрасить или нет»; отдай она вечера, каждый вызывающий раскладывал бы их
@@ -74,15 +75,47 @@ Set<DateTime> occupiedDaysOf({
   required List<PersonalEvent> own,
   required List<PersonalEvent> asParticipant,
   required String uid,
+}) => occupiedEventsByDayOf(
+  own: own,
+  asParticipant: asParticipant,
+  uid: uid,
+).keys.toSet();
+
+/// ЧЕМ ИМЕННО заняты эти сутки — те же вечера, разложенные по дням.
+///
+/// **Источник один, форм две, и вторая ВЫВЕДЕНА из первой** (`occupiedDaysOf`
+/// — это её ключи). Завести два прохода значило бы дать им разойтись: набор
+/// дней сказал бы «занято», а список вечеров оказался бы пуст, и оба ответа
+/// выглядели бы правильными порознь (N49, N74).
+///
+/// **Зачем понадобились вечера, а не только даты (владелец, 25.08).** Сетка
+/// красит день предупредительно, и человек, нажав на него, вправе спросить
+/// «чем занят?». Ответить на это набором дат нельзя — нужен сам вечер: его
+/// тип, время и `id`, по которому открывается карточка.
+///
+/// **ВЕЧЕРА ОТДАЮТСЯ ВСЕ, а не первый.** Два вечера в один день — обычная
+/// жизнь; отдай мы один, второй пропал бы молча, и это ровно N51/I11:
+/// сигнатура, возвращающая одно там, где их может быть несколько, прячет тот
+/// же дефект, что и `.first`. Порядок — по времени, тот же, которым живут
+/// список дня и пометка месяца, чтобы человек видел их в одном порядке везде.
+Map<DateTime, List<PersonalEvent>> occupiedEventsByDayOf({
+  required List<PersonalEvent> own,
+  required List<PersonalEvent> asParticipant,
+  required String uid,
 }) {
-  final out = <DateTime>{};
+  final out = <DateTime, List<PersonalEvent>>{};
   for (final e in liveEvents(own: own, asParticipant: asParticipant)) {
     if (dayRoleOf(e, uid) != DayRole.occupied) continue;
     final day = eventDay(e.date);
     // `liveEvents` уже выбросил записи без разбираемой даты — проверка здесь
     // только ради типа, а не ради правила.
     if (day == null) continue;
-    out.add(day);
+    (out[day] ??= <PersonalEvent>[]).add(e);
+  }
+  for (final list in out.values) {
+    list.sort(
+      (a, b) => eventLocalDateTime(a.date)!.compareTo(eventLocalDateTime(b.date)!),
+    );
   }
   return out;
 }

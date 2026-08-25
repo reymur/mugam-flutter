@@ -5,6 +5,7 @@ import '../../../core/job_offer/offer_draft.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/time/az_date_format.dart';
 import '../busy_days.dart';
+import '../widgets/busy_day_notice.dart';
 
 // ЛИСТ ВЫБОРА ДНЕЙ — макет `docs/design/mugam-14-secim`, положен 14.08.
 //
@@ -40,8 +41,8 @@ class JobOfferDaysSheet extends StatefulWidget {
     super.key,
     required this.onSend,
     this.initialMonth,
-    this.busyDays = const {},
-    this.busyUnknown = false,
+    this.busy = const BusyDays.unknown(),
+    this.onOpenBusyEvent,
     this.initialDates = const [],
     this.now,
     this.onRecordVoice,
@@ -68,23 +69,24 @@ class JobOfferDaysSheet extends StatefulWidget {
 
   final DateTime? initialMonth;
 
-  /// Свои занятые дни. **ВИДНЫ, НО ВЫБРАТЬ ИХ МОЖНО** — приложение помнит и
-  /// показывает, решает человек: две работы в один вечер бывают законны.
+  /// Своя занятость. **ВИДНА, НО ВЫБРАТЬ ЗАНЯТЫЙ ДЕНЬ МОЖНО** — приложение
+  /// помнит и показывает, решает человек: две работы в один вечер бывают
+  /// законны.
   ///
   /// **ПОДКЛЮЧЕНО 25.08**, вместе с листом ответа и по тому же доводу
   /// владельца: работодатель набирал дни так же вслепую, как музыкант их
   /// отмечал. Поставщик общий — `busyDaysProvider`
   /// (`features/job_offer/busy_days.dart`), передаётся из точки вызова
   /// (`job_offer_entry.dart`).
-  final Set<String> busyDays;
-
-  /// **ЗАНЯТОСТИ МЫ НЕ ЗНАЕМ — и лист обязан сказать это, а не промолчать.**
   ///
-  /// Ровно тот же признак и ровно та же причина, что у листа ответа
-  /// (`JobOfferAnswerSheet.busyUnknown`): пустая сетка утверждает «всё
-  /// свободно», а из готового набора дней «мы не смотрели» не выводится.
-  /// Умолчание `false` — виджет показывает то, что подали.
-  final bool busyUnknown;
+  /// **ОДИН ОБЪЕКТ, А НЕ ТРИ ПОЛЯ РЯДОМ, и умолчание — «не знаем»:** разбор
+  /// целиком у листа ответа (`JobOfferAnswerSheet.busy`), довод там же и один
+  /// на оба листа.
+  final BusyDays busy;
+
+  /// Открыть карточку вечера, занявшего день. `null` — открывать некуда, и
+  /// надпись про занятость не рисуется нажимаемой (N146/I64).
+  final void Function(String eventId)? onOpenBusyEvent;
 
   final List<String> initialDates;
 
@@ -238,17 +240,25 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
                       const Text(
                         kBusyPickableLine,
                         key: ValueKey('offer-busy-pickable'),
-                        style: TextStyle(color: kMuted, fontSize: 12),
+                        style: TextStyle(color: kWarnHint, fontSize: 13),
                       ),
-                    ] else if (widget.busyUnknown &&
-                        widget.busyDays.isEmpty) ...[
+                    ] else if (!widget.busy.known) ...[
                       const SizedBox(height: 12),
                       const Text(
                         kBusyUnknownLine,
                         key: ValueKey('offer-busy-unknown'),
-                        style: TextStyle(color: kMuted, fontSize: 12),
+                        style: TextStyle(color: kWarnHint, fontSize: 13),
                       ),
                     ],
+                    // ЧЕМ ЗАНЯТ ТОЛЬКО ЧТО НАЖАТЫЙ ДЕНЬ. Цвет говорит
+                    // «осторожно», надпись — «чем именно», и по ней
+                    // открывается сам вечер.
+                    BusyDayNotice(
+                      events: _openDay == null
+                          ? const []
+                          : widget.busy.on(_openDay!),
+                      onOpenEvent: widget.onOpenBusyEvent,
+                    ),
                     if (_picked.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Text(
@@ -362,14 +372,20 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
   /// сейчас»), а видит он в двух листах разное.
   bool get _busyVisibleThisMonth => monthGridDays(_month).any(
     (d) =>
-        widget.busyDays.contains(isoDay(d)) &&
+        widget.busy.days.contains(isoDay(d)) &&
         !isPastDay(d, now: widget.now),
   );
 
-  // ЦВЕТА ВЗЯТЫ ИЗ МАКЕТА, А НЕ ПОДОБРАНЫ НА ГЛАЗ. Занятый день там —
-  // rgba(111,168,220,0.16), и это ровно `kOwnerOther` (0xFF6FA8DC), уже
-  // живущий в палитре как «чужой владелец». Берётся ИМЕНЕМ, а не числом:
-  // уедет палитра — уедет и здесь, а число осталось бы старым (N66).
+  // ЦВЕТА БЕРУТСЯ ИМЕНЕМ, А НЕ ЧИСЛОМ (N66): уедет палитра — уедет и здесь,
+  // а число осталось бы старым.
+  //
+  // **МАКЕТ ЗДЕСЬ БОЛЬШЕ НЕ ГЛАВНЫЙ, И ЭТО ЗАПИСАНО НАРОЧНО.** До 25.08
+  // занятый день красился `kOwnerOther` с альфой — ровно
+  // `rgba(111,168,220,0.16)` из `mugam-14-secim`, то есть «взято из макета, а
+  // не подобрано на глаз». На устройстве владелец увидел, что этот цвет
+  // неотличим от невыбираемого дня, и заменил его предупредительным. **Макет
+  // проиграл трубке — так в этом проекте и решается**, и запись об этом
+  // стоит здесь, чтобы следующий не «вернул как в макете».
   Widget _dayCell(DateTime day) {
     final inMonth = day.month == _month.month;
     final iso = isoDay(day);
@@ -381,7 +397,7 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
     // учит глаз игнорировать цвет, который завтра должен остановить руку.
     //
     // `past` взят готовым строкой выше — второго источника даты нет.
-    final busy = widget.busyDays.contains(iso) && !past;
+    final busy = widget.busy.days.contains(iso) && !past;
     final hasDetails = (_details[iso] ?? const DayDetails()).isNotEmpty;
     final selectable = inMonth && !past;
 
@@ -392,13 +408,20 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
         height: 40,
         margin: const EdgeInsets.all(2),
         decoration: BoxDecoration(
-          color: picked
-              ? kGold
-              : (busy ? kOwnerOther.withAlpha(41) : Colors.transparent),
+          // ЗАНЯТЫЙ ДЕНЬ — ПРЕДУПРЕДИТЕЛЬНЫМ ЦВЕТОМ, тот же набор `kWarn*` и
+          // тот же довод, что в `OfferMonthGrid._cell` (владелец, 25.08):
+          // прежний `kOwnerOther` с альфой на устройстве не отличался от
+          // невыбираемого дня.
+          color: picked ? kGold : (busy ? kWarnBg : Colors.transparent),
           borderRadius: BorderRadius.circular(9),
-          border: _openDay == iso && !picked
-              ? Border.all(color: kGold, width: 1.5)
-              : null,
+          // Выбранный занятый день сохраняет рамку: золото выбора иначе
+          // закрывает предупреждение ровно тогда, когда человек на занятый
+          // день согласился.
+          border: picked && busy
+              ? Border.all(color: kWarnBorder, width: 1.5)
+              : (_openDay == iso && !picked
+                    ? Border.all(color: kGold, width: 1.5)
+                    : null),
         ),
         child: Stack(
           alignment: Alignment.center,

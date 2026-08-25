@@ -61,6 +61,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/agreements/occupied_days.dart';
 import '../../core/job_offer/offer_draft.dart';
 import '../../firebase/firestore_service.dart';
+import '../../firebase/models.dart';
 
 /// «Твои занятые дни пока не показываются». Одна строка на оба листа: сказать
 /// это двумя копиями значит дать им разойтись в первой же правке (N66 — брать
@@ -78,19 +79,31 @@ const String kBusyPickableLine = 'məşğul günləri də seçə bilərsən';
 /// свободен» и «мы не смотрели». Первое — сведения, второе — молчание, и
 /// человек, отмечающий дни, поступает по ним по-разному.
 class BusyDays {
-  /// Знаем: вот эти дни заняты (набор может быть и пустым — это ответ
-  /// «занятых нет», а не отсутствие ответа).
-  const BusyDays(this.days) : known = true;
+  /// Знаем: вот эти дни заняты, и вот чем (карта может быть и пустой — это
+  /// ответ «занятых нет», а не отсутствие ответа).
+  const BusyDays(this.eventsByDay) : known = true;
 
   /// Не знаем: потоки молчат, отказали, либо спрашивать не за кого.
-  const BusyDays.unknown() : days = const {}, known = false;
+  const BusyDays.unknown() : eventsByDay = const {}, known = false;
 
-  /// Занятые сутки в виде `2026-08-25` — той же записью, какой их спрашивает
-  /// сетка (`isoDay`).
-  final Set<String> days;
+  /// Занятые сутки → вечера, которые их занимают. Ключ — запись `2026-08-25`,
+  /// та же, какой сетка спрашивает про клетку (`isoDay`).
+  ///
+  /// **Вечера лежат здесь, а не рядом отдельным набором дат**, потому что два
+  /// поля разъехались бы: набор сказал бы «занято», список оказался бы пуст, и
+  /// каждое выглядело бы правильным порознь.
+  final Map<String, List<PersonalEvent>> eventsByDay;
 
   /// Ответ вообще состоялся.
   final bool known;
+
+  /// Занятые дни — для сетки, которой нужен только ответ «красить или нет».
+  Set<String> get days => eventsByDay.keys.toSet();
+
+  /// Чем занят этот день. Пусто — день свободен **или** мы не знаем; кто
+  /// спрашивает про показ, различает это по [known].
+  List<PersonalEvent> on(String isoDay) =>
+      eventsByDay[isoDay] ?? const <PersonalEvent>[];
 }
 
 /// Занятые дни человека [uid] для сеток выбора.
@@ -123,11 +136,11 @@ final busyDaysProvider = Provider.family<BusyDays, String>((ref, uid) {
   }
 
   return BusyDays({
-    for (final day in occupiedDaysOf(
+    for (final entry in occupiedEventsByDayOf(
       own: own.asData!.value,
       asParticipant: asParticipant.asData!.value,
       uid: uid,
-    ))
-      isoDay(day),
+    ).entries)
+      isoDay(entry.key): entry.value,
   });
 });

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/job_offer/offer_draft.dart';
 import 'package:mugam_flutter/core/theme/colors.dart';
+import 'package:mugam_flutter/features/job_offer/busy_days.dart';
+import 'package:mugam_flutter/firebase/models.dart';
 import 'package:mugam_flutter/features/job_offer/screens/job_offer_days_sheet.dart';
 
 // ЛИСТ ВЫБОРА ДНЕЙ — три требования владельца, каждое отдельной проверкой.
@@ -87,20 +89,28 @@ void main() {
     Future<void> pump(
       WidgetTester tester, {
       Set<String> busy = const {},
-      bool busyUnknown = false,
+      bool busyKnown = true,
+      Map<String, List<PersonalEvent>> busyEvents = const {},
+      void Function(String eventId)? onOpenBusyEvent,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: JobOfferDaysSheet(
               initialMonth: DateTime(2026, 8),
-              busyUnknown: busyUnknown,
+              // Занятость — ОДИН ответ: дни, вечера и признак «знаем ли».
+              busy: busyKnown
+                  ? BusyDays({
+                      for (final iso in busy) iso: busyEvents[iso] ?? const [],
+                      ...busyEvents,
+                    })
+                  : const BusyDays.unknown(),
+              onOpenBusyEvent: onOpenBusyEvent,
               // «Сегодня» прибито намеренно: без этого набор тыкает в
               // конкретные числа и через неделю бьёт в прошлое, которое
               // лист законно не принимает. Тест покраснел бы не потому,
               // что код сломался, — поймано в первый же прогон.
               now: DateTime(2026, 8, 1),
-              busyDays: busy,
               onSend:
                   ({required dates, required eventType, required details}) {},
             ),
@@ -512,7 +522,7 @@ void main() {
     // Firestore до показа листа).
     group('занятость: три состояния, и молчание — только одно из них', () {
       testWidgets('занятости не знаем — сказано словами', (tester) async {
-        await pump(tester, busyUnknown: true);
+        await pump(tester, busyKnown: false);
         expect(
           find.byKey(const ValueKey('offer-busy-unknown')),
           findsOneWidget,
@@ -541,15 +551,26 @@ void main() {
       });
 
       // ВЗАИМНО ИСКЛЮЧАЮЩИЕ: «занятые выбирать можно» и «занятых не знаем» —
-      // про одно и то же два разных. Проверка держит именно это, а не то, что
-      // какая-то из строк вообще есть.
-      testWidgets('две строки разом не показываются', (tester) async {
-        await pump(tester, busy: {'2026-08-10'}, busyUnknown: true);
+      // про одно и то же два разных.
+      //
+      // **ПРОВЕРКА ИЗМЕНИЛАСЬ 25.08, И ЭТО НЕ ОСЛАБЛЕНИЕ.** Прежде она подавала
+      // занятые дни ВМЕСТЕ с признаком «не знаем» — состояние, которое лист мог
+      // получить, пока полей было два. Теперь занятость приходит одним объектом
+      // (`BusyDays`), и «не знаем» по устройству не имеет дней: противоречие
+      // стало **невыразимым**, а не запрещённым. Проверка держит именно это.
+      testWidgets('«не знаем» не может прийти вместе с занятыми днями', (
+        tester,
+      ) async {
+        await pump(tester, busy: {'2026-08-10'}, busyKnown: false);
         expect(
-          find.byKey(const ValueKey('offer-busy-pickable')),
+          find.byKey(const ValueKey('offer-busy-unknown')),
           findsOneWidget,
         );
-        expect(find.byKey(const ValueKey('offer-busy-unknown')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('offer-busy-pickable')),
+          findsNothing,
+          reason: 'занятые дни при «не знаем» не доехали бы до листа вовсе',
+        );
       });
 
       // Занятость приходит на ВЕСЬ календарь, а сетка показывает один месяц.
@@ -561,6 +582,84 @@ void main() {
         await pump(tester, busy: {'2026-12-10'});
         expect(find.byKey(const ValueKey('offer-busy-pickable')), findsNothing);
         expect(find.byKey(const ValueKey('offer-busy-unknown')), findsNothing);
+      });
+    });
+
+    // ЧЕМ ЗАНЯТ НАЖАТЫЙ ДЕНЬ — та же надпись и та же дверь, что в листе
+    // ответа (владелец, 25.08). Виджет один на оба листа
+    // (`BusyDayNotice`), потому что вопрос один; проверки здесь — про то,
+    // что ЭТОТ лист его подключил и кормит правильным днём.
+    group('чем занят нажатый день', () {
+      PersonalEvent evening(String id, {String time = '15:00'}) =>
+          PersonalEvent.fromFirestore(id, {
+            'ownerUid': 'me',
+            'date': '2026-08-10T$time:00.000',
+            'type': 'Toy',
+            'musicians': const <String>[],
+            'answersWrittenByOwner': true,
+            'status': 'agreed',
+          });
+
+      testWidgets('нажал занятый день — сказано, чем он занят', (tester) async {
+        await pump(
+          tester,
+          busy: {'2026-08-10'},
+          busyEvents: {
+            '2026-08-10': [evening('e1')],
+          },
+        );
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('offer-cell-2026-08-10')),
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-10')));
+        await tester.pump();
+
+        expect(find.byKey(const ValueKey('busy-day-notice')), findsOneWidget);
+        expect(find.text('Toy · 15:00'), findsOneWidget);
+      });
+
+      testWidgets('нажал свободный день — надписи нет', (tester) async {
+        await pump(
+          tester,
+          busy: {'2026-08-10'},
+          busyEvents: {
+            '2026-08-10': [evening('e1')],
+          },
+        );
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('offer-cell-2026-08-11')),
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-11')));
+        await tester.pump();
+        expect(find.byKey(const ValueKey('busy-day-notice')), findsNothing);
+      });
+
+      testWidgets('нажатие на надпись открывает ТОТ вечер', (tester) async {
+        String? opened;
+        await pump(
+          tester,
+          busy: {'2026-08-10'},
+          busyEvents: {
+            '2026-08-10': [evening('e1')],
+          },
+          onOpenBusyEvent: (id) => opened = id,
+        );
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('offer-cell-2026-08-10')),
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('offer-cell-2026-08-10')));
+        await tester.pump();
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('busy-day-open-e1')),
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('busy-day-open-e1')));
+        await tester.pump();
+
+        expect(opened, 'e1');
       });
     });
 
@@ -592,7 +691,7 @@ void main() {
       // заливать вообще.
       testWidgets('занятый БУДУЩИЙ день залит', (tester) async {
         await pump(tester, busy: {'2026-08-10'});
-        expect(cellColor(tester, '2026-08-10'), kOwnerOther.withAlpha(41));
+        expect(cellColor(tester, '2026-08-10'), kWarnBg);
       });
 
       testWidgets('занятость только в прошлом — строки про выбор нет', (

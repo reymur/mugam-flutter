@@ -413,7 +413,7 @@ void main() {
 
       expect(
         cellColor(tester, iso(11)),
-        kOwnerOther.withAlpha(41),
+        kWarnBg,
         reason: 'занятый день не покрашен — занятость до сетки не доехала',
       );
       expect(
@@ -430,6 +430,49 @@ void main() {
         find.text(kBusyPickableLine),
         findsOneWidget,
         reason: 'занятый день выбрать можно, и это сказано',
+      );
+    });
+
+    // ДВЕРЬ В КАРТОЧКУ ВЕЧЕРА ПЕРЕДАНА — ПРОВОДКА, А НЕ ВИДЖЕТ.
+    //
+    // Сам виджет надписи знает своё («передали дверь — рисую нажимаемой»), и
+    // это проверено у него. Здесь утверждение другое и на него нет второго
+    // теста: **что дверь кто-то передаёт**. Не передай её `job_offer_sheet` —
+    // человек увидел бы надпись, которая ничего не делает; это ровно N146,
+    // микрофон без адресата.
+    //
+    // Проверяется НАЛИЧИЕМ нажимаемой строки, а не переходом: `eventDetailRoute`
+    // ведёт в экран, которому нужен живой Firestore, и открывать его здесь
+    // нечем. Граница названа, чтобы на этот тест не полагались шире (I50).
+    testWidgets('нажатие на занятый день даёт нажимаемую надпись о вечере', (
+      tester,
+    ) async {
+      await pumpSheet(
+        tester,
+        Stream.value([futureOffer()]),
+        viewerUid: player,
+        own: {
+          player: [
+            calendarEvent('busy-1', owner: player, date: '${iso(11)}T15:00:00.000'),
+          ],
+        },
+        asParticipant: const {},
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tester.tap(find.byKey(ValueKey('offer-cell-${iso(11)}')));
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('busy-day-notice')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('busy-day-open-busy-1')),
+        findsOneWidget,
+        reason: 'надпись есть, а двери нет — человек нажмёт и не получит '
+            'ничего (N146)',
       );
     });
 
@@ -532,7 +575,7 @@ void main() {
 
       expect(
         cellColor(tester, iso(11)),
-        kOwnerOther.withAlpha(41),
+        kWarnBg,
         reason: 'занятость пришла, а модалка её не увидела — Consumer внутри '
             'листа потерян, и человек остался с устаревшим',
       );

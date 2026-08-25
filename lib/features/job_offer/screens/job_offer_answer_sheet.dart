@@ -5,6 +5,7 @@ import '../../../core/job_offer/offer_draft.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/time/az_date_format.dart';
 import '../busy_days.dart';
+import '../widgets/busy_day_notice.dart';
 import '../widgets/offer_month_grid.dart';
 
 // ЭКРАН ОТВЕТА — приглашённый отмечает, на какие дни может.
@@ -25,8 +26,8 @@ class JobOfferAnswerSheet extends StatefulWidget {
     required this.myUid,
     required this.initiatorName,
     required this.onSend,
-    this.busyDays = const {},
-    this.busyUnknown = false,
+    this.busy = const BusyDays.unknown(),
+    this.onOpenBusyEvent,
     this.now,
   });
 
@@ -38,32 +39,26 @@ class JobOfferAnswerSheet extends StatefulWidget {
   /// от ответа.
   final void Function(List<String> picked) onSend;
 
-  /// Свои занятые дни — ПРЕДУПРЕЖДЕНИЕ, не запрет: выбрать их можно,
-  /// решает человек (см. `OfferMonthGrid.busy`).
-  final Set<String> busyDays;
+  /// Своя занятость — ПРЕДУПРЕЖДЕНИЕ, не запрет: выбрать занятый день можно,
+  /// решает человек.
+  ///
+  /// **ОДИН ОБЪЕКТ, А НЕ ТРИ ПОЛЯ РЯДОМ, и это не аккуратность.** Здесь
+  /// стояли `busyDays` и `busyUnknown` по отдельности; с 25.08 к ним
+  /// понадобились ещё и сами вечера — чтобы сказать, ЧЕМ занят день. Три поля
+  /// рядом расходятся молча: набор говорит «занято», список вечеров пуст,
+  /// признак говорит «не знаем» — и каждое выглядит правильным порознь.
+  /// [BusyDays] держит их вместе, потому что они и есть один ответ.
+  ///
+  /// **УМОЛЧАНИЕ — «НЕ ЗНАЕМ», и это тоже правка 25.08.** Прежнее умолчание
+  /// (пустой набор плюс `busyUnknown: false`) означало «мы посмотрели, у тебя
+  /// всё свободно» — утверждение, которого никто не делал. Виджет, которому
+  /// занятость не подали, обязан молчать о ней честно.
+  final BusyDays busy;
 
-  /// **ЗАНЯТОСТИ МЫ НЕ ЗНАЕМ — сказать это словами, а не промолчать.**
-  ///
-  /// Пустой `busyDays` двусмыслен, и обе стороны двусмыслицы на экране
-  /// выглядят одинаково: «у меня всё свободно» и «мы не знаем». Пустая сетка
-  /// утверждает первое, а верно бывает и второе.
-  ///
-  /// **Различие здесь решает не показ, а на что человек соглашается**
-  /// (I47). Промолчать значило бы дать ему отметить день, на котором он
-  /// уже занят, и узнать об этом на шаге 3 — чужими руками.
-  ///
-  /// **ПОДКЛЮЧЕНО 25.08.** До этого дня сюда приходил литерал
-  /// `busyUnknown: true` — «не знаем» говорилось всегда, потому что
-  /// поставщика не было ни одного. Теперь признак приходит от
-  /// `busyDaysProvider` (`features/job_offer/busy_days.dart`) и означает
-  /// ровно то, что написано: потоки календаря ещё не ответили, отказали,
-  /// либо спрашивать не за кого (пустой uid).
-  ///
-  /// **Лист принимает признак и НЕ выводит его сам** — ни из пустоты
-  /// `busyDays`, ни из чего другого: из готового набора «мы не смотрели» не
-  /// выводится в принципе. Отсюда и умолчание `false`: виджет, которому
-  /// подали дни и не подали признак, показывает то, что подали.
-  final bool busyUnknown;
+  /// Открыть карточку вечера, занявшего день. `null` — открывать некуда, и
+  /// тогда надпись про занятость не рисуется нажимаемой (правило «кнопка без
+  /// адресата не рисуется», N146/I64).
+  final void Function(String eventId)? onOpenBusyEvent;
 
   final DateTime? now;
 
@@ -73,6 +68,10 @@ class JobOfferAnswerSheet extends StatefulWidget {
 
 class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
   late final Set<String> _picked = widget.offer.pickedBy(widget.myUid).toSet();
+
+  /// Последний нажатый день — тот, про который говорит надпись о занятости.
+  /// **Не «выбранный»:** выбор здесь набор, а спрашивают всегда про один день.
+  String? _openDay;
   late DateTime _month = _monthOfFirstDate();
 
   DateTime _monthOfFirstDate() {
@@ -142,14 +141,19 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
                     OfferMonthGrid(
                       month: _month,
                       picked: _picked,
-                      busy: widget.busyDays,
+                      busy: widget.busy.days,
                       // НАЖИМАЕМЫ ТОЛЬКО ПРЕДЛОЖЕННЫЕ ДНИ, ни одного
                       // лишнего. Требование автора и вторая половина
                       // правила `answerFitsOffer`.
                       selectable: offered,
+                      // Обведён тот день, о котором говорит надпись про
+                      // занятость ниже: иначе «Bu gün məşğulsan» висит в
+                      // воздухе и не называет, про какой день оно.
+                      openDay: _openDay,
                       now: widget.now,
                       onTapDay: (iso) => setState(() {
                         if (!_picked.remove(iso)) _picked.add(iso);
+                        _openDay = iso;
                       }),
                     ),
                     const SizedBox(height: 12),
@@ -164,6 +168,15 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                    // ЧЕМ ЗАНЯТ ТОЛЬКО ЧТО НАЖАТЫЙ ДЕНЬ. Цвет говорит
+                    // «осторожно», надпись — «чем именно», и по ней
+                    // открывается сам вечер.
+                    BusyDayNotice(
+                      events: _openDay == null
+                          ? const []
+                          : widget.busy.on(_openDay!),
+                      onOpenEvent: widget.onOpenBusyEvent,
+                    ),
                     if (_busyOfferedAhead(offered).isNotEmpty) ...[
                       const SizedBox(height: 8),
                       const Text(
@@ -173,20 +186,26 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
                         // Строка взята ИМЕНЕМ: та же самая стоит в листе
                         // набора дней, и две копии разошлись бы в первой же
                         // правке (N66).
+                        //
+                        // ЦВЕТ И РАЗМЕР ПОДНЯТЫ 25.08: владелец назвал строку
+                        // нечитаемой на трубке — она стояла `kMuted` в 12
+                        // пунктов. Пояснение к предупреждению обязано
+                        // читаться, иначе предупреждение остаётся без
+                        // объяснения и выглядит запретом.
                         kBusyPickableLine,
-                        style: TextStyle(color: kMuted, fontSize: 12),
+                        style: TextStyle(color: kWarnHint, fontSize: 13),
                       ),
                     ],
                     // ВЗАИМНО ИСКЛЮЧАЮЩЕ С ПРЕДЫДУЩЕЙ, И НЕ СЛУЧАЙНО: та
                     // говорит «занятые дни выбирать можно», эта — «занятых
                     // дней мы не знаем». Показать обе разом значило бы
                     // сказать про одно и то же два разных.
-                    if (widget.busyUnknown && widget.busyDays.isEmpty) ...[
+                    if (!widget.busy.known) ...[
                       const SizedBox(height: 8),
                       const Text(
                         kBusyUnknownLine,
                         key: ValueKey('answer-busy-unknown'),
-                        style: TextStyle(color: kMuted, fontSize: 12),
+                        style: TextStyle(color: kWarnHint, fontSize: 13),
                       ),
                     ],
                   ],
@@ -221,7 +240,7 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
   /// `DateTime`; нечитаемая строка сюда попасть не может — набор собран
   /// `isoDay`, — но ответ на неё дан явно: не показывать.
   Set<String> _busyOfferedAhead(Set<String> offered) => {
-    for (final iso in widget.busyDays.intersection(offered))
+    for (final iso in widget.busy.days.intersection(offered))
       if (!(DateTime.tryParse(iso) == null ||
           isPastDay(DateTime.parse(iso), now: widget.now)))
         iso,

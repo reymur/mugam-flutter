@@ -12,6 +12,7 @@ import '../../core/job_offer/day_details.dart';
 import '../../core/job_offer/job_offer_repository.dart';
 import '../../core/job_offer/offer_draft.dart';
 import '../../firebase/firestore_service.dart';
+import '../agreements/screens/agreements_screen.dart';
 import 'busy_days.dart';
 import 'screens/job_offer_days_sheet.dart';
 import 'screens/pick_person_sheet.dart';
@@ -285,11 +286,16 @@ Future<bool> _offerToPerson(
           // набирал дни так же вслепую, как музыкант их отмечал: параметр у
           // листа был, поставщика не было ни одного. Поставщик общий с
           // листом ответа — `busyDaysProvider`.
-          busyDays: busy.days,
-          // «Не знаем» — это НЕ «набор пуст»: пустой набор бывает и законным
-          // ответом «занятых нет». Признак отдельный и приходит от
-          // поставщика.
-          busyUnknown: !busy.known,
+          // Занятость одним объектом: дни, вечера и признак «знаем ли» — один
+          // ответ, и разъехаться им нельзя.
+          busy: busy,
+          // ДВЕРЬ В КАРТОЧКУ ВЕЧЕРА — та же `eventDetailRoute`, что у всего
+          // остального (N90/N117), и открывается она ПОВЕРХ листа: человек
+          // смотрит, чем занят день, и возвращается к набору, не потеряв
+          // набранного.
+          onOpenBusyEvent: (eventId) => Navigator.of(context).push(
+            eventDetailRoute(eventId: eventId, currentUid: myUid),
+          ),
           // День из календаря открывает лист НА ЭТОМ МЕСЯЦЕ и стоит
           // предвыбранным — но снимается тапом, как любой другой. Иначе
           // «открыл из календаря и передумал» давало бы предложение на день,

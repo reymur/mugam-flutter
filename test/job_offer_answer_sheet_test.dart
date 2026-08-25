@@ -5,6 +5,7 @@ import 'package:mugam_flutter/core/theme/colors.dart';
 import 'package:mugam_flutter/features/job_offer/busy_days.dart';
 import 'package:mugam_flutter/features/job_offer/screens/job_offer_accept_sheet.dart';
 import 'package:mugam_flutter/features/job_offer/screens/job_offer_answer_sheet.dart';
+import 'package:mugam_flutter/firebase/models.dart';
 
 // ЭКРАНЫ ОТВЕТА И ПРИЁМА.
 //
@@ -50,7 +51,11 @@ void main() {
       WidgetTester tester, {
       JobOffer? o,
       Set<String> busy = const {},
+      bool busyKnown = true,
+      Map<String, List<PersonalEvent>> busyEvents = const {},
+      void Function(String eventId)? onOpenBusyEvent,
       void Function(List<String>)? onSend,
+      DateTime? now,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -59,8 +64,16 @@ void main() {
               offer: o ?? offer(),
               myUid: player,
               initiatorName: 'Rafael',
-              busyDays: busy,
-              now: DateTime(2026, 9, 1),
+              // Занятость подаётся как ОДИН ответ: дни, вечера и признак
+              // «знаем ли». Здесь вечеров нет — эти проверки про клетку и
+              // про строку под сеткой, а не про то, чем занят день.
+              busy: busyKnown
+                  ? BusyDays({
+                      for (final iso in busy) iso: busyEvents[iso] ?? const [],
+                    })
+                  : const BusyDays.unknown(),
+              onOpenBusyEvent: onOpenBusyEvent,
+              now: now ?? DateTime(2026, 9, 1),
               onSend: onSend ?? (_) {},
             ),
           ),
@@ -112,11 +125,17 @@ void main() {
     // в одиночку зелено и при заливке, сломанной вовсе. Канарейка рядом
     // требует, чтобы будущий БЫЛ залит, и падает от такой поломки первой.
     group('занятость прошедшего дня не показывается', () {
-      // «Сегодня» у набора — 1 сентября 2026 (`pump`), поэтому 28 августа
-      // прошедшее, а 2 сентября будущее; оба видны в сетке августа, которая
-      // тянется с 27 июля по 6 сентября.
+      // ОБА ДНЯ — ВНУТРИ ОДНОГО МЕСЯЦА, и это не мелочь: клетки соседних
+      // месяцев в сетке видны, но не нажимаются вовсе (`inMonth`), и проверка
+      // «выбрал занятый день» на такой клетке прошла бы по неверной причине —
+      // день не выбрался бы ни при какой заливке. Поймано первым же прогоном.
+      //
+      // «Сегодня» здесь 10 сентября: 5-е прошедшее, 15-е будущее, оба в
+      // сентябре, на котором лист и открывается (месяц берётся по первой дате
+      // предложения).
+      final today = DateTime(2026, 9, 10);
       JobOffer acrossToday() =>
-          offer(dates: const ['2026-08-28', '2026-09-02']);
+          offer(dates: const ['2026-09-05', '2026-09-15']);
 
       Color? cellColor(WidgetTester tester, String iso) {
         final container = tester.widget<Container>(
@@ -133,15 +152,49 @@ void main() {
       testWidgets('занятый ПРОШЕДШИЙ день предложения не залит', (
         tester,
       ) async {
-        await pump(tester, o: acrossToday(), busy: {'2026-08-28'});
-        expect(cellColor(tester, '2026-08-28'), Colors.transparent);
+        await pump(tester, o: acrossToday(), busy: {'2026-09-05'}, now: today);
+        expect(cellColor(tester, '2026-09-05'), Colors.transparent);
       });
 
       // КАНАРЕЙКА. Без неё проверка выше зелена и на сетке, разучившейся
       // заливать вообще.
       testWidgets('занятый БУДУЩИЙ день предложения залит', (tester) async {
-        await pump(tester, o: acrossToday(), busy: {'2026-09-02'});
-        expect(cellColor(tester, '2026-09-02'), kOwnerOther.withAlpha(41));
+        await pump(tester, o: acrossToday(), busy: {'2026-09-15'}, now: today);
+        expect(cellColor(tester, '2026-09-15'), kWarnBg);
+      });
+
+      // ВЫБРАННЫЙ ЗАНЯТЫЙ ДЕНЬ СОХРАНЯЕТ ПРЕДУПРЕЖДАЮЩУЮ РАМКУ.
+      //
+      // Это тот самый случай, что случился 22.08: золотая заливка выбора
+      // закрывает предупреждение целиком — то есть ровно в тот миг, когда
+      // человек согласился на занятый день, предупреждение и пропадает.
+      testWidgets('выбрал занятый день — рамка предупреждения осталась', (
+        tester,
+      ) async {
+        await pump(tester, o: acrossToday(), busy: {'2026-09-15'}, now: today);
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('offer-cell-2026-09-15')),
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('offer-cell-2026-09-15')));
+        await tester.pump();
+
+        final container = tester.widget<Container>(
+          find
+              .descendant(
+                of: find.byKey(const ValueKey('offer-cell-2026-09-15')),
+                matching: find.byType(Container),
+              )
+              .first,
+        );
+        final decoration = container.decoration as BoxDecoration;
+        expect(decoration.color, kGold, reason: 'день должен быть выбран');
+        expect(
+          (decoration.border as Border?)?.top.color,
+          kWarnBorder,
+          reason: 'выбор закрасил предупреждение — человек согласился и '
+              'перестал видеть, что день занят',
+        );
       });
 
       // Строка под сеткой обязана молчать вместе с заливкой: сказать «занятые
@@ -150,13 +203,111 @@ void main() {
       testWidgets('занятость только в прошлом — строки про выбор нет', (
         tester,
       ) async {
-        await pump(tester, o: acrossToday(), busy: {'2026-08-28'});
+        await pump(tester, o: acrossToday(), busy: {'2026-09-05'}, now: today);
         expect(find.text(kBusyPickableLine), findsNothing);
       });
 
       testWidgets('занятость впереди — строка про выбор есть', (tester) async {
-        await pump(tester, o: acrossToday(), busy: {'2026-09-02'});
+        await pump(tester, o: acrossToday(), busy: {'2026-09-15'}, now: today);
         expect(find.text(kBusyPickableLine), findsOneWidget);
+      });
+    });
+
+    // ЧЕМ ЗАНЯТ ДЕНЬ — надпись под сеткой и дверь в вечер (владелец, 25.08).
+    //
+    // Цвет говорит «осторожно» и молчит о том, ЧЕМ занято. Человек, ткнув в
+    // закрашенный день, вправе спросить — и получить ответ, не выходя из
+    // листа.
+    group('чем занят нажатый день', () {
+      PersonalEvent evening(String id, {String time = '15:00'}) =>
+          PersonalEvent.fromFirestore(id, {
+            'ownerUid': player,
+            'date': '2026-09-15T$time:00.000',
+            'type': 'Toy',
+            'musicians': const <String>[],
+            'answersWrittenByOwner': true,
+            'status': 'agreed',
+          });
+
+      Future<void> pumpBusy(
+        WidgetTester tester, {
+        List<PersonalEvent> events = const [],
+        void Function(String eventId)? onOpen,
+      }) => pump(
+        tester,
+        busy: {'2026-09-15'},
+        busyEvents: {'2026-09-15': events},
+        onOpenBusyEvent: onOpen,
+      );
+
+      testWidgets('до нажатия надписи нет — ни про какой день', (tester) async {
+        await pumpBusy(tester, events: [evening('e1')]);
+        expect(find.byKey(const ValueKey('busy-day-notice')), findsNothing);
+      });
+
+      testWidgets('нажал занятый день — сказано, чем он занят', (tester) async {
+        await pumpBusy(tester, events: [evening('e1')]);
+        await tester.tap(find.byKey(const ValueKey('offer-cell-2026-09-15')));
+        await tester.pump();
+
+        expect(find.byKey(const ValueKey('busy-day-notice')), findsOneWidget);
+        expect(find.text('Bu gün məşğulsan'), findsOneWidget);
+        expect(
+          find.text('Toy · 15:00'),
+          findsOneWidget,
+          reason: 'сказано «занят», но не сказано чем — это половина ответа',
+        );
+      });
+
+      testWidgets('нажал свободный день — надписи нет', (tester) async {
+        await pumpBusy(tester, events: [evening('e1')]);
+        await tester.tap(find.byKey(const ValueKey('offer-cell-2026-09-14')));
+        await tester.pump();
+        expect(find.byKey(const ValueKey('busy-day-notice')), findsNothing);
+      });
+
+      // ВСЕ ВЕЧЕРА, А НЕ ПЕРВЫЙ (N51/I11): два вечера в один день — обычная
+      // жизнь, и спрятать второй значит соврать про день.
+      testWidgets('два вечера в один день — названы оба', (tester) async {
+        await pumpBusy(
+          tester,
+          events: [evening('e1'), evening('e2', time: '21:00')],
+        );
+        await tester.tap(find.byKey(const ValueKey('offer-cell-2026-09-15')));
+        await tester.pump();
+
+        expect(find.text('Toy · 15:00'), findsOneWidget);
+        expect(find.text('Toy · 21:00'), findsOneWidget);
+      });
+
+      testWidgets('нажатие на надпись открывает ТОТ вечер', (tester) async {
+        String? opened;
+        await pumpBusy(
+          tester,
+          events: [evening('e1'), evening('e2', time: '21:00')],
+          onOpen: (id) => opened = id,
+        );
+        await tester.tap(find.byKey(const ValueKey('offer-cell-2026-09-15')));
+        await tester.pump();
+
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('busy-day-open-e2')),
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('busy-day-open-e2')));
+        await tester.pump();
+        expect(opened, 'e2', reason: 'открылся не тот вечер, на который нажали');
+      });
+
+      // ПРАВИЛО «КНОПКА БЕЗ АДРЕСАТА НЕ РИСУЕТСЯ» (N146, I64). Не передали
+      // дверь — надпись остаётся надписью, без обманчивого вида нажимаемой.
+      testWidgets('двери нет — надпись есть, но не нажимаема', (tester) async {
+        await pumpBusy(tester, events: [evening('e1')]);
+        await tester.tap(find.byKey(const ValueKey('offer-cell-2026-09-15')));
+        await tester.pump();
+
+        expect(find.byKey(const ValueKey('busy-day-notice')), findsOneWidget);
+        expect(find.byKey(const ValueKey('busy-day-open-e1')), findsNothing);
       });
     });
 

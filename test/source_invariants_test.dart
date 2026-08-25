@@ -423,11 +423,13 @@ void main() {
       expect('busyDaysProvider('.allMatches(entryCode).length, 1,
           reason: 'Точка вызова не спрашивает занятость: работодатель '
               'набирает дни вслепую — тот самый дефект, что чинился 25.08.');
-      expect('busyDays:'.allMatches(entryCode).length, 1,
-          reason: 'Занятость спрошена, но листу не передана.');
-      expect('busyUnknown:'.allMatches(entryCode).length, 1,
-          reason: 'Признак незнания листу не передан: пустая сетка будет '
-              'утверждать «всё свободно», чего мы не знаем.');
+      expect('busy: busy'.allMatches(entryCode).length, 1,
+          reason: 'Занятость спрошена, но листу не передана. Признак «знаем '
+              'ли» едет тем же объектом: пустая сетка иначе утверждает «всё '
+              'свободно», чего мы не знаем.');
+      expect('onOpenBusyEvent:'.allMatches(entryCode).length, 1,
+          reason: 'Дверь в карточку вечера листу не передана: надпись «Bu gün '
+              'məşğulsan» будет нажиматься и не делать ничего (N146).');
     });
   });
 

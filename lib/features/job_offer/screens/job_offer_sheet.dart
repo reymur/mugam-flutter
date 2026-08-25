@@ -7,6 +7,7 @@ import '../../../core/job_offer/job_offer.dart';
 import '../../../core/job_offer/job_offer_repository.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
+import '../../agreements/screens/agreements_screen.dart';
 import '../busy_days.dart';
 import '../widgets/job_offer_card.dart';
 import 'job_offer_accept_sheet.dart';
@@ -351,11 +352,25 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
             offer: offer,
             myUid: viewerUid,
             initiatorName: _nameOf(offer.createdBy, viewerUid),
-            busyDays: busy.days,
-            // «Не знаем» — это НЕ «набор пуст»: пустой набор бывает и
-            // законным ответом «занятых нет». Признак отдельный и приходит
-            // от поставщика.
-            busyUnknown: !busy.known,
+            // Занятость одним объектом: дни, вечера и признак «знаем ли» —
+            // один ответ, и разъехаться им нельзя.
+            busy: busy,
+            // ДВЕРЬ В КАРТОЧКУ ВЕЧЕРА — та же, что у всего остального
+            // (`eventDetailRoute`, N90/N117): она одна на проект и сама
+            // разбирает три случая — грузится, удалено, показываем.
+            //
+            // Открывается ПОВЕРХ листа, а не вместо: человек смотрит, чем
+            // занят день, и возвращается к ответу, ничего не потеряв.
+            onOpenBusyEvent: (eventId) => Navigator.of(context).push(
+              eventDetailRoute(eventId: eventId, currentUid: viewerUid),
+            ),
+            // ДВЕРЬ В КАРТОЧКУ ВЕЧЕРА — та же, что у всего остального
+            // (`eventDetailRoute`, N90/N117): она одна на проект и сама
+            // разбирает три случая — грузится, удалено, показываем.
+            //
+            // Открывается ПОВЕРХ листа, а не вместо: человек смотрит, чем
+            // занят день, и возвращается к ответу, ничего не потеряв.
+
             onSend: (picked) async {
               // ЗАКРЫВАЕМ ДО ЗАПИСИ, А НЕ ПОСЛЕ. Запись уходит в сеть, и
               // ждать её с открытым листом значит держать человека перед

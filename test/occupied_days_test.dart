@@ -194,6 +194,64 @@ void main() {
     });
   });
 
+  // ЧЕМ ИМЕННО ЗАНЯТ ДЕНЬ — вторая форма того же ответа, заведена 25.08:
+  // сетка красит день предупредительно, и человек вправе спросить «чем?».
+  group('вечера дня, а не только дни', () {
+    test('вечер назван сам, а не только его дата', () {
+      final byDay = occupiedEventsByDayOf(
+        own: [event('e1', owner: me)],
+        asParticipant: const [],
+        uid: me,
+      );
+      expect(byDay[DateTime(2026, 8, 25)]!.single.id, 'e1');
+    });
+
+    // ВСЕ, А НЕ ПЕРВЫЙ (N51/I11). Два вечера в один день — обычная жизнь;
+    // отдай мы один, второй пропал бы молча, и сигнатура скрыла бы это лучше,
+    // чем `.first`.
+    test('два вечера в один день — оба, и по времени', () {
+      final byDay = occupiedEventsByDayOf(
+        own: [
+          event('поздний', owner: me, date: '2026-08-25T21:00:00.000'),
+          event('ранний', owner: me, date: '2026-08-25T15:00:00.000'),
+        ],
+        asParticipant: const [],
+        uid: me,
+      );
+      expect(
+        byDay[DateTime(2026, 8, 25)]!.map((e) => e.id).toList(),
+        ['ранний', 'поздний'],
+        reason: 'порядок по времени — тот же, что у списка дня и пометки '
+            'месяца, чтобы человек видел вечера одинаково везде',
+      );
+    });
+
+    // ДНИ ВЫВЕДЕНЫ ИЗ ВЕЧЕРОВ, А НЕ СЧИТАНЫ ОТДЕЛЬНО. Два прохода разошлись
+    // бы молча: набор сказал бы «занято», список оказался бы пуст.
+    test('дни и вечера не расходятся — у каждого дня есть чем', () {
+      final args = {
+        'own': [
+          event('e1', owner: me, date: '2026-08-25T15:00:00.000'),
+          event('e2', owner: me, date: '2026-08-27T15:00:00.000'),
+        ],
+      };
+      final days = occupiedDaysOf(
+        own: args['own']!,
+        asParticipant: const [],
+        uid: me,
+      );
+      final byDay = occupiedEventsByDayOf(
+        own: args['own']!,
+        asParticipant: const [],
+        uid: me,
+      );
+      expect(days, byDay.keys.toSet());
+      for (final day in days) {
+        expect(byDay[day], isNotEmpty);
+      }
+    });
+  });
+
   group('края', () {
     // ПУСТОЙ ОТВЕТ ЗДЕСЬ ЗАКОННЫЙ И ЗНАЧИТ «ЗАНЯТЫХ НЕТ». Отличать его от
     // «мы не смотрели» это правило не умеет и не должно: на входе у него уже
