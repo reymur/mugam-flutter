@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/job_offer/offer_draft.dart';
+import 'package:mugam_flutter/core/theme/colors.dart';
 import 'package:mugam_flutter/features/job_offer/screens/job_offer_days_sheet.dart';
 
 // ЛИСТ ВЫБОРА ДНЕЙ — три требования владельца, каждое отдельной проверкой.
@@ -560,6 +561,45 @@ void main() {
         await pump(tester, busy: {'2026-12-10'});
         expect(find.byKey(const ValueKey('offer-busy-pickable')), findsNothing);
         expect(find.byKey(const ValueKey('offer-busy-unknown')), findsNothing);
+      });
+    });
+
+    // ПРОШЕДШАЯ ЗАНЯТОСТЬ НЕ ЗАЛИВАЕТСЯ — решение владельца 25.08, общее с
+    // листом ответа. Заливка здесь не сообщение о календаре, а предупреждение
+    // о выборе; на прошедшем дне выбора нет.
+    //
+    // «Сегодня» у набора — 1 августа 2026 (`pump`), а сетка августа тянется с
+    // 27 июля, поэтому 30 июля видно и оно прошедшее.
+    group('занятость прошедшего дня не показывается', () {
+      Color? cellColor(WidgetTester tester, String iso) {
+        final container = tester.widget<Container>(
+          find
+              .descendant(
+                of: find.byKey(ValueKey('offer-cell-$iso')),
+                matching: find.byType(Container),
+              )
+              .first,
+        );
+        return (container.decoration as BoxDecoration?)?.color;
+      }
+
+      testWidgets('занятый ПРОШЕДШИЙ день не залит', (tester) async {
+        await pump(tester, busy: {'2026-07-30'});
+        expect(cellColor(tester, '2026-07-30'), Colors.transparent);
+      });
+
+      // КАНАРЕЙКА. Без неё проверка выше зелена и на сетке, разучившейся
+      // заливать вообще.
+      testWidgets('занятый БУДУЩИЙ день залит', (tester) async {
+        await pump(tester, busy: {'2026-08-10'});
+        expect(cellColor(tester, '2026-08-10'), kOwnerOther.withAlpha(41));
+      });
+
+      testWidgets('занятость только в прошлом — строки про выбор нет', (
+        tester,
+      ) async {
+        await pump(tester, busy: {'2026-07-30'});
+        expect(find.byKey(const ValueKey('offer-busy-pickable')), findsNothing);
       });
     });
   });

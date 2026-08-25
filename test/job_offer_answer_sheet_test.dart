@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/job_offer/job_offer.dart';
+import 'package:mugam_flutter/core/theme/colors.dart';
+import 'package:mugam_flutter/features/job_offer/busy_days.dart';
 import 'package:mugam_flutter/features/job_offer/screens/job_offer_accept_sheet.dart';
 import 'package:mugam_flutter/features/job_offer/screens/job_offer_answer_sheet.dart';
 
@@ -96,6 +98,66 @@ void main() {
     ) async {
       await pump(tester, busy: {'2026-09-21'});
       expect(tappableDays(tester).contains('2026-09-21'), isFalse);
+    });
+
+    // ПРОШЕДШАЯ ЗАНЯТОСТЬ НЕ ЗАЛИВАЕТСЯ — решение владельца 25.08, по виду
+    // на трубке в первый же день подключения.
+    //
+    // **Довод в одну строку:** заливка здесь не сообщение о календаре, а
+    // предупреждение о выборе; на прошедшем дне выбора нет, предупреждать не
+    // о чем, а лишняя краска учит глаз игнорировать тот самый цвет, который
+    // завтра должен остановить руку.
+    //
+    // **ОБЕ ПОЛОВИНЫ ПРОВЕРЯЮТСЯ, И ВТОРАЯ НЕ ЛИШНЯЯ:** «прошедший не залит»
+    // в одиночку зелено и при заливке, сломанной вовсе. Канарейка рядом
+    // требует, чтобы будущий БЫЛ залит, и падает от такой поломки первой.
+    group('занятость прошедшего дня не показывается', () {
+      // «Сегодня» у набора — 1 сентября 2026 (`pump`), поэтому 28 августа
+      // прошедшее, а 2 сентября будущее; оба видны в сетке августа, которая
+      // тянется с 27 июля по 6 сентября.
+      JobOffer acrossToday() =>
+          offer(dates: const ['2026-08-28', '2026-09-02']);
+
+      Color? cellColor(WidgetTester tester, String iso) {
+        final container = tester.widget<Container>(
+          find
+              .descendant(
+                of: find.byKey(ValueKey('offer-cell-$iso')),
+                matching: find.byType(Container),
+              )
+              .first,
+        );
+        return (container.decoration as BoxDecoration?)?.color;
+      }
+
+      testWidgets('занятый ПРОШЕДШИЙ день предложения не залит', (
+        tester,
+      ) async {
+        await pump(tester, o: acrossToday(), busy: {'2026-08-28'});
+        expect(cellColor(tester, '2026-08-28'), Colors.transparent);
+      });
+
+      // КАНАРЕЙКА. Без неё проверка выше зелена и на сетке, разучившейся
+      // заливать вообще.
+      testWidgets('занятый БУДУЩИЙ день предложения залит', (tester) async {
+        await pump(tester, o: acrossToday(), busy: {'2026-09-02'});
+        expect(cellColor(tester, '2026-09-02'), kOwnerOther.withAlpha(41));
+      });
+
+      // Строка под сеткой обязана молчать вместе с заливкой: сказать «занятые
+      // дни тоже можно выбрать» там, где не покрашено ни одной клетки, значит
+      // объяснять то, чего человек не видит.
+      testWidgets('занятость только в прошлом — строки про выбор нет', (
+        tester,
+      ) async {
+        await pump(tester, o: acrossToday(), busy: {'2026-08-28'});
+        expect(find.text(kBusyPickableLine), findsNothing);
+      });
+
+      testWidgets('занятость впереди — строка про выбор есть', (tester) async {
+        await pump(tester, o: acrossToday(), busy: {'2026-09-02'});
+        expect(find.text(kBusyPickableLine), findsOneWidget);
+      });
     });
 
     testWidgets('отмеченные дни доходят до отправки', (tester) async {

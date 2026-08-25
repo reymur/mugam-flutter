@@ -350,12 +350,21 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
   /// и пояснение «занятые дни тоже можно выбрать» на месяце, где не покрашено
   /// ни одной клетки, объясняло бы то, чего человек не видит.
   ///
+  /// **`isPastDay` здесь тот же, что и в клетке, и это обязательно, а не для
+  /// порядка:** с 25.08 прошедшая занятость не заливается, и разойдись эти
+  /// два условия — строка объявляла бы, что занятые дни выбирать можно, на
+  /// месяце, где не покрашено ничего. Два места решают одно, и потому
+  /// спрашивают одно.
+  ///
   /// У листа ответа гейт другой — пересечение с предложенными днями, — и это
   /// не разнобой: там сетка ограничена днями предложения, здесь месяцем. Гейт
   /// отвечает на один и тот же вопрос («видит ли человек занятое прямо
   /// сейчас»), а видит он в двух листах разное.
-  bool get _busyVisibleThisMonth =>
-      monthGridDays(_month).any((d) => widget.busyDays.contains(isoDay(d)));
+  bool get _busyVisibleThisMonth => monthGridDays(_month).any(
+    (d) =>
+        widget.busyDays.contains(isoDay(d)) &&
+        !isPastDay(d, now: widget.now),
+  );
 
   // ЦВЕТА ВЗЯТЫ ИЗ МАКЕТА, А НЕ ПОДОБРАНЫ НА ГЛАЗ. Занятый день там —
   // rgba(111,168,220,0.16), и это ровно `kOwnerOther` (0xFF6FA8DC), уже
@@ -366,7 +375,13 @@ class _JobOfferDaysSheetState extends State<JobOfferDaysSheet> {
     final iso = isoDay(day);
     final past = isPastDay(day, now: widget.now);
     final picked = _picked.contains(iso);
-    final busy = widget.busyDays.contains(iso);
+    // ЗАНЯТОСТЬ ПРОШЕДШЕГО ДНЯ НЕ ПОКАЗЫВАЕТСЯ — то же решение и тот же
+    // довод, что в `OfferMonthGrid._cell` (владелец, 25.08): заливка здесь
+    // предупреждает о ВЫБОРЕ, а на прошедшем дне выбора нет. Лишняя краска
+    // учит глаз игнорировать цвет, который завтра должен остановить руку.
+    //
+    // `past` взят готовым строкой выше — второго источника даты нет.
+    final busy = widget.busyDays.contains(iso) && !past;
     final hasDetails = (_details[iso] ?? const DayDetails()).isNotEmpty;
     final selectable = inMonth && !past;
 

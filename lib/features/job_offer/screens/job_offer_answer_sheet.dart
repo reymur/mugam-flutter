@@ -164,7 +164,7 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    if (widget.busyDays.intersection(offered).isNotEmpty) ...[
+                    if (_busyOfferedAhead(offered).isNotEmpty) ...[
                       const SizedBox(height: 8),
                       const Text(
                         // Занятость — сведения, а не преграда. Сказано и на
@@ -205,6 +205,27 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
       ),
     );
   }
+
+  /// Занятые дни ПРЕДЛОЖЕНИЯ, которые человек ещё может выбрать.
+  ///
+  /// **Прошедшие исключены, и это не мелочь.** С 25.08 сетка прошедшую
+  /// занятость не заливает (решение владельца: заливка предупреждает о
+  /// выборе, а на прошедшем дне выбора нет). Оставь здесь голое пересечение —
+  /// и строка «занятые дни тоже можно выбрать» встала бы под сеткой, где не
+  /// покрашено ни одной клетки. Случай не выдуманный: предложение с
+  /// прошедшими датами в проекте есть и записано находкой N153.
+  ///
+  /// **«Сегодня» — то же `isPastDay` и тот же `widget.now`**, что у клетки;
+  /// второго источника даты не заводится. Разбор строки нужен потому, что
+  /// занятость приходит записью `2026-08-25`, а `isPastDay` спрашивает
+  /// `DateTime`; нечитаемая строка сюда попасть не может — набор собран
+  /// `isoDay`, — но ответ на неё дан явно: не показывать.
+  Set<String> _busyOfferedAhead(Set<String> offered) => {
+    for (final iso in widget.busyDays.intersection(offered))
+      if (!(DateTime.tryParse(iso) == null ||
+          isPastDay(DateTime.parse(iso), now: widget.now)))
+        iso,
+  };
 
   Widget _monthHeader() => Row(
     mainAxisAlignment: MainAxisAlignment.spaceBetween,
