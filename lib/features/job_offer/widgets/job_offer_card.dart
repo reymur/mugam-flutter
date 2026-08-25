@@ -193,7 +193,27 @@ class _JobOfferCardState extends State<JobOfferCard> {
       case OfferState.accepted:
         return azUpperCase('təklif qəbul edildi');
       case OfferState.answered:
-        return azUpperCase('${widget.recipientName} cavab verdi');
+        // СВОЕЙ СТОРОНЕ — «SƏN», И ЭТО ЕДИНСТВЕННАЯ ВЕТВЬ, ГДЕ ПРАВИЛО БЫЛО
+        // НАРУШЕНО (25.08, найдено глазами на трубке).
+        //
+        // Теймур на СВОЁМ экране читал «TEYMUR ORUCOV CAVAB VERDİ» — то есть
+        // приложение говорило о нём в третьем лице, как о постороннем.
+        //
+        // **Правило в проекте есть и в этом же методе соблюдается:** ветвь
+        // `awaitingAnswer` ниже различает стороны (`təklif göndərildi` своей,
+        // имя чужой), а лента говорит «Sən təklif etdin» (`offerAuthorLine`).
+        // То есть из четырёх ветвей заголовка правило соблюдали три, и
+        // промолчала одна — I64 дословно: проверять надо не наличие правила,
+        // а каждого, кто под него подпадает.
+        //
+        // Условие взято ТОЧНОЕ — «отвечавший это я», — а не `!isInitiator`.
+        // Роль здесь двоичная (`roleOf`: не создатель — значит получатель),
+        // поэтому оба условия сегодня совпадают; но сказать надо то, что
+        // имеется в виду: заголовок про ОТВЕТИВШЕГО, и второе лицо положено
+        // ему, а не всякому, кто не создатель.
+        return widget.viewerUid == widget.recipientUid
+            ? azUpperCase('sən cavab verdin')
+            : azUpperCase('${widget.recipientName} cavab verdi');
       case OfferState.awaitingAnswer:
         return isInitiator
             ? azUpperCase('təklif göndərildi')
@@ -446,7 +466,10 @@ class _JobOfferCardState extends State<JobOfferCard> {
         Expanded(
           child: _goldButton(
             key: const ValueKey('offer-open-answer'),
-            label: 'Cavab ver',
+            // Слово решает правило в `job_offer.dart`, не разметка: ответа
+            // ещё нет — «Cavab ver», ответ есть — «Cavabı dəyiş». Ключ у
+            // кнопки один и тот же намеренно: ход тот же, меняется обещание.
+            label: offerAnswerButtonLabel(offer, widget.recipientUid),
             onTap: widget.onOpenAnswer,
           ),
         ),

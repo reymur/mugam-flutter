@@ -16,10 +16,11 @@ JobOffer offer({
   Map<String, List<String>> answers = const {},
   String? acceptedBy,
   String? withdrawnBy,
+  List<String>? dates,
 }) => JobOffer(
   id: 'o',
   createdBy: boss,
-  dates: const ['2026-09-14', '2026-09-15', '2026-09-20'],
+  dates: dates ?? const ['2026-09-14', '2026-09-15', '2026-09-20'],
   eventType: 'Toy',
   answers: answers,
   acceptedBy: acceptedBy,
@@ -54,6 +55,48 @@ void main() {
         ),
         '14, 20 sentyabr · 2/3 gün · Toy · cavab',
       );
+    });
+
+    // ЧИСЛА СОВПАЛИ — ДРОБИ НЕТ. Замечено глазами 25.08: «1/1 gün» ничего
+    // не сообщает вторым числом, а выглядит как поломка.
+    //
+    // Утверждается И НАЛИЧИЕ «3 gün», И ОТСУТСТВИЕ «3/3 gün». Одного
+    // первого мало: «3/3 gün» содержит «3 gün» подстрокой, и проверка на
+    // одно вхождение прошла бы зелёной при живой дроби (I31).
+    test('согласился на все предложенные — одно число, а не «3/3»', () {
+      final line = offerFeedLine(
+        offer(
+          answers: {
+            player: const ['2026-09-14', '2026-09-15', '2026-09-20'],
+          },
+        ),
+        recipientUid: player,
+      );
+      expect(line, '14–15, 20 sentyabr · 3 gün · Toy · cavab');
+      expect(line.contains('3/3'), isFalse);
+    });
+
+    test('согласился на единственный предложенный — «1 gün», не «1/1»', () {
+      final line = offerFeedLine(
+        offer(
+          dates: const ['2026-09-14'],
+          answers: {player: const ['2026-09-14']},
+        ),
+        recipientUid: player,
+      );
+      expect(line, '14 sentyabr · 1 gün · Toy · cavab');
+      expect(line.contains('1/1'), isFalse);
+    });
+
+    // ОБРАТНАЯ СТОРОНА, И БЕЗ НЕЁ ДВЕ ПРЕДЫДУЩИЕ НИЧЕГО НЕ ЗНАЧАТ: снятие
+    // дроби вообще дало бы те же два зелёных теста. Дробь обязана остаться
+    // там, где числа РАЗНЫЕ.
+    test('согласился не на все — дробь на месте', () {
+      final line = offerFeedLine(
+        offer(answers: {player: const ['2026-09-14']}),
+        recipientUid: player,
+      );
+      expect(line.contains('1/3 gün'), isTrue);
     });
 
     // ТРЕТЬЕ НЕ СВОДИТСЯ КО ВТОРОМУ.

@@ -309,6 +309,86 @@ void main() {
     expect(accepted, isTrue);
   });
 
+  // ДВА СЛОВА, НАЙДЕННЫЕ ГЛАЗАМИ НА ТРУБКЕ 25.08. Оба про одно: экран
+  // говорил не то, что есть. Тестами они не ловились — таблица действий
+  // проверяет, ЧТО предложено, и молчит о том, какими СЛОВАМИ это названо.
+  group('заголовок и метка говорят правду о стороне и о ходе', () {
+    testWidgets('ответивший читает о себе во втором лице, а не по имени', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        o: offer(answers: {player: const ['2026-08-09', '2026-08-10']}),
+        viewer: player,
+        onOpenAnswer: () {},
+      );
+
+      // Утверждается НАЛИЧИЕ второго лица и ОТСУТСТВИЕ имени. Одного первого
+      // мало: имя могло бы остаться рядом, и «Sən» соседствовало бы с
+      // «TEYMUR», не сняв неправды. Одного второго мало тем более — оно
+      // зелено и на пустом экране (I31).
+      expect(find.text('SƏN CAVAB VERDİN'), findsOneWidget);
+      expect(find.text('TEYMUR CAVAB VERDİ'), findsNothing);
+    });
+
+    testWidgets('инициатор по-прежнему читает имя ответившего', (
+      tester,
+    ) async {
+      // Обратная сторона той же правки, и без неё первая ничего не значит:
+      // «Sən» у обоих было бы такой же неправдой, только зеркальной.
+      await pump(
+        tester,
+        o: offer(answers: {player: const ['2026-08-09']}),
+        viewer: boss,
+        onAccept: () {},
+      );
+
+      expect(find.text('TEYMUR CAVAB VERDİ'), findsOneWidget);
+      expect(find.text('SƏN CAVAB VERDİN'), findsNothing);
+    });
+
+    testWidgets('ответа нет — кнопка обещает дать ответ', (tester) async {
+      await pump(tester, o: offer(), viewer: player, onOpenAnswer: () {});
+
+      expect(find.text('Cavab ver'), findsOneWidget);
+      expect(find.text('Cavabı dəyiş'), findsNothing);
+    });
+
+    testWidgets('ответ есть — кнопка обещает изменить его, а не дать', (
+      tester,
+    ) async {
+      // Переответ разрешён намеренно (canAnswer остаётся true), поэтому
+      // кнопка обязана быть. Врало только слово: лист открывается с уже
+      // проставленными отметками, то есть ведёт к ПРАВКЕ.
+      await pump(
+        tester,
+        o: offer(answers: {player: const ['2026-08-09', '2026-08-10']}),
+        viewer: player,
+        onOpenAnswer: () {},
+      );
+
+      expect(find.text('Cavabı dəyiş'), findsOneWidget);
+      expect(find.text('Cavab ver'), findsNothing);
+    });
+
+    testWidgets('ход не потерян вместе со сменой слова', (tester) async {
+      // I9: проверки выше смотрят на ТЕКСТ и провалиться от снятого
+      // обработчика не могут. Кнопка, которая называется правильно и не
+      // нажимается, — ровно N146, и ловится это только нажатием.
+      var opened = false;
+      await pump(
+        tester,
+        o: offer(answers: {player: const ['2026-08-09']}),
+        viewer: player,
+        onOpenAnswer: () => opened = true,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+      await tester.pump();
+      expect(opened, isTrue);
+    });
+  });
+
   testWidgets('неотмеченные дни показаны мелкой строкой «— yox»', (
     tester,
   ) async {
