@@ -23,6 +23,8 @@ class OfferMonthGrid extends StatelessWidget {
     required this.picked,
     this.busy = const {},
     this.withDetails = const {},
+    this.declined = const {},
+    this.allowPastTaps = false,
     this.selectable,
     this.onTapDay,
     this.openDay,
@@ -55,6 +57,19 @@ class OfferMonthGrid extends StatelessWidget {
   /// Дни, у которых что-то вписано — карандаш в углу.
   final Set<String> withDetails;
 
+  /// Дни, на которые приглашённый ответил «не могу», — красный ✕ в углу.
+  ///
+  /// **ЗНАЧОК, А НЕ ЦВЕТ, и это решение владельца 25.08.** Цветом уже говорят
+  /// две вещи — золотое «согласился» и предупредительное «занят», — и третий
+  /// оттенок пришлось бы отличать от них на глаз. Значок читается сразу и не
+  /// спорит ни с одним из них: **на одной клетке могут стоять и заливка
+  /// занятости, и ✕**, потому что это разные сведения — заливка про календарь
+  /// человека, значок про его ответ.
+  ///
+  /// С карандашом `withDetails` столкнуться не может: карандаш ставится тем
+  /// дням, чьи подробности открывают, а открывают только согласованные.
+  final Set<String> declined;
+
   /// Какие дни вообще нажимаются.
   ///
   /// `null` — любой будущий день месяца (лист составления). Множество —
@@ -66,6 +81,17 @@ class OfferMonthGrid extends StatelessWidget {
   /// запрещать то же самое. Иначе человек тапает, а запись молча отказывает
   /// — и выглядит это как «нажал, и ничего».
   final Set<String>? selectable;
+
+  /// Можно ли нажимать ПРОШЕДШИЕ дни.
+  ///
+  /// **По умолчанию нельзя, и это про ВЫБОР:** отметить вчерашний день —
+  /// бессмыслица, поэтому там, где дни выбирают, прошлое мертво.
+  ///
+  /// **Но читать прошлое можно.** В виде ответа (`OfferAnswerView`) нажатие
+  /// не выбирает день, а показывает, что на него было вписано, — и запрет
+  /// прошлого сделал бы подробности состоявшейся работы недостижимыми ровно
+  /// на следующий день после неё. Флаг разделяет эти два разных «нажатия».
+  final bool allowPastTaps;
 
   final void Function(String isoDay)? onTapDay;
 
@@ -130,7 +156,10 @@ class OfferMonthGrid extends StatelessWidget {
 
     // Ни одного лишнего дня нажимаемым быть не должно: сперва общее
     // условие (свой месяц, не прошлое), затем — заданный список.
-    final allowed = inMonth && !past && (selectable?.contains(iso) ?? true);
+    final allowed =
+        inMonth &&
+        (allowPastTaps || !past) &&
+        (selectable?.contains(iso) ?? true);
 
     return GestureDetector(
       key: ValueKey('offer-cell-$iso'),
@@ -184,6 +213,29 @@ class OfferMonthGrid extends StatelessWidget {
                     : (!allowed ? kMuted.withAlpha(120) : Colors.white),
               ),
             ),
+            if (declined.contains(iso))
+              Positioned(
+                top: 1,
+                right: 3,
+                child: Container(
+                  key: ValueKey('offer-declined-$iso'),
+                  width: 14,
+                  height: 14,
+                  alignment: Alignment.center,
+                  decoration: const BoxDecoration(
+                    color: kRed,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Text(
+                    '✕',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 8,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
             if (withDetails.contains(iso))
               Positioned(
                 top: 2,

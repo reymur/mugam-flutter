@@ -854,7 +854,15 @@ void main() {
 
       // I9: без нажатия проверка смотрела бы на текст и не могла бы
       // провалиться от снятого обработчика — ровно N146.
-      await tester.tap(find.byKey(const ValueKey('accept-confirm')));
+      //
+      // `ensureVisible` ДОПИСАН 25.08 вместе с возвратом сетки месяца: вид
+      // стал выше окна теста, кнопка уехала за нижний край, и нажатие стало
+      // промахиваться МОЛЧА — виджет по ключу находился, а обработчик не
+      // звался. Выглядело это как «приём не доводит до писателя», то есть
+      // как поломка прода, которой не было.
+      final btn = find.byKey(const ValueKey('accept-confirm'));
+      await tester.ensureVisible(btn);
+      await tester.tap(btn);
       await tester.pump();
 
       expect(

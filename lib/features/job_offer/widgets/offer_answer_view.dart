@@ -4,6 +4,7 @@ import '../../../core/job_offer/day_details.dart';
 import '../../../core/job_offer/job_offer.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/time/az_date_format.dart';
+import 'offer_month_grid.dart';
 
 // ОТВЕТ МУЗЫКАНТА, КАК ЕГО ЧИТАЮТ ОБЕ СТОРОНЫ.
 //
@@ -13,60 +14,63 @@ import '../../../core/time/az_date_format.dart';
 // рисует сама дверь (`JobOfferSheet`), и промежуточной карточки между лентой
 // и ответом больше нет.
 //
-// **ПОЧЕМУ ВИД, А НЕ ЛИСТ, И ЭТО ГЛАВНОЕ В ФАЙЛЕ.** В `job_offer_sheet.dart`
-// записан довод владельца от 22.08 против того, чтобы вести из ленты прямо в
-// приём: тогда лист пришлось бы либо питать СНИМКОМ из ленты — и потерять
-// живое обновление, ради которого делалась N143, — либо завести второй
-// источник тех же данных. Довод не отменён, он **обойдён**: содержимое
-// осталось за дверью, у живого потока, и снимок сюда по-прежнему не подаётся.
-// Своей обёртки — высоты, скруглений, ручки — у этого виджета нет намеренно:
-// всё это уже есть у двери, и вторая копия разошлась бы с первой.
+// **ПОЧЕМУ ВИД, А НЕ ЛИСТ.** В `job_offer_sheet.dart` записан довод владельца
+// от 22.08 против того, чтобы вести из ленты прямо в приём: тогда лист
+// пришлось бы либо питать СНИМКОМ из ленты — и потерять живое обновление,
+// ради которого делалась N143, — либо завести второй источник тех же данных.
+// Довод не отменён, он **обойдён**: содержимое осталось за дверью, у живого
+// потока. Своей обёртки — высоты, скруглений, ручки — у этого виджета нет
+// намеренно: всё это уже есть у двери, и вторая копия разошлась бы с первой.
 //
-// **Второй довод того же абзаца снят макетом:** там сказано, что инициатор,
-// уведённый прямо в приём, потеряет «Ətraflı» — в листе приёма его не было
-// (замер 22.08: `grep -c "Ətraflı"` по тому файлу — 0). Теперь подробности
-// здесь есть, и лежат они ПО ДНЯМ — так же, как хранятся.
+// --- ВТОРАЯ РЕДАКЦИЯ, 25.08: КАЛЕНДАРЬ ВЕРНУЛСЯ ---
 //
-// --- ПОРЯДОК СВЕРХУ ВНИЗ, И КАЖДАЯ ПЕРЕСТАНОВКА ИМЕЕТ ПРИЧИНУ ---
+// Первая редакция показывала согласованные дни отдельными квадратиками, без
+// сетки месяца. Владелец поправил: **ответ должен приходить на тот же
+// календарь, на котором предложение отправляли.** Человек узнаёт экран, и
+// «31, 1» под одним заголовком больше не может обмануть — недели на месте.
 //
-//   имя отвечавшего     — крупно. Прежде здесь было мелкое серое
-//                         «TEYMUR ORUCOV CAVAB VERDİ» в разрядку: имя и
-//                         состояние делили одну строку и мешали друг другу.
-//                         Теперь имя отвечает на «кто», подпись под ним — на
-//                         «что», и они не спорят;
-//   месяц               — по центру, один раз на группу дней. Раньше месяц
-//                         повторялся при каждом числе («29 avqust, şənbə»);
-//   только числа        — дни недели сняты, слова сняты. Отказ помечен
-//                         красным ✕ и больше ничем: значок говорит сам,
-//                         подписи «Gələ bilmir» нет (решение владельца);
-//   числа и подпись     — «29, 30 · Gələ bilirəm» одной строкой;
-//   итог                — «2 gün · Toy» мелко ВНИЗУ. Прежде «2 gün» стояло
-//                         крупным белым СВЕРХУ, то есть самое заметное место
-//                         отдавалось числу, которое и так видно по клеткам.
+// Сетка взята ОБЩАЯ (`OfferMonthGrid`), а не написана заново: у неё уже есть
+// занятость, обводка открытого дня, карандаш подробностей и правило «ни
+// одного лишнего дня нажимаемым». Ей дописаны ровно две вещи — красный ✕ для
+// отказа и `allowPastTaps` (здесь дни ЧИТАЮТ, а не выбирают, и прошлое
+// обязано открываться).
 //
-// --- ЧЕГО ЭТОТ ВИД НЕ ДЕЛАЕТ ---
+// --- ПОРЯДОК СВЕРХУ ВНИЗ ---
 //
-//   1. НЕ ПОЗВОЛЯЕТ ПРАВИТЬ ОТМЕТКИ. Инициатору менять ответ музыканта
-//      запрещено правилом, иначе «он согласился на 29-е» перестало бы значить
-//      «решил он». Нажатие на день открывает подробности, и только;
-//   2. НЕ РИСУЕТ СЕТКУ МЕСЯЦА. Показаны ровно предложенные дни — по макету.
-//      `OfferMonthGrid` остаётся жить в листе ответа, где дни ВЫБИРАЮТ;
-//   3. НЕ РЕШАЕТ, КОМУ ЧТО ПРЕДЛОЖЕНО. Кнопки рисуются по тому, какие
-//      обработчики переданы, — правило живёт у двери.
+//   имя отвечавшего   — крупно. Прежде было мелкое серое «TEYMUR ORUCOV
+//                       CAVAB VERDİ» в разрядку: имя и состояние делили одну
+//                       строку и мешали друг другу;
+//   месяц со стрелками — дни предложения могут лежать в двух месяцах, и без
+//                       стрелок вторую половину не увидеть;
+//   сетка месяца      — золотое «согласился», ✕ «не может», заливка «занят»;
+//   СРЕДНИЙ БЛОК      — одно место на две вещи (см. ниже);
+//   кнопки            — через увеличенный отступ.
+//
+// --- СРЕДНИЙ БЛОК: ОДНО МЕСТО, ДВЕ ВЕЩИ (владелец, 25.08) ---
+//
+// Пока день не открыт — итог ответа: «Gələ bilirəm», числа, «N gün · тип».
+// Нажали согласованный день — НА ТОМ ЖЕ МЕСТЕ его подробности.
+//
+// **Подробности не выезжают снизу, и это решение, а не упрощение.**
+// Выезжающий лист накрывает календарь, то есть прячет ровно то, к чему
+// относится. Здесь календарь остаётся на виду, и у открытого дня стоит
+// обводка — видно, чей это день.
+//
+// **У блока задан нижний предел высоты**, иначе кнопки прыгали бы при каждом
+// переключении, а под ними — необратимое «Qəbul edirəm».
 
-/// Одна группа дней: месяц и его числа, в календарном порядке.
-typedef _MonthGroup = ({DateTime month, List<String> isoDays});
-
-class OfferAnswerView extends StatelessWidget {
+class OfferAnswerView extends StatefulWidget {
   const OfferAnswerView({
     super.key,
     required this.offer,
     required this.viewerUid,
     required this.recipientUid,
     required this.recipientName,
+    this.busyDates = const {},
     this.onAccept,
     this.onWithdraw,
     this.onChangeAnswer,
+    this.now,
   });
 
   final JobOffer offer;
@@ -78,57 +82,73 @@ class OfferAnswerView extends StatelessWidget {
   final String recipientUid;
   final String recipientName;
 
-  /// «Qəbul edirəm» — инициатору. Рисуется только вместе с
+  /// Занятые дни СМОТРЯЩЕГО — заливкой на сетке.
+  ///
+  /// У каждого свои: предложивший видит свой календарь, отвечавший — свой.
+  /// Показывать чужую занятость нельзя не из вежливости, а потому, что чужого
+  /// календаря у нас на руках нет — это отдельная работа с отдельными
+  /// разрешениями.
+  final Set<String> busyDates;
+
+  /// «Qəbul edirəm» — предложившему. Рисуется только вместе с
   /// `canAcceptAnswer`: принимать нечего и до ответа, и при ответе нулём
   /// дней, а кнопка, после которой не происходит ничего, обещала действие.
   final VoidCallback? onAccept;
 
-  /// «Təklifi geri götür» — инициатору.
+  /// «Təklifi geri götür» — предложившему.
   final VoidCallback? onWithdraw;
 
   /// «Cavabı dəyiş» — отвечавшему. Переответ разрешён, пока раунд открыт.
   final VoidCallback? onChangeAnswer;
 
-  bool get _viewerAnswered => viewerUid == recipientUid;
+  /// Прибитое «сегодня» для теста — уходит в сетку.
+  final DateTime? now;
 
-  /// Дни предложения, разложенные по месяцам, в календарном порядке.
-  ///
-  /// **ГРУПП МОЖЕТ БЫТЬ БОЛЬШЕ ОДНОЙ, и это не запас на будущее.** Позвать
-  /// на 31 августа и 1 сентября — обычное дело, а месяц в макете назван
-  /// ОДИН РАЗ над числами. Свали такие дни в одну кучу — и «31, 1» под
-  /// заголовком «Avqust» назовёт сентябрьский день августовским.
-  ///
-  /// Сортировка по ISO-строке и есть хронологический порядок: `YYYY-MM-DD`
-  /// лексикографически совпадает с временным.
-  ///
-  /// Неразбираемые даты отбрасываются — тем же способом, каким их отбрасывал
-  /// прежний экран (`whereType<DateTime>()`). Заводить здесь своё поведение
-  /// значило бы развести два ответа на один вопрос.
-  List<_MonthGroup> get _groups {
-    final out = <_MonthGroup>[];
-    for (final iso in offer.dates.toList()..sort()) {
+  @override
+  State<OfferAnswerView> createState() => _OfferAnswerViewState();
+}
+
+class _OfferAnswerViewState extends State<OfferAnswerView> {
+  /// Показываемый месяц. Начинаем с того, где лежит ПЕРВЫЙ день предложения,
+  /// а не с текущего: человек открыл ответ, чтобы увидеть ответ.
+  late DateTime _month = _firstMonth();
+
+  /// День, чьи подробности сейчас стоят в среднем блоке. `null` — там итог.
+  String? _openDay;
+
+  DateTime _firstMonth() {
+    final sorted = widget.offer.dates.toList()..sort();
+    for (final iso in sorted) {
       final d = DateTime.tryParse(iso);
-      if (d == null) continue;
-      final m = DateTime(d.year, d.month);
-      if (out.isNotEmpty && out.last.month == m) {
-        out.last.isoDays.add(iso);
-      } else {
-        out.add((month: m, isoDays: <String>[iso]));
-      }
+      if (d != null) return DateTime(d.year, d.month);
     }
-    return out;
+    final n = widget.now ?? DateTime.now();
+    return DateTime(n.year, n.month);
   }
 
-  bool _hasDetails(String iso) => offer.details[iso]?.isNotEmpty ?? false;
+  Set<String> get _picked => widget.offer.pickedBy(widget.recipientUid).toSet();
+  Set<String> get _declined =>
+      widget.offer.declinedBy(widget.recipientUid).toSet();
+
+  bool _hasDetails(String iso) =>
+      widget.offer.details[iso]?.isNotEmpty ?? false;
+
+  /// Согласованные дни, у которых есть что показать. Только они нажимаются:
+  /// обещать «Ətraflı» над пустотой значит завести нажимаемое без адресата
+  /// (N146), а карандаш на клетке говорит, у каких дней это есть.
+  Set<String> get _readable => _picked.where(_hasDetails).toSet();
+
+  bool get _viewerAnswered => widget.viewerUid == widget.recipientUid;
+
+  /// Перелистывание месяца НЕ закрывает открытый день намеренно: он мог
+  /// лежать в соседнем месяце, и захлопывать подробности из-за листания
+  /// значило бы терять прочитанное на ровном месте.
+  void _shiftMonth(int by) =>
+      setState(() => _month = DateTime(_month.year, _month.month + by));
 
   @override
   Widget build(BuildContext context) {
-    final picked = offer.pickedBy(recipientUid).toSet();
-    final groups = _groups;
-    // Подсказка про нажатие — только когда нажимать есть на что. Обещать
-    // «günə toxun» там, где ни у одного согласованного дня подробностей нет,
-    // значило бы звать в пустоту.
-    final anyTappable = picked.any(_hasDetails);
+    final picked = _picked;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
@@ -136,57 +156,45 @@ class OfferAnswerView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            _viewerAnswered ? 'Sən' : recipientName,
+            _viewerAnswered ? 'Sən' : widget.recipientName,
             key: const ValueKey('answer-who'),
             style: const TextStyle(
               color: kText,
-              fontSize: 21,
+              fontSize: 20,
               fontWeight: FontWeight.w700,
               height: 1.2,
             ),
           ),
-          const SizedBox(height: 3),
+          const SizedBox(height: 2),
           Text(
             _viewerAnswered ? 'cavab verdin' : 'cavab verdi',
             style: const TextStyle(color: kMuted, fontSize: 12),
           ),
 
-          for (final g in groups) ...[
-            const SizedBox(height: 18),
-            Center(
-              child: Text(
-                azUpperCase(azMonthFull(g.month.month)),
-                style: const TextStyle(
-                  color: kGold,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1.6,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Center(
-              child: Wrap(
-                spacing: 10,
-                runSpacing: 14,
-                alignment: WrapAlignment.center,
-                children: [
-                  for (final iso in g.isoDays)
-                    _DayChip(
-                      iso: iso,
-                      day: DateTime.parse(iso).day,
-                      agreed: picked.contains(iso),
-                      onTap: picked.contains(iso) && _hasDetails(iso)
-                          ? () => _openDetails(context, iso)
-                          : null,
-                    ),
-                ],
-              ),
-            ),
-          ],
+          const SizedBox(height: 10),
+          _monthHeader(),
+          const SizedBox(height: 4),
+          OfferMonthGrid(
+            month: _month,
+            picked: picked,
+            declined: _declined,
+            busy: widget.busyDates,
+            withDetails: _readable,
+            // Нажимаются только те, у кого есть что показать.
+            selectable: _readable,
+            // Здесь дни ЧИТАЮТ, а не выбирают: подробности состоявшейся
+            // работы должны открываться и на следующий день после неё.
+            allowPastTaps: true,
+            openDay: _openDay,
+            onTapDay: (iso) => setState(() {
+              // Тот же день второй раз — возврат к итогу.
+              _openDay = _openDay == iso ? null : iso;
+            }),
+            now: widget.now,
+          ),
 
-          if (anyTappable) ...[
-            const SizedBox(height: 9),
+          if (_readable.isNotEmpty) ...[
+            const SizedBox(height: 8),
             const Center(
               child: Text(
                 'günə toxun → Ətraflı',
@@ -196,274 +204,115 @@ class OfferAnswerView extends StatelessWidget {
             ),
           ],
 
-          // ЧИСЛА И ПОДПИСЬ — только когда согласованные дни есть. При
-          // ответе нулём («ни на один не могу») строка «— Gələ bilirəm»
-          // рядом с пустотой прочлась бы прямо наоборот.
-          if (picked.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            Container(
-              padding: const EdgeInsets.only(top: 14),
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: kBorder)),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Expanded(
-                    child: Text(
-                      _numbers(picked),
-                      key: const ValueKey('answer-picked-numbers'),
-                      style: const TextStyle(
-                        color: kText,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        fontFeatures: [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  const Text(
-                    'Gələ bilirəm',
-                    style: TextStyle(color: kGold, fontSize: 12.5),
-                  ),
-                ],
-              ),
+          const SizedBox(height: 13),
+          Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(minHeight: 92),
+            padding: const EdgeInsets.only(top: 12),
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: kBorder)),
             ),
-          ],
-
-          const SizedBox(height: 8),
-          Text(
-            '${picked.length} gün · ${offer.eventType}',
-            key: const ValueKey('answer-total'),
-            style: const TextStyle(color: kMuted, fontSize: 12),
+            child: _openDay == null ? _summary(picked) : _details(_openDay!),
           ),
 
-          const SizedBox(height: 20),
+          // ОТСТУП ДО КНОПКИ — ВОЗДУХ, А НЕ УКРАШЕНИЕ (владелец, 25.08).
+          // «Qəbul edirəm» необратима: она создаёт вечера. Палец не должен
+          // попадать в неё сразу после чтения времени и места.
+          const SizedBox(height: 28),
           ..._actions(),
         ],
       ),
     );
   }
 
-  /// Числа согласованных дней через запятую, в календарном порядке.
-  String _numbers(Set<String> picked) {
-    final days = (picked.toList()..sort())
-        .map(DateTime.tryParse)
-        .whereType<DateTime>()
-        .map((d) => '${d.day}')
-        .join(', ');
-    return days;
-  }
+  Widget _monthHeader() => Row(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      IconButton(
+        key: const ValueKey('answer-month-prev'),
+        icon: const Icon(Icons.chevron_left, color: kMuted),
+        onPressed: () => _shiftMonth(-1),
+      ),
+      Text(
+        '${azMonthFull(_month.month)} ${_month.year}',
+        style: const TextStyle(color: Colors.white, fontSize: 16),
+      ),
+      IconButton(
+        key: const ValueKey('answer-month-next'),
+        icon: const Icon(Icons.chevron_right, color: kMuted),
+        onPressed: () => _shiftMonth(1),
+      ),
+    ],
+  );
 
-  List<Widget> _actions() {
-    final out = <Widget>[];
-
-    if (onAccept != null &&
-        canAcceptAnswer(offer, recipientUid: recipientUid)) {
-      out.add(
-        _GoldButton(
-          key: const ValueKey('accept-confirm'),
-          label: 'Qəbul edirəm',
-          onTap: onAccept!,
-        ),
-      );
-    }
-
-    if (onChangeAnswer != null) {
-      if (out.isNotEmpty) out.add(const SizedBox(height: 10));
-      out.add(
-        _GoldButton(
-          key: const ValueKey('answer-change'),
-          label: 'Cavabı dəyiş',
-          onTap: onChangeAnswer!,
-        ),
-      );
-    }
-
-    // ПРИ ОТКАЗЕ ОТЗЫВ — ЕДИНСТВЕННЫЙ ХОД, и потому рядом сказано, ЧТО
-    // ПОСЛЕ НЕГО БУДЕТ. Иначе человек нажмёт и не поймёт, куда всё делось:
-    // предложение закрывается насовсем, а позвать заново — значит отправить
-    // НОВОЕ предложение. Кнопка без этой строки выглядит как «убрать с
-    // глаз», а убирает она ход целиком.
-    if (onWithdraw != null) {
-      if (out.isNotEmpty) out.add(const SizedBox(height: 12));
-      out.addAll([
-        Center(
-          child: GestureDetector(
-            key: const ValueKey('accept-withdraw'),
-            onTap: onWithdraw,
-            child: const Text(
-              'Təklifi geri götür',
-              style: TextStyle(color: kMuted, fontSize: 14),
-            ),
+  /// ИТОГ — три строки по центру, в порядке, заданном владельцем: что
+  /// сказал, про какие дни, сколько их.
+  Widget _summary(Set<String> picked) => Column(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      // Строка согласия — только когда согласованные дни есть. При ответе
+      // нулём («ни на один не могу») «Gələ bilirəm» рядом с пустотой
+      // прочлось бы прямо наоборот.
+      if (picked.isNotEmpty) ...[
+        const Text(
+          'Gələ bilirəm',
+          style: TextStyle(
+            color: kGold,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
           ),
         ),
         const SizedBox(height: 4),
-        const Text(
-          'Təklif bağlanacaq. Yenidən çağırmaq üçün yeni təklif '
-          'göndərməlisən.',
-          key: ValueKey('accept-withdraw-note'),
-          textAlign: TextAlign.center,
-          style: TextStyle(color: kMuted, fontSize: 11),
-        ),
-      ]);
-    }
-
-    return out;
-  }
-
-  /// ПОДРОБНОСТИ ОДНОГО ДНЯ — снизу, поверх этого вида.
-  ///
-  /// Поверх, а не вместо: человек смотрит время и место и возвращается к
-  /// ответу, ничего не потеряв. Тот же приём, что у листа ответа и у
-  /// карточки вечера.
-  void _openDetails(BuildContext context, String iso) {
-    final d = offer.details[iso];
-    if (d == null || d.isEmpty) return;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _DayDetailsSheet(iso: iso, details: d),
-    );
-  }
-}
-
-/// ОДИН ДЕНЬ — ТОЛЬКО ЧИСЛО, и знак отказа при нём.
-///
-/// Три вида, и они различаются не оттенком, а формой сообщения:
-///   согласован             — золотой, нажимается, если есть подробности;
-///   отказ                  — тусклый, и красный ✕ в углу;
-///   предложен без ответа    — тусклый, без значка.
-class _DayChip extends StatelessWidget {
-  const _DayChip({
-    required this.iso,
-    required this.day,
-    required this.agreed,
-    this.onTap,
-  });
-
-  final String iso;
-  final int day;
-  final bool agreed;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final box = Container(
-      width: 52,
-      height: 52,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: agreed ? kGold.withAlpha(36) : kBg3,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: agreed ? kGold : Colors.transparent),
-      ),
-      child: Text(
-        '$day',
-        style: TextStyle(
-          color: agreed ? kGold2 : kTextDim,
-          fontSize: 19,
-          fontWeight: FontWeight.w600,
-          fontFeatures: const [FontFeature.tabularFigures()],
-        ),
-      ),
-    );
-
-    return Stack(
-      // Значок заходит за угол клетки, поэтому обрезать его нельзя.
-      clipBehavior: Clip.none,
-      children: [
-        onTap == null
-            ? box
-            : GestureDetector(
-                key: ValueKey('answer-day-$iso'),
-                onTap: onTap,
-                child: box,
-              ),
-        if (!agreed)
-          Positioned(
-            top: -4,
-            right: -4,
-            child: Container(
-              key: ValueKey('answer-day-no-$iso'),
-              width: 19,
-              height: 19,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: kRed,
-                shape: BoxShape.circle,
-                border: Border.all(color: kBg2, width: 2),
-              ),
-              child: const Text(
-                '✕',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 9,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
+        Text(
+          _numbers(picked),
+          key: const ValueKey('answer-picked-numbers'),
+          style: const TextStyle(
+            color: kText,
+            fontSize: 17,
+            fontWeight: FontWeight.w600,
+            fontFeatures: [FontFeature.tabularFigures()],
           ),
+        ),
+        const SizedBox(height: 4),
       ],
-    );
-  }
-}
+      Text(
+        '${picked.length} gün · ${widget.offer.eventType}',
+        key: const ValueKey('answer-total'),
+        style: const TextStyle(color: kMuted, fontSize: 12),
+      ),
+    ],
+  );
 
-/// Подробности дня — время, место, одежда. Пустые поля не рисуются вовсе:
-/// строка «Yer —» обещала бы сведения, которых нет.
-class _DayDetailsSheet extends StatelessWidget {
-  const _DayDetailsSheet({required this.iso, required this.details});
-
-  final String iso;
-  final DayDetails details;
-
-  @override
-  Widget build(BuildContext context) {
+  /// ПОДРОБНОСТИ ОДНОГО ДНЯ — на месте итога. Пустые поля не рисуются вовсе:
+  /// строка «Yer —» обещала бы сведения, которых нет.
+  Widget _details(String iso) {
+    final d = widget.offer.details[iso] ?? const DayDetails();
     final rows = <(String, String)>[
-      if (details.time.isNotEmpty) ('Saat', details.time),
-      if (details.location.isNotEmpty) ('Yer', details.location),
-      if (details.dress.isNotEmpty) ('Geyim', details.dress),
+      if (d.time.isNotEmpty) ('Saat', d.time),
+      if (d.location.isNotEmpty) ('Yer', d.location),
+      if (d.dress.isNotEmpty) ('Geyim', d.dress),
     ];
 
-    return Container(
-      decoration: const BoxDecoration(
-        color: kBg3,
-        border: Border(top: BorderSide(color: kBorder)),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          fmtEventDate(iso),
+          key: const ValueKey('answer-details-day'),
+          style: const TextStyle(
+            color: kGold,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 240),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Center(
-                child: Container(
-                  width: 38,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: kMuted.withAlpha(90),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                fmtEventDate(iso),
-                key: const ValueKey('answer-details-day'),
-                style: const TextStyle(
-                  color: kGold,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 10),
               for (final r in rows)
                 Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  padding: const EdgeInsets.symmetric(vertical: 3),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -486,8 +335,84 @@ class _DayDetailsSheet extends StatelessWidget {
             ],
           ),
         ),
-      ),
+        const SizedBox(height: 6),
+        // ВОЗВРАТ НАЗВАН СЛОВОМ, а не оставлен на догадку. Повторное нажатие
+        // на день работает тоже, но о нём никто не знает: способ, который
+        // нельзя увидеть, — это не способ.
+        GestureDetector(
+          key: const ValueKey('answer-details-back'),
+          onTap: () => setState(() => _openDay = null),
+          child: const Text(
+            '← nəticəyə qayıt',
+            style: TextStyle(color: kMuted, fontSize: 11),
+          ),
+        ),
+      ],
     );
+  }
+
+  /// Числа согласованных дней через запятую, в календарном порядке.
+  String _numbers(Set<String> picked) => (picked.toList()..sort())
+      .map(DateTime.tryParse)
+      .whereType<DateTime>()
+      .map((d) => '${d.day}')
+      .join(', ');
+
+  List<Widget> _actions() {
+    final out = <Widget>[];
+
+    if (widget.onAccept != null &&
+        canAcceptAnswer(widget.offer, recipientUid: widget.recipientUid)) {
+      out.add(
+        _GoldButton(
+          key: const ValueKey('accept-confirm'),
+          label: 'Qəbul edirəm',
+          onTap: widget.onAccept!,
+        ),
+      );
+    }
+
+    if (widget.onChangeAnswer != null) {
+      if (out.isNotEmpty) out.add(const SizedBox(height: 10));
+      out.add(
+        _GoldButton(
+          key: const ValueKey('answer-change'),
+          label: 'Cavabı dəyiş',
+          onTap: widget.onChangeAnswer!,
+        ),
+      );
+    }
+
+    // ПРИ ОТКАЗЕ ОТЗЫВ — ЕДИНСТВЕННЫЙ ХОД, и потому рядом сказано, ЧТО ПОСЛЕ
+    // НЕГО БУДЕТ. Иначе человек нажмёт и не поймёт, куда всё делось:
+    // предложение закрывается насовсем, а позвать заново — значит отправить
+    // НОВОЕ. Кнопка без этой строки выглядит как «убрать с глаз», а убирает
+    // она ход целиком.
+    if (widget.onWithdraw != null) {
+      if (out.isNotEmpty) out.add(const SizedBox(height: 12));
+      out.addAll([
+        Center(
+          child: GestureDetector(
+            key: const ValueKey('accept-withdraw'),
+            onTap: widget.onWithdraw,
+            child: const Text(
+              'Təklifi geri götür',
+              style: TextStyle(color: kMuted, fontSize: 14),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Təklif bağlanacaq. Yenidən çağırmaq üçün yeni təklif '
+          'göndərməlisən.',
+          key: ValueKey('accept-withdraw-note'),
+          textAlign: TextAlign.center,
+          style: TextStyle(color: kMuted, fontSize: 11),
+        ),
+      ]);
+    }
+
+    return out;
   }
 }
 

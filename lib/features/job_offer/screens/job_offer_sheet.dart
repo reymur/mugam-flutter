@@ -303,11 +303,25 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
     final recipientUid = _recipientUid(offer, viewerUid);
     final viewerAnswered = viewerUid == recipientUid;
 
+    // ЗАНЯТОСТЬ СМОТРЯЩЕГО — тот же поставщик, что у листа ответа и у листа
+    // набора дней. Второго источника занятости в проекте нет и не заводится.
+    //
+    // Спрошена ЗДЕСЬ, в теле двери, а не внутри вида: дверь и так живёт
+    // потоком предложений и перестраивается на каждую выдачу, значит `watch`
+    // здесь получает обновления даром. У модалок, открываемых поверх, беда
+    // обратная (N143) — там нужен свой `Consumer`, и он там стоит.
+    //
+    // `known == false` даёт ПУСТОЙ набор, а не «свободно»: незакрашенная
+    // сетка утверждает ровно столько же, сколько мы знаем, — ничего. Врать
+    // заливкой здесь нечем, потому что заливка тут ничего не запрещает.
+    final busy = ref.watch(busyDaysProvider(viewerUid));
+
     return OfferAnswerView(
       offer: offer,
       viewerUid: viewerUid,
       recipientUid: recipientUid,
       recipientName: _nameOf(recipientUid, viewerUid),
+      busyDates: busy.eventsByDay.keys.toSet(),
       onAccept: viewerAnswered
           ? null
           : () => _writeAccept(
