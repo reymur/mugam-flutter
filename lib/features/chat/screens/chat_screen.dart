@@ -3144,6 +3144,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     // идёт первая выдача потока. Показать тут заглушку значило бы мигать
     // ею на каждом открытии чата.
     final offer = offerCardFor(msg.offerId, offersById);
+
+    // ОТОЗВАННОЕ ИЗ ЛЕНТЫ УБИРАЕТСЯ СОВСЕМ — решает `offerRowHidden`, а не
+    // это место. Довод, цена и граница записаны у самой функции; здесь
+    // только пустой виджет вместо строки.
+    //
+    // Пустой виджет, а не «провалиться ниже»: ниже якорь нарисовался бы
+    // обычным пузырём с `offerAnchorText`, то есть строка осталась бы на
+    // экране, только без состояния.
+    if (offer != null && offerRowHidden(offer, viewerUid: currentUid)) {
+      return KeyedSubtree(key: ValueKey(msg.id), child: const SizedBox.shrink());
+    }
+
     if (offer != null) {
       // Ключ на обёртке, а не на самом виджете: `_SwipeableMessageBubble`
       // его не принимает, а списку он нужен, чтобы не перепутать строки.
