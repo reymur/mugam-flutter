@@ -4508,15 +4508,30 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             // rename by an admin shows up here immediately instead of only
             // after reopening the chat — falls back to the one-time
             // chatDataProvider value until the live stream's first snapshot
-            // arrives. 1:1 chats are untouched: otherUser.name (live via
-            // currentUserProvider) already covers that case, same as before.
-            final displayName = (!isGroup && otherUser != null)
-                ? otherUser.name
-                : (isGroup
-                      ? (chatMetaAsync.value?['name'] as String? ??
-                            data['name'] ??
-                            'Chat')
-                      : (data['name'] ?? 'Chat'));
+            // arrives.
+            //
+            // ИМЯ ГРУППЫ ВЫНЕСЕНО ОТДЕЛЬНОЙ ПЕРЕМЕННОЙ — 25.08, вместе с
+            // починкой последних читателей `chatData['name']` (N141).
+            //
+            // Раньше обе ветви жили в одном тройном условии, и хвост
+            // `: (data['name'] ?? 'Chat')` — путь ПРЯМОГО чата, пока
+            // `otherUser` ещё не приехал, — читался как продолжение
+            // групповой ветви. Он ею не был: в прямом чате `name` документа
+            // пишет mugam-v2 со стороны СОЗДАТЕЛЯ и не обновляет, поэтому
+            // вторая сторона видела там СВОЁ имя в заголовке чужого чата.
+            //
+            // Разделено не ради красоты, а чтобы правило было ВЫРАЗИМО: имя
+            // группы — законное чтение поля, имя человека — нет, и теперь
+            // это видно и глазу, и сторожу «е».
+            final groupName =
+                chatMetaAsync.value?['name'] as String? ??
+                data['name'] ??
+                'Chat';
+            // Прямой чат: только живой пользователь, иначе — тот же знак
+            // незнания, что стоит выше у `data == null`. Показать вместо
+            // имени многоточие честно; показать собственное имя читателя —
+            // нет (N141).
+            final displayName = isGroup ? groupName : (otherUser?.name ?? '...');
             final titleColumn = Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
@@ -4931,11 +4946,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                           mainAxisSize: MainAxisSize.min,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
+                            // ПОДПИСЬ ЦИТИРУЕМОГО В ПОЛЕ ВВОДА — то же имя,
+                            // что уедет в `replyTo.senderName` при отправке.
+                            //
+                            // Сведено с `_replySenderName` 25.08 (N141). Это
+                            // сведение ПО ЗАДАЧЕ, а не по совпадению вида
+                            // (I58): здесь и там отвечают на один вопрос —
+                            // «кто написал цитируемое», — и никакого
+                            // переключателя «а этому иначе» не понадобилось.
+                            // Ветвь «Siz» осталась снаружи: она про слово, а
+                            // не про источник имени.
+                            //
+                            // Расхождение было наблюдаемым: поле ввода
+                            // показывало одно имя, а в документ уходило
+                            // другое.
                             Text(
                               _replyingTo!.senderId == currentUid
                                   ? 'Siz'
-                                  : (chatDataAsync.value?['name'] as String? ??
-                                        ''),
+                                  : _replySenderName(_replyingTo!, currentUid),
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: kGold,

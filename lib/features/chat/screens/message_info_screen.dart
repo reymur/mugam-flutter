@@ -105,7 +105,11 @@ class MessageInfoScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final chatMeta = ref.watch(chatMetaProvider(chatId)).value ?? {};
-    final chatData = ref.watch(chatDataProvider(chatId)).value;
+    // `chatDataProvider` здесь больше не читается: его единственным
+    // потребителем было `chatData['name']` — имя человека, взятое с
+    // документа чата (N141, починено 25.08). Подписка снята вместе с
+    // чтением, а не оставлена «на всякий случай»: живой поставщик без
+    // читателя — это лишняя подписка и приглашение прочитать поле снова.
     final messages = ref.watch(chatMessagesControllerProvider(chatId)).messages;
 
     Widget body;
@@ -213,7 +217,23 @@ class MessageInfoScreen extends ConsumerWidget {
         final uid = recipients.isEmpty ? null : recipients.first;
         final isRead = uid != null && readByUid(uid);
         final isDelivered = uid != null && (deliveredToUid(uid) || isRead);
-        final otherName = chatData?['name'] as String? ?? '';
+        // ИМЯ ПРОЧИТАВШЕГО — У ЖИВОГО ПОЛЬЗОВАТЕЛЯ, А НЕ У ПОЛЯ ЧАТА.
+        //
+        // Починено 25.08, последним из пяти читателей `chatData['name']`
+        // (N141). Поле `name` документа чата пишет mugam-v2 со стороны
+        // СОЗДАТЕЛЯ и никогда не обновляет — то есть у одной из двух сторон
+        // здесь стояло СВОЁ СОБСТВЕННОЕ имя, и экран сообщал «Я oxudu» про
+        // чужое прочтение.
+        //
+        // Источник тот же, которым этот файл уже пользуется строкой ниже —
+        // `_MemberStatusRow` берёт имя участника через `currentUserProvider`.
+        // Второго источника имён здесь не заводится.
+        //
+        // Пустая строка оставлена значащей: `otherName.isNotEmpty` ниже
+        // выбирает между «$otherName oxudu» и просто «Oxundu». Пока имя не
+        // приехало, честнее сказать «прочитано», чем назвать кого-то.
+        final otherName =
+            uid == null ? '' : (ref.watch(currentUserProvider(uid)).value?.name ?? '');
         if (isDelivered) {
           rows.add(
             _buildInfoRow(
