@@ -299,6 +299,56 @@ void main() {
         expect(opened, 'e2', reason: 'открылся не тот вечер, на который нажали');
       });
 
+      // ОДИН ВЕЧЕР — НАЖИМАЕТСЯ ВЕСЬ БЛОК (владелец, 25.08, по виду на
+      // трубке). Проверка бьёт по ЗАГОЛОВКУ: он лежит вне строки вечера, и
+      // сработай только строка — нажатие сюда не дало бы ничего.
+      testWidgets('один вечер — нажимается весь блок, а не только строка', (
+        tester,
+      ) async {
+        String? opened;
+        await pumpBusy(
+          tester,
+          events: [evening('e1')],
+          onOpen: (id) => opened = id,
+        );
+        await tester.tap(find.byKey(const ValueKey('offer-cell-2026-09-15')));
+        await tester.pump();
+
+        await tester.ensureVisible(find.text('Bu gün məşğulsan'));
+        await tester.pump();
+        await tester.tap(find.text('Bu gün məşğulsan'));
+        await tester.pump();
+        expect(opened, 'e1');
+      });
+
+      // НЕСКОЛЬКО ВЕЧЕРОВ — БЛОК ЦЕЛИКОМ НЕ НАЖИМАЕТСЯ, и это не недоделка:
+      // целей столько же, сколько вечеров, и общая мишень открывала бы
+      // первый (`.first`, N51/I11) либо спрашивала бы «который?».
+      testWidgets('два вечера — общей мишени у блока нет', (tester) async {
+        String? opened;
+        await pumpBusy(
+          tester,
+          events: [evening('e1'), evening('e2', time: '21:00')],
+          onOpen: (id) => opened = id,
+        );
+        await tester.tap(find.byKey(const ValueKey('offer-cell-2026-09-15')));
+        await tester.pump();
+
+        await tester.ensureVisible(find.text('Bu gün məşğulsan'));
+        await tester.pump();
+        await tester.tap(
+          find.text('Bu gün məşğulsan'),
+          warnIfMissed: false,
+        );
+        await tester.pump();
+        expect(
+          opened,
+          isNull,
+          reason: 'нажатие на заголовок открыло вечер — значит блок выбрал '
+              'один из двух за человека',
+        );
+      });
+
       // ПРАВИЛО «КНОПКА БЕЗ АДРЕСАТА НЕ РИСУЕТСЯ» (N146, I64). Не передали
       // дверь — надпись остаётся надписью, без обманчивого вида нажимаемой.
       testWidgets('двери нет — надпись есть, но не нажимаема', (tester) async {

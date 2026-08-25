@@ -16,15 +16,24 @@ import '../../../shared/widgets/event_conflict_banner.dart';
 /// код один (I58: сводить по задаче). Расходятся листы в том, КОГДА день
 /// считается выбранным, и это остаётся у них.
 ///
-/// **ВЕЧЕРА ПЕРЕЧИСЛЯЮТСЯ ВСЕ, каждый своей строкой, и каждая ведёт в свой.**
-/// Два вечера в один день — обычная жизнь; показать один значило бы спрятать
-/// второй молча (N51/I11), а спросить «который из двух?» окошком — задать
-/// вопрос там, где человек его не задавал. Строк столько, сколько вечеров.
+/// --- ГДЕ НАЖИМАТЬ: ОДИН ВЕЧЕР И НЕСКОЛЬКО — РАЗНЫЕ СЛУЧАИ ---
+///
+/// **Один вечер — нажимается ВЕСЬ блок** (владелец, 25.08, по виду на
+/// трубке). Цель у нажатия одна, значит и мишень одна: заставлять целиться в
+/// строку, когда в блоке больше нечего нажать, — значит отнимать площадь без
+/// причины. Стрелка при этом стоит **по центру блока**, а не вровень со
+/// строкой: она про блок целиком.
+///
+/// **Несколько вечеров — нажимается КАЖДАЯ СТРОКА, и стрелка у каждой.**
+/// Целей столько же, сколько вечеров, и свести их к одной нельзя: пришлось бы
+/// либо открывать первый (`.first`, N51/I11), либо спрашивать «который?» —
+/// вопрос, которого человек не задавал. Два вечера в один день — обычная
+/// жизнь.
 ///
 /// **СТРОКА БЕЗ АДРЕСАТА НЕ РИСУЕТСЯ НАЖИМАЕМОЙ.** Не передали
-/// [onOpenEvent] — текст остаётся текстом, без обманчивого вида кнопки. Это
-/// то самое правило, на котором 20.08 поймали микрофон без обработчика
-/// (N146, I64).
+/// [onOpenEvent] — текст остаётся текстом, без обманчивого вида кнопки, и
+/// стрелки нет вовсе. Это то самое правило, на котором 20.08 поймали микрофон
+/// без обработчика (N146, I64).
 class BusyDayNotice extends StatelessWidget {
   const BusyDayNotice({
     super.key,
@@ -35,46 +44,84 @@ class BusyDayNotice extends StatelessWidget {
   /// Вечера этого дня, уже по времени. Пусто — виджет не рисуется вовсе.
   final List<PersonalEvent> events;
 
-  /// Открыть карточку вечера. `null` — открывать некуда, строки не нажимаемы.
+  /// Открыть карточку вечера. `null` — открывать некуда, ничего не нажимаемо.
   final void Function(String eventId)? onOpenEvent;
+
+  /// Стрелка. **Крупная намеренно** (владелец, 25.08): прежние 18 пунктов у
+  /// края блока читались на трубке как украшение, а не как «сюда нажимают».
+  static const double _chevronSize = 30;
 
   @override
   Widget build(BuildContext context) {
     if (events.isEmpty) return const SizedBox.shrink();
 
-    return Container(
+    final single = events.length == 1;
+    final wholeBoxOpens = single && onOpenEvent != null;
+
+    final box = Container(
       key: const ValueKey('busy-day-notice'),
       width: double.infinity,
       margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
       decoration: BoxDecoration(
         color: kWarnBg,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: kWarnBorder),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        // СТРЕЛКА ПО ЦЕНТРУ БЛОКА. Стоя вровень со строкой вечера, она
+        // обещала бы, что нажимать надо именно там, — а нажимается всё.
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // ЗАГОЛОВОК — СЛОВО ФИЧИ, а не второе название того же.
-          // «məşğulsan» уже говорит карточка предложения; календарь про то же
-          // говорит своими словами («Bu gün artıq tədbirin var»), и сводить их
-          // в одну строку — отдельная работа, не эта (I51).
-          const Text(
-            'Bu gün məşğulsan',
-            style: TextStyle(
-              color: kWarnTitle,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ЗАГОЛОВОК — СЛОВО ФИЧИ, а не второе название того же.
+                // «məşğulsan» уже говорит карточка предложения; календарь про
+                // то же говорит своими словами («Bu gün artıq tədbirin var»),
+                // и сводить их в одну строку — отдельная работа, не эта (I51).
+                const Text(
+                  'Bu gün məşğulsan',
+                  style: TextStyle(
+                    color: kWarnTitle,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                for (final e in events) _eventRow(e, single: single),
+              ],
             ),
           ),
-          const SizedBox(height: 6),
-          for (final e in events) _eventRow(e),
+          if (wholeBoxOpens) ...[
+            const SizedBox(width: 6),
+            const Icon(
+              Icons.chevron_right,
+              size: _chevronSize,
+              color: kWarnHint,
+            ),
+          ],
         ],
       ),
     );
+
+    if (!wholeBoxOpens) return box;
+    return GestureDetector(
+      key: ValueKey('busy-day-open-${events.single.id}'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () => onOpenEvent!(events.single.id),
+      child: box,
+    );
   }
 
-  Widget _eventRow(PersonalEvent e) {
+  /// Одна строка «Toy · 17:20 · Bakı».
+  ///
+  /// [single] — вечер в блоке один, и нажимается блок целиком; тогда строка
+  /// своей мишени не заводит. Иначе внутри одной нажимаемой области оказалась
+  /// бы вторая, делающая ровно то же, — и промах пальцем по границе давал бы
+  /// разный отклик на одно и то же намерение.
+  Widget _eventRow(PersonalEvent e, {required bool single}) {
     final row = Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
@@ -90,15 +137,19 @@ class BusyDayNotice extends StatelessWidget {
               style: kWarnFactStyle,
             ),
           ),
-          if (onOpenEvent != null) ...[
+          if (!single && onOpenEvent != null) ...[
             const SizedBox(width: 6),
-            const Icon(Icons.chevron_right, size: 18, color: kWarnHint),
+            const Icon(
+              Icons.chevron_right,
+              size: _chevronSize,
+              color: kWarnHint,
+            ),
           ],
         ],
       ),
     );
 
-    if (onOpenEvent == null) return row;
+    if (single || onOpenEvent == null) return row;
     return GestureDetector(
       key: ValueKey('busy-day-open-${e.id}'),
       behavior: HitTestBehavior.opaque,
