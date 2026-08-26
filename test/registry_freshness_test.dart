@@ -245,7 +245,18 @@ void main() {
     final log = Process.runSync('git', ['log', '--format=%s']);
     expect(log.exitCode, 0, reason: 'git log недоступен: ${log.stderr}');
 
-    final named = RegExp(r'\bN\d{1,2}\b')
+    // `\d+`, А НЕ `\d{1,2}` — ГРАНИЦА, НА КОТОРОЙ СТОРОЖ ОСЛЕП МОЛЧА (N175).
+    //
+    // Здесь стояло `\d{1,2}`, и с появлением N100 сторож перестал видеть
+    // трёхзначные номера — то есть 74 записи реестра из 170 не сторожились
+    // ничем, а прогон всё это время был зелёным. Запись, не подошедшая под
+    // образец, здесь НЕ РОНЯЕТ прогон, она просто не попадает в множество,
+    // и «нарушителей нет» с «искать было негде» дают один и тот же вывод.
+    //
+    // Соседка ниже этого не поймала бы и не поймала: она падает на ПУСТОМ
+    // множестве, а множество пустым не было — двузначные номера в истории
+    // есть всегда.
+    final named = RegExp(r'\bN\d+\b')
         .allMatches(log.stdout as String)
         .map((m) => m.group(0)!)
         .toSet();
@@ -316,7 +327,9 @@ void main() {
       // закрытие в теле разбора. Проверка не приколочена к этим двум
       // номерам — она спрашивает у ВСЕХ записей, чьё состояние начинается
       // словом «открыт», и потому переживёт их закрытие.
-      final ids = RegExp(r'^\| (N\d{1,2}) \|', multiLine: true)
+      // `\d+` — см. довод у первой проверки (N175). До 27.08 здесь стояло
+      // `\d{1,2}`, и состояние трёхзначных записей не читалось вовсе.
+      final ids = RegExp(r'^\| (N\d+) \|', multiLine: true)
           .allMatches(registry)
           .map((m) => m.group(1)!)
           .toList();
@@ -387,7 +400,7 @@ void main() {
 
       final places = <String, String>{};
       for (final m
-          in RegExp(r'^\| (N\d{1,2}) \|(.*)$', multiLine: true)
+          in RegExp(r'^\| (N\d+) \|(.*)$', multiLine: true)
               .allMatches(registry)) {
         final status = _statusOf(registry, m.group(1)!);
         if (status != null) places['AUDIT_TODO.md ${m.group(1)}'] = status;
