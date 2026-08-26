@@ -179,8 +179,29 @@ class _JobOfferCardState extends State<JobOfferCard> {
             ),
           ],
           if (_hasDetails(offer)) _details(offer),
-          const SizedBox(height: 10),
-          _footer(offer, actions, isInitiator),
+          // ЗАКРЫТЫЙ РАУНД НЕ ПОЛУЧАЕТ ПОДВАЛА ВОВСЕ (N159, 27.08).
+          //
+          // Подвал — место ДЕЙСТВИЙ. При `isReadOnly` действий нет ни одного,
+          // и он печатал вместо них состояние: «Təklif geri götürüldü» либо
+          // «Təklif qəbul edildi». А то же самое состояние уже стоит в шапке
+          // заглавными, через две строки выше, — и на пустом экране два
+          // одинаковых сообщения подряд читаются как ошибка (найдено
+          // владельцем на трубке 22.08, повторно 27.08).
+          //
+          // СНЯТО НИЖНЕЕ, А НЕ ВЕРХНЕЕ, и причина не в том, какое красивее:
+          // шапка утверждает состояние ВО ВСЕХ ЧЕТЫРЁХ ветвях `_header`, и
+          // снять её значило бы либо потерять состояние в трёх остальных
+          // случаях, либо завести в ней дыру ровно на одном.
+          //
+          // ЗАОДНО СНЯТА ЛОЖЬ, КОТОРУЮ НИКТО НЕ ЗАМЕТИЛ: `isReadOnly` — это
+          // «действий нет», а не «раунд закрыт» (`job_offer.dart:237` — шесть
+          // отрицаний подряд). Подвал же выбирал между двумя текстами по
+          // одному лишь `state == withdrawn`, то есть на любом другом
+          // состоянии без действий печатал «принято». Ветви больше нет.
+          if (!actions.isReadOnly) ...[
+            const SizedBox(height: 10),
+            _footer(offer, actions, isInitiator),
+          ],
         ],
       ),
     );
@@ -413,16 +434,10 @@ class _JobOfferCardState extends State<JobOfferCard> {
     ),
   );
 
+  /// ЗОВЁТСЯ ТОЛЬКО ПРИ `!actions.isReadOnly` — проверка стоит у вызова
+  /// (N159). Здесь её нет намеренно: подвал ничего не знает о состоянии
+  /// раунда и не должен, он раздаёт действия.
   Widget _footer(JobOffer offer, OfferCardActions actions, bool isInitiator) {
-    if (actions.isReadOnly) {
-      return Text(
-        offer.state == OfferState.withdrawn
-            ? 'Təklif geri götürüldü'
-            : 'Təklif qəbul edildi',
-        style: const TextStyle(color: kMuted, fontSize: 13),
-      );
-    }
-
     final children = <Widget>[];
 
     // ЧЕТВЁРТЫЙ ПОД ТЕМ ЖЕ ПРАВИЛОМ, И ДО 20.08 ОН БЫЛ ЕДИНСТВЕННЫМ, КТО ИЗ

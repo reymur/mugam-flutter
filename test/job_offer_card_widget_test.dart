@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/job_offer/job_offer.dart';
+// Заглавные берутся у той же функции, что и у показа: своя копия
+// «TƏKLİF…» в тесте разошлась бы с `azUpperCase` молча (i ↔ İ).
+import 'package:mugam_flutter/core/time/az_date_format.dart';
 import 'package:mugam_flutter/features/job_offer/widgets/job_offer_card.dart';
 
 // ВТОРАЯ ПОЛОВИНА ЗАЩИТЫ — на стороне ПОКАЗА.
@@ -422,11 +425,37 @@ void main() {
     expect(find.byKey(const ValueKey('offer-withdraw')), findsNothing);
   });
 
+  // ПЕРЕПИСАН 27.08 ВМЕСТЕ С N159, И ПРИЧИНА ВАЖНЕЕ САМОЙ ПРАВКИ.
+  //
+  // Здесь стояло `find.textContaining('geri götürüldü'), findsWidgets` —
+  // и это утверждало не то, что читалось. `textContaining`
+  // РЕГИСТРОЗАВИСИМ, а шапка печатает `azUpperCase(...)`, то есть
+  // «TƏKLİF GERİ GÖTÜRÜLDÜ». Под старый матчер шапка не подходила вовсе:
+  // единственным, что он находил, был ПОДВАЛ — ровно то, что N159 и
+  // снимает. `findsWidgets` (один и больше) это прятал: пока мест было
+  // два, число ничего не различало.
+  //
+  // Теперь утверждается то, что должно пережить N159: пометка стоит
+  // ровно в одном месте и это ШАПКА.
   testWidgets('отозванное предложение остаётся в ленте с пометкой', (
     tester,
   ) async {
     await pump(tester, o: offer(withdrawnBy: boss), viewer: player);
-    expect(find.textContaining('geri götürüldü'), findsWidgets);
+    expect(find.text(azUpperCase('təklif geri götürüldü')), findsOneWidget);
+
+    // ВТОРОЕ УТВЕРЖДЕНИЕ ОБЯЗАТЕЛЬНО (I14): без него «нижнего нет» прошло
+    // бы и тогда, когда карточка не построилась вовсе. Строчная форма —
+    // это и есть снятый подвал, и вернуться она может только правкой.
+    expect(find.text('Təklif geri götürüldü'), findsNothing);
+  });
+
+  // ТА ЖЕ ПАРА ДЛЯ ПРИНЯТОГО. N159 записана была про «принято», а найдена
+  // повторно на отозванном — то есть двоение жило в ОБЕИХ ветвях подвала,
+  // и проверять надо обе (I64: не наличие правила, а каждого подпадающего).
+  testWidgets('принятое предложение говорит о себе один раз', (tester) async {
+    await pump(tester, o: offer(acceptedBy: boss), viewer: player);
+    expect(find.text(azUpperCase('təklif qəbul edildi')), findsOneWidget);
+    expect(find.text('Təklif qəbul edildi'), findsNothing);
   });
 
   // ДЛИННЫЙ НАБОР ДНЕЙ. Предела на число дней нет нигде (решение автора
