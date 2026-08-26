@@ -17,10 +17,25 @@ import '../../navigation/app_router.dart';
 // user the way a real phone call does.
 //
 // TODO(pushkit): iOS only shows this while the app process is still alive
-// (foreground or recently backgrounded) — there is no paid Apple Developer
-// Program membership yet to issue a VoIP Services Certificate / APNs auth
-// key, which PushKit (wake from fully-killed state) requires. Once
-// available:
+// (foreground or recently backgrounded).
+//
+// ДОВОД ЗДЕСЬ ИСПРАВЛЕН 26.08, И ЭТО ВАЖНЕЕ САМОГО TODO. Стояло: «нет
+// платного Apple Developer Program, чтобы выпустить VoIP-сертификат». **Счёт
+// оплачен с 14.08** — препятствия больше нет. Отложено ПО ОБЪЁМУ РАБОТЫ, а не
+// по невозможности: это отдельная работа со своей выкладкой (сертификат,
+// нативный код в AppDelegate, новая коллекция токенов, отправка мимо FCM).
+//
+// Разница не словесная: «нельзя» закрывает вопрос, «дорого» его открывает.
+// Пока стоял первый довод, следующий читал и не брался. Разбор — N172.
+//
+// **Чем это видно человеку СЕГОДНЯ:** звонок идёт тихим служебным push'ем
+// (`content-available: 1`, `apns-priority: 5`, см. `sendCallDataPush` в
+// `functions/src/index.ts`). Пятый приоритет — это по определению Apple
+// «доставить с оглядкой на батарею», iOS такие придерживает и склеивает,
+// отсюда **задержка до минуты**; при убитом приложении не будит вовсе.
+// Десятый поставить нельзя: Apple отвергает `content-available` с ним.
+//
+// Шаги, когда возьмёмся:
 //   1. Generate a VoIP Services Certificate (or APNs auth key with the
 //      VoIP push type) in the Apple Developer Portal.
 //   2. In ios/Runner/AppDelegate.swift, register a PKPushRegistry (see
