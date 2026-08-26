@@ -430,12 +430,22 @@ class _OfferAnswerViewState extends State<OfferAnswerView> {
       if (out.isNotEmpty) out.add(const SizedBox(height: 12));
       out.addAll([
         Center(
+          // ВИД ДЕЙСТВИЯ — ОДИН С КАРТОЧКОЙ (N174, 27.08). Довод целиком
+          // записан у второго места, `job_offer_card.dart` (у отзыва в
+          // `_footer`), и повторять его здесь не надо — надо, чтобы эти два
+          // места не разошлись. До сегодня они уже разошлись: `kMuted, 12`
+          // там против `kMuted, 14` здесь, и заметить это было нечем, потому
+          // что рядом их не видно никогда. Теперь оба — `kGold, 14, w600`.
           child: GestureDetector(
             key: const ValueKey('accept-withdraw'),
             onTap: widget.onWithdraw,
             child: const Text(
               'Təklifi geri götür',
-              style: TextStyle(color: kMuted, fontSize: 14),
+              style: TextStyle(
+                color: kGold,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
