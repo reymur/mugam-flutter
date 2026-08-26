@@ -1678,9 +1678,28 @@ function storagePathFromDownloadUrl(url: string): string | null {
 
 // Exhaustive scope, deliberately: (1) viewer records aren't cascade-
 // deleted by Firestore automatically, (2) media file cleanup for
-// image/video statuses. Nothing else — no push notifications to clean up
-// (disabled pending a paid Apple Developer account), no other subsystem
-// references statuses yet.
+// image/video statuses.
+//
+// ДОВОД ИСПРАВЛЕН 26.08 — ВЫВОД ТОТ ЖЕ, ПРИЧИНА ДРУГАЯ. Здесь стояло: чистить
+// нечего, потому что «no push notifications to clean up (disabled pending a
+// paid Apple Developer account)». **Это перестало быть правдой 14.08**, когда
+// счёт оплатили: уведомления работают — сообщения, звонки, предложения,
+// вечера. Запись утверждала ОТСУТСТВИЕ ПОДСИСТЕМЫ, а подсистема живёт, и
+// заметить такую неправду нечем: ноль выглядит одинаково и когда он ноль, и
+// когда стал единицей (I37).
+//
+// **ЧТО ВЕРНО ВМЕСТО НЕГО, снято обходом 26.08, а не выведено:** чистить
+// нечего потому, что **уведомлений о статусах не существует вовсе**.
+// `onStatusCreated` — сто строк, и ни одного вызова отправки: ни
+// `sendPushToUid`, ни `sendEventPushes`, ни `messaging.send`. Ни один тип
+// push во всём `functions/src` статусов не касается.
+//
+// Значит после удаления статуса висеть нечему, и снимать нечего. **Появится
+// уведомление о статусе — эту строку придётся пересмотреть**, и вот тогда
+// вопрос «а не осталось ли висеть» станет настоящим.
+//
+// Прочего у статусов по-прежнему нет: ни одна другая подсистема на них не
+// ссылается.
 export const onStatusDeleted = onDocumentDeleted(
   "users/{uid}/statuses/{statusId}",
   async (event) => {
