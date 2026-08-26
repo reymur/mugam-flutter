@@ -3268,16 +3268,37 @@ class _PersonalEventDetailScreenState
 // здесь: грузится → ждём; пришло и нет → «удалено»; пришло и есть →
 // карточка.
 //
-// ЧЕГО ЭТА ДВЕРЬ НЕ ЗАКРЫВАЕТ: путь роутера `/event/:id` и чтение
-// `eventId` в `main.dart` (N59). Уведомлению нужен путь, а не функция:
-// у него на руках нет `BuildContext` экрана. Таблица трёх поводов в N90
-// закрывается этой работой на ОДНУ строку из трёх.
+// ПУТЬ РОУТЕРА И ЧТЕНИЕ `eventId` ЗАВЕДЕНЫ 26.08 — N59 ЗАКРЫТА.
+//
+// Здесь стояло «чего эта дверь не закрывает: путь роутера `/event/:id` и
+// чтение `eventId` в `main.dart`». Оба сделаны: путь `/event/:eventId` есть в
+// `app_router.dart` и зовёт `eventDetailBody` — ТО ЖЕ тело, что и эта
+// функция, — а `main.dart` разбирает `data` правилом `pushRouteFor`.
+//
+// **Второго места, решающего «удалено или грузится», не завелось**, и это
+// было условием: обе точки входа отдают один виджет, три состояния живут
+// внутри него.
 Route<void> eventDetailRoute({
   required String eventId,
   required String currentUid,
 }) => MaterialPageRoute(
-  builder: (_) => _EventDetailById(eventId: eventId, currentUid: currentUid),
+  builder: (_) => eventDetailBody(eventId: eventId, currentUid: currentUid),
 );
+
+/// ТО ЖЕ САМОЕ ТЕЛО, НО ВИДЖЕТОМ — для роутера (26.08, N59).
+///
+/// `GoRoute` строит виджет, а не `Route`, и без этого пути к вечеру не завести
+/// вовсе: `_EventDetailById` приватен, назвать его снаружи нельзя правилом
+/// языка.
+///
+/// **Двери по-прежнему ОДНА, и это здесь главное.** Обе точки входа отдают
+/// один и тот же виджет; три состояния — грузится, удалено, показываем —
+/// живут внутри него, а не повторяются у каждого входа. Сделай маршрут своим
+/// телом, и «удалено» пришлось бы решать дважды.
+Widget eventDetailBody({
+  required String eventId,
+  required String currentUid,
+}) => _EventDetailById(eventId: eventId, currentUid: currentUid);
 
 /// ОТВЕТ ЗАГЛУШКИ — «скоро». Одно тело на весь файл.
 ///

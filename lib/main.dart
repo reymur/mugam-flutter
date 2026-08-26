@@ -27,6 +27,7 @@ import 'firebase/firestore_service.dart';
 // which would otherwise collide with firebase_auth's `User` (already
 // imported below and used unqualified for _authSub's type).
 import 'firebase/models.dart' show CallType;
+import 'core/push/push_route.dart';
 import 'firebase/push_notification_service.dart';
 import 'firebase_options.dart';
 import 'navigation/app_router.dart';
@@ -223,27 +224,18 @@ class _MugamAppState extends ConsumerState<MugamApp> {
     // сервера полем `openList`, чтобы клиент не повторял у себя правило
     // доступа и не разошёлся с ним.
     PushNotificationService.instance.setupMessageOpenedHandler((data) {
-      final type = data['type'] ?? '';
-      final chatId = data['chatId'];
-      const chatTypes = {
-        'new_message',
-        'job_offer_created',
-        'job_offer_changed',
-        'job_offer_cancelled',
-        'job_offer_agreed',
-        'job_offer_waiting_date',
-      };
-      if (chatTypes.contains(type) && chatId != null) {
-        // Открывается чат целиком, а не какое-то состояние в нём: к
-        // моменту тапа предложение могло быть уже принято или отменено,
-        // и экран честно покажет то, что есть СЕЙЧАС — переписку и
-        // плашку по текущему состоянию, без пустого экрана и без ошибки.
-        appRouter.push('/chat/$chatId');
-        return;
-      }
-      if (type.startsWith('event_')) {
-        appRouter.push('/agreements');
-      }
+      // КУДА ВЕСТИ — решает `pushRouteFor`, а не это место (26.08, N59).
+      //
+      // Здесь стоял жёсткий список типов и `startsWith('event_')`, то есть
+      // решение жило внутри обработчика, который в тесте не поднять. Обход
+      // 26.08 нашёл там три расхождения с сервером разом, и ни одно не
+      // падало: нажатие просто не делало ничего. Разбор — в самом правиле.
+      //
+      // `null` — вести некуда: тип незнаком либо в данных нет нужного ключа.
+      // Молчим, а не уводим на общий экран: увести значило бы открыть
+      // человеку то, к чему его уведомление отношения не имеет.
+      final route = pushRouteFor(data);
+      if (route != null) appRouter.push(route);
     });
     // Eagerly instantiate the offline send retry loop at startup (not
     // lazily on first chat screen open) so pending sends hydrated from a

@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'auth_gate_screen.dart';
@@ -78,6 +79,28 @@ final appRouter = GoRouter(
         chatId: s.pathParameters['chatId']!,
         initialHighlightMessageId: s.extra as String?,
       ),
+    ),
+    // ПУТЬ К ВЕЧЕРУ — заведён 26.08 ради уведомлений (N59).
+    //
+    // Карточка вечера существовала и открывалась дверью `eventDetailRoute`,
+    // но дверь эта — ФУНКЦИЯ, а уведомлению нужен ПУТЬ: у него на руках нет
+    // `BuildContext` экрана. Ровно это записано в шапке самой двери.
+    //
+    // Дверь та же самая, а не вторая: тело маршрута зовёт `eventDetailRoute`
+    // и отдаёт её виджет. Три состояния — грузится, удалено, показываем —
+    // остаются у неё, и второго места, где это решается, не заводится.
+    GoRoute(
+      path: '/event/:eventId',
+      builder: (c, s) {
+        // Свой uid берётся здесь, а не приходит уведомлением: в `data` его
+        // нет и быть не должно — push адресован устройству, а кто на нём
+        // сидит, знает только приложение.
+        final uid = FirebaseAuth.instance.currentUser?.uid ?? '';
+        return eventDetailBody(
+          eventId: s.pathParameters['eventId']!,
+          currentUid: uid,
+        );
+      },
     ),
     GoRoute(
       path: '/starred',
