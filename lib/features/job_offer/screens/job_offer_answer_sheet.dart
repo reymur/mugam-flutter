@@ -29,6 +29,7 @@ class JobOfferAnswerSheet extends StatefulWidget {
     this.busy = const BusyDays.unknown(),
     this.onOpenBusyEvent,
     this.now,
+    this.embedded = false,
   });
 
   final JobOffer offer;
@@ -62,6 +63,12 @@ class JobOfferAnswerSheet extends StatefulWidget {
 
   final DateTime? now;
 
+  /// Встроен ли лист в чужое окно.
+  ///
+  /// `false` — лист сам себе модалка: несёт высоту, заливку, скругление и
+  /// ручку. `true` — его рисует дверь предложения, и всё это уже есть у неё.
+  final bool embedded;
+
   @override
   State<JobOfferAnswerSheet> createState() => _JobOfferAnswerSheetState();
 }
@@ -86,13 +93,7 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
     final media = MediaQuery.of(context);
     final offered = widget.offer.dates.toSet();
 
-    return Container(
-      height: media.size.height * 0.92,
-      decoration: const BoxDecoration(
-        color: kBg2,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      child: SafeArea(
+    final content = SafeArea(
         top: false,
         child: Column(
           children: [
@@ -100,17 +101,22 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: Column(
                 children: [
-                  Center(
-                    child: Container(
-                      width: 38,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: kMuted.withAlpha(90),
-                        borderRadius: BorderRadius.circular(2),
+                  // Ручка — только когда лист сам себе окно. Встроенный в
+                  // дверь получает её от двери, и вторая была бы второй же
+                  // копией одного украшения.
+                  if (!widget.embedded) ...[
+                    Center(
+                      child: Container(
+                        width: 38,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: kMuted.withAlpha(90),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
+                    const SizedBox(height: 10),
+                  ],
                   Text(
                     azUpperCase(
                       '${widget.initiatorName} təklif edir · '
@@ -146,6 +152,18 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
                       // лишнего. Требование автора и вторая половина
                       // правила `answerFitsOffer`.
                       selectable: offered,
+                      // КАРАНДАШ НА ДНЯХ, КУДА ЧТО-ТО ВПИСАНО — 26.08, вместе
+                      // с переездом подробностей сюда. Без него нажатие на
+                      // день обещает одинаково, а показывает по-разному: у
+                      // одного время и место, у другого «ничего не вписано».
+                      withDetails: {
+                        for (final e in widget.offer.details.entries)
+                          if (e.value.isNotEmpty) e.key,
+                      },
+                      // КАРАНДАШ НА ДНЯХ, КУДА ЧТО-ТО ВПИСАНО — 26.08, вместе
+                      // с переездом подробностей сюда. Без него нажатие на
+                      // день обещает одинаково, а показывает по-разному: у
+                      // одного время и место, у другого «ничего не вписано».
                       // Обведён тот день, о котором говорит надпись про
                       // занятость ниже: иначе «Bu gün məşğulsan» висит в
                       // воздухе и не называет, про какой день оно.
@@ -173,9 +191,34 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                    // ПОДРОБНОСТИ НАЖАТОГО ДНЯ — переехали сюда 26.08 с
+                    // промежуточной карточки, и это сняло последнее, что её
+                    // держало.
+                    //
+                    // **ПОЧЕМУ КАРТОЧКУ НЕЛЬЗЯ БЫЛО УБРАТЬ РАНЬШЕ.** Решение
+                    // владельца 20.08 звучало так: «подробности остаются жить
+                    // ЗДЕСЬ… порядок „сперва читаю, что предлагают, потом
+                    // отвечаю" — не лишнее нажатие, а сам смысл». Довод верен
+                    // и не отменён: убери карточку тогда — музыкант отмечал бы
+                    // дни, НЕ ЗНАЯ времени и места, а это не нехватка удобства,
+                    // а неверный ответ. Замер 26.08 подтвердил цену:
+                    // `grep -c "Ətraflı"` давал **2 в карточке и 0 здесь**.
+                    //
+                    // Теперь подробности здесь, и довод исполнен на том же
+                    // экране, где отвечают, — а не этажом выше.
+                    //
+                    // **ТЕМ ЖЕ НАЖАТИЕМ, ЧТО И ВЫБОР, и второго жеста не
+                    // заводится.** `_openDay` уже существовал: на нём висит
+                    // врезка занятости ниже. День, нажатый последним, и есть
+                    // тот, о котором говорят обе строки.
+                    _dayDetails(),
                     // ЧЕМ ЗАНЯТ ТОЛЬКО ЧТО НАЖАТЫЙ ДЕНЬ. Цвет говорит
                     // «осторожно», надпись — «чем именно», и по ней
                     // открывается сам вечер.
+                    //
+                    // СТОИТ ПОСЛЕ ПОДРОБНОСТЕЙ, а не до: сперва чужое
+                    // предложение, потом своё расписание. Человек читает, на
+                    // что зовут, и лишь затем — что этому мешает.
                     BusyDayNotice(
                       events: _openDay == null
                           ? const []
@@ -226,7 +269,27 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
             ),
           ],
         ),
+      );
+
+    // ВСТРОЕННЫЙ В ДВЕРЬ ЛИСТ НЕ НЕСЁТ СВОЕЙ ОБЁРТКИ (26.08).
+    //
+    // Высоту, заливку и скругление даёт дверь (`JobOfferSheet`); вторая копия
+    // разошлась бы с первой при первой же правке — ровно то, чего избегали у
+    // вида ответа.
+    //
+    // **Это переключатель ОФОРМЛЕНИЯ, а не задачи, и потому он законен
+    // (I58).** Дело у обоих одно — отметить дни и отправить; расходятся они
+    // лишь тем, окно это или часть окна. Переключателя вида «а этому не
+    // отправлять» здесь нет ни одного.
+    if (widget.embedded) return content;
+
+    return Container(
+      height: media.size.height * 0.92,
+      decoration: const BoxDecoration(
+        color: kBg2,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
+      child: content,
     );
   }
 
@@ -283,6 +346,91 @@ class _JobOfferAnswerSheetState extends State<JobOfferAnswerSheet> {
   /// человек, который не может ни на один день, остался бы без хода вовсе.
   /// Подпись при этом обязана меняться: «Göndər» при пустом наборе выглядит
   /// как «отправить ничего», и человек не нажмёт, побоявшись, что не понял.
+  /// ПОДРОБНОСТИ НАЖАТОГО ДНЯ — время, место, одежда.
+  ///
+  /// **День без вписанного говорит об этом СЛОВОМ, а не пустотой.** Пустое
+  /// место на экране, где только что был текст, читается как «не
+  /// загрузилось», и человек ждёт. Строка «ничего не вписано» — ответ, и его
+  /// видно.
+  ///
+  /// **Пустые поля внутри дня не рисуются вовсе:** строка «Yer —» обещала бы
+  /// сведения, которых нет. Отсутствие поля и пустое поле здесь одно и то же
+  /// — так их пишет `createOffer` (дни без единой подробности в карту не
+  /// попадают).
+  ///
+  /// Ничего не нажато — пусто: говорить не о чем, и место под сеткой не
+  /// занимается зря.
+  Widget _dayDetails() {
+    final iso = _openDay;
+    if (iso == null) return const SizedBox.shrink();
+    final d = widget.offer.details[iso];
+    final rows = <(String, String)>[
+      if (d != null && d.time.isNotEmpty) ('Saat', d.time),
+      if (d != null && d.location.isNotEmpty) ('Yer', d.location),
+      if (d != null && d.dress.isNotEmpty) ('Geyim', d.dress),
+    ];
+
+    return Container(
+      key: const ValueKey('answer-day-details'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 11),
+      padding: const EdgeInsets.fromLTRB(13, 11, 13, 11),
+      decoration: BoxDecoration(
+        color: kGold.withAlpha(13),
+        border: Border.all(color: kBorder),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            fmtEventDate(iso),
+            key: const ValueKey('answer-day-details-title'),
+            style: const TextStyle(
+              color: kGold,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 7),
+          if (rows.isEmpty)
+            const Text(
+              'Bu günə əlavə məlumat yoxdur',
+              key: ValueKey('answer-day-details-empty'),
+              style: TextStyle(color: kTextDim, fontSize: 14),
+            )
+          else
+            for (final r in rows)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 62,
+                      child: Text(
+                        r.$1,
+                        style: const TextStyle(color: kMuted, fontSize: 15),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        r.$2,
+                        style: const TextStyle(
+                          color: kText,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
   Widget _sendButton() => GestureDetector(
     key: const ValueKey('answer-send'),
     onTap: () => widget.onSend(_picked.toList()..sort()),

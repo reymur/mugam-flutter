@@ -207,9 +207,7 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
                   // `offerSheetFor`: та отвечает на «в каком состоянии
                   // человек и что ему предложено», и у неё другой
                   // потребитель — см. шапку файла.
-                  return offer.state == OfferState.answered
-                      ? _answer(offer)
-                      : _card(offer);
+                  return _content(offer);
                 },
               ),
             ),
@@ -281,6 +279,67 @@ class _JobOfferSheetState extends ConsumerState<JobOfferSheet> {
       ),
     ),
   );
+
+  /// ЧТО ПОКАЗАТЬ ЗА ДВЕРЬЮ — три исхода, и все три названы.
+  ///
+  /// **ПРОМЕЖУТОЧНОЙ КАРТОЧКИ НЕ ОСТАЛОСЬ НИ У ОДНОЙ СТОРОНЫ, КОТОРОЙ ЕСТЬ
+  /// ЧТО ДЕЛАТЬ** (26.08, вторым заходом). Она стояла между лентой и делом и
+  /// существовала ради одного — показать «Ətraflı» перед ответом. Подробности
+  /// переехали в сам лист ответа, и держать её стало нечем.
+  ///
+  ///   ответ есть          → вид ответа (обе стороны);
+  ///   ответа нет, я зван  → СРАЗУ лист ответа, отмечать дни;
+  ///   ответа нет, я звал  → карточка: ждать, смотреть «Ətraflı», отозвать.
+  ///
+  /// **Третий исход — не остаток, а свой случай.** Инициатору отвечать нечего
+  /// и незачем: у него ход другой — ждать либо отозвать. Увести его в лист
+  /// выбора дней значило бы предложить ему ответить на собственное
+  /// предложение, а правило это и так отвергнет (`!isInitiator()`).
+  ///
+  /// Состояние спрашивается у самого предложения, а не у `offerSheetFor`: та
+  /// отвечает на «в каком состоянии человек и что ему предложено», и у неё
+  /// другой потребитель — см. шапку файла.
+  Widget _content(JobOffer offer) {
+    if (offer.state == OfferState.answered) return _answer(offer);
+
+    final viewerUid =
+        widget.debugViewerUid ??
+        FirebaseAuth.instance.currentUser?.uid ??
+        '';
+    final iAmRecipient =
+        offer.roleOf(viewerUid) == OfferRole.recipient &&
+        offer.state == OfferState.awaitingAnswer;
+    return iAmRecipient ? _answerSheet(offer, viewerUid) : _card(offer);
+  }
+
+  /// ЛИСТ ОТВЕТА, ВСТРОЕННЫЙ В ДВЕРЬ.
+  ///
+  /// Тот же виджет, что открывается модалкой по «Cavabı dəyiş», и та же
+  /// запись ответа — расходятся они только обёрткой (`embedded`).
+  ///
+  /// **Занятость спрошена ЗДЕСЬ, в теле двери.** Дверь живёт потоком
+  /// предложений и перестраивается на каждую выдачу, значит `watch` здесь
+  /// получает обновления даром. У модалки беда обратная (N143) — там нужен
+  /// свой `Consumer`, и он там стоит.
+  Widget _answerSheet(JobOffer offer, String viewerUid) {
+    final busy = ref.watch(busyDaysProvider(viewerUid));
+    return JobOfferAnswerSheet(
+      embedded: true,
+      offer: offer,
+      myUid: viewerUid,
+      initiatorName: _nameOf(offer.createdBy, viewerUid),
+      busy: busy,
+      onOpenBusyEvent: (eventId) => Navigator.of(context).push(
+        eventDetailRoute(eventId: eventId, currentUid: viewerUid),
+      ),
+      onSend: (picked) async {
+        // Закрываем дверь целиком: ответ отправлен, смотреть тут больше
+        // нечего, а лента покажет его строкой.
+        Navigator.of(context).pop();
+        await _writeAnswer(offer, viewerUid, picked);
+      },
+    );
+  }
 
   /// ВИД ОТВЕТА — то, что видят обе стороны, когда музыкант ответил.
   ///

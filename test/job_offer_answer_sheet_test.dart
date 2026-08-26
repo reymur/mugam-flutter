@@ -411,6 +411,98 @@ void main() {
   });
 
 
+  // ПОДРОБНОСТИ ДНЯ В ЛИСТЕ ОТВЕТА — переехали сюда 26.08 с промежуточной
+  // карточки, и это сняло последнее, что её держало.
+  //
+  // Решение владельца 20.08 запрещало вести из ленты прямо в лист: «подробности
+  // остаются жить ЗДЕСЬ… сперва читаю, что предлагают, потом отвечаю». Довод
+  // верен и не отменён — он ИСПОЛНЕН на другом экране. Замер 26.08 показывал
+  // цену: `grep -c "Ətraflı"` давал 2 в карточке и 0 в листе.
+  group('подробности дня в листе ответа', () {
+    final withDetails = offer(
+      details: const {
+        '2026-09-14': DayDetails(time: '20:00', location: 'Şəki'),
+      },
+    );
+
+    Future<void> pumpSheet(WidgetTester tester, JobOffer o) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: JobOfferAnswerSheet(
+              offer: o,
+              myUid: player,
+              initiatorName: 'Rafael',
+              busy: const BusyDays({}),
+              onSend: (_) {},
+              now: DateTime(2026, 9, 1),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    testWidgets('пока день не нажат — подробностей нет', (tester) async {
+      await pumpSheet(tester, withDetails);
+      expect(find.byKey(const ValueKey('answer-day-details')), findsNothing);
+    });
+
+    // ОДНО НАЖАТИЕ — ДВА ДЕЛА: день выбирается И открывается. Второго жеста
+    // не заводится: `_openDay` в листе уже был, на нём висит врезка занятости.
+    testWidgets('нажал день — он выбран И показал своё время и место', (
+      tester,
+    ) async {
+      await pumpSheet(tester, withDetails);
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-09-14')));
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('answer-day-details')), findsOneWidget);
+      expect(find.text('20:00'), findsOneWidget);
+      expect(find.text('Şəki'), findsOneWidget);
+      // Пустых полей нет: «Geyim» не вписан, строки быть не должно.
+      expect(find.text('Geyim'), findsNothing);
+      // И день ВЫБРАН — иначе нажатие делало бы только половину дела.
+      expect(find.textContaining('1 gün'), findsOneWidget);
+    });
+
+    // СНЯТИЕ ВЫБОРА НЕ ЗАКРЫВАЕТ ПОДРОБНОСТИ: передумав, человек не должен
+    // терять из виду то, от чего отказался.
+    testWidgets('снял выбор — подробности остались', (tester) async {
+      await pumpSheet(tester, withDetails);
+      final day = find.byKey(const ValueKey('offer-cell-2026-09-14'));
+      await tester.tap(day);
+      await tester.pump();
+      await tester.tap(day);
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('answer-day-details')), findsOneWidget);
+      expect(find.text('20:00'), findsOneWidget);
+    });
+
+    // ДЕНЬ БЕЗ ВПИСАННОГО ГОВОРИТ ОБ ЭТОМ СЛОВОМ, а не пустотой: пустое место
+    // там, где только что был текст, читается как «не загрузилось».
+    testWidgets('день без подробностей сказал это словами', (tester) async {
+      await pumpSheet(tester, withDetails);
+      await tester.tap(find.byKey(const ValueKey('offer-cell-2026-09-20')));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('answer-day-details-empty')),
+        findsOneWidget,
+        reason: 'пустое место вместо ответа — человек будет ждать загрузки',
+      );
+    });
+
+    // КАРАНДАШ ГОВОРИТ, У КАКИХ ДНЕЙ ЕСТЬ ЧТО СМОТРЕТЬ. Без него нажатие
+    // обещает одинаково, а показывает по-разному.
+    testWidgets('карандаш стоит только на дне с подробностями', (tester) async {
+      await pumpSheet(tester, withDetails);
+      expect(find.byKey(const ValueKey('offer-pen-2026-09-14')), findsOneWidget);
+      expect(find.byKey(const ValueKey('offer-pen-2026-09-20')), findsNothing);
+    });
+  });
+
   // ВИД ОТВЕТА — то, что видят обе стороны после ответа музыканта.
   //
   // ВТОРАЯ РЕДАКЦИЯ, 25.08: КАЛЕНДАРЬ ВЕРНУЛСЯ. Первая показывала дни

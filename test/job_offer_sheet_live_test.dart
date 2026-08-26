@@ -331,7 +331,16 @@ void main() {
 
     // КАНАРЕЙКА БЕЗУСЛОВНАЯ И ПЕРВАЯ. Все проверки ниже нажимают кнопку;
     // если её нет, они упадут по причине «не нашли кнопку», а не по своей.
-    testWidgets('получателю кнопка ответа нарисована — экран подключён', (
+    // ПЕРЕПИСАН 26.08 ВМЕСТЕ СО СНЯТИЕМ ПРОМЕЖУТОЧНОЙ КАРТОЧКИ.
+    //
+    // Прежде здесь ждали кнопку «Cavab ver» НА КАРТОЧКЕ, которая открывала
+    // лист ответа поверх. Теперь дверь показывает получателю сам лист: карточка
+    // существовала ради «Ətraflı» перед ответом, подробности переехали в лист,
+    // и держать её стало нечем.
+    //
+    // Проверка утверждает И НАЛИЧИЕ нового, И ОТСУТСТВИЕ старого: без второй
+    // половины она прошла бы и в случае, когда карточка осталась висеть.
+    testWidgets('получателю лист ответа открыт сразу, без карточки', (
       tester,
     ) async {
       await pumpSheet(
@@ -340,9 +349,15 @@ void main() {
         viewerUid: player,
       );
       await tester.pump();
+      await tester.pump();
 
-      expect(find.byKey(const ValueKey('offer-open-answer')), findsOneWidget);
-      expect(find.text('Cavab ver'), findsOneWidget);
+      expect(find.byKey(const ValueKey('answer-send')), findsOneWidget);
+      expect(find.byKey(ValueKey('offer-cell-${iso(10)}')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('offer-open-answer')),
+        findsNothing,
+        reason: 'промежуточная карточка снова стоит между лентой и ответом',
+      );
     });
 
     // ХОД НЕ РАЗДАН ВСЕМ ПОДРЯД. Без этой проверки «кнопка есть у
@@ -361,17 +376,19 @@ void main() {
       expect(find.byKey(const ValueKey('offer-open-answer')), findsNothing);
     });
 
-    testWidgets('нажатие на «Cavab ver» открывает лист ответа', (tester) async {
+    // ПОДРОБНОСТИ ДНЯ — ТО, РАДИ ЧЕГО КАРТОЧКУ И МОЖНО БЫЛО УБРАТЬ.
+    //
+    // Решение владельца 20.08 запрещало вести из ленты прямо в лист: музыкант
+    // отмечал бы дни, НЕ ЗНАЯ времени и места. Довод снят не словами, а
+    // переездом: подробности теперь здесь, и проверяются здесь же.
+    testWidgets('лист ответа открыт про НАШЕ предложение', (tester) async {
       await pumpSheet(
         tester,
         Stream.value([futureOffer()]),
         viewerUid: player,
       );
       await tester.pump();
-
-      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
 
       expect(find.byKey(const ValueKey('answer-send')), findsOneWidget);
       // Лист открыт про НАШЕ предложение: клетки его дней нажимаемы.
@@ -426,9 +443,15 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+      // Нажимать нечего: лист ответа дверь показывает сразу (26.08).
+      //
+      // ДВА КАДРА, А НЕ `pumpAndSettle`, и это не мелочь: при сломанной двери
+      // листа нет вовсе, и `pumpAndSettle` ЖДЁТ ЕГО ДЕСЯТЬ МИНУТ, а потом
+      // падает по своему таймауту. Поймано порчей 26.08 — прогон повис
+      // вместо того, чтобы покраснеть. Повисший тест хуже упавшего: он не
+      // называет причину и съедает весь прогон.
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
 
       expect(
         cellColor(tester, iso(11)),
@@ -479,9 +502,15 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+      // Нажимать нечего: лист ответа дверь показывает сразу (26.08).
+      //
+      // ДВА КАДРА, А НЕ `pumpAndSettle`, и это не мелочь: при сломанной двери
+      // листа нет вовсе, и `pumpAndSettle` ЖДЁТ ЕГО ДЕСЯТЬ МИНУТ, а потом
+      // падает по своему таймауту. Поймано порчей 26.08 — прогон повис
+      // вместо того, чтобы покраснеть. Повисший тест хуже упавшего: он не
+      // называет причину и съедает весь прогон.
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
 
       await tester.tap(find.byKey(ValueKey('offer-cell-${iso(11)}')));
       await tester.pump();
@@ -507,9 +536,15 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+      // Нажимать нечего: лист ответа дверь показывает сразу (26.08).
+      //
+      // ДВА КАДРА, А НЕ `pumpAndSettle`, и это не мелочь: при сломанной двери
+      // листа нет вовсе, и `pumpAndSettle` ЖДЁТ ЕГО ДЕСЯТЬ МИНУТ, а потом
+      // падает по своему таймауту. Поймано порчей 26.08 — прогон повис
+      // вместо того, чтобы покраснеть. Повисший тест хуже упавшего: он не
+      // называет причину и съедает весь прогон.
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
 
       expect(find.byKey(const ValueKey('answer-busy-unknown')), findsNothing);
       expect(find.text(kBusyPickableLine), findsNothing);
@@ -526,9 +561,15 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+      // Нажимать нечего: лист ответа дверь показывает сразу (26.08).
+      //
+      // ДВА КАДРА, А НЕ `pumpAndSettle`, и это не мелочь: при сломанной двери
+      // листа нет вовсе, и `pumpAndSettle` ЖДЁТ ЕГО ДЕСЯТЬ МИНУТ, а потом
+      // падает по своему таймауту. Поймано порчей 26.08 — прогон повис
+      // вместо того, чтобы покраснеть. Повисший тест хуже упавшего: он не
+      // называет причину и съедает весь прогон.
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
 
       expect(
         find.byKey(const ValueKey('answer-busy-unknown')),
@@ -578,9 +619,15 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+      // Нажимать нечего: лист ответа дверь показывает сразу (26.08).
+      //
+      // ДВА КАДРА, А НЕ `pumpAndSettle`, и это не мелочь: при сломанной двери
+      // листа нет вовсе, и `pumpAndSettle` ЖДЁТ ЕГО ДЕСЯТЬ МИНУТ, а потом
+      // падает по своему таймауту. Поймано порчей 26.08 — прогон повис
+      // вместо того, чтобы покраснеть. Повисший тест хуже упавшего: он не
+      // называет причину и съедает весь прогон.
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
 
       // Лист открыт РАНЬШЕ данных — и честно молчит о занятости.
       expect(find.byKey(const ValueKey('answer-busy-unknown')), findsOneWidget);
@@ -590,6 +637,13 @@ void main() {
       calendar.add([
         calendarEvent('busy-1', owner: player, date: '${iso(11)}T15:00:00.000'),
       ]);
+      // ДВА КАДРА, А НЕ ОДИН — 26.08, вместе со снятием карточки.
+      //
+      // Прежде лист был модалкой со своим `Consumer` прямо над занятостью, и
+      // выдача доезжала за кадр. Теперь его рисует дверь, и цепочка длиннее:
+      // поток календаря → `busyDaysProvider` → перестройка двери → лист.
+      // Это не задержка на экране — это лишний кадр в тесте.
+      await tester.pump();
       await tester.pump();
 
       expect(
@@ -628,9 +682,15 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+      // Нажимать нечего: лист ответа дверь показывает сразу (26.08).
+      //
+      // ДВА КАДРА, А НЕ `pumpAndSettle`, и это не мелочь: при сломанной двери
+      // листа нет вовсе, и `pumpAndSettle` ЖДЁТ ЕГО ДЕСЯТЬ МИНУТ, а потом
+      // падает по своему таймауту. Поймано порчей 26.08 — прогон повис
+      // вместо того, чтобы покраснеть. Повисший тест хуже упавшего: он не
+      // называет причину и съедает весь прогон.
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
 
       // КЛЕТКИ СЕТКИ — `offer-cell-<iso>`, А НЕ `offer-day-<iso>`. Второе —
       // строки карточки, которая лежит ПОД модалкой и в ней остаётся
@@ -669,9 +729,15 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.byKey(const ValueKey('offer-open-answer')));
+      // Нажимать нечего: лист ответа дверь показывает сразу (26.08).
+      //
+      // ДВА КАДРА, А НЕ `pumpAndSettle`, и это не мелочь: при сломанной двери
+      // листа нет вовсе, и `pumpAndSettle` ЖДЁТ ЕГО ДЕСЯТЬ МИНУТ, а потом
+      // падает по своему таймауту. Поймано порчей 26.08 — прогон повис
+      // вместо того, чтобы покраснеть. Повисший тест хуже упавшего: он не
+      // называет причину и съедает весь прогон.
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
 
       await tester.tap(find.byKey(const ValueKey('answer-send')));
       await tester.pump();
