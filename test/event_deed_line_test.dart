@@ -19,7 +19,7 @@ void main() {
   const me = 'viewer-uid';
   const other = 'other-uid';
 
-  String? line(
+  EventDeed? deed(
     String? type, {
     String? by = other,
     String name = 'Rafael',
@@ -30,6 +30,15 @@ void main() {
         viewerUid: viewer,
         actorName: name,
       );
+
+  // Текст отдельно от тона: почти все проверки ниже про слова, и тащить в них
+  // `.text` значило бы двадцать раз написать одно и то же.
+  String? line(
+    String? type, {
+    String? by = other,
+    String name = 'Rafael',
+    String viewer = me,
+  }) => deed(type, by: by, name: name, viewer: viewer)?.text;
 
   group('чужой поступок — третье лицо', () {
     // Пятнадцать значений, и здесь их одиннадцать говорящих. Проверяется не
@@ -158,6 +167,136 @@ void main() {
     test('своё действие имени не спрашивает вовсе', () {
       // Даже с пустым именем своя фраза остаётся целой: в ней имени нет.
       expect(line(kDeedLeft, by: me, name: ''), 'Sən ayrıldın');
+    });
+  });
+
+  group('тон — громко только про участника', () {
+    // Требование владельца 28.08: «чтобы голым глазом было видно, что
+    // произошло с участником». Тон — вторая половина сообщения, и проверять
+    // его надо отдельно от слов: текст может быть верным при неверном тоне,
+    // и наоборот.
+
+    test('уход — единственный громкий, обеими фразами', () {
+      expect(deed(kDeedLeft)?.tone, DeedTone.memberGone);
+      expect(deed(kDeedLeft, by: me)?.tone, DeedTone.memberGone);
+      expect(deed(kDeedMemberLeft)?.tone, DeedTone.memberGone);
+      expect(deed(kDeedMemberLeft, by: me)?.tone, DeedTone.memberGone);
+    });
+
+    test('ОТМЕНА ВЕЧЕРА НЕ громкая, и это решение, а не пропуск', () {
+      // Отмена — тоже потеря, но потеря ДРУГОГО: вечера, а не человека.
+      // Покрась и её — тон перестанет что-либо означать, и глаз привыкнет к
+      // кирпичному ровно там, где он должен останавливать. Плюс в палитре
+      // проекта красный уже занят отменой (N110), и два красных смысла на
+      // одном экране не различить.
+      expect(deed(kDeedOwnerCancelled)?.tone, DeedTone.plain);
+      expect(deed(kDeedCancelConfirmed)?.tone, DeedTone.plain);
+      expect(deed(kDeedWorkCancelled)?.tone, DeedTone.plain);
+    });
+
+    test('всё остальное — тихое', () {
+      for (final d in <String>[
+        kDeedCreated, kDeedReplaced, kDeedAgreed, kDeedCancelRequested,
+        kDeedCancelWithdrawn, kDeedCancelDeclined, kDeedOwnerFirm,
+        kDeedOwnerDoubt, kDeedRestored,
+      ]) {
+        expect(deed(d)?.tone, DeedTone.plain, reason: d);
+      }
+    });
+
+    // СОСЕДКА (I31): без неё «всё тихое» прошло бы и на функции, вернувшей
+    // `plain` вообще всегда, — то есть на сломанном тоне.
+    test('соседка: громкий тон вообще встречается', () {
+      final tones = <DeedTone>{
+        for (final d in <String>[kDeedCreated, kDeedLeft, kDeedOwnerCancelled])
+          deed(d)!.tone,
+      };
+      expect(tones.length, 2, reason: 'тон свёлся к одному значению');
+    });
+  });
+
+  group('своё или чужое — признак для крестика', () {
+    // Крестик прячет НОВОСТЬ, а собственное действие новостью не является:
+    // человек его только что совершил. Признак решается в правиле, а не в
+    // разметке, потому что тот же вопрос уже решён здесь ради лица глагола, и
+    // второй ответ на него разошёлся бы с первым (N49).
+
+    // ВСЕ ПОСТУПКИ РАЗОМ, А НЕ ВЫБОРОЧНО (I64: проверять не наличие правила, а
+    // каждого, кто под него подпадает). Признак дописывался в одиннадцать
+    // ветвей, и в трёх из них его сперва не оказалось — недостача прошла бы
+    // молча, будь здесь проверено два примера.
+    const withFace = <String>[
+      kDeedCreated, kDeedReplaced, kDeedLeft, kDeedMemberLeft,
+      kDeedCancelRequested, kDeedCancelConfirmed, kDeedCancelWithdrawn,
+      kDeedCancelDeclined, kDeedOwnerFirm, kDeedOwnerDoubt,
+      kDeedOwnerCancelled, kDeedRestored,
+    ];
+
+    test('свой поступок помечен своим — все двенадцать', () {
+      for (final d in withFace) {
+        expect(deed(d, by: me)?.own, isTrue, reason: d);
+      }
+    });
+
+    test('чужой поступок своим не помечен — все двенадцать', () {
+      for (final d in withFace) {
+        expect(deed(d)?.own, isFalse, reason: d);
+      }
+    });
+
+    test('безличные не бывают своими — им некого называть', () {
+      expect(deed(kDeedAgreed, by: me)?.own, isFalse);
+      expect(deed(kDeedWorkCancelled, by: me)?.own, isFalse);
+    });
+  });
+
+  group('ключ, по которому строка прячется', () {
+    // Крестик справа убирает КОНКРЕТНУЮ новость, а не вечер: убравший
+    // «Rafael ayrıldı» обязан увидеть следующее сообщение об этом же вечере.
+
+    test('разные поступки одного вечера — разные ключи', () {
+      final a = deedDismissKey(
+          eventId: 'ev1', lastActionType: kDeedLeft, lastActionBy: other);
+      final b = deedDismissKey(
+          eventId: 'ev1',
+          lastActionType: kDeedOwnerCancelled,
+          lastActionBy: other);
+      expect(a, isNot(b));
+    });
+
+    test('один поступок разных людей — разные ключи', () {
+      expect(
+        deedDismissKey(
+            eventId: 'ev1', lastActionType: kDeedLeft, lastActionBy: other),
+        isNot(deedDismissKey(
+            eventId: 'ev1', lastActionType: kDeedLeft, lastActionBy: me)),
+      );
+    });
+
+    test('один поступок разных вечеров — разные ключи', () {
+      expect(
+        deedDismissKey(
+            eventId: 'ev1', lastActionType: kDeedLeft, lastActionBy: other),
+        isNot(deedDismissKey(
+            eventId: 'ev2', lastActionType: kDeedLeft, lastActionBy: other)),
+      );
+    });
+
+    test('тот же поступок — тот же ключ, иначе скрытие не удержится', () {
+      expect(
+        deedDismissKey(
+            eventId: 'ev1', lastActionType: kDeedLeft, lastActionBy: other),
+        deedDismissKey(
+            eventId: 'ev1', lastActionType: kDeedLeft, lastActionBy: other),
+      );
+    });
+
+    test('пустые части не роняют ключ и не сливают разные вечера', () {
+      expect(
+        deedDismissKey(eventId: 'ev1', lastActionType: null, lastActionBy: null),
+        isNot(deedDismissKey(
+            eventId: 'ev2', lastActionType: null, lastActionBy: null)),
+      );
     });
   });
 

@@ -35,7 +35,7 @@ void main() {
     test('ШАГ 4: новым ставится «ждём», а не «идёт»', () {
       // До шага 4 здесь стояло `going` у всех, и это было верно: добавление
       // и означало согласие. С шага 4 добавление — приглашение.
-      expect(answersForParticipants(const ['a', 'b']), {
+      expect(answersForParticipants(const ['a', 'b'], previousParticipants: null), {
         'a': 'waiting',
         'b': 'waiting',
       });
@@ -48,6 +48,7 @@ void main() {
       final out = answersForParticipants(
         const ['a', 'b', 'c'],
         previous: const {'a': 'cant', 'b': 'going'},
+        previousParticipants: null,
       );
       expect(out, {'a': 'cant', 'b': 'going', 'c': 'waiting'});
     });
@@ -69,6 +70,7 @@ void main() {
       final out = answersForParticipants(
         const ['a', 'b'],
         previous: const {'a': 'нечто', 'b': 'cant'},
+        previousParticipants: null,
       );
       // Знакомый ответ рядом с мусором — так проверка различает случаи сама.
       expect(out, {'a': 'waiting', 'b': 'cant'});
@@ -81,6 +83,7 @@ void main() {
       final out = answersForParticipants(
         const ['owner', 'guest'],
         ownerUid: 'owner',
+        previousParticipants: null,
       );
       expect(out, {'owner': 'going', 'guest': 'waiting'});
     });
@@ -94,6 +97,7 @@ void main() {
         const ['owner', 'guest'],
         previous: const {'owner': 'cant'},
         ownerUid: 'owner',
+        previousParticipants: null,
       );
       expect(out, {'owner': 'cant', 'guest': 'waiting'});
     });
@@ -102,7 +106,7 @@ void main() {
       // Пустой `ownerUid` не совпадает ни с одним uid состава, потому что
       // пустые из состава отброшены. Отдельной ветки на это нет, и проверка
       // стоит, чтобы её не завели «на всякий случай».
-      expect(answersForParticipants(const ['a', 'b']), {
+      expect(answersForParticipants(const ['a', 'b'], previousParticipants: null), {
         'a': 'waiting',
         'b': 'waiting',
       });
@@ -132,6 +136,53 @@ void main() {
       expect(out, {'guest': 'going', 'other': 'cant'});
     });
 
+    // N173 — ДВА НЕЗНАНИЯ ПОД ОДНИМ ОТВЕТОМ, И ЛЕЧЕНИЯ У НИХ ПРОТИВОПОЛОЖНЫЕ.
+    //
+    // До 28.08 прежний состав приходил `List<String>` с умолчанием `const []`,
+    // и пустота значила «не знаем» — переносим. Но пустым он бывает и по
+    // ДРУГОЙ причине: из состава вышел последний участник. Тогда перенос
+    // возвращал согласие, которого человек не давал.
+    //
+    // Доказательство было документом прода: `pcop3dUyviw2v28AZKmb` —
+    // `musicians` пусто, `answers: Rafael = going`. Согласие лежало у того,
+    // кого в составе нет.
+    //
+    // Две проверки ниже — пара, и врозь ни одна ничего не значит: первая
+    // прошла бы и на «переносим всегда», вторая — на «сбрасываем всегда».
+    test('N173: состав БЫЛ ПУСТ — согласие НЕ воскресает', () {
+      final out = answersForParticipants(
+        const ['guest'],
+        previous: const {'guest': 'going'},
+        previousParticipants: const [],
+      );
+      expect(out, {'guest': 'waiting'});
+    });
+
+    test('N173: состав НЕИЗВЕСТЕН — ответ переносится', () {
+      // Старый документ, чужой писатель, вызывающий без сведений. Сбрось мы
+      // здесь — правка места объявила бы ждущими всех разом, и починка стала
+      // бы дефектом шире исходного.
+      final out = answersForParticipants(
+        const ['guest'],
+        previous: const {'guest': 'going'},
+        previousParticipants: null,
+      );
+      expect(out, {'guest': 'going'});
+    });
+
+    test('N173: тот же вход, разные ответы — значит различие живо', () {
+      // Соседка к паре выше (I31): она утверждает НАЛИЧИЕ различия и падает,
+      // если `null` и `[]` снова сольются в один ответ — как они и были слиты
+      // до 28.08.
+      const people = ['guest'];
+      const prev = {'guest': 'going'};
+      expect(
+        answersForParticipants(people, previous: prev, previousParticipants: null),
+        isNot(answersForParticipants(people,
+            previous: prev, previousParticipants: const [])),
+      );
+    });
+
     test('N114: прежний состав НЕ НАЗВАН — переносим по-старому', () {
       // Пустой список означает «сведений нет», а не «никого не было». Иначе
       // правка от вызывающего, который прежний состав не передал, объявила бы
@@ -139,6 +190,7 @@ void main() {
       final out = answersForParticipants(
         const ['guest'],
         previous: const {'guest': 'going'},
+        previousParticipants: null,
       );
       expect(out, {'guest': 'going'});
     });
@@ -147,26 +199,26 @@ void main() {
       // Состав, а не количество (I13). Лишний ключ — ответ за того, кого в
       // составе нет; недостающий — участник без ответа, то есть дырка,
       // которую следующий читатель заполнит догадкой.
-      final out = answersForParticipants(const ['x', 'y', 'z']);
+      final out = answersForParticipants(const ['x', 'y', 'z'], previousParticipants: null);
       expect(out.keys.toSet(), {'x', 'y', 'z'});
     });
 
     test('пустой состав даёт пустую карту, а не null и не отсутствие', () {
-      expect(answersForParticipants(const []), isEmpty);
+      expect(answersForParticipants(const [], previousParticipants: null), isEmpty);
     });
 
     test('пустой uid не человек — ключа из него не делается', () {
       // Ключ из пустой строки — запись, которую некому сопоставить.
-      expect(answersForParticipants(const ['a', '', 'b']).keys.toSet(),
+      expect(answersForParticipants(const ['a', '', 'b'], previousParticipants: null).keys.toSet(),
           {'a', 'b'});
     });
 
     test('повтор в списке не даёт двух ключей', () {
-      expect(answersForParticipants(const ['a', 'a']), {'a': 'waiting'});
+      expect(answersForParticipants(const ['a', 'a'], previousParticipants: null), {'a': 'waiting'});
     });
 
     test('значения — только из известного набора', () {
-      final out = answersForParticipants(const ['a', 'b', 'c']);
+      final out = answersForParticipants(const ['a', 'b', 'c'], previousParticipants: null);
       for (final v in out.values) {
         expect(kEventAnswers.contains(v), isTrue, reason: 'чужое значение $v');
       }
@@ -194,7 +246,8 @@ void main() {
     // человеке. До тех пор она сторожит СОСТАВ ключей, а не значения, и
     // полагаться на неё шире нельзя.
     void roundTrip(List<String> people) {
-      final written = answersForParticipants(people);
+      final written =
+          answersForParticipants(people, previousParticipants: null);
       for (final uid in people.where((u) => u.isNotEmpty)) {
         expect(
           answerOf(uid: uid, participantUids: people, answers: written),
@@ -210,7 +263,7 @@ void main() {
     test('с повтором', () => roundTrip(const ['a', 'a', 'b']));
     test('с пустым uid', () => roundTrip(const ['a', '', 'b']));
     test('пустой состав — сверять нечего, и это не отказ', () {
-      expect(answersForParticipants(const []), isEmpty);
+      expect(answersForParticipants(const [], previousParticipants: null), isEmpty);
     });
   });
 
@@ -273,7 +326,8 @@ void main() {
       ]) {
         final m = answersMismatch(
           participantUids: people,
-          answers: answersForParticipants(people),
+          answers:
+              answersForParticipants(people, previousParticipants: null),
         );
         expect(m.isClean, isTrue, reason: 'состав $people');
       }

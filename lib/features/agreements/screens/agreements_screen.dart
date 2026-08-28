@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import '../../../core/agreements/agreement_card.dart';
 import '../../../core/agreements/event_answer_reply.dart';
 import '../../../core/agreements/event_answers.dart';
+import '../../../core/agreements/deed_dismissals.dart';
 import '../../../core/agreements/event_deed_line.dart';
 import '../../../core/agreements/event_status_view.dart';
 import '../../../core/agreements/event_edit.dart';
@@ -3018,6 +3019,22 @@ class _PersonalEventDetailScreenState
                     // правка, добавление и исключение молчат всегда — все три
                     // пишут один `edited`, и что изменилось, документ не
                     // помнит. Пустое место под датой — не поломка.
+                    // ТОН И ЗНАЧОК — требование владельца 28.08: «чтобы голым
+                    // глазом было видно, что произошло с участником».
+                    //
+                    // ЦВЕТ ВЗЯТ СУЩЕСТВУЮЩИЙ, А НЕ ЗАВЕДЁН НОВЫЙ:
+                    // `kAnswerCantText` — приглушённо-кирпичный, тот же, что у
+                    // ответа «не может». Довод стоит в палитре и решает дело:
+                    // **красный (`kRed`) на этих экранах означает ОТМЕНУ
+                    // ВЕЧЕРА** (N110), и покрась им уход человека — прочтут
+                    // «вечер отменён» вместо «одного не стало». Уход участника
+                    // ближе к «не придёт», чем к «отменено».
+                    //
+                    // ДВА КРЕСТИКА НА ОДНОЙ СТРОКЕ НЕ РАЗЛИЧИТЬ, поэтому слева
+                    // стоит НЕ крестик, а человечек с минусом: справа крестик —
+                    // кнопка, и вид обязан это говорить (N174: у нажимаемого
+                    // две половины — адресат и вид). Поставь мы крестик и
+                    // слева — читатель не понял бы, какой из них нажимается.
                     if (eventDeedLine(
                           lastActionType: event.lastActionType,
                           lastActionBy: event.lastActionBy,
@@ -3027,14 +3044,101 @@ class _PersonalEventDetailScreenState
                                       ?.name ??
                                   '',
                         )
-                        case final String deed) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        deed,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: kMuted,
-                        ),
+                        case final EventDeed deed) ...[
+                      Builder(
+                        builder: (context) {
+                          final key = deedDismissKey(
+                            eventId: event.id,
+                            lastActionType: event.lastActionType,
+                            lastActionBy: event.lastActionBy,
+                          );
+                          // Спрятанное человеком не рисуется вовсе — ни
+                          // строки, ни отступа: иначе под датой оставался бы
+                          // необъяснимый провал.
+                          if (ref.watch(dismissedDeedsProvider).contains(key)) {
+                            return const SizedBox.shrink();
+                          }
+                          final gone = deed.tone == DeedTone.memberGone;
+                          final tone = gone ? kAnswerCantText : kMuted;
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                if (gone) ...[
+                                  Icon(
+                                    Icons.person_remove_outlined,
+                                    size: 16,
+                                    color: tone,
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                Expanded(
+                                  child: Text(
+                                    deed.text,
+                                    style: TextStyle(fontSize: 14, color: tone),
+                                  ),
+                                ),
+                                // КРЕСТИК ТОЛЬКО У СТРОКИ ОБ УХОДЕ, И ТОЛЬКО У
+                                // ЧУЖОГО (решение владельца 28.08, в два
+                                // приёма).
+                                //
+                                // Сперва он стоял у всего подряд, и владелец
+                                // спросил: «у инициатора тоже есть крестик —
+                                // зачем это?» Затем: «нужно только удалить
+                                // ушедшего из мероприятия».
+                                //
+                                // ДОВОД, ОБЩИЙ ДЛЯ ОБЕИХ ПОЛОВИН УСЛОВИЯ:
+                                // крестик убирает то, что МЕШАЕТ. «Rafael
+                                // tədbiri yaratdı» не мешает — это подпись под
+                                // вечером, такая же, как его тип и место;
+                                // убери её, и человек лишится сведений, ничего
+                                // не выиграв. Мешает висящая новость об уходе,
+                                // и только она.
+                                //
+                                // «Своё» отсеяно тем же условием и по той же
+                                // причине: собственный уход человек совершил
+                                // сам, новостью для него это не является.
+                                //
+                                // ПОЧЕМУ ОБА ПРИЗНАКА ИЗ ПРАВИЛА, А НЕ ИЗ
+                                // РАЗМЕТКИ: и «это уход» (`tone`), и «своё ли»
+                                // (`own`) уже решены в `eventDeedLine` — там
+                                // ими выбираются цвет и лицо глагола. Решить
+                                // их здесь второй раз значило бы завести два
+                                // места с одним правилом (N49).
+                                if (gone && !deed.own)
+                                  // ЦВЕТ КРЕСТИКА — ТОТ ЖЕ, ЧТО У СТРОКИ
+                                  // (требование владельца 28.08). Стоял
+                                  // `kTextDim`, и на устройстве крестик читался
+                                  // как ничей: серое пятнышко у края, к
+                                  // которому непонятно, что относится. Общий
+                                  // цвет говорит, ЧТО именно он уберёт.
+                                  //
+                                  // Область нажатия шире рисунка: 16 пунктов
+                                  // пальцем не берутся, а кнопка, которую не
+                                  // нажать, — та же мёртвая кнопка, только с
+                                  // другой стороны (N147).
+                                  GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTap: () => ref
+                                        .read(dismissedDeedsProvider.notifier)
+                                        .dismiss(key),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 6,
+                                      ),
+                                      child: Icon(
+                                        Icons.close,
+                                        size: 16,
+                                        color: tone,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
                       ),
                     ],
 
@@ -3670,9 +3774,21 @@ class _PartyMemberRow extends StatelessWidget {
     final (ring, word) = switch (answer) {
       kAnswerGoing => (kStatusFirmBorder, kStatusFirmText),
       kAnswerCant => (kAnswerCantBorder, kAnswerCantText),
-      // «Ждём» и «не спрашивали» — серая обводка у обоих: разницу несёт
-      // слово под именем, а цвета у макета на это состояние ровно один.
-      _ => (kBorder, kAnswerWaitText),
+      // «ЖДЁМ ОТВЕТА» ПОЛУЧИЛО СВОЙ ЦВЕТ — решение владельца 28.08.
+      //
+      // Здесь стояла одна ветвь на «ждём» и «не спрашивали»: серая обводка у
+      // обоих, разницу несло слово. На трубке ожидание оказалось тише всех
+      // трёх состояний — при том что оно единственное, где ход за человеком.
+      //
+      // **РАЗВЕДЕНЫ ОНИ НЕ РАДИ КРАСОТЫ, А ПОТОМУ ЧТО ЭТО РАЗНЫЕ ВОПРОСЫ**
+      // (N99, I47): `waiting` — приглашённого спросили, он молчит, и
+      // действовать должен ОН; `notAsked` — его не звали по-настоящему, и
+      // действовать должен ВЛАДЕЛЕЦ. Покрась мы обоих янтарным, владелец
+      // читал бы «жду ответа» там, где сам ещё не спросил.
+      kAnswerWaiting => (kAnswerWaitBorder, kAnswerWaitText),
+      // Сюда падают «не спрашивали», «вышел» и незнакомое. Цвет тот же, каким
+      // ожидание было до 28.08, — то есть для них ничего не изменилось.
+      _ => (kBorder, kTextSecondary),
     };
     final label = participantAnswerLabel(answer);
     return GestureDetector(
@@ -3708,9 +3824,40 @@ class _PartyMemberRow extends StatelessWidget {
                   if (label.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 2),
-                      child: Text(
-                        label,
-                        style: TextStyle(fontSize: 13, color: word),
+                      // ЗНАК ВОПРОСА ПЕРЕД СЛОВОМ ОЖИДАНИЯ — решение
+                      // владельца 28.08, вместе с янтарным цветом.
+                      //
+                      // Цвет и значок говорят одно и то же и потому стоят
+                      // ВМЕСТЕ, а не вместо друг друга: цвет виден боковым
+                      // зрением при прокрутке, значок читается вблизи и
+                      // работает там, где цвет не сработал — на ярком солнце,
+                      // у человека с иным цветовосприятием.
+                      //
+                      // ТОЛЬКО У ОЖИДАНИЯ, и по тому же доводу, что цвет: у
+                      // «не спрашивали» вопрос ещё не задан, и знак вопроса
+                      // сказал бы владельцу, что он свою часть уже сделал.
+                      //
+                      // ЗНАЧОК, А НЕ БУКВА «?» В СТРОКЕ: рядом, правее, живёт
+                      // круглая кнопка «?» (`onAsk`). Два одинаковых знака на
+                      // одной строке — и непонятно, какой из них нажимается
+                      // (N174). Здесь тонкий контурный значок в цвет слова,
+                      // там — обведённая кружком буква.
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (answer == kAnswerWaiting) ...[
+                            Icon(
+                              Icons.help_outline,
+                              size: 14,
+                              color: word,
+                            ),
+                            const SizedBox(width: 4),
+                          ],
+                          Text(
+                            label,
+                            style: TextStyle(fontSize: 13, color: word),
+                          ),
+                        ],
                       ),
                     ),
                 ],

@@ -105,6 +105,7 @@ void main() {
           notes: 'Qara kostyum',
           musicians: const ['a', 'b'],
           actorUid: _actor,
+          previousParticipants: null,
         );
 
     test('пишет ровно 9 ключей и ровно тех', () {
@@ -135,6 +136,7 @@ void main() {
         notes: '',
         musicians: const ['b', 'c'],
         actorUid: _actor,
+        previousParticipants: null,
       );
       final answers = data['answers'] as Map<String, String>;
       expect(answers.keys.toSet(), {'b', 'c'});
@@ -158,6 +160,7 @@ void main() {
         musicians: const ['a', 'b', 'c'],
         actorUid: _actor,
         previousAnswers: const {'a': 'cant', 'b': 'going'},
+        previousParticipants: null,
       );
       expect(data['answers'], {'a': 'cant', 'b': 'going', 'c': 'waiting'});
     });
@@ -202,6 +205,7 @@ void main() {
         notes: '',
         musicians: source,
         actorUid: _actor,
+        previousParticipants: null,
       );
       source.add('b');
       expect(data['musicians'], ['a']);
