@@ -3,10 +3,13 @@ import { readFileSync } from "fs";
 import {
   diffEvents,
   editedBody,
+  EventPush,
   EventSnapshot,
   eventWallClock,
   fmtEventWhen,
+  leftViaAnswers,
   planUpdatePushes,
+  PlanUpdateInput,
   pushDeleted,
   pushReminder,
   recipientsOf,
@@ -42,6 +45,20 @@ function ev(over: Partial<EventSnapshot> = {}): EventSnapshot {
     musicians: [OWNER, GUEST],
     ...over,
   };
+}
+
+// Обёртка над `planUpdatePushes` с пустым `leftNames` по умолчанию.
+//
+// Поле обязательное по устройству — так `index.ts` не может забыть его
+// передать (см. довод у самого поля). Здесь же ни одна проверка, кроме
+// проверок ухода, про имена вышедших ничего не знает, и писать «тут никто не
+// выходил» двадцать раз значило бы прятать те два места, где это важно.
+function plan(
+  input:
+    & Omit<PlanUpdateInput, "leftNames">
+    & { leftNames?: Record<string, string> },
+): EventPush[] {
+  return planUpdatePushes({ leftNames: {}, ...input });
 }
 
 describe("договор становится «под вопросом» (Часть 6а)", () => {
@@ -273,7 +290,7 @@ describe("изменение полей", () => {
   it("изменилась дата — текст называет новую", () => {
     const before = ev();
     const after = ev({ date: "2026-08-09T20:00:00", lastActionBy: OWNER });
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1", before, after, actorName: "Rafael",
     });
     assert.equal(pushes.length, 1);
@@ -290,7 +307,7 @@ describe("изменение полей", () => {
       location: "Gülüstan",
       lastActionBy: OWNER,
     });
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1", before, after, actorName: "Rafael",
     });
     assert.equal(pushes.length, 1);
@@ -308,13 +325,13 @@ describe("изменение полей", () => {
     // никого: уведомление без содержания приучает их не читать.
     const before = ev();
     const after = ev({ lastActionBy: OWNER });
-    assert.deepEqual(planUpdatePushes({
+    assert.deepEqual(plan({
       eventId: "e1", before, after, actorName: "Rafael",
     }), []);
   });
 
   it("НЕ отправляется автору: правил владелец — владельцу не приходит", () => {
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1",
       before: ev(),
       after: ev({ date: "2026-08-09T20:00:00", lastActionBy: OWNER }),
@@ -328,7 +345,7 @@ describe("состав участников", () => {
   it("добавленный получает «вас добавили», а не «дата изменилась»", () => {
     const before = ev({ musicians: [OWNER] });
     const after = ev({ musicians: [OWNER, GUEST], lastActionBy: OWNER });
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1", before, after, actorName: "Rafael",
     });
     assert.equal(pushes.length, 1);
@@ -344,7 +361,7 @@ describe("состав участников", () => {
       date: "2026-08-09T20:00:00",
       lastActionBy: OWNER,
     });
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1", before, after, actorName: "Rafael",
     });
     const forGuest = pushes.filter((p) => p.uid === GUEST);
@@ -358,7 +375,7 @@ describe("состав участников", () => {
     // ошибку, хуже уведомления без перехода.
     const before = ev();
     const after = ev({ musicians: [OWNER], lastActionBy: OWNER });
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1", before, after, actorName: "Rafael",
     });
     assert.equal(pushes.length, 1);
@@ -374,7 +391,7 @@ describe("состав участников", () => {
       lastActionBy: GUEST,
       lastActionType: "left",
     });
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1", before, after, actorName: "Teymur",
     });
     assert.equal(pushes.length, 1);
@@ -385,13 +402,271 @@ describe("состав участников", () => {
   it("вышедший сам не получает «вас исключили»", () => {
     // Ровно тот случай, ради которого заведён lastActionType: diff у
     // «вышел сам» и «владелец убрал» одинаковый.
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1",
       before: ev(),
       after: ev({ musicians: [OWNER], lastActionBy: GUEST, lastActionType: "left" }),
       actorName: "Teymur",
     });
     assert.equal(pushes.some((p) => p.uid === GUEST), false);
+  });
+});
+
+// УХОД ПО НОВОЙ СХЕМЕ — переход ключа `answers` в `'left'` (N121, шаг 1).
+//
+// ШЕСТЬ ПРОВЕРОК, И ПЯТЬ ИЗ НИХ ОТРИЦАТЕЛЬНЫЕ. Это не перестраховка:
+// признак-переход дешёв, а всё, что он обязан НЕ считать уходом, —
+// повседневные записи, которые в проде идут пачками. Ошибись он в эту
+// сторону, и владелец получал бы «İştirakçı ayrıldı» на каждое сохранение
+// формы вечера, про человека, который никуда не уходил.
+//
+// ШЕСТАЯ — КАНАРЕЙКА, И ОНА ЗДЕСЬ ГЛАВНАЯ (I31): она утверждает НАЛИЧИЕ —
+// что старая ветвь жива, — и потому падает, а не зеленеет, если новая
+// съест старую. Без неё пять зелёных отрицаний означали бы с равным успехом
+// «переход считается верно» и «ветвь не работает вовсе».
+describe("участник вышел — НОВАЯ схема, переход answers → left (N121)", () => {
+  // Состав НЕ МЕНЯЕТСЯ — в этом вся разница со старой схемой: человек
+  // остаётся в `musicians`, меняется только его ответ.
+  const before = ev({ answers: { [OWNER]: "going", [GUEST]: "going" } });
+  const after = ev({ answers: { [OWNER]: "going", [GUEST]: "left" } });
+
+  it("переход в 'left' даёт уведомление — владельцу, и только ему", () => {
+    const pushes = plan({
+      eventId: "e1", before, after, actorName: "НЕ ДОЛЖНО ПОПАСТЬ В ТЕКСТ",
+      leftNames: { [GUEST]: "Teymur" },
+    });
+    assert.equal(pushes.length, 1);
+    assert.equal(pushes[0].uid, OWNER);
+    assert.equal(pushes[0].title, "İştirakçı ayrıldı");
+  });
+
+  // ПОЛОВИНА ОТВЕТА, КОТОРОЙ НЕ БЫЛО В РАЗБОРЕ 26.08. `answersForSelf()`
+  // пускает только ключ `answers`, значит `lastActionBy` остаётся от
+  // ПРОШЛОГО действия, а когда его нет — `index.ts` подставляет владельца.
+  // Возьми текст имя оттуда, и владелец прочитал бы, что вышел он сам.
+  it("имя берётся от uid перехода, а не из lastActionBy", () => {
+    const pushes = plan({
+      eventId: "e1",
+      before,
+      // `lastActionBy` намеренно указывает на ПОСТОРОННЕГО: так и будет в
+      // проде, где он остался от прошлой правки вечера.
+      after: ev({
+        answers: { [OWNER]: "going", [GUEST]: "left" },
+        lastActionBy: OTHER,
+        lastActionType: "edited",
+      }),
+      actorName: "Rafael",
+      leftNames: { [GUEST]: "Teymur" },
+    });
+    assert.equal(pushes.length, 1);
+    assert.ok(pushes[0].body.startsWith("Teymur "), pushes[0].body);
+    assert.equal(pushes[0].body.includes("Rafael"), false);
+  });
+
+  it("имени нет в карте — запасное слово, а не «undefined»", () => {
+    // У 7 учёток из 12 поля `name` нет вовсе (N142), и `displayName`
+    // отвечает тем же словом. Печатать сюда `undefined` значило бы
+    // показать человеку поломку вместо новости.
+    const pushes = plan({
+      eventId: "e1", before, after, actorName: "Rafael", leftNames: {},
+    });
+    assert.equal(pushes.length, 1);
+    assert.ok(pushes[0].body.startsWith("İstifadəçi "), pushes[0].body);
+  });
+
+  it("повторная запись 'left' уведомления НЕ даёт", () => {
+    assert.deepEqual(plan({
+      eventId: "e1", before: after, after, actorName: "Rafael",
+      leftNames: { [GUEST]: "Teymur" },
+    }), []);
+  });
+
+  it("перенос 'left' при правке вечера владельцем уведомления НЕ даёт", () => {
+    // `answersForParticipants` переносит знакомый ответ как есть, и правок
+    // вечера бывает сколько угодно. Признак-СОСТОЯНИЕ дал бы здесь push на
+    // каждую; признак-переход не даёт ни одного — и без единой добавочной
+    // проверки, потому что `before` и `after` оба `'left'`.
+    const pushes = plan({
+      eventId: "e1",
+      before: after,
+      after: ev({
+        date: "2026-08-09T20:00:00",
+        answers: { [OWNER]: "going", [GUEST]: "left" },
+        lastActionBy: OWNER,
+      }),
+      actorName: "Rafael",
+      leftNames: { [GUEST]: "Teymur" },
+    });
+    // Про уход — ни слова; про правку даты владелец сам себе не шлёт, а
+    // вышедший её больше не получает (`recipientsOf`).
+    assert.equal(pushes.some((p) => p.title === "İştirakçı ayrıldı"), false);
+  });
+
+  it("удаление ушедшего из состава уведомления об уходе НЕ даёт", () => {
+    // Ключ пропал вовсе: `after[uid]` больше не `'left'`, перехода нет.
+    const pushes = plan({
+      eventId: "e1",
+      before: after,
+      after: ev({
+        musicians: [OWNER],
+        answers: { [OWNER]: "going" },
+        lastActionBy: OWNER,
+      }),
+      actorName: "Rafael",
+      leftNames: {},
+    });
+    assert.equal(pushes.some((p) => p.title === "İştirakçı ayrıldı"), false);
+  });
+
+  it("повторное приглашение ('waiting') уведомления НЕ даёт", () => {
+    assert.deepEqual(plan({
+      eventId: "e1",
+      before: after,
+      after: ev({ answers: { [OWNER]: "going", [GUEST]: "waiting" } }),
+      actorName: "Rafael",
+      leftNames: {},
+    }), []);
+  });
+
+  // КАНАРЕЙКА К ПЯТИ ОТРИЦАНИЯМ ВЫШЕ И К САМОЙ ВЫКЛАДКЕ.
+  //
+  // Она утверждает НАЛИЧИЕ (I31: такой сторож сам себе канарейка) и потому
+  // доказывает ровно то, ради чего шаг 1 выкладывается инертным: старый путь
+  // — через `musicians` и `lastActionType` — работает как работал. Съешь
+  // новая ветвь старую, покраснеет здесь, а не на трубке у владельца.
+  it("КАНАРЕЙКА: обычный уход по СТАРОЙ схеме по-прежнему даёт", () => {
+    const pushes = plan({
+      eventId: "e1",
+      before: ev({ musicians: [OWNER, GUEST, OTHER] }),
+      after: ev({
+        musicians: [OWNER, OTHER],
+        lastActionBy: GUEST,
+        lastActionType: "left",
+      }),
+      actorName: "Teymur",
+      leftNames: {},
+    });
+    assert.equal(pushes.length, 1);
+    assert.equal(pushes[0].uid, OWNER);
+    assert.equal(pushes[0].title, "İştirakçı ayrıldı");
+    assert.ok(pushes[0].body.startsWith("Teymur "), pushes[0].body);
+  });
+
+  // СТОРОЖ НА ПРОВОДКУ ИМЕНИ, И ПОСТАВЛЕН ОН ПО РЕЗУЛЬТАТУ ПОРЧИ, А НЕ ЗАРАНЕЕ.
+  //
+  // 28.08 порча «`leftNames[uid] = actorName` вместо `await displayName(uid)`»
+  // в `index.ts` прошла ЗЕЛЁНОЙ на всех 360 проверках — и это ровно тот
+  // дефект, ради которого половина ветви и писалась: владелец прочитал бы, что
+  // из вечера вышел он сам. Не поймал никто и не мог:
+  //
+  //   • разбор `EventPush` подаёт `leftNames` сам — тест не видит, откуда они
+  //     взялись в проде (N156, N160: тест подаёт то, отсутствие чего
+  //     проверяет);
+  //   • эмулятор текста уведомления не достаёт ничем — APNs в нём нет, а
+  //     `sendFcmPush` тела нигде не сохраняет. Проверка отсутствует не по
+  //     недосмотру, а по устройству (I50).
+  //
+  // **ЧЕГО ЭТОТ СТОРОЖ НЕ ЛОВИТ, И ЭТО ЕГО ГЛАВНОЕ СВОЙСТВО:** он сравнивает
+  // ТЕКСТ, а не поведение. Переименуют `displayName`, вынесут чтение имён в
+  // отдельную функцию, соберут строку иначе — он покраснеет на исправном
+  // коде; поменяют местами uid в двух соседних строках — пропустит. Он держит
+  // ровно одну руку: ту, что «упростит» ветвь, подставив готовый `actorName`.
+  // Настоящая проверка появится, только если тексты уведомлений станут
+  // доставаться из эмулятора.
+  it("index.ts берёт имя вышедшего у ЕГО uid, а не готовое actorName", () => {
+    const src = readFileSync(`${__dirname}/../src/index.ts`, "utf8");
+    assert.ok(
+      src.includes("leftNames[uid] = await displayName(uid);"),
+      "проводка имени вышедшего изменилась: если имя снова берётся из " +
+        "actorName, «İştirakçı ayrıldı» назовёт постороннего — чаще всего " +
+        "самого владельца, потому что при пустом lastActionBy подставляется " +
+        "ownerUid",
+    );
+  });
+
+  // СОСЕДКА К СТОРОЖУ ВЫШЕ (I31): он утверждает НАЛИЧИЕ строки, значит сам
+  // себе канарейка — ослепший разбор дал бы ноль и покраснел. Но слепота
+  // бывает и к материалу: прочитайся файл пустым, обе проверки прошли бы
+  // молча, если бы вторая утверждала отсутствие. Здесь она утверждает, что
+  // файл вообще читается и что искомое место в нём одно, а не два.
+  it("соседка: место чтения имён в index.ts ровно одно", () => {
+    const src = readFileSync(`${__dirname}/../src/index.ts`, "utf8");
+    assert.equal(src.split("leftNames[uid] = ").length - 1, 1);
+    assert.ok(src.includes("leftViaAnswers(b, a)"));
+  });
+
+  // САМ ПРИЗНАК, ОТДЕЛЬНО ОТ РАССЫЛКИ: его зовёт и `index.ts` — ради имён, —
+  // и `planUpdatePushes`, ради ветвления. Порознь зовут, порознь и проверяем.
+  describe("сам признак перехода", () => {
+    it("называет вышедшего поимённо", () => {
+      assert.deepEqual(leftViaAnswers(before, after), [GUEST]);
+    });
+
+    it("поля не было вовсе — перехода нет", () => {
+      assert.deepEqual(leftViaAnswers(ev(), ev()), []);
+    });
+
+    it("left → going → left: второй уход — законный, и он виден", () => {
+      const back = ev({ answers: { [OWNER]: "going", [GUEST]: "going" } });
+      assert.deepEqual(leftViaAnswers(after, back), []);
+      assert.deepEqual(leftViaAnswers(back, after), [GUEST]);
+    });
+
+    it("вышли двое одной записью — названы оба, а не первый", () => {
+      // В проде правило пускает один ключ за запись; но писатель у документа
+      // не один (I49), и сигнатура на одного прятала бы второго молча
+      // (N51/I11).
+      const two = ev({
+        musicians: [OWNER, GUEST, OTHER],
+        answers: { [OWNER]: "going", [GUEST]: "left", [OTHER]: "left" },
+      });
+      assert.deepEqual(
+        leftViaAnswers(ev({ musicians: [OWNER, GUEST, OTHER] }), two).sort(),
+        [GUEST, OTHER].sort(),
+      );
+    });
+  });
+});
+
+// ВЫШЕДШИЙ ПЕРЕСТАЁТ БЫТЬ ЖИВЫМ В ВЕЧЕРЕ (N121, шаг 1).
+//
+// Отсев стоит в ОДНОМ месте — `recipientsOf`, — а `remindableOf` получает
+// его оттуда, потому что на нём и построен. Проверки при этом ДВЕ: порознь
+// зовут обе, значит порознь обе и обязаны отвечать. Сними кто-нибудь
+// зависимость между ними — покраснеет вторая, а не выяснится на трубке.
+describe("вышедший ('left') не считается живым", () => {
+  it("рассылка изменений его больше не касается", () => {
+    const e = ev({
+      musicians: [OWNER, GUEST, OTHER],
+      answers: { [GUEST]: "left", [OTHER]: "going" },
+    });
+    assert.deepEqual(recipientsOf(e, null).sort(), [OTHER, OWNER].sort());
+  });
+
+  it("напоминаний он больше не получает", () => {
+    const e = ev({
+      musicians: [OWNER, GUEST, OTHER],
+      answers: { [GUEST]: "left", [OTHER]: "going" },
+    });
+    assert.deepEqual(remindableOf(e).sort(), [OTHER, OWNER].sort());
+  });
+
+  it("сказавший «не может» изменения получает по-прежнему", () => {
+    // Соседка к двум проверкам выше, и она про разные вопросы, а не про
+    // разные значения: `cant` — «я не приду», человек в вечере и вправе
+    // передумать, поехав дата; `'left'` — «меня здесь больше нет».
+    const e = ev({ answers: { [GUEST]: "cant" } });
+    assert.deepEqual(recipientsOf(e, null).sort(), [GUEST, OWNER].sort());
+  });
+
+  it("ВЛАДЕЛЬЦА не снимает даже с 'left' в карте", () => {
+    // Правила такого не пропустят (`answersForSelf` требует
+    // `ownerUid != uid`), значит взяться это может только от чужого
+    // писателя — Admin SDK, консоль (I49). Отнимать у человека вести о
+    // собственном вечере по чужой записи мы не будем.
+    const e = ev({ answers: { [OWNER]: "left", [GUEST]: "going" } });
+    assert.deepEqual(recipientsOf(e, null).sort(), [GUEST, OWNER].sort());
+    assert.deepEqual(remindableOf(e).sort(), [GUEST, OWNER].sort());
   });
 });
 
@@ -403,7 +678,7 @@ describe("отмена по согласию", () => {
   // о судьбе своего договора.
 
   it("запрос отмены уходит второй стороне", () => {
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1",
       before: ev(),
       after: ev({
@@ -429,7 +704,7 @@ describe("отмена по согласию", () => {
     // очищают. Тест защищает от дня, когда он появится, — а появится он
     // молча, потому что признак-переход не ошибается, он просто не
     // срабатывает.
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1",
       before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
       after: ev({
@@ -450,7 +725,7 @@ describe("отмена по согласию", () => {
     // договору случается сколько угодно раз. Признак построен на сдвиге
     // отметки времени и потому отвечает на вопрос «просьба подана», а не
     // «поле сейчас заполнено».
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1",
       before: ev({ cancelRequestedBy: null, cancelRequestedAtMs: null }),
       after: ev({
@@ -468,7 +743,7 @@ describe("отмена по согласию", () => {
   it("переписанная тем же временем просьба второго уведомления не даёт", () => {
     // Холостая запись — не новая просьба. Тот же довод, что и у сдвига:
     // уведомление привязано к СОБЫТИЮ, а не к состоянию поля.
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1",
       before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
       after: ev({
@@ -483,7 +758,7 @@ describe("отмена по согласию", () => {
   });
 
   it("подтверждение отмены уходит тому, кто просил", () => {
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1",
       before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
       after: ev({
@@ -502,7 +777,7 @@ describe("отмена по согласию", () => {
   });
 
   it("ОТЗЫВ уходит второй стороне — той, кого просили подтвердить", () => {
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1",
       before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
       after: ev({
@@ -522,7 +797,7 @@ describe("отмена по согласию", () => {
     // В `after` поле уже пустое: его очистил тот самый ход, о котором
     // шлём. Возьми адресата из `after` — уведомление не уйдёт никому, и
     // человек останется ждать ответа, которого уже не будет.
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1",
       before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
       after: ev({
@@ -551,7 +826,7 @@ describe("отмена по согласию", () => {
     // «вам отказали».
     const before = ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 });
     const cleared = { cancelRequestedBy: null, cancelRequestedAtMs: null };
-    const withdrawn = planUpdatePushes({
+    const withdrawn = plan({
       eventId: "e1",
       before,
       after: ev({
@@ -561,7 +836,7 @@ describe("отмена по согласию", () => {
       }),
       actorName: "Rafael",
     });
-    const declined = planUpdatePushes({
+    const declined = plan({
       eventId: "e1",
       before,
       after: ev({
@@ -590,7 +865,7 @@ describe("отмена по согласию", () => {
       ["cancelWithdrawn", OWNER],
       ["cancelDeclined", GUEST],
     ] as const) {
-      const pushes = planUpdatePushes({
+      const pushes = plan({
         eventId: "e1",
         before: type === "cancelRequested" ? ev() : before,
         after: ev({
@@ -613,7 +888,7 @@ describe("отмена по согласию", () => {
     // Ветка отмены обрывает разбор: иначе смена `status` на `cancelled`
     // вместе с чем-нибудь ещё дала бы человеку две новости об одном
     // действии — «договор отменён» и «поля изменились».
-    const pushes = planUpdatePushes({
+    const pushes = plan({
       eventId: "e1",
       before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
       after: ev({

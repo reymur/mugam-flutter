@@ -18,6 +18,7 @@ import { isWatchingChatDecision, isWatchingEventDecision } from "./presence";
 import {
   EventPush,
   EventSnapshot,
+  leftViaAnswers,
   planUpdatePushes,
   pushAdded,
   pushDeleted,
@@ -2368,11 +2369,29 @@ export const onPersonalEventUpdated = onDocumentUpdated(
     const a = toEventSnapshot(after);
     const actor = a.lastActionBy ?? a.ownerUid;
     const actorName = await displayName(actor);
+    // ИМЯ ВЫШЕДШЕГО — ОТ UID ПЕРЕХОДА, А НЕ ОТ `lastActionBy` (N121, шаг 1).
+    //
+    // `actorName` строкой выше для этой ветви негоден: новая запись идёт
+    // правилом `answersForSelf()`, которое пускает только ключ `answers`,
+    // значит `lastActionBy` остаётся от ПРОШЛОГО действия — а когда его нет
+    // вовсе, строка выше подставляет `ownerUid`, и владелец прочитал бы, что
+    // из вечера вышел он сам. Кто вышел, знает изменённый ключ карты, и
+    // только он (`firestore.rules:988-995`: «поступок сам себя называет»).
+    //
+    // Чтений здесь ровно столько, сколько людей вышло этой записью, — в
+    // проде не больше одного: правило пускает один изменённый ключ за раз
+    // (`affectedKeys().hasOnly([uid])`). На обычной правке вечера список
+    // пуст, и не читается ничего.
+    const leftNames: Record<string, string> = {};
+    for (const uid of leftViaAnswers(b, a)) {
+      leftNames[uid] = await displayName(uid);
+    }
     const pushes = planUpdatePushes({
       eventId: event.params.eventId,
       before: b,
       after: a,
       actorName,
+      leftNames,
     });
     if (pushes.length === 0) return;
     // Отметка снимается ШИРЕ, чем уходит push: получатели рассылки бывают
