@@ -242,8 +242,8 @@ describe("шаг 4: участник отвечает за себя, и толь
   });
 
   it("УШЕДШИЙ не может ответить после выхода", async () => {
-    // Его ключ в карте остался — `leavesEvent` к `answers` не пускает. Но
-    // `isParty()` его больше не признаёт, и вся ветка ему закрыта.
+    // Его ключ в карте остался — `leavesEvent` (снято 30.08) к `answers` не
+    // пускало. Но `isParty()` его больше не признаёт, и вся ветка ему закрыта.
     await seed(env, { [GUEST]: "going" }, [OWNER, OTHER]);
     const db = env.authenticatedContext(GUEST).firestore();
     await assertFails(
