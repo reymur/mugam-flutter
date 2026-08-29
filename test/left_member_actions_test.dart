@@ -27,7 +27,7 @@ void main() {
   group('кому и когда предложено окошко', () {
     test('владельцу у ВЫШЕДШЕГО — да', () {
       expect(
-        offersLeftMemberMenu(
+        offersLeftMemberRemoval(
           viewerUid: _owner,
           memberUid: _member,
           ownerUid: _owner,
@@ -41,7 +41,7 @@ void main() {
       // Ход необратим и меняет ОБЩИЙ список. Дай его любому смотрящему, и
       // вечер потеряет человека по нажатию того, кто его не звал.
       expect(
-        offersLeftMemberMenu(
+        offersLeftMemberRemoval(
           viewerUid: 'someone-else',
           memberUid: _member,
           ownerUid: _owner,
@@ -57,7 +57,7 @@ void main() {
       // этого условия «Dəqiqləşdir» открыл бы чат с самим собой, а
       // «Siyahıdan sil» вычеркнул бы владельца из его же вечера.
       expect(
-        offersLeftMemberMenu(
+        offersLeftMemberRemoval(
           viewerUid: _owner,
           memberUid: _owner,
           ownerUid: _owner,
@@ -71,7 +71,7 @@ void main() {
       // Незалогиненный смотрящий и вечер без владельца дали бы `'' == ''`,
       // то есть «я владелец» и «это не я» разом. Пустая строка не человек.
       expect(
-        offersLeftMemberMenu(
+        offersLeftMemberRemoval(
           viewerUid: '',
           memberUid: _member,
           ownerUid: '',
@@ -92,7 +92,7 @@ void main() {
         null,
       ]) {
         expect(
-          offersLeftMemberMenu(
+          offersLeftMemberRemoval(
             viewerUid: _owner,
             memberUid: _member,
             ownerUid: _owner,

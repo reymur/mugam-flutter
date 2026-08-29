@@ -1059,3 +1059,108 @@ describe("три формы даты в проде (N26)", () => {
     assert.equal(eventWallClock("не дата"), "не дата");
   });
 });
+
+// УБРАЛИ ВСЛЕД ЗА УХОДОМ — ВЫШЕДШЕМУ НЕ ПИШЕМ (решение владельца 29.08).
+//
+// Довод владельца дословно: «не надо отправлять push, потому что Рафаэль
+// вышел сознательно». Удаление здесь — уборка вслед за его же ходом, а не
+// поступок над ним, и «{Ad} sizi tədbirindən çıxardı» рассказало бы человеку
+// о его собственном решении чужими словами.
+//
+// НАБОР ДЕРЖИТ ОБЕ СТОРОНЫ, и это не симметрия ради красоты: гашение,
+// написанное шире, чем задумано, отняло бы у владельца единственный способ
+// сказать участнику «я тебя убрал». Поэтому рядом с «молчим» стоит «пишем».
+describe("удаление вслед за уходом (N121, шаг 2)", () => {
+  it("вышедшего убрали из состава — ему НЕ пишут", () => {
+    const before = ev({
+      musicians: [OWNER, GUEST],
+      answers: { [OWNER]: "going", [GUEST]: "left" },
+    });
+    const after = ev({
+      musicians: [OWNER],
+      answers: { [OWNER]: "going" },
+      lastActionType: "edited",
+      lastActionBy: OWNER,
+    });
+    const out = plan({
+      eventId: "e1",
+      before,
+      after,
+      actorName: "Teymur",
+    });
+    assert.deepEqual(out.filter((p) => p.uid === GUEST), []);
+  });
+
+  it("СОСЕДКА: не уходившего убрали — ему пишут", () => {
+    // Тот же ход, та же форма записи, разница ровно в одном ключе карты.
+    // Без этой проверки «ему не пишут» подтвердилось бы и гашением,
+    // которое молчит всегда, — а это отняло бы у владельца возможность
+    // сказать участнику, что он его убрал.
+    const before = ev({
+      musicians: [OWNER, GUEST],
+      answers: { [OWNER]: "going", [GUEST]: "going" },
+    });
+    const after = ev({
+      musicians: [OWNER],
+      answers: { [OWNER]: "going" },
+      lastActionType: "edited",
+      lastActionBy: OWNER,
+    });
+    const out = plan({
+      eventId: "e1",
+      before,
+      after,
+      actorName: "Teymur",
+    });
+    const mine = out.filter((p) => p.uid === GUEST);
+    assert.equal(mine.length, 1);
+    assert.equal(mine[0].title, "Tədbirdən çıxarıldınız");
+  });
+
+  it("признак берётся из BEFORE — в AFTER ключа уже нет", () => {
+    // Правка состава переписывает карту по составу, и удалённый из неё
+    // выпадает. Спроси признак у `after` — он был бы пуст ВСЕГДА, гашение
+    // не сработало бы ни разу, а выглядело бы это как «сделали, не помогло».
+    // Здесь `after.answers` намеренно НЕ содержит ушедшего, как в проде.
+    const before = ev({
+      musicians: [OWNER, GUEST],
+      answers: { [OWNER]: "going", [GUEST]: "left" },
+    });
+    const after = ev({
+      musicians: [OWNER],
+      answers: { [OWNER]: "going" },
+      lastActionBy: OWNER,
+    });
+    assert.equal(after.answers?.[GUEST], undefined);
+    const out = plan({
+      eventId: "e1",
+      before,
+      after,
+      actorName: "Teymur",
+    });
+    assert.deepEqual(out.filter((p) => p.uid === GUEST), []);
+  });
+
+  it("вышедший не получает и «дата изменилась» той же правкой", () => {
+    // Пометка `touchedByActor` ставится ДО решения о письме. Поставь её
+    // только в ветви с письмом — и погашенный участник получил бы вместо
+    // «вас убрали» рассылку об изменении вечера, из которого его убрали.
+    const before = ev({
+      musicians: [OWNER, GUEST],
+      answers: { [OWNER]: "going", [GUEST]: "left" },
+    });
+    const after = ev({
+      musicians: [OWNER],
+      answers: { [OWNER]: "going" },
+      date: "2026-08-09T19:00:00",
+      lastActionBy: OWNER,
+    });
+    const out = plan({
+      eventId: "e1",
+      before,
+      after,
+      actorName: "Teymur",
+    });
+    assert.deepEqual(out.filter((p) => p.uid === GUEST), []);
+  });
+});
