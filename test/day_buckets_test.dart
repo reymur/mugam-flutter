@@ -241,6 +241,7 @@ void main() {
         ],
         asParticipant: const [],
         now: now,
+        viewerUid: '',
       );
       expect(b.today.map((e) => e.id), ['t1']);
       expect(b.tomorrow.map((e) => e.id), ['t2']);
@@ -261,6 +262,7 @@ void main() {
         ],
         asParticipant: const [],
         now: now,
+        viewerUid: '',
       );
       expect(b.today.map((e) => e.id), ['ранний', 'дневной', 'поздний']);
     });
@@ -275,6 +277,7 @@ void main() {
         ],
         asParticipant: const [],
         now: now,
+        viewerUid: '',
       );
       expect(b.today.length, 2);
       expect(b.tomorrow, isEmpty);
@@ -285,6 +288,7 @@ void main() {
         own: [ev('вчерашний', '2026-08-06T23:59:00.000')],
         asParticipant: const [],
         now: now,
+        viewerUid: '',
       );
       expect(b.today, isEmpty);
       expect(b.weekHasNothing, isTrue);
@@ -302,6 +306,7 @@ void main() {
         ],
         asParticipant: const [],
         now: now,
+        viewerUid: '',
       );
       expect(
         b.week.expand((d) => d.events).map((e) => e.id),
@@ -318,6 +323,7 @@ void main() {
         ],
         asParticipant: const [],
         now: now,
+        viewerUid: '',
       );
       expect(b.next?.id, 'сентябрьский',
           reason: 'названо не первое попавшееся, а ближайшее');
@@ -336,6 +342,7 @@ void main() {
         own: [ev('один', '2026-08-07T20:00:00.000')],
         asParticipant: [ev('один', '2026-08-07T20:00:00.000')],
         now: now,
+        viewerUid: '',
       );
       expect(b.today.length, 1);
       expect(b.today.single.id, 'один');
@@ -346,6 +353,7 @@ void main() {
         own: [ev('отменён', '2026-08-07T20:00:00.000', status: 'cancelled')],
         asParticipant: const [],
         now: now,
+        viewerUid: '',
       );
       expect(b.today, isEmpty);
     });
@@ -358,6 +366,7 @@ void main() {
         own: [ev('битый', 'позавчера'), ev('пустой', '')],
         asParticipant: const [],
         now: now,
+        viewerUid: '',
       );
       expect(b.today, isEmpty);
       expect(b.isEmpty, isTrue);
@@ -417,6 +426,7 @@ void main() {
         ],
         asParticipant: const [],
         now: now,
+        viewerUid: '',
       );
       expect(b.week.length, 7);
       expect(b.weekHasNothing, isFalse, reason: 'неделя не пуста');
@@ -435,6 +445,7 @@ void main() {
         own: [ev('сегодня', '2026-08-07T20:00:00.000')],
         asParticipant: const [],
         now: now,
+        viewerUid: '',
       );
       expect(b.weekHasNothing, isTrue);
       // Строки при этом НЕ исчезают: правило отдаёт факт, а решение
@@ -450,13 +461,15 @@ void main() {
         own: [ev('единственное', '2026-08-14T19:00:00.000')],
         asParticipant: const [],
         now: now,
+        viewerUid: '',
       );
       expect(b.weekHasNothing, isFalse);
       expect(b.week.where((d) => d.isEmpty).length, 6);
     });
 
     test('дни идут подряд и по порядку, без пропусков', () {
-      final b = buildDayBuckets(own: const [], asParticipant: const [], now: now);
+      final b = buildDayBuckets(
+          own: const [], asParticipant: const [], now: now, viewerUid: '');
       final days = b.week.map((d) => d.day).toList();
       expect(days.first, DateTime(2026, 8, 9), reason: 'первый день — послезавтра');
       expect(days.last, DateTime(2026, 8, 15));
@@ -475,6 +488,7 @@ void main() {
         ],
         asParticipant: const [],
         now: now,
+        viewerUid: '',
       );
       final day = b.week.firstWhere((d) => d.day == DateTime(2026, 8, 9));
       expect(day.events.map((e) => e.id), ['утро', 'вечер']);
@@ -486,6 +500,7 @@ void main() {
           own: events,
           asParticipant: const [],
           now: now,
+          viewerUid: '',
         );
 
     test('сегодня пусто, завтра есть — «Bu gün boşsunuz»', () {
@@ -592,12 +607,90 @@ void main() {
         own: own,
         asParticipant: asParticipant,
         now: day,
+        // ПУСТОЙ СМОТРЯЩИЙ ЗДЕСЬ ОБЯЗАТЕЛЕН, а не выбран по инерции: этот
+        // тест сличает счёт кружка на сетке с ответом под ней, и кружок
+        // фильтра по вышедшему не знает вовсе (`eventsOfDay` выше зовётся
+        // без uid). Передай сюда живого человека — числа разошлись бы по
+        // причине, к N74 отношения не имеющей, и тест обвинил бы сетку в
+        // том, чего она не делала.
+        viewerUid: '',
       ).today.length;
 
       expect(naCetke, podSetkoj,
           reason: 'кружок говорит $naCetke, ответ под сеткой $podSetkoj — '
               'ровно расхождение, снятое на устройстве 07.08 (N74)');
       expect(naCetke, 3);
+    });
+  });
+
+  // ВЕЧЕР, ИЗ КОТОРОГО ЧЕЛОВЕК ВЫШЕЛ, В ЕГО РАСКЛАДКУ НЕ ПОПАДАЕТ
+  // (29.08, шаг 2 работы N121).
+  //
+  // ПОЧЕМУ ЭТО ПРОВЕРЯЕТСЯ ЗДЕСЬ, А НЕ ТОЛЬКО У ПРАВИЛА. `showsInCalendarOf`
+  // проверен в `day_role_test.dart`; здесь проверяется, что раскладка его
+  // ЗОВЁТ — то есть проводка, а не правило. Ровно этот класс за одни сутки
+  // 28.08 поймали трижды (N160, N177, N180), и все три раза порчей.
+  //
+  // СОБЫТИЕ СТРОИТСЯ ЧЕРЕЗ `fromFirestore`: карта ответов у модели закрыта,
+  // и другой дороги внутрь нет вовсе. Это тот самый путь, которым ответ
+  // придёт в проде, когда `leavePersonalEvent` начнёт писать ключ (I55).
+  group('вышедший не видит вечер в своей раскладке (N121, шаг 2)', () {
+    PersonalEvent withAnswers(String id, String date, Map<String, String> a) =>
+        PersonalEvent.fromFirestore(id, {
+          'ownerUid': 'owner',
+          'date': date,
+          'musicians': const ['owner', 'guest'],
+          'answers': a,
+          'answersWrittenByOwner': true,
+          'status': 'agreed',
+        });
+
+    final now = DateTime.parse('2026-08-09T09:00:00.000');
+    final ushel = withAnswers('ushel', '2026-08-09T19:00:00.000',
+        const {'owner': 'going', 'guest': 'left'});
+    final ostalsja = withAnswers('ostalsja', '2026-08-09T21:00:00.000',
+        const {'owner': 'going', 'guest': 'going'});
+
+    test('из своей раскладки вечер пропал, ЧУЖАЯ его сохранила', () {
+      final uMenja = buildDayBuckets(
+        own: const [],
+        asParticipant: [ushel, ostalsja],
+        now: now,
+        viewerUid: 'guest',
+      );
+      expect(uMenja.today.map((e) => e.id), ['ostalsja'],
+          reason: 'вечер, из которого guest вышел, обязан исчезнуть из его '
+              'календаря — по новой схеме он остаётся в musicians, и запрос '
+              'приносит его по-прежнему');
+
+      // СОСЕДКА, И БЕЗ НЕЁ ПЕРВАЯ ПОЛОВИНА НИЧЕГО НЕ ДОКАЗЫВАЕТ: тот же
+      // вызов с теми же данными, но другим смотрящим, обязан вернуть ОБА.
+      // Ослепни фильтр в сторону «прячу всё» — первая проверка осталась бы
+      // зелёной, а календарь опустел бы у всех.
+      final uVladelca = buildDayBuckets(
+        own: [ushel, ostalsja],
+        asParticipant: const [],
+        now: now,
+        viewerUid: 'owner',
+      );
+      expect(uVladelca.today.map((e) => e.id), ['ushel', 'ostalsja'],
+          reason: 'у владельца вечер остаётся: ушёл участник, а не вечер');
+    });
+
+    test('день, где был только покинутый вечер, становится ПУСТЫМ', () {
+      // Это половина обещания «yalnız sizin təqvimdən silinəcək»: мало
+      // убрать строку — день обязан стать свободным, иначе человек видит
+      // занятый день без единой причины на нём.
+      final b = buildDayBuckets(
+        own: const [],
+        asParticipant: [ushel],
+        now: now,
+        viewerUid: 'guest',
+      );
+      expect(b.today, isEmpty);
+      expect(b.isEmpty, isTrue,
+          reason: 'ни в одном окне раскладки покинутого вечера быть не '
+              'должно, а не только в сегодняшнем');
     });
   });
 }

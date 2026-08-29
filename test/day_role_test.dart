@@ -70,12 +70,92 @@ void main() {
           reason: 'отказ отличим от пустого дня');
     });
 
-    test('вышел из состава — день свободен', () {
+    test('вышел — СВОЯ роль, а не «свободен»', () {
+      // ЗДЕСЬ СТОЯЛО `DayRole.free`, И ЭТО БЫЛО ВЕРНО ДО 29.08. Пока писать
+      // `left` было некому (N121), «я ушёл» и «меня не звали» на экране
+      // выглядели одинаково, и разницы не существовало. С появлением
+      // писателя она видна: у вышедшего вечер ЕСТЬ и он в его составе, у
+      // незваного вечера нет вовсе, — и показывать их надо по-разному (I47).
       final e = make(
         musicians: const ['owner', 'guest'],
         answers: const {'owner': kAnswerGoing, 'guest': kAnswerLeft},
       );
-      expect(dayRoleOf(e, 'guest'), DayRole.free);
+      expect(dayRoleOf(e, 'guest'), DayRole.left);
+      expect(dayRoleOf(e, 'guest'), isNot(DayRole.free),
+          reason: 'вышедший отличим от того, кого не звали');
+      expect(dayRoleOf(e, 'guest'), isNot(DayRole.occupied),
+          reason: 'выход освобождает день — ради этого ход и есть');
+      expect(dayRoleOf(e, 'guest'), isNot(DayRole.declined),
+          reason: 'вышедший ничего не отклонял: приглашение он принял');
+    });
+  });
+
+  // ПОКАЗЫВАТЬ ЛИ ВЕЧЕР ВООБЩЕ — правило `showsInCalendarOf`, заведено 29.08
+  // шагом 2 работы N121.
+  //
+  // Утверждение здесь ДВОЙНОЕ и потому само себе канарейка (I31): у одних
+  // «да», у других «нет». Ослепни разбор — обе половины сойдутся в один
+  // ответ, и любая из двух проверок покраснеет.
+  group('showsInCalendarOf — вечер, из которого вышли, не показывается', () {
+    test('вышедшему НЕ показывается, остальным показывается', () {
+      final e = make(
+        musicians: const ['owner', 'guest', 'other'],
+        answers: const {
+          'owner': kAnswerGoing,
+          'guest': kAnswerLeft,
+          'other': kAnswerCant,
+        },
+      );
+      expect(showsInCalendarOf(e, 'guest'), isFalse,
+          reason: 'обещание окна конфликта — «yalnız sizin təqvimdən '
+              'silinəcək»; не спрячь мы вечер здесь, приложение соврало бы '
+              'в том самом месте, где обещало');
+      // ТРИ СОСЕДКИ, И ОНИ ЖЕ ГРАНИЦА ПРАВИЛА. Без них «не показывается»
+      // подтвердилось бы и правилом, которое прячет вечер у всех подряд.
+      expect(showsInCalendarOf(e, 'owner'), isTrue,
+          reason: 'владельцу его собственный вечер виден всегда');
+      expect(showsInCalendarOf(e, 'other'), isTrue,
+          reason: '«не могу» — не уход: человек в составе, и дорога назад '
+              'ему нужна, чтобы передумать');
+      expect(showsInCalendarOf(e, ''), isTrue,
+          reason: 'неизвестный смотрящий видит ЛИШНЕЕ, а не теряет своё: '
+              'пустой экран прочитался бы как хорошая новость (I14)');
+    });
+
+    test('это ДРУГОЙ вопрос, чем «показать строкой или карточкой»', () {
+      // Отказавшийся отвечает «показывать, и строкой»; вышедший — «не
+      // показывать вовсе». Слейся эти два правила, отказавшийся потерял бы
+      // дорогу назад, а вышедший получил бы строку приглашения на вечер, из
+      // которого ушёл.
+      final e = make(
+        musicians: const ['owner', 'guest', 'other'],
+        answers: const {
+          'owner': kAnswerGoing,
+          'guest': kAnswerLeft,
+          'other': kAnswerCant,
+        },
+      );
+      expect(showsAsInvitation(e, 'other'), isTrue);
+      expect(showsInCalendarOf(e, 'other'), isTrue);
+      expect(showsAsInvitation(e, 'guest'), isFalse);
+      expect(showsInCalendarOf(e, 'guest'), isFalse);
+    });
+
+    test('вышедший не оставляет серой точки на дне', () {
+      // След означает «здесь был вопрос ко мне, и я его разобрал». У
+      // вышедшего вопроса не было — он принял приглашение и ушёл из дела.
+      final e = make(
+        musicians: const ['owner', 'guest'],
+        answers: const {'owner': kAnswerGoing, 'guest': kAnswerLeft},
+      );
+      expect(hasHandledInvitationOn([e], 'guest', const {}), isFalse);
+      // Соседка: у отказавшегося след ЕСТЬ, тем же вызовом. Без неё «следа
+      // нет» подтвердилось бы и разбором, который следа не видит вовсе.
+      final otkaz = make(
+        musicians: const ['owner', 'guest'],
+        answers: const {'owner': kAnswerGoing, 'guest': kAnswerCant},
+      );
+      expect(hasHandledInvitationOn([otkaz], 'guest', const {}), isTrue);
     });
   });
 
@@ -291,25 +371,36 @@ void main() {
       // правило, отвечающее `free` на всё, оставило бы половину проверок выше
       // зелёными. Здесь утверждается НАЛИЧИЕ всех трёх ответов сразу — такая
       // проверка сама себе канарейка и краснеет от ослепления.
+      // ПЯТЫЙ ДОПИСАН 29.08 НЕ РУКАМИ, А ПО ЕЁ ЖЕ КРАСНОМУ: добавив
+      // `DayRole.left`, я прогнал набор — и упала ровно эта проверка,
+      // «ожидалось 5, получено 4». То есть она сделала то, ради чего
+      // заведена: новое значение перечисления не может тихо остаться
+      // недостижимым. Случай стоит помнить как образец — сравнение с
+      // `DayRole.values.length` дешевле любого сторожа по тексту.
       final e = make(
-        musicians: const ['owner', 'going', 'waiting', 'cant', 'notasked'],
+        musicians: const [
+          'owner', 'going', 'waiting', 'cant', 'left', 'notasked',
+        ],
         answers: const {
           'owner': kAnswerGoing,
           'going': kAnswerGoing,
           'waiting': kAnswerWaiting,
           'cant': kAnswerCant,
+          'left': kAnswerLeft,
         },
       );
       final seen = {
         dayRoleOf(e, 'going'),
         dayRoleOf(e, 'waiting'),
         dayRoleOf(e, 'cant'),
+        dayRoleOf(e, 'left'),
         dayRoleOf(e, 'notasked'),
       };
       expect(seen, {
         DayRole.occupied,
         DayRole.invited,
         DayRole.declined,
+        DayRole.left,
         DayRole.free,
       });
       expect(seen.length, DayRole.values.length,
