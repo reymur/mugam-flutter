@@ -4497,13 +4497,19 @@ class _EventFormModalState extends State<_EventFormModal> {
       isEditing: widget.existingEvent != null,
     );
     if (add.isEmpty) return;
-    // Вне кадра отрисовки: зовётся из build при появлении предупреждения.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      setState(() {
-        _selectedParticipantUids.addAll(add);
-        _mergedFromConflict.addAll(add);
-      });
+    // СИНХРОННО, И ЭТО СЛЕДСТВИЕ N187, А НЕ УБОРКА. Здесь стоял
+    // `addPostFrameCallback`, и он был нужен ровно по одной причине: звали
+    // отсюда из `build`, а менять состояние внутри кадра отрисовки нельзя.
+    // После варианта 2 единственный вызывающий — ветвь ответа `'replace'`,
+    // то есть обычный обработчик, и откладывать больше нечего.
+    //
+    // **Отложить было бы ХУЖЕ, чем не нужно: `_replaceEvent` читает
+    // `_mergedFromConflict` (`foreignLeaveCreation`) в той же строке
+    // ниже.** Дождись перенос следующего кадра — и замена ушла бы с пустым
+    // списком подмешанных, то есть тихо, как в самой N187.
+    setState(() {
+      _selectedParticipantUids.addAll(add);
+      _mergedFromConflict.addAll(add);
     });
   }
 
@@ -4595,6 +4601,28 @@ class _EventFormModalState extends State<_EventFormModal> {
       // выбранного мероприятия — см. `_replaceEvent`. Диалог называет их
       // разными именами («Mövcud tədbiri dəyiş» / «Təqvimimdən sil»), но
       // ответом остаётся один: поступок совершает вызывающий, а не окно.
+      //
+      // ПЕРЕНОС СОСТАВА — ЗДЕСЬ, И ЭТО ВСЯ СУТЬ N187 (вариант 2, решение
+      // владельца 29.08). До 30.08 он делался в `build`, как только
+      // всплывала плашка, — то есть форма показывала состав, следующий из
+      // решения, которого человек ещё не принял.
+      //
+      // ПОЧЕМУ ИМЕННО ЭТА СТРОКА, А НЕ ДВЕ. Оба ответа, «замени существующее»
+      // и «убери из моего календаря», приходят одним `'replace'` — значит
+      // точка одна. Разведи их по двум веткам, и правило разъехалось бы по
+      // копиям (I58: сводить по задаче; задача здесь одна — человек сказал,
+      // что делает).
+      //
+      // ПОРЯДОК: перенос ДО `_replaceEvent`, потому что тот читает
+      // `_mergedFromConflict` (`foreignLeaveCreation`). Позови их наоборот —
+      // и замена ушла бы с пустым списком подмешанных, молча.
+      //
+      // Список тот же, что показан в окне. Подменять его на `[choice.event]`
+      // не потребовалось: `participantsToMerge` и так молчит, когда
+      // конфликтов не ровно один, — то есть когда переносить не из чего
+      // одного. Множество не изменилось, изменилось ВРЕМЯ.
+      _mergeConflictParticipants(conflicts);
+      if (!mounted) return;
       await _replaceEvent(choice.event);
       // РАЗБОР ОДНОГО НЕ ОСВОБОЖДАЕТ МИНУТУ (N51). На минуте могло стоять
       // несколько: ушёл из чужого — своё на том же времени осталось, и
@@ -5135,12 +5163,35 @@ class _EventFormModalState extends State<_EventFormModal> {
       pastDate: _pastDatePicked,
       resolvedIds: _resolvedConflictIds,
     );
-    // Состав конфликтующих мероприятий подмешивается в форму СРАЗУ, как
-    // только появилось предупреждение: требование «виден до нажатия и
-    // правится». Убранного руками не возвращает — см. _explicitlyRemoved.
-    if (banner != null && banner.events.isNotEmpty) {
-      _mergeConflictParticipants(banner.events);
-    }
+    // ЗДЕСЬ СТОЯЛО ПОДМЕШИВАНИЕ СОСТАВА, И ОНО СНЯТО 30.08 — N187, вариант 2
+    // (решение владельца).
+    //
+    // Было: `if (banner != null && banner.events.isNotEmpty)
+    // _mergeConflictParticipants(banner.events);` — состав конфликтующего
+    // мероприятия попадал в форму СРАЗУ, как только появилась плашка.
+    //
+    // ПОЧЕМУ ЭТО БЫЛО НЕВЕРНО, хотя механизм работал как задуман. Форма
+    // показывала состав, следующий из решения «я заменяю соседний вечер», в
+    // ту минуту, когда человек ЕЩЁ НЕ СКАЗАЛ, что он делает. Ответит «Yeni
+    // tədbir» — и показанное окажется неправдой задним числом, а фишка
+    // исчезнет молча. Отличить подмешанного от выбранного было нельзя:
+    // замер 29.08 — ноль упоминаний `merged` в 75 строках отрисовки фишек
+    // при канарейке `kGold` — 3.
+    //
+    // ДОВОД ВЛАДЕЛЬЦА, ПОЧЕМУ ИМЕННО ВАРИАНТ 2, дословно: «1 и 3 лечат
+    // симптом, класс остаётся; 3 объясняет пропажу вместо того, чтобы её не
+    // делать».
+    //
+    // ЧТО ВЗАМЕН: перенос делается ПОСЛЕ ответа — в ветви `'replace'`
+    // (`_showConflictFlow`), то есть после «Mövcud tədbiri dəyiş» либо
+    // «Təqvimimdən sil». Оба ответа — одно действие `'replace'`, поэтому
+    // точка переноса ровно одна, а не две.
+    //
+    // **ТРЕБОВАНИЕ «СОСТАВ ВИДЕН ДО НАЖАТИЯ» ЭТИМ ОТМЕНЯЕТСЯ, И ЭТО НЕ
+    // НЕДОСМОТР.** Оно записано 04.08 первым из трёх требований к переносу
+    // и было верно, пока перенос считался решённым делом. Теперь он
+    // следствие ответа, и показывать его до ответа значит показывать
+    // следствие несделанного выбора.
     return Container(
       margin: EdgeInsets.only(top: 60, bottom: bottomInset),
       decoration: const BoxDecoration(
@@ -5240,40 +5291,33 @@ class _EventFormModalState extends State<_EventFormModal> {
                                 d.minute != _blockedTime!.minute)) {
                           _blockedTime = null;
                         }
-                        // Сменился конфликт — сменился и подмешанный из него
-                        // состав (N38). Подмешивание живёт в `build`, а снятия не
-                        // было нигде, кроме ответа «Yeni tədbir»: человек
-                        // прокручивал дату через занятую минуту, состав того дня
-                        // налипал и оставался от даты, которую он уже не
-                        // выбирает. Правило целиком — в
-                        // `participantsAfterConflictChange`; здесь применение.
-                        final next = resolveConflictBanner(
-                          selectedDate: d,
-                          events: widget.allCombinedEvents,
-                          currentUid: widget.currentUid,
-                          blockedTime: _blockedTime,
-                          excludeEventId: _excludeEventId,
-                          // Считается для НОВОЙ даты, а не через `_pastDatePicked`:
-                          // тот смотрит на `_selectedDate`, и на прошлой дате
-                          // предупреждение о занятости не поднимается вовсе —
-                          // значит и конфликтов в нём не будет.
-                          pastDate:
-                              d != _openedWithDate &&
-                              d.isBefore(DateTime.now()),
-                          resolvedIds: _resolvedConflictIds,
-                        );
-                        final change = participantsAfterConflictChange(
+                        // ВТОРАЯ ТОЧКА ПОДМЕШИВАНИЯ ДО ОТВЕТА, И ОНА СНЯТА
+                        // ТЕМ ЖЕ ЧИСЛОМ (N187, вариант 2).
+                        //
+                        // Здесь стоял `participantsAfterConflictChange`, и он
+                        // делает ДВА дела разом: снимает подмешанных прошлого
+                        // конфликта и подмешивает состав нового. Второе — то
+                        // же самое подмешивание до ответа, только по другому
+                        // поводу: человек крутит колесо, проезжает занятую
+                        // минуту, и состав чужого вечера садится в форму, хотя
+                        // он ещё ничего не выбрал и на эту дату может не
+                        // остаться.
+                        //
+                        // **Нашлось это счётом вызовов, а не глазами:**
+                        // подмешивающих мест оказалось два, а чинили бы одно
+                        // — ровно I64, «проверять не наличие правила, а
+                        // каждого, кто под него подпадает».
+                        //
+                        // ОСТАВЛЕНА СНИМАЮЩАЯ ПОЛОВИНА, и она не лишняя:
+                        // после ответа `'replace'` форма может остаться живой
+                        // (минуту занимал не один вечер — N51), и подмешанные
+                        // к тому моменту уже есть. Смени человек тогда дату —
+                        // они обязаны уйти, это и есть N38.
+                        _selectedParticipantUids = participantsAfterUnmerge(
                           current: _selectedParticipantUids,
                           merged: _mergedFromConflict,
-                          conflicts: next?.events ?? const <PersonalEvent>[],
-                          explicitlyRemoved: _explicitlyRemoved,
-                          currentUid: widget.currentUid,
-                          isEditing: widget.existingEvent != null,
                         );
-                        _selectedParticipantUids = change.participants;
-                        _mergedFromConflict
-                          ..clear()
-                          ..addAll(change.merged);
+                        _mergedFromConflict.clear();
                       });
                     },
                   ),
