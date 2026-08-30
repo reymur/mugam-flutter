@@ -16,6 +16,12 @@ import { defineSecret, defineBoolean } from "firebase-functions/params";
 import { runOrphanSweepAndRecord } from "./orphanSweep";
 import { isWatchingChatDecision, isWatchingEventDecision } from "./presence";
 import {
+  isDeadTokenError,
+  pushErrorOf,
+  summarize,
+  type PushOutcome,
+} from "./pushDelivery";
+import {
   EventPush,
   EventSnapshot,
   leftViaAnswers,
@@ -73,23 +79,24 @@ const algoliaAdminKey = defineSecret("ALGOLIA_ADMIN_KEY");
 // шестерых пользователей. То есть значительная часть всей работы
 // диспетчера уходила в никуда, а документы жили дальше и накапливались.
 //
-// Удаляются РОВНО два кода ошибки — те, что означают «этого получателя
-// больше нет». `invalid-argument` намеренно не в списке: он приходит и на
-// испорченную полезную нагрузку, и удаление по нему стирало бы живые
-// токены из-за нашей же ошибки в теле сообщения.
-const DEAD_TOKEN_CODES = [
-  "messaging/registration-token-not-registered",
-  "messaging/invalid-registration-token",
-];
+// Смерть получателя опознаётся ДВУМЯ способами — кодом и текстом, — и
+// разбор вынесен в `pushDelivery.ts` чистой функцией: ветку внутри
+// триггера нельзя испортить и увидеть падение, а обе половины N186 ровно
+// про то, чего не видно.
+//
+// **ПОЧЕМУ НЕЛЬЗЯ ПРОСТО ДОПИСАТЬ `messaging/invalid-argument` В СПИСОК
+// КОДОВ — оговорка живёт у самого списка сообщений** (`DEAD_TOKEN_MESSAGES`
+// в `pushDelivery.ts`), и она обязательна: без неё следующий увидит здесь
+// разбор строки, сочтёт неряшливостью и «уберёт», а это снесёт живые токены
+// всех адресатов при первой же нашей ошибке в формате письма.
 
 async function pruneIfTokenDead(
   e: unknown,
   tokenRef?: FirebaseFirestore.DocumentReference,
 ): Promise<void> {
   if (!tokenRef) return;
-  const code = (e as { errorInfo?: { code?: string }; code?: string })
-    ?.errorInfo?.code ?? (e as { code?: string })?.code;
-  if (!code || !DEAD_TOKEN_CODES.includes(code)) return;
+  if (!isDeadTokenError(e)) return;
+  const { code } = pushErrorOf(e);
   try {
     await tokenRef.delete();
     logger.info(`[push] удалён мёртвый токен ${tokenRef.path} (${code})`);
@@ -98,13 +105,30 @@ async function pruneIfTokenDead(
   }
 }
 
+// НЕДОСТАВКА ВИДНА В ВОЗВРАТЕ, А НЕ ТОЛЬКО В ЖУРНАЛЕ — вторая половина
+// N186, и она отдельная работа, а не довесок к первой.
+//
+// Здесь стоял `Promise<void>`: исключение ловилось, писался `logger.warn`, и
+// управление возвращалось КАК ПРИ УСПЕХЕ. Вызывающий не различал «ушло» и
+// «не ушло» — и не мог различить, потому что различать было нечем: у `void`
+// нет двух значений. Человек не узнавал ничего, а на экране это выглядело
+// как «уведомление не пришло, наверное так и надо».
+//
+// **ПОЧЕМУ ЖУРНАЛА БЫЛО МАЛО, хотя запись в нём есть с самого начала.** Она
+// там была и 27.08, и 29.08 — и оба раза прочитана как единичный шум, потому
+// что в журнал смотрят, когда уже знают, что искать. 29.08 полезли туда
+// только после слов владельца «не пришло». Признак в возврате отличается
+// тем, что его нельзя не заметить: он в типе.
+//
+// Почему `logger.error`, а не `warn`: `warn` — это то, что читают, когда
+// пришли; `error` — то, что показывают само.
 async function sendFcmPush(
   token: string,
   title: string,
   body: string,
   data: Record<string, string>,
   tokenRef?: FirebaseFirestore.DocumentReference,
-): Promise<void> {
+): Promise<PushOutcome> {
   try {
     await messaging.send({
       token,
@@ -112,10 +136,56 @@ async function sendFcmPush(
       data,
       apns: { payload: { aps: { sound: "default" } } },
     });
+    return { ok: true };
   } catch (e) {
-    logger.warn("FCM push failed", e);
+    const { code, message } = pushErrorOf(e);
+    const tokenDead = isDeadTokenError(e);
+    logger.error("FCM push НЕ ДОСТАВЛЕН", {
+      code,
+      message,
+      tokenDead,
+      tokenPath: tokenRef?.path ?? null,
+    });
     await pruneIfTokenDead(e, tokenRef);
+    return { ok: false, code, message, tokenDead };
   }
+}
+
+// СЧЁТЧИК НЕДОСТАВКИ — чтобы отказ можно было СПРОСИТЬ, а не выгрепать.
+//
+// Кому и где: пишется в `maintenance/pushDelivery/failures/{автоId}`, поля
+// `uid`, `tokenPath`, `code`, `message`, `tokenDead`, `at`. Туда же смотрит
+// человек, который спрашивает «а всё ли дошло за сутки» — раньше на этот
+// вопрос ответа не было вовсе, кроме чтения журнала глазами.
+//
+// Знаменатель, ради которого это дёшево (замер 29.08,
+// `collectionGroup('pushTokens')`): токенов **5 у 4 человек**, доказанно
+// мёртв **один**, про два июльских не известно ничего. При таких числах
+// запись на КАЖДЫЙ отказ не создаёт объёма и не требует свёртки.
+//
+// Отказ записи счётчика ГЛОТАЕТСЯ намеренно и это единственное место, где
+// глотание уместно: счётчик — свидетель, а не участник. Уронив рассылку
+// из-за того, что не смогли записать жалобу, мы поменяли бы недоставку
+// одного письма на недоставку всех.
+async function recordPushFailure(
+  uid: string,
+  outcome: PushOutcome,
+  tokenPath: string | null,
+): Promise<void> {
+  if (outcome.ok) return;
+  await db
+    .collection("maintenance")
+    .doc("pushDelivery")
+    .collection("failures")
+    .add({
+      uid,
+      tokenPath,
+      code: outcome.code,
+      message: outcome.message,
+      tokenDead: outcome.tokenDead,
+      at: new Date(),
+    })
+    .catch((e) => logger.warn("не записан отказ доставки", e));
 }
 
 // Calls specifically need a SILENT push (data only, no `notification`
@@ -227,13 +297,36 @@ async function sendPushToUid(
   data: Record<string, string>,
 ): Promise<void> {
   const tokensSnap = await db.collection("users").doc(uid).collection("pushTokens").get();
-  await Promise.all(
+  const outcomes = await Promise.all(
     tokensSnap.docs.map(async (tokenDoc) => {
       const token = tokenDoc.data().token as string | undefined;
-      if (!token) return;
-      await sendFcmPush(token, title, body, data, tokenDoc.ref);
+      if (!token) return null;
+      const outcome = await sendFcmPush(token, title, body, data, tokenDoc.ref);
+      await recordPushFailure(uid, outcome, tokenDoc.ref.path);
+      return outcome;
     }),
   );
+
+  // СВОД ПО ЧЕЛОВЕКУ, А НЕ ПО ТОКЕНУ, И РАЗНИЦА ЗДЕСЬ СУЩЕСТВЕННА.
+  //
+  // У человека бывает несколько трубок (в проде 29.08 — у одного из
+  // четверых). «Одно письмо из двух не дошло» и «не дошло ни одного» —
+  // разные новости: первое человек всё равно увидит, второе означает, что
+  // он не узнал ничего. Отдельный `error` на второй случай ставится
+  // именно поэтому.
+  const real = outcomes.filter((o): o is PushOutcome => o !== null);
+  if (real.length === 0) return;
+  const { sent, failed, dead } = summarize(real);
+  if (failed === 0) return;
+  if (sent === 0) {
+    logger.error("[push] человек НЕ УЗНАЛ НИЧЕГО: все трубки отказали", {
+      uid, tokens: real.length, failed, dead, type: data.type ?? null,
+    });
+  } else {
+    logger.warn("[push] часть трубок не получила", {
+      uid, sent, failed, dead, type: data.type ?? null,
+    });
+  }
 }
 
 function previewText(type: string, text: string, fileName?: string): string {
@@ -526,13 +619,33 @@ export const onNewMessage = onDocumentCreated(
           .doc(uid)
           .collection("pushTokens")
           .get();
-        await Promise.all(
+        const outcomes = await Promise.all(
           tokensSnap.docs.map(async (tokenDoc) => {
             const token = tokenDoc.data().token as string | undefined;
-            if (!token) return;
-            await sendFcmPush(token, title, body, data, tokenDoc.ref);
+            if (!token) return null;
+            const outcome = await sendFcmPush(token, title, body, data, tokenDoc.ref);
+            await recordPushFailure(uid, outcome, tokenDoc.ref.path);
+            return outcome;
           }),
         );
+        // Тот же свод, что у `sendPushToUid`. Стоит здесь отдельно, потому
+        // что `onNewMessage` намеренно не переведён на общий путь (см. его
+        // комментарий выше) — а недоставка сообщения в чате как раз тот
+        // случай, где молчание дороже всего: человек не узнаёт, что ему
+        // написали.
+        const real = outcomes.filter((o): o is PushOutcome => o !== null);
+        if (real.length === 0) return;
+        const { sent, failed, dead } = summarize(real);
+        if (failed === 0) return;
+        if (sent === 0) {
+          logger.error("[push] сообщение НЕ ДОШЛО НИ НА ОДНУ трубку", {
+            uid, chatId, tokens: real.length, failed, dead,
+          });
+        } else {
+          logger.warn("[push] сообщение дошло не на все трубки", {
+            uid, chatId, sent, failed, dead,
+          });
+        }
       }),
     );
   },
@@ -2086,17 +2199,22 @@ export const sweepDeadPushTokensDaily = onSchedule(
 
     const dead: string[] = [];
     for (const [token, refs] of byToken) {
-      let code = "";
+      // ТОТ ЖЕ РАЗБОР, ЧТО У ЖИВОЙ ОТПРАВКИ, И ЭТО ПОЛОВИНА ПОЧИНКИ N186.
+      //
+      // Здесь стояла своя копия разбора — по одному лишь `errorInfo.code`
+      // против `DEAD_TOKEN_CODES`. То есть **обе дороги чистки смотрели в
+      // один список и были слепы одинаково**: ночной обход не
+      // подстраховывал живую отправку, а повторял её промах. Теперь обе
+      // зовут `isDeadTokenError`, и вылечить одну, забыв другую, нельзя —
+      // разбор ровно один.
+      let err: unknown = null;
       try {
         await messaging.send({ token, notification: { title: "x", body: "x" } }, true);
         continue;
       } catch (e) {
-        code =
-          (e as { errorInfo?: { code?: string } })?.errorInfo?.code ??
-          (e as { code?: string })?.code ??
-          "";
+        err = e;
       }
-      if (!DEAD_TOKEN_CODES.includes(code)) continue;
+      if (!isDeadTokenError(err)) continue;
       for (const ref of refs) {
         dead.push(ref.path);
         if (!dryRun) await ref.delete();
