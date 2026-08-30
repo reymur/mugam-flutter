@@ -42,6 +42,11 @@ import {
   BAKU_OFFSET_MS,
 } from "./eventNotifications";
 import { planOfferPushes } from "./jobOfferNotifications";
+import {
+  answeredBy,
+  planOfferMovePushes,
+  type OfferDoc,
+} from "./offerMoves";
 import { RtcRole, RtcTokenBuilder } from "agora-token";
 import { algoliasearch } from "algoliasearch";
 import { randomUUID } from "crypto";
@@ -2456,10 +2461,30 @@ export const onPersonalEventCreated = onDocumentCreated(
     if (!snap) return;
     if (!(await claimNotificationOnce(event.id))) return;
     const after = toEventSnapshot(snap.data());
-    // Договор из согласованного предложения — молчим. Обе стороны уже
-    // узнали: обе видят поздравительное окно, инициатор получает
-    // «İş təklifi qəbul edildi». Уведомление «вас добавили» пришло бы
-    // получателю сразу после его же нажатия «Razıyam».
+    // Договор из согласованного предложения — молчим. ПОВЕДЕНИЕ ПРЕЖНЕЕ,
+    // ДОВОД ПЕРЕПИСАН 30.08 (N130, шаг 4), и это не редактура.
+    //
+    // ЗДЕСЬ СТОЯЛО: «обе стороны уже узнали: обе видят поздравительное
+    // окно, инициатор получает „İş təklifi qəbul edildi“». Верно было до
+    // переезда предложения в подколлекцию: то уведомление шлёт
+    // `onChatUpdated` по `recipientAgreed` на документе чата, а новый ход
+    // принятия этого поля не пишет вовсе. То есть довод пережил свой
+    // предмет — гашение оставалось верным, а объяснение под ним стало
+    // неправдой, и следующий, сверившись с ним, решил бы, что музыкант
+    // уведомлён, хотя он не узнавал НИЧЕГО.
+    //
+    // ДОВОД ТЕПЕРЬ ДРУГОЙ И ДЕРЖИТСЯ НА ДРУГОМ КОДЕ: о принятии обе стороны
+    // узнают из `onOfferMoved` — инициатор нажал сам, музыканту уходит
+    // «Təklif qəbul edildi». Гасится здесь ровно шум: принятие создаёт
+    // вечера ПАЧКОЙ, и без этой строки музыкант получил бы по «вас
+    // добавили» НА КАЖДЫЙ ДЕНЬ — до тридцати одного письма об одном своём
+    // же ответе.
+    //
+    // ЧТО ОТ ЭТОГО НЕ ЧИНИТСЯ, и сказано это прямо: `lastActionType` пишет
+    // участник, и пишет затем, чтобы сервер промолчал (I54 — поле, по
+    // которому автомат судит о смысле). Молчание тише ложного уведомления,
+    // но класс тот же; здесь он лишь ПЕРЕСТАЛ БЫТЬ единственным, чем
+    // музыкант узнаёт о принятии.
     if (after.lastActionType === "agreed") return;
     const actor = after.lastActionBy ?? after.ownerUid;
     const actorName = await displayName(actor);
@@ -2806,6 +2831,99 @@ export const onJobOfferRoundChanged = onDocumentUpdated(
         await sendPushToUid(p.uid, p.title, p.body, p.data);
       } catch (e) {
         logger.warn("[offer-push] отправка не удалась", { uid: p.uid, e });
+      }
+    }));
+  },
+);
+
+// ХОДЫ ПРЕДЛОЖЕНИЯ РАБОТЫ — ОДИН ТРИГГЕР НА ПОДКОЛЛЕКЦИЮ, ТРИ ВЕТВИ
+// (N130, шаг 4).
+//
+// ПОЧЕМУ ОДИН, А НЕ ТРИ. Ходов три, но задача одна: «в предложении что-то
+// произошло — скажи второй стороне». Расходятся только текст и адресат, а
+// проводка общая целиком. Три триггера на один документ дали бы три
+// независимых замка и три гонки за `claimNotificationOnce` на одну запись —
+// то есть три способа получить дубль там, где сейчас его нет по устройству
+// (I58: сводить по задаче, а не по совпадению вызова).
+//
+// ПОЧЕМУ ЗДЕСЬ, А НЕ ВЕТКОЙ В `onJobOfferRoundChanged`. Тот висит на
+// `chats/{chatId}` и разбирает старую схему; новые ходы туда не пишут вовсе.
+// Именно это и было находкой: машина уведомлений написана, а путь не тот, и
+// не срабатывала она ни разу.
+//
+// СОСТАВ ЧАТА ЧИТАЕТСЯ ОТДЕЛЬНО, И ЭТО НЕ ЛИШНИЙ ЗАПРОС. У отзыва до ответа
+// в документе предложения нет ни одного uid музыканта — `answers` пуст, —
+// значит адресата взять неоткуда, кроме состава чата. Цена мала: этот
+// триггер поднимается на записи в `offers`, а их единицы в сутки, в отличие
+// от документа чата (~340).
+export const onOfferMoved = onDocumentUpdated(
+  { document: "chats/{chatId}/offers/{offerId}", region: FUNCTIONS_REGION },
+  async (event) => {
+    const before = event.data?.before.data() as OfferDoc | undefined;
+    const after = event.data?.after.data() as OfferDoc | undefined;
+    if (!before || !after) return;
+
+    const chatSnap = await db.collection("chats")
+      .doc(event.params.chatId).get();
+    const members: string[] = Array.isArray(chatSnap.data()?.members)
+      ? (chatSnap.data()?.members as string[])
+      : [];
+    if (members.length === 0) return;
+
+    // ДЁШЕВО ВЫЯСНЯЕМ, ЕСТЬ ЛИ ЧТО СЛАТЬ, ДО ЧТЕНИЯ ИМЕНИ — тот же порядок,
+    // что у `onJobOfferRoundChanged` строкой выше, и по той же причине: имя
+    // требует чтения документа пользователя, а большинство записей в
+    // предложение уведомления не порождают.
+    const args = { chatId: event.params.chatId, before, after, members };
+    if (planOfferMovePushes({ ...args, actorName: "" }).length === 0) return;
+
+    // ЗАМОК СТАВИТСЯ ПОСЛЕ ПРИЗНАКА, А НЕ ВМЕСТО НЕГО. Что ловит каждый —
+    // разобрано у `planOfferMovePushes`; коротко: признак отвечает на
+    // «произошло ли», замок — на «не слали ли уже». Ключ у замка
+    // `event.id`, как у всех шести триггеров проекта.
+    if (!(await claimNotificationOnce(event.id))) return;
+
+    // АВТОР — ИЗ ИЗМЕНЁННОГО КЛЮЧА, а не из подписи в документе: у ответа
+    // это тот, чей ключ в `answers` поехал, у принятия и отзыва — сам
+    // инициатор. `lastActionBy` сюда не заводится (I54, разбор в
+    // `offerMoves.ts`).
+    const initiator = after.createdBy ?? before.createdBy ?? null;
+    const closing = (!before.acceptedBy && !!after.acceptedBy) ||
+      (!before.withdrawnBy && !!after.withdrawnBy);
+    const actor = closing ? initiator : answeredBy(before, after);
+    const actorName = await displayName(actor ?? "");
+    const pushes = planOfferMovePushes({ ...args, actorName });
+
+    const nowMs = Date.now();
+    await Promise.all(pushes.map(async (p) => {
+      try {
+        const userSnap = await db.collection("users").doc(p.uid).get();
+        const userData = userSnap.data();
+        const lastSeen = userData?.lastSeen;
+        const lastSeenMs =
+          lastSeen && typeof lastSeen.toMillis === "function"
+            ? lastSeen.toMillis() : null;
+        // Подавление РОДНЫМ признаком чата, как у соседнего триггера:
+        // вопрос тот же — «смотрит ли он в этот чат», — и второй механизм
+        // на него заводить незачем.
+        const watching = isWatchingChatDecision({
+          userData,
+          chatId: event.params.chatId,
+          activeUsers: Array.isArray(chatSnap.data()?.activeUsers)
+            ? (chatSnap.data()?.activeUsers as string[]) : [],
+          uid: p.uid,
+          lastSeenMs,
+          nowMs,
+        });
+        if (watching) {
+          logger.info("[offer-move] смотрит чат, молчим",
+            { uid: p.uid, type: p.data.type });
+          return;
+        }
+        logger.info("[offer-move] шлём", { uid: p.uid, type: p.data.type });
+        await sendPushToUid(p.uid, p.title, p.body, p.data);
+      } catch (e) {
+        logger.warn("[offer-move] отправка не удалась", { uid: p.uid, e });
       }
     }));
   },

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/push/push_route.dart';
 
@@ -115,11 +117,47 @@ void main() {
           reason: 'правило схлопнулось: разные типы дают один ответ');
     });
 
-    test('разбираемых типов ровно семнадцать', () {
+    test('разбираемых типов ровно двадцать', () {
       // Число само по себе слабое, но оно ловит ОДНУ вещь, которую не ловит
       // ничто выше: молча выпавший из набора тип. Перечисления в тестах и в
       // правиле разные, и разойтись им нельзя.
-      expect(kKnownPushTypes.length, 17);
+      //
+      // Было 17 до 30.08; три добавлены шагом 4 работы N130 —
+      // `job_offer_answered`, `job_offer_accepted`, `job_offer_withdrawn`.
+      expect(kKnownPushTypes.length, 20);
+    });
+
+    // СВЕРКА С ОТПРАВИТЕЛЕМ — ПОИМЁННАЯ, И ОНА ЗДЕСЬ ЕДИНСТВЕННОЕ, ЧТО
+    // ВООБЩЕ СМОТРИТ ЧЕРЕЗ ГРАНИЦУ Dart↔TypeScript.
+    //
+    // Сторожа на неё поставить нечем: тип живёт строкой в `functions/src` и
+    // строкой в этом наборе, общего у них ничего. Дефект уже случался —
+    // `job_offer_waiting_date` против `job_offer_waiting_for_date`, и
+    // выглядел он как «нажатие не открывает ничего».
+    //
+    // Здесь стоит **чтение файла отправителя**, а не память: если имя в
+    // `offerMoves.ts` поменяют, покраснеет тут.
+    //
+    // ЧЕГО ОН НЕ ЛОВИТ: он читает ОДИН файл сервера и не увидит типа,
+    // заведённого в другом; и он не проверяет обратное — что каждый наш тип
+    // кто-то шлёт.
+    test('три типа ходов предложения совпадают с отправителем', () {
+      final src = File('functions/src/offerMoves.ts').readAsStringSync();
+      for (final t in const [
+        'job_offer_answered',
+        'job_offer_accepted',
+        'job_offer_withdrawn',
+      ]) {
+        expect(kKnownPushTypes.contains(t), isTrue,
+            reason: '$t не разбирается клиентом');
+        expect(src.contains('"$t"'), isTrue,
+            reason: '$t не найден в offerMoves.ts — имена разошлись, и '
+                'нажатие по уведомлению не откроет ничего');
+      }
+      // Канарейка: файл прочитан, а не пуст.
+      expect(src.contains('openChat('), isTrue,
+          reason: 'канарейка: offerMoves.ts не читается — совпадения выше '
+              'означали бы «искали не там», а не «имена сошлись»');
     });
 
     test('каждый разбираемый тип куда-нибудь ведёт', () {
