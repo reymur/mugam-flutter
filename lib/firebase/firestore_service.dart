@@ -3690,13 +3690,35 @@ class FirestoreService {
       // нём стоит. Правила не дают выставить его чужим uid.
       'lastActionBy': ownerUid,
       'lastActionType': replacedEventId == null ? 'created' : 'replaced',
+      'lastActionAt': FieldValue.serverTimestamp(),
       'createdAt': FieldValue.serverTimestamp(),
     }).timeout(_writeTimeout);
     return ref.id;
   }
 
+  /// Правка вечера владельцем. Карту собирает `eventEditUpdate` — чистое
+  /// правило, у которого своя задача: сказать, ЧТО меняется.
+  ///
+  /// **ВРЕМЯ ПОСТУПКА СТАВИТСЯ ЗДЕСЬ, А НЕ ТАМ (N181).** `eventEditUpdate`
+  /// вынесен затем, чтобы проверяться без Firestore, и
+  /// `FieldValue.serverTimestamp()` втащил бы туда зависимость от базы,
+  /// сделав карту несравнимой в тестах. Здесь же запись и происходит.
+  ///
+  /// **Отметка ставится вместе с поступком, а не всегда.** Условие не
+  /// осторожность: `lastActionAt` без `lastActionType` — это «когда-то
+  /// что-то случилось», отметка ни о чём, и она попала бы в ключ скрытия
+  /// строки, которой нет. Единственный сегодняшний вызывающий поступок
+  /// несёт всегда (`agreements_screen.dart`), но правило написано по
+  /// смыслу, а не по сегодняшнему составу вызывающих.
   Future<void> updatePersonalEvent(String eventId, Map<String, dynamic> data) {
-    return _db.collection('personalEvents').doc(eventId).update(data).timeout(_writeTimeout);
+    final payload = data.containsKey('lastActionType')
+        ? {...data, 'lastActionAt': FieldValue.serverTimestamp()}
+        : data;
+    return _db
+        .collection('personalEvents')
+        .doc(eventId)
+        .update(payload)
+        .timeout(_writeTimeout);
   }
 
   /// Есть ли уже договор, созданный из этого чата.
@@ -3830,6 +3852,7 @@ class FirestoreService {
       'status': status,
       'lastActionBy': uid,
       'lastActionType': deed,
+      'lastActionAt': FieldValue.serverTimestamp(),
     }).timeout(_writeTimeout);
   }
 
@@ -3911,6 +3934,7 @@ class FirestoreService {
           'cancelRequestedAt': FieldValue.serverTimestamp(),
           'lastActionBy': uid,
           'lastActionType': 'cancelRequested',
+          'lastActionAt': FieldValue.serverTimestamp(),
         })
         .timeout(_writeTimeout);
   }
@@ -3947,6 +3971,7 @@ class FirestoreService {
           // `firestore.rules`. Значение одно, читателей два, и каждый
           // читает своим способом.
           'lastActionType': 'restored',
+          'lastActionAt': FieldValue.serverTimestamp(),
         })
         .timeout(_writeTimeout);
   }
@@ -3962,6 +3987,7 @@ class FirestoreService {
           'cancelledAt': FieldValue.serverTimestamp(),
           'lastActionBy': uid,
           'lastActionType': 'cancelConfirmed',
+          'lastActionAt': FieldValue.serverTimestamp(),
         })
         .timeout(_writeTimeout);
   }
@@ -3983,6 +4009,7 @@ class FirestoreService {
           'cancelRequestedAt': null,
           'lastActionBy': uid,
           'lastActionType': 'cancelWithdrawn',
+          'lastActionAt': FieldValue.serverTimestamp(),
         })
         .timeout(_writeTimeout);
   }
@@ -3997,6 +4024,7 @@ class FirestoreService {
           'cancelRequestedAt': null,
           'lastActionBy': uid,
           'lastActionType': 'cancelDeclined',
+          'lastActionAt': FieldValue.serverTimestamp(),
         })
         .timeout(_writeTimeout);
   }

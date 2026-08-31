@@ -184,6 +184,7 @@ AcceptBatch buildAcceptBatch({
           // чтобы сервер промолчал, — тише, чем ложное уведомление, но
           // класс тот же, и на шаге 4 это место надо пересмотреть.
           'lastActionType': 'agreed',
+          'lastActionAt': FieldValue.serverTimestamp(),
           // ОТМЕТКА СЕРВЕРА, А НЕ ЧАСЫ ТЕЛЕФОНА — как у ОБОИХ
           // существующих писателей этой коллекции
           // (`firestore_service.dart:3687`, `index.ts:1489`).

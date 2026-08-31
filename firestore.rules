@@ -911,7 +911,7 @@ service cloud.firestore {
       // написании триггера, до выхода на устройства.
       function requestsCancel() {
         return changedKeys().hasOnly(['cancelRequestedBy', 'cancelRequestedAt',
-                                      'lastActionBy', 'lastActionType'])
+                                      'lastActionBy', 'lastActionType', 'lastActionAt'])
           && request.resource.data.cancelRequestedBy == request.auth.uid
           && resource.data.get('cancelRequestedBy', null) == null
           && resource.data.get('status', null) != 'cancelled'
@@ -932,7 +932,7 @@ service cloud.firestore {
       // может: «отменил Х» обязано значить «решение принял Х».
       function confirmsCancel() {
         return changedKeys().hasOnly(['status', 'cancelConfirmedBy', 'cancelledAt',
-                                      'lastActionBy', 'lastActionType'])
+                                      'lastActionBy', 'lastActionType', 'lastActionAt'])
           && request.resource.data.status == 'cancelled'
           && request.resource.data.cancelConfirmedBy == request.auth.uid
           && resource.data.get('cancelRequestedBy', null) != null
@@ -1000,6 +1000,39 @@ service cloud.firestore {
         return request.resource.data.lastActionBy == request.auth.uid;
       }
 
+      // ВРЕМЯ ПОСТУПКА — СЕРВЕРНОЕ, И ЭТО НЕ ОСТОРОЖНОСТЬ (N181, I54).
+      //
+      // Довод конкретный, а не «пусть будет надёжнее». `lastActionAt`
+      // становится ЧАСТЬЮ КЛЮЧА, по которому решается, показывать строку
+      // «что случилось» или она спрятана крестиком (`deedDismissKey`).
+      // Отдав время участнику, мы отдали бы ему и возможность попасть в
+      // чужой прежний ключ: спрятать строку, которую человек не прятал,
+      // либо не дать спрятаться той, которую он спрятал.
+      //
+      // ПОЧЕМУ ЗДЕСЬ, А НЕ В КАЖДОМ ХОДЕ. Ровно по той же причине, по
+      // которой рядом стоит привратник `lastActionBy`: подделка признака
+      // одинаково запрещена ВСЕМ ходам, включая те, которых ещё нет.
+      // Семь копий этой строки разошлись бы, восьмой ход про неё забыл бы.
+      //
+      // ПОЧЕМУ ЧЕРЕЗ `changedKeys()`, А НЕ ПРОСТЫМ РАВЕНСТВОМ. Простое
+      // равенство требовало бы ключ в КАЖДОЙ записи — и старая сборка, не
+      // пишущая его, перестала бы записывать поступок вовсе. То есть
+      // выкладка правил ломала бы прод до выкладки клиента, а порядок у
+      // нас обратный: правила первыми. Здесь условие срабатывает, только
+      // если ключ ТРОГАЮТ.
+      //
+      // ЧЕГО ЭТО НЕ ЗАКРЫВАЕТ, сказано прямо: `allow create` перечисления
+      // ключей не имеет вовсе, и при СОЗДАНИИ вечера время не прибито
+      // ничем. Вреда в этом нет — ключ скрытия локален, и подделать своё
+      // время у своего же вечера значит спрятать строку у себя, что и так
+      // делается крестиком. Расширять область правила ради этого значило
+      // бы менять `create` в ту же выкладку, то есть везти две переменные
+      // в необратимом шаге (I48).
+      function stampsTime() {
+        return !changedKeys().hasAny(['lastActionAt'])
+          || request.resource.data.lastActionAt == request.time;
+      }
+
       // ОТВЕТИТЬ ЗА СЕБЯ — шаг 4 работы «одна сущность» (`docs/plan.md`).
       //
       // Приём тот же, что у `clearedBy` в чатах (`writesOnlyOwnClearedBy`), и
@@ -1065,7 +1098,7 @@ service cloud.firestore {
       // у личного вечера одним владельцем, у договорённости по согласию.
       // Разреши его здесь — и защита «по согласию» обходится этим ходом.
       function ownerSetsStatus() {
-        return changedKeys().hasOnly(['status', 'lastActionBy', 'lastActionType'])
+        return changedKeys().hasOnly(['status', 'lastActionBy', 'lastActionType', 'lastActionAt'])
           && resource.data.ownerUid == request.auth.uid
           && request.resource.data.status in ['agreed', 'unsettled']
           && request.resource.data.lastActionType in
@@ -1082,7 +1115,7 @@ service cloud.firestore {
       // стороны, потому что согласие его и составляет; второе — сообщение о
       // факте, и спрашивать о нём некого. Личный вечер никому не обещан.
       function ownerCancelsOwnEvent() {
-        return changedKeys().hasOnly(['status', 'lastActionBy', 'lastActionType'])
+        return changedKeys().hasOnly(['status', 'lastActionBy', 'lastActionType', 'lastActionAt'])
           && resource.data.ownerUid == request.auth.uid
           && resource.data.get('isAgree', false) == false
           && request.resource.data.status == 'cancelled'
@@ -1097,7 +1130,7 @@ service cloud.firestore {
       // хода. Поэтому у договорённости возврата здесь нет — он идёт парой
       // ходов-зеркал (отдельная работа, `docs/plan.md`).
       function ownerRestoresOwnEvent() {
-        return changedKeys().hasOnly(['status', 'lastActionBy', 'lastActionType'])
+        return changedKeys().hasOnly(['status', 'lastActionBy', 'lastActionType', 'lastActionAt'])
           && resource.data.ownerUid == request.auth.uid
           && resource.data.get('isAgree', false) == false
           && resource.data.get('status', null) == 'cancelled'
@@ -1134,7 +1167,7 @@ service cloud.firestore {
       // отмену».
       function clearsCancelFields() {
         return changedKeys().hasOnly(['cancelRequestedBy', 'cancelRequestedAt',
-                                      'lastActionBy', 'lastActionType'])
+                                      'lastActionBy', 'lastActionType', 'lastActionAt'])
           && request.resource.data.cancelRequestedBy == null
           && request.resource.data.cancelRequestedAt == null
           && resource.data.get('cancelRequestedBy', null) != null
@@ -1196,7 +1229,7 @@ service cloud.firestore {
       // откуда пришли, ему положено. Все четыре хода отмены смотрят на
       // `lastActionType` ровно так же.
       function restoresEvent() {
-        return changedKeys().hasOnly(['status', 'lastActionBy', 'lastActionType'])
+        return changedKeys().hasOnly(['status', 'lastActionBy', 'lastActionType', 'lastActionAt'])
           && request.resource.data.status == 'agreed'
           && resource.data.get('status', null) == 'unsettled'
           && resource.data.get('lastActionType', null) == 'memberLeft'
@@ -1247,6 +1280,10 @@ service cloud.firestore {
       // а доверяет ему сервер безоговорочно — он для того и заведён.
       allow update: if isSignedIn()
         && (!changedKeys().hasAny(['lastActionBy']) || stampsSelf())
+        // Время поступка — рядом с автором, потому что это две половины
+        // одной отметки: КТО и КОГДА. Разведи их по разным местам, и
+        // следующий поправит одну (N181, разбор — `stampsTime` выше).
+        && stampsTime()
         && (
           (resource.data.ownerUid == request.auth.uid
              && !touchesCancel() && !namesCancelDeed())

@@ -3135,6 +3135,10 @@ class _PersonalEventDetailScreenState
                             eventId: event.id,
                             lastActionType: event.lastActionType,
                             lastActionBy: event.lastActionBy,
+                            // Четвёртая часть — время поступка (N181).
+                            // Без неё второй такой же уход оставался бы
+                            // спрятанным первым нажатием.
+                            lastActionAt: event.lastActionMoment,
                           );
                           // Спрятанное человеком не рисуется вовсе — ни
                           // строки, ни отступа: иначе под датой оставался бы

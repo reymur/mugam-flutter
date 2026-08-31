@@ -253,50 +253,97 @@ void main() {
   group('ключ, по которому строка прячется', () {
     // Крестик справа убирает КОНКРЕТНУЮ новость, а не вечер: убравший
     // «Rafael ayrıldı» обязан увидеть следующее сообщение об этом же вечере.
+    //
+    // ЧЕТВЁРТАЯ ЧАСТЬ — ВРЕМЯ ПОСТУПКА (N181, 01.09). До неё повтор того же
+    // поступка тем же человеком давал ТОТ ЖЕ ключ, и вторая новость
+    // оставалась спрятанной первым нажатием навсегда.
+
+    final t1 = DateTime.utc(2026, 8, 28, 6, 40);
+    final t2 = DateTime.utc(2026, 8, 28, 7, 15);
+
+    String key(
+      String ev,
+      String? type,
+      String? by, [
+      DateTime? at,
+    ]) =>
+        deedDismissKey(
+          eventId: ev,
+          lastActionType: type,
+          lastActionBy: by,
+          lastActionAt: at,
+        );
 
     test('разные поступки одного вечера — разные ключи', () {
-      final a = deedDismissKey(
-          eventId: 'ev1', lastActionType: kDeedLeft, lastActionBy: other);
-      final b = deedDismissKey(
-          eventId: 'ev1',
-          lastActionType: kDeedOwnerCancelled,
-          lastActionBy: other);
-      expect(a, isNot(b));
+      expect(
+        key('ev1', kDeedLeft, other, t1),
+        isNot(key('ev1', kDeedOwnerCancelled, other, t1)),
+      );
     });
 
     test('один поступок разных людей — разные ключи', () {
       expect(
-        deedDismissKey(
-            eventId: 'ev1', lastActionType: kDeedLeft, lastActionBy: other),
-        isNot(deedDismissKey(
-            eventId: 'ev1', lastActionType: kDeedLeft, lastActionBy: me)),
+        key('ev1', kDeedLeft, other, t1),
+        isNot(key('ev1', kDeedLeft, me, t1)),
       );
     });
 
     test('один поступок разных вечеров — разные ключи', () {
       expect(
-        deedDismissKey(
-            eventId: 'ev1', lastActionType: kDeedLeft, lastActionBy: other),
-        isNot(deedDismissKey(
-            eventId: 'ev2', lastActionType: kDeedLeft, lastActionBy: other)),
+        key('ev1', kDeedLeft, other, t1),
+        isNot(key('ev2', kDeedLeft, other, t1)),
       );
     });
 
-    test('тот же поступок — тот же ключ, иначе скрытие не удержится', () {
+    test('тот же поступок в то же время — тот же ключ', () {
+      // Скрытие обязано удержаться между перерисовками экрана: ключ —
+      // чистая функция от документа, и пока документ не менялся, он один.
+      expect(key('ev1', kDeedLeft, other, t1), key('ev1', kDeedLeft, other, t1));
+    });
+
+    test('ТОТ ЖЕ ПОСТУПОК В ДРУГОЕ ВРЕМЯ — РАЗНЫЕ КЛЮЧИ (N181)', () {
+      // Ради этого вердикта работа и делалась. Ушёл, вернулся, ушёл снова:
+      // вечер, имя поступка и автор совпадают у обоих уходов, и различает
+      // их только отметка времени.
       expect(
-        deedDismissKey(
-            eventId: 'ev1', lastActionType: kDeedLeft, lastActionBy: other),
-        deedDismissKey(
-            eventId: 'ev1', lastActionType: kDeedLeft, lastActionBy: other),
+        key('ev1', kDeedLeft, other, t1),
+        isNot(key('ev1', kDeedLeft, other, t2)),
+      );
+    });
+
+    test('отметка есть против отметки нет — тоже разные ключи', () {
+      // Переходное окно, названное вслух: вечер, тронутый сборкой старше
+      // 01.09, отметки не имеет, и его прежнее скрытие ОТКЛЕИТСЯ один раз.
+      // Решение владельца 01.09 — пережить окно, а не заводить второй
+      // способ понимать одни данные ради одних суток.
+      expect(
+        key('ev1', kDeedLeft, other, null),
+        isNot(key('ev1', kDeedLeft, other, t1)),
       );
     });
 
     test('пустые части не роняют ключ и не сливают разные вечера', () {
       expect(
-        deedDismissKey(eventId: 'ev1', lastActionType: null, lastActionBy: null),
-        isNot(deedDismissKey(
-            eventId: 'ev2', lastActionType: null, lastActionBy: null)),
+        key('ev1', null, null, null),
+        isNot(key('ev2', null, null, null)),
       );
+    });
+
+    test('КАНАРЕЙКА: ключ не сводится к одному ответу', () {
+      // I31: все вердикты выше, кроме двух, утверждают РАЗЛИЧИЕ. Верни
+      // функция пустую строку на всё — «тот же поступок, тот же ключ»
+      // остался бы зелёным, а различия покраснели бы; верни она случайное
+      // — наоборот. Здесь сказано вслух, сколько разных ответов она даёт.
+      final all = <String>{
+        key('ev1', kDeedLeft, other, t1),
+        key('ev1', kDeedLeft, other, t2),
+        key('ev1', kDeedLeft, other, null),
+        key('ev1', kDeedLeft, me, t1),
+        key('ev1', kDeedOwnerCancelled, other, t1),
+        key('ev2', kDeedLeft, other, t1),
+        key('ev1', null, null, null),
+      };
+      expect(all.length, 7);
     });
   });
 
