@@ -44,11 +44,26 @@ const db = getFirestore();
 const messaging = getMessaging();
 
 async function main(): Promise<void> {
-  const [uid, docId] = process.argv.slice(2);
+  const [uid, docId, title, body] = process.argv.slice(2);
   if (!uid || !docId) {
-    console.error("нужны два довода: <uid> <docId>");
+    console.error("нужны два довода: <uid> <docId> [заголовок] [текст]");
     process.exit(2);
   }
+  // Заголовок задаётся снаружи ради КАНАРЕЙКИ: одну отправку шлём на
+  // спорный адрес, вторую — на заведомо живой, и на экране их надо
+  // различить. Без второй "не пришло ничего" не отличить от "доставка
+  // сломана вообще", и вывод про APNs делать было бы не на чем (I14).
+  const useTitle = title ?? "Yoxlama";
+  const useBody = body ?? "N186 — çatdırılma yoxlanışı";
+
+  // ВХОЛОСТУЮ (`--dry-run`) — тем же вызовом, каким живость выясняют НОЧНОЙ
+  // ОБХОД `pushTokenSweep` и разовый `cleanupPushTokens`. Вопрос отдельный
+  // от настоящей отправки и к ней не сводится: FCM вправе проверять адрес
+  // иначе, когда доставлять не надо. Ответ решает, удалит ли обход этот
+  // токен САМ — по настоящей отправке этого не видно.
+  //
+  // Ничего не доставляется: ни одного уведомления ни на один телефон.
+  const dryRun = process.argv.includes("--dry-run");
 
   const ref = db.collection("users").doc(uid).collection("pushTokens").doc(docId);
   const before = await ref.get();
@@ -66,21 +81,24 @@ async function main(): Promise<void> {
   console.log(`документ:  ${ref.path}`);
   console.log(`обновлён:  ${String(before.data()?.updatedAt?.toDate?.().toISOString() ?? "—")}`);
   console.log(`адрес:     ${token.slice(0, 24)}…${token.slice(-8)} (длина ${token.length})`);
+  console.log(
+    `режим:     ${dryRun ? "ВХОЛОСТУЮ, ничего не доставляется" : "настоящая отправка"}`,
+  );
   console.log(`отправлено в ${new Date().toISOString()}\n`);
 
   // Форма письма та же, что у `sendFcmPush` в index.ts: notification +
   // data + звук в apns. Иначе отказ мог бы прийти на форму, а не на адрес,
   // и мы приняли бы одно за другое.
   try {
-    const messageId = await messaging.send({
-      token,
-      notification: {
-        title: "Yoxlama",
-        body: "N186 — çatdırılma yoxlanışı",
+    const messageId = await messaging.send(
+      {
+        token,
+        notification: { title: useTitle, body: useBody },
+        data: { type: "probe_n186" },
+        apns: { payload: { aps: { sound: "default" } } },
       },
-      data: { type: "probe_n186" },
-      apns: { payload: { aps: { sound: "default" } } },
-    });
+      dryRun,
+    );
     console.log("=== ОТВЕТ FCM: УСПЕХ ===");
     console.log(`messageId: ${messageId}`);
     console.log("");
