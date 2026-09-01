@@ -11,6 +11,7 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/auth_service.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/push_notification_service.dart';
+import '../../../firebase/voip_push_token_service.dart';
 
 // Reached from the gear icon in ProfileScreen's header (Navigator.push,
 // same pattern as EditProfileScreen and chats_screen.dart's
@@ -305,6 +306,15 @@ class ProfileSettingsScreen extends ConsumerWidget {
       // сразу у трёх пользователей.
       try {
         await PushNotificationService.instance
+            .unregisterToken(uid)
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {}
+      // Адрес PushKit снимается тем же порядком и по той же причине,
+      // отдельной попыткой: у него цена ошибки выше обычного токена —
+      // оставшийся адрес заставит этот телефон показывать окно
+      // ВХОДЯЩЕГО ЗВОНКА, адресованного прежнему аккаунту.
+      try {
+        await VoipPushTokenService.instance
             .unregisterToken(uid)
             .timeout(const Duration(seconds: 5));
       } catch (_) {}

@@ -1,0 +1,92 @@
+import Flutter
+import Foundation
+
+// Backs lib/firebase/voip_push_token_service.dart. Answers ONE question that
+// Dart cannot answer for itself: which APNs environment this build's push
+// address belongs to — sandbox or production.
+//
+// ПОЧЕМУ ЭТО ЗАМЕР, А НЕ КОНСТАНТА, И ПОЧЕМУ ЭТО НЕ ПРИДИРКА. Адрес PushKit
+// сам по себе не говорит, куда его нести: один и тот же по виду
+// шестнадцатеричный адрес годен ЛИБО в sandbox, ЛИБО в production, и APNs
+// на промах не жалуется — он выбрасывает молча. Это уже измерено на этом
+// проекте: N186, две отправки на два адреса Рафаэля, доставлен один, отказа
+// по второму не было вовсе; отсюда N191.
+//
+// Написать здесь `"sandbox"` строкой было бы верно РОВНО СЕГОДНЯ (сборка с
+// кабеля, `aps-environment` = `development`) и стало бы неправдой в день
+// первого TestFlight — причём неправдой, которая ничего не роняет и ничем
+// себя не выдаёт: звонок просто перестанет доходить, а журнал сервера
+// скажет «отправлено». Поэтому среда СНИМАЕТСЯ с того же места, откуда её
+// берёт сама iOS, — с права `aps-environment` во встроенном профиле
+// подготовки.
+//
+// ЧЕГО ЭТОТ ЗАМЕР НЕ ЛОВИТ (границы пишутся вместе со сторожем):
+//   - профиля может не быть вовсе — сборка из симулятора, а на App Store
+//     сборках `embedded.mobileprovision` не всегда лежит рядом. Тогда
+//     возвращается `unknown`, и это НЕ подменяется правдоподобным
+//     «production» (I50): пусть сервер увидит незнание и скажет о нём, чем
+//     промахнётся молча;
+//   - он говорит, куда годен адрес, и НИЧЕГО не говорит о том, жив ли адрес
+//     и дойдёт ли push. Это разные вопросы, и второй проверяется только
+//     делом.
+class VoipPushPlugin: NSObject, FlutterPlugin {
+  static func register(with registrar: FlutterPluginRegistrar) {
+    let channel = FlutterMethodChannel(
+      name: "mugam/voip_push",
+      binaryMessenger: registrar.messenger()
+    )
+    registrar.addMethodCallDelegate(VoipPushPlugin(), channel: channel)
+  }
+
+  func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
+    case "apsEnvironment":
+      result(VoipPushPlugin.apsEnvironment())
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  // "development" | "production" | "unknown"
+  //
+  // `embedded.mobileprovision` — подписанный CMS-конверт, внутри которого
+  // лежит обычный XML-plist. Полноценный разбор конверта потребовал бы
+  // Security.framework и проверки подписи, которая нам здесь не нужна:
+  // файл лежит внутри нашего же бандла, и вопрос у нас не «подлинный ли
+  // он», а «что в нём написано». Поэтому вырезается ровно plist — от
+  // `<?xml` до закрывающего `</plist>`, — и читается штатным
+  // PropertyListSerialization.
+  static func apsEnvironment() -> String {
+    guard
+      let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+      let raw = try? Data(contentsOf: url)
+    else {
+      return "unknown"
+    }
+
+    guard
+      let start = raw.range(of: Data("<?xml".utf8)),
+      let end = raw.range(of: Data("</plist>".utf8), options: .backwards)
+    else {
+      return "unknown"
+    }
+
+    let plistData = raw.subdata(in: start.lowerBound..<end.upperBound)
+
+    guard
+      let plist = try? PropertyListSerialization.propertyList(
+        from: plistData, options: [], format: nil
+      ) as? [String: Any],
+      let entitlements = plist["Entitlements"] as? [String: Any],
+      let environment = entitlements["aps-environment"] as? String
+    else {
+      return "unknown"
+    }
+
+    // Apple пишет сюда ровно два значения; всё прочее — не наш случай, и
+    // угадывать его нельзя.
+    return environment == "development" || environment == "production"
+      ? environment
+      : "unknown"
+  }
+}

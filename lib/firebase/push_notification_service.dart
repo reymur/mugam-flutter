@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/device/install_id.dart';
 import '../core/time/instant_iso.dart';
 
 // Mirrors mugam-v2's users/{uid}/pushTokens/{deviceId} = {token, updatedAt}
@@ -22,7 +22,6 @@ class PushNotificationService {
   String? _registeredUid;
   StreamSubscription<String>? _tokenRefreshSub;
 
-  static const _deviceIdKey = 'mugam_push_device_id_v1';
   static const _legacyPurgeKey = 'mugam_push_legacy_ids_purged_v1';
 
   // Идентификатор УСТАНОВКИ приложения, а не модели и не сборки ОС.
@@ -48,18 +47,13 @@ class PushNotificationService {
   // приложения, а не железу. Одна семантика на обе платформы —
   // `identifierForVendor` на iOS был не сломан, но он второй по счёту, а
   // два разных правила для одного поля это будущая ловушка.
-  Future<String> _deviceId() async {
-    final prefs = await SharedPreferences.getInstance();
-    final existing = prefs.getString(_deviceIdKey);
-    if (existing != null) return existing;
-    final random = Random.secure();
-    final id = List.generate(
-      16,
-      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
-    ).join();
-    await prefs.setString(_deviceIdKey, id);
-    return id;
-  }
+  //
+  // САМО ТЕЛО ПЕРЕЕХАЛО В lib/core/device/install_id.dart — тем же ключом,
+  // байт в байт той же выдачей, — потому что у второй коллекции адресов
+  // (`voipPushTokens`, PushKit) обязан быть ТОТ ЖЕ идентификатор установки.
+  // Разбор — там же. Здесь остался разбор случая прода 02.08: он про то,
+  // почему идентификатор такой, а не где он живёт.
+  Future<String> _deviceId() => installId();
 
   // Принцип I4: перестал писать в код — снеси и из данных. Прежние
   // документы этого же устройства (по идентификатору сборки на Android, по

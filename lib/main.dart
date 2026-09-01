@@ -29,6 +29,7 @@ import 'firebase/firestore_service.dart';
 import 'firebase/models.dart' show CallType;
 import 'core/push/push_route.dart';
 import 'firebase/push_notification_service.dart';
+import 'firebase/voip_push_token_service.dart';
 import 'firebase_options.dart';
 import 'navigation/app_router.dart';
 
@@ -185,6 +186,11 @@ class _MugamAppState extends ConsumerState<MugamApp> {
       if (user != null) {
         unawaited(_reconcileLocalStoreWithSignedInUid(user.uid));
         PushNotificationService.instance.registerToken(user.uid);
+        // Адрес PushKit — отдельным вызовом, рядом, а не внутри вызова
+        // выше: адреса два, сети две (FCM и APNs напрямую), и отказ
+        // одного не должен уносить второй. На Android вызов выходит
+        // сразу же, ничего не делая.
+        VoipPushTokenService.instance.registerToken(user.uid);
         PresenceService.instance.start(user.uid);
         CallListenerService.instance.start(user.uid, (call) {
           // Only CallKitService here now — appRouter.push('/call/incoming/...')

@@ -20,6 +20,7 @@
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
 		AA11BB22CC33DD44EE55FF01 /* NativeVideoCompressorPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FF02 /* NativeVideoCompressorPlugin.swift */; };
+		AA11BB22CC33DD44EE55FF03 /* VoipPushPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FF04 /* VoipPushPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -73,6 +74,7 @@
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A7A8438E9E0E334C1095F90F /* Pods-RunnerTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.profile.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig"; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FF02 /* NativeVideoCompressorPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeVideoCompressorPlugin.swift; sourceTree = "<group>"; };
+		AA11BB22CC33DD44EE55FF04 /* VoipPushPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoipPushPlugin.swift; sourceTree = "<group>"; };
 		D541E5642BDCA223A64CE5DB /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -172,6 +174,7 @@
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				593AA09FDDAE9B8071D4855F /* NativeSoundEffectPlugin.swift */,
 				AA11BB22CC33DD44EE55FF02 /* NativeVideoCompressorPlugin.swift */,
+				AA11BB22CC33DD44EE55FF04 /* VoipPushPlugin.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
@@ -412,6 +415,7 @@
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				72977E1AF51CDBB4544E1651 /* NativeSoundEffectPlugin.swift in Sources */,
 				AA11BB22CC33DD44EE55FF01 /* NativeVideoCompressorPlugin.swift in Sources */,
+				AA11BB22CC33DD44EE55FF03 /* VoipPushPlugin.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 			);
