@@ -33,7 +33,24 @@ curl -s -H "Authorization: Bearer $TOKEN" -H "X-Goog-User-Project: mugam-club" \
 
 # индексы
 gcloud firestore indexes composite list --project=mugam-club
+
+# сверочный счёт мероприятий: всего и по статусам (сумма обязана сходиться)
+# NODE_PATH=functions/node_modules node -e '
+#   const a=require("firebase-admin");a.initializeApp({projectId:"mugam-club"});
+#   a.firestore().collection("personalEvents").get().then(s=>{const b={};
+#   s.docs.forEach(d=>{const k=d.get("status")||"(нет)";b[k]=(b[k]||0)+1});
+#   console.log(s.size,b)})'
 ```
+
+> **Счёт мероприятий держать КОМАНДОЙ, А НЕ ЧИСЛОМ, и вот чем это измерено.**
+> В `docs/how-we-work.md` три недели стояло «91 мероприятие в проде; после
+> каждого шага сумма держится» (замер 13.08) — то есть число служило
+> **сверочной константой**. Перемер 02.09 даёт **121** (`agreed` 96,
+> `cancelled` 22, `unsettled` 3; сумма сходится). Разошлось на **30**, и
+> заметить это было нечем: у сверочного числа нет признака порчи, оно просто
+> перестаёт совпадать и читается как поломка того, что проверяют. Число
+> снято, команда оставлена (I6: команда сильнее даты — читатель пересчитает
+> даром).
 
 > **Ловушка REST-запроса к правилам:** без заголовка `X-Goog-User-Project`
 > он отвечает `403 SERVICE_DISABLED` — «API требует quota project». Это
