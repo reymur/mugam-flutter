@@ -22,6 +22,11 @@ import {
   type PushOutcome,
 } from "./pushDelivery";
 import {
+  isDeadApnsReason,
+  sendVoipPush,
+  voipPayloadFor,
+} from "./voipPush";
+import {
   EventPush,
   EventSnapshot,
   leftViaAnswers,
@@ -68,6 +73,11 @@ const FUNCTIONS_REGION = "europe-west3";
 // this function mint a valid token.
 const AGORA_APP_ID = "f475311300aa4392a2e5ee7eff0e54ef";
 const agoraAppCertificate = defineSecret("AGORA_APP_CERTIFICATE");
+// Содержимое файла .p8 целиком, вместе со строками -----BEGIN/END-----.
+// Через Secret Manager, как AGORA_APP_CERTIFICATE: в репозиторий ключ не
+// кладётся никогда (.gitignore:85 — *.p8), а копия у владельца лежит в
+// ~/Documents/mugam-keys/.
+const apnsAuthKey = defineSecret("APNS_AUTH_KEY_P8");
 
 // ALGOLIA_APP_ID/ALGOLIA_USERS_INDEX live in ./algoliaShared (shared with
 // scripts/algoliaBackfill.ts) — only the Admin API Key is sensitive (it can
@@ -236,6 +246,87 @@ async function sendCallPushToUid(uid: string, data: Record<string, string>): Pro
       const token = tokenDoc.data().token as string | undefined;
       if (!token) return;
       await sendCallDataPush(token, data, tokenDoc.ref);
+    }),
+  );
+}
+
+// ОТПРАВКА ЗВОНКА ЧЕРЕЗ PushKit — ВТОРЫМ ПУТЁМ, А НЕ ВМЕСТО ПЕРВОГО.
+//
+// СТАРЫЙ ПУТЬ FCM ДЕРЖИМ, И ЭТО РЕШЕНИЕ, А НЕ ЗАБЫВЧИВОСТЬ. Он единственный
+// на Android; на iOS он же покрывает случай, когда VoIP-адреса ещё нет
+// (человек не перезаходил после обновления — адресов на 01.09 было 2 из 12
+// учёток). Снять его можно будет только после проверки делом, отдельным
+// шагом, и до тех пор оба пути идут вместе.
+//
+// ДВОЙНОЕ ОКНО ДОЛЖЕН СПАСАТЬ `callkitUuid`, И ЭТО ПРОВЕРЯЕТСЯ ДЕЛОМ, А НЕ
+// ПРЕДПОЛОЖЕНИЕМ. Оба пути несут ОДИН И ТОТ ЖЕ `callkitUuid` — он выдаётся
+// один раз в startCall ниже, — а CallKit отказывает в
+// `reportNewIncomingCall` на уже занятый UUID. То есть второе окно не должно
+// появиться. Но «не должно» здесь означает «так устроен CXProvider», а не
+// «мы это видели»: пока не проверено на трубке, считать это работающим
+// нельзя.
+//
+// ОТПРАВКИ ИДУТ ПОРОЗНЬ И НЕ ОТМЕНЯЮТ ДРУГ ДРУГА: отказ APNs не должен
+// уносить путь FCM, и наоборот. Поэтому здесь нет общей `Promise.all` на
+// оба пути и нет проброса исключения наверх — startCall обязан вернуть
+// callId звонящему даже если ни один push не ушёл, иначе звонок не начнётся
+// вовсе.
+async function sendVoipCallPushToUid(
+  uid: string,
+  payload: Record<string, string>,
+  p8: string,
+): Promise<void> {
+  const snap = await db.collection("users").doc(uid).collection("voipPushTokens").get();
+  if (snap.empty) {
+    // НЕ отказ и не поломка: у этого человека просто нет трубки с PushKit.
+    // Сказано вслух с числом, потому что молчание здесь неотличимо от
+    // «отправка не выполнялась» (I31).
+    logger.info(`[voip] адресов PushKit у ${uid}: 0 — отправка не выполнялась`);
+    return;
+  }
+  await Promise.all(
+    snap.docs.map(async (doc) => {
+      const token = doc.get("token") as string | undefined;
+      const environment = doc.get("environment") as unknown;
+      let result;
+      try {
+        result = await sendVoipPush({
+          token: token ?? "",
+          environment,
+          payload,
+          p8,
+        });
+      } catch (e) {
+        logger.error(`[voip] отправка сорвалась ${doc.ref.path}`, e);
+        return;
+      }
+      if (result.ok) {
+        logger.info(`[voip] доставлено APNs ${doc.ref.path} (${String(environment)})`);
+        return;
+      }
+      if (result.skipped) {
+        // Пропуск — это НЕ отказ, и путать их нельзя: «не слали» и «слали, не
+        // дошло» лечатся по-разному (I47).
+        logger.error(`[voip] не отправляли ${doc.ref.path}: ${result.skipped}`);
+        return;
+      }
+      // logger.error, а не warn: warn читают, когда уже пришли искать, а
+      // здесь никто не придёт — пропавший звонок не замечает ни одна из
+      // сторон (N186, N19).
+      logger.error(
+        `[voip] APNs отказал ${doc.ref.path}: ${result.status} ${result.reason}`,
+      );
+      if (isDeadApnsReason(result.reason)) {
+        try {
+          await doc.ref.delete();
+          logger.info(`[voip] удалён мёртвый адрес ${doc.ref.path} (${result.reason})`);
+        } catch (delErr) {
+          logger.warn("[voip] не удалось удалить мёртвый адрес", {
+            path: doc.ref.path,
+            delErr,
+          });
+        }
+      }
     }),
   );
 }
@@ -1993,7 +2084,7 @@ export const generateAgoraToken = onCall(
 // caller-supplied channelName, and the callId this function returns is
 // exactly what both caller and callee (once they read the doc) pass to it.
 export const startCall = onCall(
-  { region: FUNCTIONS_REGION },
+  { region: FUNCTIONS_REGION, secrets: [apnsAuthKey] },
   async (request) => {
     const uid = request.auth?.uid;
     if (!uid) {
@@ -2045,6 +2136,8 @@ export const startCall = onCall(
       createdAt: FieldValue.serverTimestamp(),
     });
 
+    // ПУТЬ ПЕРВЫЙ — FCM, ПРЕЖНИЙ, НЕ ТРОНУТ. Единственный на Android;
+    // на iOS покрывает того, у кого VoIP-адреса ещё нет.
     await sendCallPushToUid(calleeUid, {
       type: "incoming_call",
       callId,
@@ -2053,6 +2146,31 @@ export const startCall = onCall(
       callType: type,
       callerName,
     });
+
+    // ПУТЬ ВТОРОЙ — PushKit, НАПРЯМУЮ В APNs. Единственный, который будит
+    // СМАХНУТОЕ приложение на iOS (N172, N190).
+    //
+    // Тот же `callkitUuid`, что и выше, и это не совпадение, а то самое, на
+    // чём держится защита от двойного окна: CallKit отказывает в отчёте о
+    // звонке с уже занятым UUID. Разбор — у sendVoipCallPushToUid.
+    //
+    // Отдельным try, а не общим с путём выше: отказ APNs не должен уносить
+    // FCM, и ни один из них не должен уносить возврат callId звонящему —
+    // иначе звонок не начнётся вовсе.
+    try {
+      await sendVoipCallPushToUid(
+        calleeUid,
+        voipPayloadFor({
+          callkitUuid,
+          callId,
+          callerName,
+          callType: type,
+        }),
+        apnsAuthKey.value(),
+      );
+    } catch (e) {
+      logger.error("[voip] отправка звонка сорвалась целиком", e);
+    }
 
     return { callId };
   },

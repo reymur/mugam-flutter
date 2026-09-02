@@ -169,6 +169,33 @@ class CallKitService {
       // callback). There is no shared event.body['id'] like the old v2
       // Map-based API this was originally drafted against.
       switch (event) {
+        // МОСТ С ПУТИ PushKit. Плагин шлёт это событие из обработчика
+        // УСПЕШНОГО отчёта в CallKit — то есть окно уже показано, и показано
+        // нативным кодом, потому что Dart к тому моменту мог не существовать
+        // вовсе (приложение было смахнуто). Здесь мы ничего не показываем:
+        // здесь звонок только БЕРЁТСЯ НА УЧЁТ, тем же самым _attachCall, что
+        // и на пути FCM.
+        //
+        // Без этого случая путь PushKit был бы наполовину мёртвым и мёртвым
+        // МОЛЧА: окно показалось бы, человек нажал бы «принять», а
+        // _callkitIdByCallId оказалась бы пуста — значит reportConnected и
+        // endCall не нашли бы CallKit-идентификатор, и отмена звонка со
+        // стороны звонящего не убрала бы окно у вызываемого. Ни одна из этих
+        // поломок не выглядит как поломка приёма push'а.
+        //
+        // По пути FCM этот случай тоже сработает, вторым заходом после
+        // showIncoming, и это безвредно — см. _attachCall.
+        case CallEventActionCallIncoming(:final callKitParams):
+          final callId = callKitParams.extra?['firestoreCallId'] as String?;
+          final callkitId = callKitParams.id;
+          debugPrint(
+            '[CALLKIT] CallEventActionCallIncoming: callId=$callId callkitId=$callkitId',
+          );
+          // Пусто — это негодный push, и нативная сторона его уже закрыла
+          // (см. AppDelegate.swift, правило «б»). Учитывать нечего.
+          if (callId == null || callId.isEmpty) break;
+          if (callkitId.isEmpty) break;
+          _attachCall(callId, callkitId);
         case CallEventActionCallAccept(:final callKitParams):
           final callId = callKitParams.extra?['firestoreCallId'] as String?;
           debugPrint('[CALLKIT] CallEventActionCallAccept fired for callId=$callId, already in _acceptedCallIds=${callId != null && _acceptedCallIds.contains(callId)}, isOutgoing=${callId != null && _outgoingCallIds.contains(callId)}');
@@ -254,17 +281,43 @@ class CallKitService {
     });
   }
 
+  // УЧЁТ ЗВОНКА — ВСЁ, ЧТО ДЕЛАЕТ ЭТОТ КЛАСС ПОМИМО ПОКАЗА ОКНА, и вынесено
+  // это сюда потому, что путей к одному и тому же звонку стало ДВА, а дело
+  // у них одно.
+  //
+  //   FCM   — Dart сам зовёт showIncoming ниже: окно показываем МЫ, значит
+  //           учёт делаем тут же;
+  //   VoIP  — окно показал НАТИВНЫЙ код, до того как Dart вообще проснулся
+  //           (иначе iOS снимет приложение, см. AppDelegate.swift). Учесть
+  //           звонок Dart всё равно обязан, иначе `endCall`, `reportConnected`
+  //           и слежение за отменой не найдут его по firestore-идентификатору.
+  //
+  // Это I58 в обе стороны сразу. Разделено по ЗАДАЧЕ: общее у двух путей —
+  // учёт, разное — кто показывает окно, и потому showIncoming остался
+  // отдельным, а не оброс переключателем «а этому не показывать». Сведено
+  // тоже по задаче: учёт у обоих буквально один и тот же, и второе его
+  // написание разошлось бы с первым при первой же правке.
+  //
+  // ИДЕМПОТЕНТЕН НАРОЧНО: по пути FCM он выполнится ДВАЖДЫ — один раз из
+  // showIncoming, второй раз из события ACTION_CALL_INCOMING, которое плагин
+  // шлёт из своего же обработчика показа. Повторный вызов безвреден:
+  // присвоение в карту переписывает то же значение, а _watchForRemoteEnd
+  // первым делом снимает прежнюю подписку по тому же ключу.
+  void _attachCall(String callId, String callkitId) {
+    _callkitIdByCallId[callId] = callkitId;
+    // Covers the whole lifecycle from here on — a caller cancelling before
+    // we accept (so the native ringing UI doesn't sit there for the full
+    // 30s duration/timeout) as well as the call ending after we accept it.
+    _watchForRemoteEnd(callId, FirestoreService());
+  }
+
   Future<void> showIncoming({
     required String callId,
     required String callkitId,
     required String callerName,
     required bool isVideo,
   }) async {
-    _callkitIdByCallId[callId] = callkitId;
-    // Covers the whole lifecycle from here on — a caller cancelling before
-    // we accept (so the native ringing UI doesn't sit there for the full
-    // 30s duration/timeout) as well as the call ending after we accept it.
-    _watchForRemoteEnd(callId, FirestoreService());
+    _attachCall(callId, callkitId);
     // try/catch kept from the original diagnostic pass: the root cause
     // (callId wasn't a valid UUID, see Call.callkitUuid's comment) turned
     // out to be a silent native no-op that this can't actually catch — the

@@ -97,22 +97,117 @@ import workmanager_apple
     SwiftFlutterCallkitIncomingPlugin.sharedInstance?.setDevicePushTokenVoIP("")
   }
 
-  // ПРИЁМ ВХОДЯЩЕГО PUSH'А ЗДЕСЬ НАРОЧНО НЕ РЕАЛИЗОВАН — ЭТО ШАГ 4, И ЭТО
-  // НЕ ЗАБЫТО, А ОТЛОЖЕНО. Оставлять пустым безопасно ровно до тех пор, пока
-  // VoIP-push никто не шлёт, а не шлёт его никто: функция отправки ещё не
-  // написана (шаг 4, `startCall` в functions/src/index.ts).
+  // ПРИЁМ ВХОДЯЩЕГО VoIP-PUSH'А. САМОЕ ЖЁСТКОЕ ПО СРОКАМ МЕСТО ВО ВСЁМ
+  // ПРИЛОЖЕНИИ, И СРОК ЗДЕСЬ НЕ СОВЕТ, А УСЛОВИЕ ЖИЗНИ.
   //
-  // ЧЕМ ЭТО ОПАСНО СТАНЕТ В ТОТ ЖЕ ДЕНЬ, КОГДА ШАГ 4 ВЫЛОЖАТ: начиная с
-  // iOS 13 система требует, чтобы на КАЖДЫЙ принятый VoIP-push приложение
-  // сообщило о звонке в CallKit. Не сообщило — приложение снимается, а при
-  // повторе iOS перестаёт доставлять VoIP-push этому приложению вовсе.
-  // То есть отсутствие этого метода — не «ничего не произойдёт», а
-  // «трубка замолчит навсегда, и починится это только переустановкой».
+  // ЧТО ТРЕБУЕТ iOS. Начиная с iOS 13 на КАЖДЫЙ принятый VoIP-push
+  // приложение обязано сообщить о входящем звонке в CallKit —
+  // `CXProvider.reportNewIncomingCall` — и сделать это ДО того, как вернётся
+  // переданный сюда `completion`. Не «желательно», не «поскорее»: ровно на
+  // каждый push ровно один отчёт, и раньше `completion`.
   //
-  // Поэтому шаг 4 обязан начинаться отсюда, а не с функции:
-  //   pushRegistry(_:didReceiveIncomingPushWith:for:completion:) →
-  //   SwiftFlutterCallkitIncomingPlugin.sharedInstance?
-  //     .showCallkitIncoming(data, fromPushKit: true) { completion() }
-  // Ссылка в обе стороны (I42): второй конец этой записи — TODO(pushkit)
-  // в lib/core/calls/callkit_service.dart.
+  // ЧТО БУДЕТ, ЕСЛИ ОТЧЁТ ОПОЗДАЕТ ИЛИ НЕ СОСТОИТСЯ. Наказание идёт двумя
+  // ступенями, и вторая необратима в пределах установки:
+  //   1. система СНИМАЕТ приложение — не «звонок не покажется», а процесс
+  //      убивается;
+  //   2. при повторах iOS ПЕРЕСТАЁТ ДОСТАВЛЯТЬ VoIP-push этому приложению
+  //      ВОВСЕ. Не отказом, не ошибкой — просто перестаёт. Чинится это
+  //      переустановкой приложения, и никакая правка кода уже не поможет.
+  // То есть отказ здесь имеет ровно тот вид, который в этом проекте дороже
+  // всего: у «звонки выключены системой» и «звонков сегодня не было» один и
+  // тот же наблюдаемый вывод (I31). Понять, что это случилось, будет нечем.
+  //
+  // ОТСЮДА ТРИ ПРАВИЛА, КОТОРЫЕ ЗДЕСЬ СОБЛЮДЕНЫ И КОТОРЫЕ НЕЛЬЗЯ ОСЛАБИТЬ:
+  //
+  //   а. НИКАКОЙ АСИНХРОННОЙ РАБОТЫ ДО ОТЧЁТА. Ни чтения Firestore, ни
+  //      ожидания движка Flutter, ни сети. Всё, что нужно для отчёта, обязано
+  //      приехать В САМОМ PUSH'Е — поэтому сервер кладёт туда и `callkitUuid`,
+  //      и имя звонящего, и вид звонка. Именно поэтому мост к нашему
+  //      CallKitService идёт ПОСЛЕ отчёта, а не до (см. ниже).
+  //
+  //   б. ОТЧЁТ ДЕЛАЕТСЯ ДАЖЕ ПРИ НЕГОДНОМ ПУСТОМ ПУСТЬ-ЧЁМ. Плагин на
+  //      неразбираемом UUID молча НЕ отчитывается и лишь зовёт `completion`
+  //      (проверено чтением его исходника, `showCallkitIncoming` с
+  //      `completion`, ветка `guard let uuid`). Для нас это ровно тот случай,
+  //      за который снимают. Поэтому негодный идентификатор ЗАМЕНЯЕТСЯ своим
+  //      годным, отчёт делается, и звонок тут же закрывается — человек видит
+  //      мигнувшее окно вместо умершего навсегда VoIP.
+  //
+  //   в. `completion` ЗОВЁТСЯ РОВНО ОДИН РАЗ И НА ВСЕХ ПУТЯХ, включая
+  //      «push не наш».
+  //
+  // ПРО `sharedInstance`, КОТОРЫЙ ЗДЕСЬ НЕ МОЖЕТ БЫТЬ nil, И ЭТО НЕ НАДЕЖДА.
+  // Плагины регистрируются внутри `super.application(...)`, а реестр PushKit
+  // заводится СТРОКОЙ ПОЗЖЕ (см. `registerVoipPushRegistry` выше). iOS
+  // доставляет push только в заведённый реестр, значит к моменту доставки
+  // super уже вернулся и `sharedInstance` существует. Порядок в
+  // `didFinishLaunchingWithOptions` — часть этого рассуждения, и менять его
+  // местами нельзя.
+  func pushRegistry(
+    _ registry: PKPushRegistry,
+    didReceiveIncomingPushWith payload: PKPushPayload,
+    for type: PKPushType,
+    completion: @escaping () -> Void
+  ) {
+    guard type == .voIP else {
+      completion()
+      return
+    }
+
+    let body = payload.dictionaryPayload
+    let pushedUuid = body["id"] as? String ?? ""
+    let firestoreCallId = body["callId"] as? String ?? ""
+    let callerName = body["nameCaller"] as? String ?? "Zəng"
+    // Вид звонка приезжает строкой ("video"/"audio"), а не булевым: в JSON
+    // push'а булево пришлось бы угадывать по типу, а строку видно глазом в
+    // журнале APNs.
+    let isVideo = (body["callType"] as? String) == "video"
+
+    // Годен ли идентификатор — решается ЗДЕСЬ, до отчёта, потому что от
+    // ответа зависит, чем отчитываться (правило «б» выше).
+    let uuidIsUsable = UUID(uuidString: pushedUuid) != nil
+    let payloadIsUsable = uuidIsUsable && !firestoreCallId.isEmpty
+
+    let data = flutter_callkit_incoming.Data(
+      id: uuidIsUsable ? pushedUuid : UUID().uuidString,
+      nameCaller: callerName,
+      handle: "",
+      type: isVideo ? 1 : 0
+    )
+    data.appName = "Mugam"
+    data.duration = 30000
+    data.handleType = "generic"
+    data.supportsVideo = true
+    data.ringtonePath = "system_ringtone_default"
+    // ЭТО И ЕСТЬ МОСТ К НАШЕМУ КОДУ, И ОН ОДНА СТРОКА. `extra` плагин
+    // сохраняет сам и отдаёт обратно в событии ACTION_CALL_INCOMING и во всех
+    // последующих (приём, отказ, конец) — в том числе в другом процессе.
+    // Поэтому Dart-сторона ничего заново не выясняет: она берёт
+    // `firestoreCallId` оттуда же, откуда берёт его путь через FCM.
+    data.extra = ["firestoreCallId": firestoreCallId]
+
+    SwiftFlutterCallkitIncomingPlugin.sharedInstance?.showCallkitIncoming(
+      data, fromPushKit: true
+    ) {
+      completion()
+    }
+
+    // Закрывается ПОСЛЕ отчёта, а не вместо него. Порядок именно такой:
+    // сперва выполнить требование системы, потом убрать то, что показывать
+    // нечем.
+    if !payloadIsUsable {
+      NSLog(
+        "[VoIP] негодный push: uuid=%@ callId=%@ — отчёт сделан, звонок закрыт",
+        pushedUuid, firestoreCallId
+      )
+      SwiftFlutterCallkitIncomingPlugin.sharedInstance?.endCall(data)
+    }
+  }
+
+  // ЧЕГО ЗДЕСЬ НЕТ И ПОЧЕМУ. Мы НЕ поднимаем движок Flutter и НЕ зовём
+  // отсюда Dart: это работа на секунды, а срок отчёта — доли секунды
+  // (правило «а»). Наш CallKitService подхватывает звонок сам, событием
+  // ACTION_CALL_INCOMING, которое плагин шлёт из обработчика успешного
+  // отчёта. Разбор моста — в lib/core/calls/callkit_service.dart, случай
+  // `CallEventActionCallIncoming`. Ссылка в обе стороны (I42).
 }
