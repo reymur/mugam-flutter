@@ -1,3 +1,5 @@
+import AVFAudio
+import CallKit
 import Flutter
 import GoogleMaps
 import PushKit
@@ -6,7 +8,9 @@ import flutter_callkit_incoming
 import workmanager_apple
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, PKPushRegistryDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate, PKPushRegistryDelegate,
+  CallkitIncomingAppDelegate
+{
   // ДЕРЖИТСЯ ПОЛЕМ, А НЕ МЕСТНОЙ ПЕРЕМЕННОЙ, И ЭТО НЕ СТИЛЬ. PKPushRegistry
   // не удерживается системой: местная переменная умрёт вместе с методом,
   // делегат никто не позовёт, и адрес не придёт НИКОГДА — молча, без
@@ -210,4 +214,73 @@ import workmanager_apple
   // ACTION_CALL_INCOMING, которое плагин шлёт из обработчика успешного
   // отчёта. Разбор моста — в lib/core/calls/callkit_service.dart, случай
   // `CallEventActionCallIncoming`. Ссылка в обе стороны (I42).
+
+  // MARK: - CallkitIncomingAppDelegate (N194)
+
+  // ПОЧЕМУ МЫ ВООБЩЕ ПОДПИСАНЫ НА ЭТОТ ПРОТОКОЛ. Он единственный способ
+  // узнать о нажатии, когда Dart ещё не поднялся: плагин зовёт эти методы
+  // из обработчиков CXProvider, В SWIFT, СИНХРОННО, независимо от того,
+  // существует ли движок Flutter. Штатного фонового обработчика на iOS у
+  // плагина НЕТ — `registerBackgroundHandler` есть только в андроидной
+  // части, а неизвестный метод канала на iOS отвечает
+  // `FlutterMethodNotImplemented`. Проверено чтением исходника плагина.
+  //
+  // ОДНА ОБЯЗАННОСТЬ ПЕРЕШЛА К НАМ ВМЕСТЕ С ПОДПИСКОЙ, И ОНА МОЛЧАЛИВАЯ:
+  // в `provider(_:perform:)` плагин зовёт `action.fulfill()` ТОЛЬКО в ветке
+  // `else`, то есть когда делегата нет. Подписались — зовём сами. Не позвать
+  // — CallKit повиснет на действии до собственного тайм-аута транзакции, и
+  // человек увидит нажатие, которое «не сработало». Сторож на это —
+  // `test/pending_call_actions_test.dart`, вердикт про `action.fulfill()`.
+
+  func onAccept(_ call: Call, _ action: CXAnswerCallAction) {
+    record("accept", call)
+    action.fulfill()
+  }
+
+  func onDecline(_ call: Call, _ action: CXEndCallAction) {
+    record("decline", call)
+    action.fulfill()
+  }
+
+  func onEnd(_ call: Call, _ action: CXEndCallAction) {
+    record("end", call)
+    action.fulfill()
+  }
+
+  // У этого метода параметра `action` нет вовсе — завершать нечего, плагин
+  // уже отчитался в CallKit сам.
+  func onTimeOut(_ call: Call) {
+    record("timeout", call)
+  }
+
+  private func record(_ name: String, _ call: Call) {
+    let callId = call.data.extra["firestoreCallId"] as? String ?? ""
+    // Пусто — значит нагрузка была негодной и звонок уже закрыт (см. правило
+    // «б» у приёма push'а). Откладывать нечего: применять такое действие
+    // Dart всё равно будет некуда.
+    guard !callId.isEmpty else { return }
+    VoipPushPlugin.recordPendingAction(name, callId: callId, callkitId: call.uuid.uuidString)
+  }
+
+  // ТРИ ПУСТЫЕ РЕАЛИЗАЦИИ НИЖЕ — НЕ ЗАБЫТЫЕ, А ПРОВЕРЕННО ЛИШНИЕ, и это
+  // записано здесь нарочно: следующий читатель обязан увидеть довод, а не
+  // решить, что до них не дошли руки.
+  //
+  // Проверено чтением плагина: в отличие от `onAccept`/`onDecline`/`onEnd`,
+  // которые стоят в `if/else` и ЗАБИРАЮТ у плагина вызов `action.fulfill()`,
+  // эти три вызываются ДОПОЛНИТЕЛЬНО — плагин делает всю свою работу и до, и
+  // после них:
+  //   - `didActivate` (строка 775): зовёт нас, а затем сам поднимает звук
+  //     исходящего и принятого звонка;
+  //   - `didDeactivate` (806) — то же;
+  //   - `providerDidReset` (624): сам гасит все звонки, чистит список и шлёт
+  //     событие, и только потом зовёт нас.
+  // Значит наполнить их — значит делать ту же работу второй раз. Звук в
+  // разговоре ведёт Agora, к сессии CallKit он не привязан.
+
+  func didActivateAudioSession(_ audioSession: AVAudioSession) {}
+
+  func didDeactivateAudioSession(_ audioSession: AVAudioSession) {}
+
+  func providerDidReset() {}
 }

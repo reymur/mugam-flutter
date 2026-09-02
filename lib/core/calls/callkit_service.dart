@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 // The main library file doesn't re-export its own entities (CallEvent,
 // CallKitParams, AndroidParams, IOSParams, ...) — this barrel is required
@@ -137,6 +140,14 @@ class CallKitService {
   // way) so it doesn't keep firing after the fact.
   final Map<String, StreamSubscription<void>> _endWatchers = {};
 
+  /// Имя канала к нативной стороне PushKit — ОДНО на весь проект.
+  ///
+  /// Объявлено здесь, а не в каждом потребителе: две одинаковые строки в
+  /// двух файлах расходятся молча (N80), а `MethodChannel` на несовпадающее
+  /// имя отвечает `MissingPluginException`, то есть уже в проде.
+  static const String nativeChannelName = 'mugam/voip_push';
+  static const MethodChannel _nativeChannel = MethodChannel(nativeChannelName);
+
   String? _callIdForCallkitId(String callkitId) {
     for (final entry in _callkitIdByCallId.entries) {
       if (entry.value == callkitId) return entry.key;
@@ -178,6 +189,88 @@ class CallKitService {
   /// контроллер существует с создания singleton'а, события просто пойдут,
   /// когда пойдут.
   Stream<CallEvent> get events => _events.stream;
+
+  // Что уже применено в ЭТОМ запуске — ключ «действие:callId».
+  //
+  // Нужно потому, что при живом Dart одно нажатие приходит ДВАЖДЫ: событием
+  // на канал И вызовом нативного делегата, который кладёт его в отложенные
+  // (см. ios/Runner/AppDelegate.swift). Без этой пометки выдача применила бы
+  // то же самое вторым заходом.
+  final Set<String> _applied = {};
+
+  // ЗАБРАТЬ У НАТИВНОЙ СТОРОНЫ ДЕЙСТВИЯ, СЛУЧИВШИЕСЯ ДО ТОГО, КАК МЫ
+  // ПОДПИСАЛИСЬ (N194).
+  //
+  // Зовётся сразу после ensureListening. Приложение, разбуженное
+  // VoIP-push'ем из смахнутого состояния, показывает окно нативно, и человек
+  // успевает нажать раньше, чем поднимется Dart: замер 02.09 — подписка
+  // появляется не позже чем через 1,32 с после push'а. События CallKit
+  // мгновенны и не повторяются (N193), поэтому нажатие в эту секунду
+  // исчезало без следа.
+  //
+  // ПОРЯДОК ЗНАЧИМ: сперва ensureListening, потом выдача. Обратный порядок
+  // оставил бы новую щель ровно того же вида — между выдачей и подпиской.
+  Future<void> drainPendingNativeActions(FirestoreService firestoreService) async {
+    if (!Platform.isIOS) return;
+    List<dynamic>? raw;
+    try {
+      raw = await _nativeChannel.invokeMethod<List<dynamic>>('takePendingCallActions');
+    } catch (_) {
+      return;
+    }
+    if (raw == null || raw.isEmpty) return;
+    debugPrint('[CALLKIT] отложенных действий с нативной стороны: ${raw.length}');
+
+    for (final item in raw) {
+      final map = Map<String, dynamic>.from(item as Map);
+      final action = map['action'] as String?;
+      final callId = map['callId'] as String?;
+      final callkitId = map['callkitId'] as String? ?? '';
+      final at = (map['at'] as num?)?.toDouble();
+      if (action == null || callId == null || callId.isEmpty) continue;
+
+      // СРОК ГОДНОСТИ ВЫВЕДЕН ИЗ ЗВОНКА, А НЕ НАЗНАЧЕН НА ГЛАЗ: окно
+      // входящего живёт 30 с (duration: 30000 и там, и в нативном приёме),
+      // значит действие старше минуты не может относиться к живому звонку.
+      // Без этого отложенное отклонение всплыло бы через час и закрыло чужой,
+      // давно законченный разговор.
+      if (at != null) {
+        final age = DateTime.now().millisecondsSinceEpoch / 1000 - at;
+        if (age > 60) {
+          debugPrint('[CALLKIT] отложенное $action по $callId протухло ($age с)');
+          continue;
+        }
+      }
+
+      final key = '$action:$callId';
+      if (_applied.contains(key)) continue;
+      _applied.add(key);
+
+      switch (action) {
+        case 'accept':
+          if (_acceptedCallIds.contains(callId)) break;
+          _acceptedCallIds.add(callId);
+          if (callkitId.isNotEmpty) _attachCall(callId, callkitId);
+          try {
+            await firestoreService.respondToCall(callId: callId, accept: true);
+          } catch (_) {}
+          appRouter.push('/call/active/$callId');
+        case 'decline':
+          try {
+            await firestoreService.respondToCall(callId: callId, accept: false);
+          } catch (_) {}
+          _callkitIdByCallId.remove(callId);
+          _endWatchers.remove(callId)?.cancel();
+        case 'end':
+        case 'timeout':
+          try {
+            await firestoreService.endCall(callId: callId);
+          } catch (_) {}
+          _callkitIdByCallId.remove(callId);
+          _endWatchers.remove(callId)?.cancel();
+      }
+    }
+  }
 
   void ensureListening(FirestoreService firestoreService) {
     debugPrint('[CALLKIT] ensureListening called, _listening=$_listening');
@@ -244,6 +337,7 @@ class CallKitService {
           // this set is ever repurposed) wouldn't be blocked forever.
           if (_acceptedCallIds.contains(callId)) break;
           _acceptedCallIds.add(callId);
+          _applied.add('accept:$callId');
           // Deliberately NOT removed from _callkitIdByCallId here — this
           // map is what translates callId -> callkitId for every call INTO
           // the plugin (reportConnected, endCall), and both of those still
@@ -270,6 +364,7 @@ class CallKitService {
         case CallEventActionCallDecline(:final callKitParams):
           final callId = callKitParams.extra?['firestoreCallId'] as String?;
           if (callId == null) break;
+          _applied.add('decline:$callId');
           try {
             await firestoreService.respondToCall(callId: callId, accept: false);
           } catch (_) {}

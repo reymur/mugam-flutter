@@ -216,6 +216,13 @@ class _MugamAppState extends ConsumerState<MugamApp> {
     });
     PushNotificationService.instance.setupForegroundPresentation();
     CallKitService.instance.ensureListening(FirestoreService());
+    // СРАЗУ ПОСЛЕ подписки, и порядок значим (N194): забрать действия,
+    // которые человек успел сделать по нативному окну звонка ДО того, как
+    // Dart поднялся. Обратный порядок оставил бы щель того же вида —
+    // между выдачей и подпиской.
+    unawaited(
+      CallKitService.instance.drainPendingNativeActions(FirestoreService()),
+    );
     // Куда ведёт тап по уведомлению.
     //
     // Раньше открывался только чат и только для нового сообщения, а все

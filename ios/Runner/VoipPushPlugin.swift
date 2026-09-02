@@ -42,9 +42,63 @@ class VoipPushPlugin: NSObject, FlutterPlugin {
     switch call.method {
     case "apsEnvironment":
       result(VoipPushPlugin.apsEnvironment())
+    case "takePendingCallActions":
+      result(VoipPushPlugin.takePendingCallActions())
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+
+  // MARK: - Несостоявшиеся действия над звонком (N194)
+
+  // ЗАЧЕМ ЭТО ЕСТЬ. Приложение, разбуженное VoIP-push'ем из смахнутого
+  // состояния, показывает окно звонка НАТИВНО, до того как поднимется Dart.
+  // Человек успевает нажать «отклонить» или «принять» РАНЬШЕ, чем Dart
+  // подпишется на события: замер 02.09 — подписка появляется не позже чем
+  // через 1,32 с после push'а (серверные отметки: push 01:42:21.514Z, первая
+  // запись клиента в Firestore 01:42:22.831Z), а нажатие укладывается в эту
+  // секунду.
+  //
+  // События CallKit мгновенны и не повторяются: у `EventChannel` нет ни
+  // буфера, ни очереди (N193). Поэтому нажатие, случившееся в эту секунду,
+  // исчезало без следа — и выглядело это как «отклонил, а у звонящего экран
+  // висит».
+  //
+  // ЧТО ЗДЕСЬ СДЕЛАНО: действие перестаёт быть мгновенным событием и
+  // становится СОСТОЯНИЕМ, которое дожидается читателя. Гонки после этого
+  // нет вовсе — не «она стала реже», а её больше не существует.
+  //
+  // ХРАНИТСЯ В UserDefaults, А НЕ В ПАМЯТИ, И ЭТО НЕ ПЕРЕСТРАХОВКА. После
+  // отклонения из смахнутого приложения процесс держать нечем: iOS вправе
+  // снять его раньше, чем Dart дочитает. Память такое не переживёт, и мы
+  // получили бы тот же висящий экран, только реже — то есть хуже, потому что
+  // перемежающийся отказ спишут на случайность.
+  //
+  // ЧЕГО НЕ ПОКРЫВАЕТ (границы пишутся вместе со сторожем): если человек
+  // удалит приложение до следующего запуска, запись уйдёт вместе с ним; и
+  // накопленное не имеет срока годности — Dart обязан забрать его при первом
+  // же запуске, иначе оно применится с опозданием.
+  private static let pendingKey = "MugamPendingCallActions"
+
+  static func recordPendingAction(_ action: String, callId: String, callkitId: String) {
+    var list = UserDefaults.standard.array(forKey: pendingKey) as? [[String: Any]] ?? []
+    list.append([
+      "action": action,
+      "callId": callId,
+      "callkitId": callkitId,
+      "at": Date().timeIntervalSince1970,
+    ])
+    UserDefaults.standard.set(list, forKey: pendingKey)
+    NSLog("[VoIP] отложено действие %@ по звонку %@", action, callId)
+  }
+
+  // ЗАБИРАЕТ И СРАЗУ ОЧИЩАЕТ. Иначе одно и то же действие применялось бы при
+  // каждом запуске приложения — а «отклонить» задним числом по чужому,
+  // давно законченному звонку хуже, чем не отклонить вовсе.
+  static func takePendingCallActions() -> [[String: Any]] {
+    let list = UserDefaults.standard.array(forKey: pendingKey) as? [[String: Any]] ?? []
+    UserDefaults.standard.removeObject(forKey: pendingKey)
+    return list
   }
 
   // "development" | "production" | "unknown"
