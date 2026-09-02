@@ -153,6 +153,32 @@ class CallKitService {
     });
   }
 
+  // ЕДИНСТВЕННАЯ НА ВСЁ ПРИЛОЖЕНИЕ РАЗДАЧА СОБЫТИЙ CallKit, И ЭТО НЕ УДОБСТВО,
+  // А ОБХОД ОГРАНИЧЕНИЯ ПЛАТФОРМЫ (N193).
+  //
+  // У `EventChannel` слушатель ровно один, и второй забирает поток себе
+  // МОЛЧА: `receiveBroadcastStream()` при подписке зовёт
+  // `binaryMessenger.setMessageHandler(имя канала, …)`, а тот ставится ПО
+  // ИМЕНИ и затирает прежний. Ни ошибки, ни предупреждения, ни падения —
+  // первый подписчик просто перестаёт получать. Именно так у нас и вышло:
+  // второй слушатель, заведённый в `VoipPushTokenService`, обесточил весь
+  // приём и отклонение звонка на трубке вызываемого.
+  //
+  // ПОЭТОМУ: подписка на `FlutterCallkitIncoming.onEvent` в приложении
+  // ровно одна — ниже, — а всем, кому события нужны, они раздаются отсюда.
+  // Этот контроллер — НАСТОЯЩИЙ широковещательный, у него слушателей может
+  // быть сколько угодно, и лишний никого не обесточит. Сторож на счёт
+  // подписок — `test/single_callkit_listener_test.dart`.
+  final StreamController<CallEvent> _events = StreamController<CallEvent>.broadcast();
+
+  /// События CallKit для всех, кому они нужны, кроме самого этого класса.
+  ///
+  /// Подписываться СЮДА, а не на `FlutterCallkitIncoming.onEvent`.
+  /// Подписаться можно в любой момент, в том числе до `ensureListening`:
+  /// контроллер существует с создания singleton'а, события просто пойдут,
+  /// когда пойдут.
+  Stream<CallEvent> get events => _events.stream;
+
   void ensureListening(FirestoreService firestoreService) {
     debugPrint('[CALLKIT] ensureListening called, _listening=$_listening');
     if (_listening) return;
@@ -163,6 +189,10 @@ class CallKitService {
     // field just to never use it.
     FlutterCallkitIncoming.onEvent.listen((event) async {
       if (event == null) return;
+      // Раздача идёт ПЕРВОЙ строкой и вне try: если разбор ниже когда-нибудь
+      // бросит, чужие подписчики всё равно должны получить своё. Обратный
+      // порядок сделал бы их зависимыми от нашей ветки switch.
+      _events.add(event);
       // CallEvent is a sealed class (flutter_callkit_incoming 3.x) — each
       // variant carries either its own CallKitParams (accept/decline/
       // start/incoming/ended) or a bare String id (timeout/connected/

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 
+import '../core/calls/callkit_service.dart';
 import '../core/device/install_id.dart';
 
 // Адрес PushKit: users/{uid}/voipPushTokens/{deviceId}.
@@ -95,9 +96,21 @@ class VoipPushTokenService {
     if (!Platform.isIOS) return;
     _registeredUid = uid;
 
+    // ПОДПИСКА ИДЁТ ЧЕРЕЗ CallKitService, А НЕ НА КАНАЛ НАПРЯМУЮ (N193).
+    //
+    // Здесь стояло `FlutterCallkitIncoming.onEvent.listen(...)` — своя,
+    // вторая на весь приложение подписка на один и тот же `EventChannel`. У
+    // канала слушатель ровно один, и второй забирает поток себе МОЛЧА:
+    // ни ошибки, ни предупреждения. Эта строка обесточила приём и отклонение
+    // звонка целиком — окно показывалось, а нажатие не делало ничего, и
+    // выглядело это как поломка PushKit, а не как лишний слушатель.
+    //
+    // Цена ошибки была несимметричной: здесь ловится обновление адреса, что
+    // случается раз за установку, а отняло — каждый приём и каждый отказ.
+    //
     // Подписка ставится ДО чтения: между чтением и подпиской есть окно, и
     // адрес, пришедший в него, иначе потерялся бы до следующего запуска.
-    _tokenUpdateSub ??= FlutterCallkitIncoming.onEvent.listen((event) async {
+    _tokenUpdateSub ??= CallKitService.instance.events.listen((event) async {
       if (event is! CallEventActionDidUpdateDevicePushTokenVoip) return;
       final current = _registeredUid;
       if (current == null) return;
