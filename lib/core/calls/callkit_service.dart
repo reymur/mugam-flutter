@@ -131,6 +131,31 @@ class CallKitService {
   // _acceptedCallIds guards against.
   final Set<String> _outgoingCallIds = {};
 
+  // ЗВОНКИ, ЧЬЁ ОКНО CallKit ЗАКРЫЛИ МЫ САМИ (N195).
+  //
+  // ЗАЧЕМ. Плагин выбирает между «человек отклонил» и «звонок завершён» по
+  // одному условию — `answerCall == nil && outgoingCall == nil`
+  // (`SwiftFlutterCallkitIncomingPlugin.swift:688–715`), — и про то, КТО
+  // запросил закрытие, не спрашивает вовсе: `CXEndCallAction` приходит
+  // одинаковый и от пальца человека, и от нашего
+  // `FlutterCallkitIncoming.endCall(...)`. Поэтому наше собственное
+  // закрытие окна (звонящий отменил → `_watchForRemoteEnd` → `endCall`)
+  // возвращается к нам событием `ACTION_CALL_DECLINE`, и без этой пометки
+  // мы писали в прод `respondToCall(accept: false)` от имени человека,
+  // который ничего не нажимал. Замер 03.09: **2 документа `calls` из 25**
+  // со статусом `declined`, приписанным вызываемому (`UJGxokaT`,
+  // `YV43Uh9S`).
+  //
+  // ПОЧЕМУ РАЗЛИЧИЕ ЖИВЁТ ЗДЕСЬ, А НЕ У ПЛАГИНА. У него этого знания нет и
+  // взяться ему неоткуда — намерение известно только тому, кто закрывает.
+  //
+  // ПОЧЕМУ НАБОР НЕ ЧИСТИТСЯ ПО ТАЙМЕРУ. Запись снимается тем самым
+  // событием, ради которого поставлена. Не пришло событие — запись
+  // останется, и это безвредно: `callId` уникален, а звонок, чьё окно мы
+  // уже закрыли, закончился. Худшее, что может сделать залежавшаяся
+  // пометка, — погасить отказ по звонку, которого больше нет.
+  final Set<String> _closedByUs = {};
+
   // Started alongside every showIncoming/reportOutgoingStarted call (see
   // those methods) — owned by this singleton, not by whichever screen
   // widget happens to be showing the call, specifically so ending the
@@ -364,7 +389,22 @@ class CallKitService {
         case CallEventActionCallDecline(:final callKitParams):
           final callId = callKitParams.extra?['firestoreCallId'] as String?;
           if (callId == null) break;
+          // ПОМЕТКА В `_applied` СТОИТ ДО РАЗВИЛКИ НАРОЧНО, И ЭТО НЕ
+          // ПЕРЕСТРАХОВКА (N194 × N195). Нативный делегат кладёт КАЖДЫЙ
+          // отказ в отложенные, включая тот, что мы сейчас распознаем как
+          // своё же закрытие. Без пометки эта запись дождалась бы
+          // следующего запуска в течение минуты — и выдача применила бы
+          // отказ, от которого мы здесь отказались.
           _applied.add('decline:$callId');
+          // СВОЁ ЗАКРЫТИЕ ОКНА — НЕ ОТКАЗ ЧЕЛОВЕКА (N195). Разбор — у
+          // объявления `_closedByUs`. Пометка снимается тем же чтением,
+          // которым проверяется: второго такого события по одному звонку не
+          // бывает, а если бы и пришло — оно уже про закончившийся звонок.
+          if (_closedByUs.remove(callId)) {
+            _callkitIdByCallId.remove(callId);
+            _endWatchers.remove(callId)?.cancel();
+            break;
+          }
           try {
             await firestoreService.respondToCall(callId: callId, accept: false);
           } catch (_) {}
@@ -537,6 +577,11 @@ class CallKitService {
     _outgoingCallIds.remove(callId);
     final callkitId = _callkitIdByCallId.remove(callId);
     if (callkitId == null) return;
+    // ПОМЕТКА СТАВИТСЯ ДО ЗАКРЫТИЯ, И ПОРЯДОК ЗНАЧИМ (N195): событие
+    // `ACTION_CALL_DECLINE` — это ответ плагина на строку ниже, и прийти оно
+    // может раньше, чем `await` вернёт управление сюда. Пометка после
+    // закрытия оставила бы щель ровно того же вида, что N194.
+    _closedByUs.add(callId);
     await FlutterCallkitIncoming.endCall(callkitId);
   }
 }
