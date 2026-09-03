@@ -131,7 +131,16 @@ class CallKitService {
   // _acceptedCallIds guards against.
   final Set<String> _outgoingCallIds = {};
 
-  // ЗВОНКИ, ЧЬЁ ОКНО CallKit ЗАКРЫЛИ МЫ САМИ (N195).
+  // ЗВОНКИ, ЧЬЁ ОКНО CallKit ЗАКРЫЛИ МЫ САМИ (N195 и N198).
+  //
+  // СПРАШИВАЕТСЯ В ДВУХ ВЕТВЯХ, А НЕ В ОДНОЙ, И ЭТО НЕ ПЕРЕСТРАХОВКА.
+  // Наше закрытие окна возвращается к нам **разным** событием в зависимости
+  // от того, звонил ли когда-нибудь сам владелец трубки: `outgoingCall` в
+  // плагине — защёлка, взводится при первом исходящем и не сбрасывается
+  // никогда. Не звонил — приходит `ACTION_CALL_DECLINE` (N195, приписанный
+  // отказ). Звонил хоть раз — приходит `ACTION_CALL_ENDED` (N198, затирание
+  // настоящего отказа). Починить одну ветвь значило бы починить для половины
+  // людей, и по какому признаку эта половина делится — не видно ниоткуда.
   //
   // ЗАЧЕМ. Плагин выбирает между «человек отклонил» и «звонок завершён» по
   // одному условию — `answerCall == nil && outgoingCall == nil`
@@ -423,18 +432,45 @@ class CallKitService {
           _endWatchers.remove(callId)?.cancel();
         case CallEventActionCallEnded(:final callKitParams):
           // Fires for ANY call end CallKit knows about — including ones WE
-          // triggered via endCall() below (telling the plugin to end a call
-          // reports this same event back to us; harmless to re-run
-          // firestoreService.endCall() in that case, it's a no-op write on
-          // an already-"ended" doc). The case that actually matters here is
-          // the one nothing else covers: the user ending the call from
-          // CallKit's OWN native in-call screen (the system "Отбой" button,
-          // reachable via the status-bar call pill) — that's a
+          // triggered via endCall() below. The case that actually matters
+          // here is the one nothing else covers: the user ending the call
+          // from CallKit's OWN native in-call screen (the system "Отбой"
+          // button, reachable via the status-bar call pill) — that's a
           // CXEndCallAction the OS performs directly against the provider,
           // entirely outside our Dart code, so without this case Firestore
           // (and the other party) would never learn the call ended.
+          //
+          // ЗДЕСЬ СТОЯЛО «harmless to re-run firestoreService.endCall() in
+          // that case, it's a no-op write on an already-"ended" doc», И ЭТО
+          // БЫЛО НЕВЕРНО (N198, найдено 03.09 замером в проде). Документ на
+          // момент перезаписи бывает не `ended`, а **`declined`** — и тогда
+          // это не no-op, а **затирание отказа человека**.
+          //
+          // ЗАМЕР, ЗВОНОК `Z6VxywLZ`: `respondToCall` в `00:35:50.088Z`
+          // записал `declined`, наш же `endCall` в `00:35:52.142Z` — через
+          // **2,05 с** — переписал его на `ended`. Отклонение исчезло из
+          // записи.
+          //
+          // ПОЧЕМУ СОБЫТИЕ ПРИХОДИТ «ЗАВЕРШЁН», А НЕ «ОТКЛОНЁН», хотя окно
+          // закрыто из-за отказа: плагин выбирает ветвь по
+          // `answerCall == nil && outgoingCall == nil`, а `outgoingCall` —
+          // защёлка, которая взводится при первом же исходящем звонке с этой
+          // трубки и НИКОГДА не сбрасывается. У всякого, кто хоть раз звонил
+          // сам, наше закрытие окна возвращается как `ENDED`. То есть N195 и
+          // этот случай — одна болезнь на двух ветвях, и чинить надо обе.
+          //
+          // ЭТИМ ЖЕ ОБЪЯСНЯЕТСЯ ЗАМЕР 02.09: **23 документа `ended` против
+          // 2 `declined` из 25.** Отклонения записывались и затирались.
           final callId = callKitParams.extra?['firestoreCallId'] as String?;
           if (callId == null) break;
+          // СВОЁ ЗАКРЫТИЕ ОКНА НЕ ЕСТЬ ЗАВЕРШЕНИЕ ЗВОНКА ЧЕЛОВЕКОМ (N198).
+          // Пометку ставит `endCall` перед обращением к плагину; снимается
+          // она здесь же, тем же чтением, что и проверяется.
+          if (_closedByUs.remove(callId)) {
+            _callkitIdByCallId.remove(callId);
+            _endWatchers.remove(callId)?.cancel();
+            break;
+          }
           try {
             await firestoreService.endCall(callId: callId);
           } catch (_) {}
