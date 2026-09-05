@@ -23,6 +23,35 @@ beforeEach(async () => {
 
 // БАРЬЕР МЕЖДУ ЗАПИСЬЮ И ВЫЗОВОМ ФУНКЦИИ — N192.
 //
+// ═══ ПРИЧИНА НАЙДЕНА 03.09, И ВЕСЬ РАЗБОР НИЖЕ ЕЮ ОТМЕНЁН. ЧИТАТЬ ЕГО КАК
+// ═══ ИСТОРИЮ ЗАБЛУЖДЕНИЯ, А НЕ КАК ОБЪЯСНЕНИЕ.
+//
+// Документ статуса переписывал ТРЕТИЙ ПИСАТЕЛЬ — наш собственный триггер
+// `onStatusCreated` (`functions/src/index.ts:1794`, расчёт `:1828`, запись
+// `:1831`). Он ставит `isPublic = privacyMode !== "onlyShareWith"`; вердикт
+// писал `privacyMode: "contacts"` и рядом `isPublic: false`, триггер приводил
+// их к согласию и ставил `true` за ~11 мс. Функция читала уже исправленное и
+// разрешала доступ — ПРАВИЛЬНО по тем данным, что лежат. Пропуска проверки
+// доступа не было: `canView` считал верно каждый раз.
+//
+// ЧТО ИЗ НАПИСАННОГО НИЖЕ НЕВЕРНО ИМЕННО КАК ВЫВОД, а не как замер:
+//   • «помогает не время, а ЗАПРОС» — совпадение на малом числе проб. Барьер
+//     даёт триггеру БОЛЬШЕ времени успеть, а не меньше, то есть лечить эту
+//     гонку не мог ни при каком раскладе;
+//   • «`set()` возвращается раньше, чем результат виден следующему читателю» —
+//     догадка, ничем не подтверждённая; видно было последнее состояние своего
+//     же документа (отпечаток файла в прочитанном совпал с возвращённым).
+//
+// ЧИСЛО «ВОСЕМЬ ВЕРДИКТОВ ИЗ ДЕВЯТИ» ТОЖЕ НЕВЕРНО, И ЭТО I57 — ЗАМЕРА НЕ БЫЛО
+// ВОВСЕ. Вердиктов в файле СЕМЬ, и было семь всегда:
+// `grep -cE "^test\(" functions/test/copy-status-media-to-chat.test.ts` — 7,
+// то же число на `4555ebf` и на `098defa`. Девятка не устарела, её никто не
+// считал.
+//
+// БАРЬЕР ОСТАВЛЕН НАРОЧНО, А НЕ ПО ЗАБЫВЧИВОСТИ: он ничего не портит, а нужен
+// ли он вообще — проверяется отдельным прогоном без него, и это отдельная
+// работа (раздел 0 `docs/handoff.md`).
+//
 // ЧТО СЛУЧИЛОСЬ. Набор из 23 файлов был зелёным. Добавление 24-го,
 // БЕЗВРЕДНОГО (`voip-tokens-rules.test.ts`, он не трогает ни статусы, ни
 // чаты, ни Storage) сделало этот файл красным на вердикте «rejects when
@@ -70,11 +99,27 @@ async function makeChat(chatId: string, members: string[]): Promise<void> {
   await settle();
 }
 
+// ПОЧЕМУ `privacyMode` — ПАРАМЕТР, А НЕ ПРИБИТОЕ «contacts»
+// (N192, 06.09 местного / 05.09 UTC — заход ночной, поэтому обе).
+//
+// Документ статуса здесь пишет НЕ ТОЛЬКО этот файл: `onStatusCreated`
+// (`functions/src/index.ts:1794`) срабатывает на создание и ПЕРЕПИСЫВАЕТ
+// `visibleToUids` и `isPublic`, считая их из `privacyMode` и `privacyList`.
+// Пока режим был прибит к «contacts», всякий вердикт этого файла писал одно,
+// а через несколько миллисекунд в документе оказывалось другое: триггер ставил
+// `isPublic: true` и `visibleToUids: [ownerUid]`. Кто успеет первым — функция
+// или триггер, — решала очередь наборов, и вердикт про ЗАКРЫТЫЙ статус был
+// зелёным ровно потому, что успевал прочитать до нашей же правки (I9: зелен он
+// был так всю свою жизнь, а не в удачные дни).
+//
+// Лечится это не барьером и не паузой, а тем, что обстановка перестаёт спорить
+// с триггером: режим называется явно, и написанное совпадает с вычисленным.
 async function makeImageStatus(opts: {
   ownerUid: string;
   statusId: string;
   visibleToUids?: string[];
   isPublic?: boolean;
+  privacyMode?: string;
   privacyList?: string[];
   fileBytes?: string;
 }): Promise<{ statusId: string; storagePath: string }> {
@@ -118,7 +163,7 @@ async function makeImageStatus(opts: {
       mediaUrl,
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + 86400000),
-      privacyMode: "contacts",
+      privacyMode: opts.privacyMode ?? "contacts",
       privacyList: opts.privacyList ?? [],
       visibleToUids: opts.visibleToUids ?? [opts.ownerUid],
       isPublic: opts.isPublic ?? false,
@@ -156,7 +201,29 @@ test("rejects when the status doesn't exist", async () => {
 
 test("rejects when caller has no access to a private status (not owner, not in visibleToUids, not public)", async () => {
   await makeChat("c1", ["A", "B"]);
-  await makeImageStatus({ ownerUid: "A", statusId: "s1", visibleToUids: ["A"], isPublic: false });
+  // РЕЖИМ НАЗВАН ЯВНО, И ЭТО И ЕСТЬ ПОЧИНКА N192 (06.09 местного / 05.09 UTC).
+  //
+  // «onlyShareWith» с ПУСТЫМ `privacyList` — единственный режим, при котором
+  // `onStatusCreated` считает то же самое, что написано здесь руками:
+  // `visibleToUids: [ownerUid]` и `isPublic: false`. Триггер и вердикт
+  // перестают спорить, и статус остаётся закрытым независимо от того, кто
+  // успел первым.
+  //
+  // Прежде здесь стоял режим «contacts» (умолчание хелпера), и триггер за
+  // ~11 мс ставил `isPublic: true`. Вердикт обещает «закрытый статус», а
+  // статус закрытым не был: проходил он, только если функция успевала
+  // прочитать документ до нашей же правки. Замер 03.09: одиннадцать прогонов,
+  // у десяти зелёных `createTime == updateTime` и `isPublic: false`, у
+  // единственного красного `createTime 03:35:57.709Z` != `updateTime .720Z`
+  // при `isPublic: true` — расхождение отметок и есть подпись второй записи.
+  await makeImageStatus({
+    ownerUid: "A",
+    statusId: "s1",
+    privacyMode: "onlyShareWith",
+    privacyList: [],
+    visibleToUids: ["A"],
+    isPublic: false,
+  });
 
   await expect(
     copyStatusMediaToChat.run(req("B", { statusOwnerUid: "A", statusId: "s1", targetChatId: "c1" })),
