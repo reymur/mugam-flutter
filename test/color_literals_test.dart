@@ -52,7 +52,10 @@ const _known = <String, int>{
   'features/profile/screens/profile_screen.dart|Color(0x99000000)': 1,
   'features/status/screens/create_status_screen.dart|Color(0xFF2196F3)': 1,
   'shared/widgets/event_conflict_dialog.dart|Color(0xCC000000)': 1,
-  'shared/widgets/topbar.dart|Color(0xFF8B5A00)': 1,
+  // СНЯТО 06.09 РАБОТОЙ 7Б: третья плитка значка переведена на имя
+  // `kLogoTileWarm`, литерала в `topbar.dart` больше нет. Строка убрана,
+  // а не оставлена с нулём: остаток считается по составу, и лишний ключ
+  // читался бы как «литерал ещё там».
 };
 
 Map<String, int> _found() {

@@ -406,7 +406,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
                     colors: [kGold2, kGold],
                   ),
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: Colors.white.withAlpha(38)),
+                  border: Border.all(color: kHairline38),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withAlpha(100),
@@ -665,7 +665,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       bgColor = kRed.withAlpha(20);
     } else if (cancelled) {
       borderColor = kRed.withAlpha(77);
-      bgColor = Colors.white.withAlpha(3);
+      bgColor = kSurfaceLift03;
     } else if (unsettled) {
       // Не золотая рамка и не красная: договор ни «свежий», ни отменённый.
       // Тот же набор `kWarn*`, что у отметки на самой карточке и у
@@ -677,7 +677,7 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
       bgColor = kGold.withAlpha(20);
     } else {
       borderColor = null;
-      bgColor = Colors.white.withAlpha(8);
+      bgColor = kSurfaceLift08;
     }
 
     String roleText;
@@ -1662,10 +1662,10 @@ class _AgreementsScreenState extends ConsumerState<AgreementsScreen> {
         margin: const EdgeInsets.all(2),
         decoration: BoxDecoration(
           color: bgColor == Colors.transparent
-              ? Colors.white.withAlpha(16)
+              ? kSurfaceLift16
               : bgColor,
           borderRadius: BorderRadius.circular(12),
-          border: border ?? Border.all(color: Colors.white.withAlpha(28)),
+          border: border ?? Border.all(color: kHairline28),
           boxShadow: glow,
         ),
         child: Stack(

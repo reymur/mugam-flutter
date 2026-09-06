@@ -523,8 +523,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 },
               ),
             ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text('Sil', style: TextStyle(color: Colors.red)),
+              leading: const Icon(Icons.delete_outline, color: kRedChat),
+              title: const Text('Sil', style: TextStyle(color: kRedChat)),
               onTap: () =>
                   _enterSelectionMode(msg, purpose: _SelectionPurpose.delete),
             ),
@@ -595,8 +595,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 },
               ),
             ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text('Sil', style: TextStyle(color: Colors.red)),
+              leading: const Icon(Icons.delete_outline, color: kRedChat),
+              title: const Text('Sil', style: TextStyle(color: kRedChat)),
               onTap: () {
                 Navigator.of(context).pop();
                 ref
@@ -1549,7 +1549,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 ListTile(
                   title: const Text(
                     'Hamıdan sil',
-                    style: TextStyle(color: Colors.red),
+                    style: TextStyle(color: kRedChat),
                   ),
                   onTap: () {
                     Navigator.of(sheetContext).pop();
@@ -1559,7 +1559,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               ListTile(
                 title: const Text(
                   'Yalnız məndən sil',
-                  style: TextStyle(color: Colors.red),
+                  style: TextStyle(color: kRedChat),
                 ),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
@@ -2929,7 +2929,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Mikrofon icazəsi verilmədi'),
-          backgroundColor: Colors.red,
+          backgroundColor: kRedChat,
         ),
       );
     }

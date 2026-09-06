@@ -28,7 +28,7 @@ class Topbar extends StatelessWidget {
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF8B5A00),
+                  color: kLogoTileWarm,
                   borderRadius: BorderRadius.circular(10),
                 ),
                 alignment: Alignment.center,

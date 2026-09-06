@@ -81,7 +81,7 @@ class _WheelDateTimePickerState extends State<WheelDateTimePicker> {
       decoration: BoxDecoration(
         color: kCard,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withAlpha(15)),
+        border: Border.all(color: kHairline15),
       ),
       child: Stack(
         alignment: Alignment.center,
@@ -91,7 +91,7 @@ class _WheelDateTimePickerState extends State<WheelDateTimePicker> {
               height: _itemExtent,
               margin: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
-                color: Colors.white.withAlpha(18),
+                color: kSurfaceLift18,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: kGold.withAlpha(128)),
               ),

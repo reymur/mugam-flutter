@@ -1106,7 +1106,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
                 ListTile(
                   title: const Text(
                     'Hamıdan sil',
-                    style: TextStyle(color: Colors.red),
+                    style: TextStyle(color: kRedChat),
                   ),
                   onTap: () async {
                     Navigator.of(sheetContext).pop();
@@ -1122,7 +1122,7 @@ class _VideoPlayerScreenState extends ConsumerState<VideoPlayerScreen> {
               ListTile(
                 title: const Text(
                   'Yalnız məndən sil',
-                  style: TextStyle(color: Colors.red),
+                  style: TextStyle(color: kRedChat),
                 ),
                 onTap: () async {
                   Navigator.of(sheetContext).pop();
