@@ -109,13 +109,13 @@ const Color kLogoTile = Color(0xFF2A1E08);
 /// Значение равно `Colors.red` (`0xFFF44336`), которое стояло в 11 местах:
 /// десять — удаление («Hamıdan sil», «Yalnız məndən sil», «Sil»), одно —
 /// отказ в разрешении на микрофон. Правкой 2 схлопнется в `kRed`.
-const Color kRedChat = Color(0xFFF44336);
+const Color kRedChat = kRed;
 
 /// Тёплая подложка плитки значка в верхней панели — временное имя.
 ///
 /// Значение равно `0xFF8B5A00`, которое стояло литералом в `topbar.dart`.
 /// Третий экземпляр той же плитки; правкой 2 схлопнется в `kLogoTile`.
-const Color kLogoTileWarm = Color(0xFF8B5A00);
+const Color kLogoTileWarm = kLogoTile;
 
 // СЕМЬ ПРОЗРАЧНОСТЕЙ ТЁМНОЙ ОБОЛОЧКИ — И ЭТО СЕМЬ ИЗ ДВАДЦАТИ ОДНОЙ, А НЕ ВСЕ.
 //
@@ -129,13 +129,34 @@ const Color kLogoTileWarm = Color(0xFF8B5A00);
 // Свести последние 14 к двум именам значит поменять вид просмотрщика статуса
 // и видео. Это решение о ВИДЕ, а не уборка, и оно за владельцем — поэтому
 // работа 7б их не трогает. План называл 10 мест; сегодня их 21 (I57).
-const Color kSurfaceLift03 = Color(0x03FFFFFF);
-const Color kSurfaceLift08 = Color(0x08FFFFFF);
-const Color kSurfaceLift16 = Color(0x10FFFFFF);
-const Color kSurfaceLift18 = Color(0x12FFFFFF);
-const Color kHairline15 = Color(0x0FFFFFFF);
-const Color kHairline28 = Color(0x1CFFFFFF);
-const Color kHairline38 = Color(0x26FFFFFF);
+/// Подложка чуть светлее фона — ОДНО значение на все четыре места.
+///
+/// Значение выбрано серединой того, что стояло: 3, 8, 16 и 18 -> **12**.
+/// Не среднее арифметическое (11,25), а круглое рядом с ним: разницу в
+/// единицу альфы на тёмном фоне не различает никто, а круглое число легче
+/// назвать вслух.
+const Color kSurfaceLift = Color(0x0CFFFFFF);
+
+/// Волосяная линия — ОДНО значение на все три места.
+///
+/// Было 15, 28 и 38 -> **28**, и это НЕ середина. Довод: 15 на тёмном почти
+/// не видна (колесо выбора времени), 38 заметнее прочих рамок экрана. 28
+/// стоит у самой частой рамки и уже прошло проверку глазами в своём месте —
+/// брать середину значило бы менять и её тоже.
+const Color kHairline = Color(0x1CFFFFFF);
+
+// ПСЕВДОНИМЫ ПРАВКИ 1 СХЛОПНУТЫ СЮДА. Места вызова не тронуты нарочно: вся
+// разница между правкой 1 и правкой 2 живёт в этом файле, поэтому на трубке
+// видно ровно оттенок, а откат — одна строка. Переименовать места вызова в
+// два конечных имени можно третьим, косметическим заходом, когда вид принят
+// глазами; делать это сейчас значило бы снова смешать перевод с оттенком.
+const Color kSurfaceLift03 = kSurfaceLift;
+const Color kSurfaceLift08 = kSurfaceLift;
+const Color kSurfaceLift16 = kSurfaceLift;
+const Color kSurfaceLift18 = kSurfaceLift;
+const Color kHairline15 = kHairline;
+const Color kHairline28 = kHairline;
+const Color kHairline38 = kHairline;
 
 // ЭТО ПРАВИЛО ПРО СВЯЗЬ, А НЕ ПРО ЗАПРЕТ ИМЁН. Производное, которое обязано
 // ЕХАТЬ ЗА источником, своего имени не получает. Производное, которому
