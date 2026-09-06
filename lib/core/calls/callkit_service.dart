@@ -432,8 +432,6 @@ class CallKitService {
           // следующего запуска в течение минуты — и выдача применила бы
           // отказ, от которого мы здесь отказались.
           _applied.add('decline:$callId');
-          // ДИАГНОСТИКА N195, ОБРАТИМАЯ, СНЯТЬ ПОСЛЕ ЗАМЕРА.
-          debugPrint('[CALLKIT] DECLINE callId=$callId closedByUs=${_closedByUs.contains(callId)} outgoing=${_outgoingCallIds.contains(callId)} accepted=${_acceptedCallIds.contains(callId)}');
           // СВОЁ ЗАКРЫТИЕ ОКНА — НЕ ОТКАЗ ЧЕЛОВЕКА (N195). Разбор — у
           // объявления `_closedByUs`. Пометка снимается тем же чтением,
           // которым проверяется: второго такого события по одному звонку не
@@ -454,8 +452,6 @@ class CallKitService {
         case CallEventActionCallTimeout(:final id):
           final callId = _callIdForCallkitId(id);
           if (callId == null) break;
-          // ДИАГНОСТИКА N195, ОБРАТИМАЯ, СНЯТЬ ПОСЛЕ ЗАМЕРА.
-          debugPrint('[CALLKIT] TIMEOUT callId=$callId closedByUs=${_closedByUs.contains(callId)}');
           try {
             await firestoreService.endCall(callId: callId);
           } catch (_) {}
@@ -494,8 +490,6 @@ class CallKitService {
           // 2 `declined` из 25.** Отклонения записывались и затирались.
           final callId = callKitParams.extra?['firestoreCallId'] as String?;
           if (callId == null) break;
-          // ДИАГНОСТИКА N195, ОБРАТИМАЯ, СНЯТЬ ПОСЛЕ ЗАМЕРА.
-          debugPrint('[CALLKIT] ENDED callId=$callId closedByUs=${_closedByUs.contains(callId)} outgoing=${_outgoingCallIds.contains(callId)} accepted=${_acceptedCallIds.contains(callId)}');
           // СВОЁ ЗАКРЫТИЕ ОКНА НЕ ЕСТЬ ЗАВЕРШЕНИЕ ЗВОНКА ЧЕЛОВЕКОМ (N198).
           // Пометку ставит `endCall` перед обращением к плагину; снимается
           // она здесь же, тем же чтением, что и проверяется.
@@ -706,8 +700,6 @@ class CallKitService {
     // заново, а не остаться от прошлого раза.
     _closedByUs.remove(callId);
     final callkitId = _callkitIdByCallId.remove(callId);
-    // ДИАГНОСТИКА N195, ОБРАТИМАЯ, СНЯТЬ ПОСЛЕ ЗАМЕРА.
-    debugPrint('[CALLKIT] endCall(наше смыкание окна) callId=$callId callkitId=$callkitId');
     if (callkitId == null) return;
     // ПОМЕТКА СТАВИТСЯ ДО ЗАКРЫТИЯ, И ПОРЯДОК ЗНАЧИМ (N195): событие
     // `ACTION_CALL_DECLINE` — это ответ плагина на строку ниже, и прийти оно
