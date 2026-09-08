@@ -10,6 +10,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/agreements/event_answers.dart';
+import '../core/agreements/lineup.dart';
 import '../core/chat/chat_departure.dart';
 import '../core/chat/chat_existence.dart';
 import '../core/models/activity_type.dart';
@@ -3694,6 +3695,111 @@ class FirestoreService {
       'createdAt': FieldValue.serverTimestamp(),
     }).timeout(_writeTimeout);
     return ref.id;
+  }
+
+  /// ПРИГЛАШЕНИЕ СВОЕГО В СОСТАВ — отдельный документ на каждого позванного.
+  ///
+  /// Работа 7, шаг 5 (`docs/plan.md`), 09.09. **Это первое место в проекте,
+  /// пишущее `parentEventId`, и первый его вызов НЕОБРАТИМ В ДАННЫХ:** до
+  /// него форму документа можно переделать даром, после — это миграция. Оно
+  /// не выглядит выкладкой и потому названо здесь громко: необратимое
+  /// проходит обычным нажатием кнопки при проверке на трубке.
+  ///
+  /// **ВЛАДЕЛЕЦ РЕБЁНКА — ЗОВУЩИЙ, И ВЫБОРА ТУТ НЕТ.** Правило
+  /// `allow create` требует `request.resource.data.ownerUid ==
+  /// request.auth.uid`; завести документ, которым владеет приглашённый, с
+  /// нашего устройства нельзя вовсе. Из этого следует схлопывание в календаре
+  /// зовущего — `collapsesUnderParent` в `core/agreements/day_role.dart`.
+  ///
+  /// **ПОЛЯ РОДИТЕЛЯ КОПИРУЮТСЯ СНИМКОМ, А НЕ ЧИТАЮТСЯ ПО ССЫЛКЕ**, и это
+  /// сказано вслух, чтобы не сойти за готовое: сдвинул родителя — дети
+  /// сегодня останутся на прежней дате. Их ведёт сервер, шаги 6 и 8 работы.
+  ///
+  /// **В `musicians` только приглашённый.** Зовущий там не нужен —
+  /// `isParty()` пускает его как владельца, — а попади он туда, карта ответов
+  /// объявила бы его ждущим ответа на собственном вечере (N112).
+  ///
+  /// **`isAgree: false` даже когда родитель — договор.** Приглашение в состав
+  /// не есть двусторонняя договорённость об оплате: это про вечер, а не про
+  /// то, платят ли за него. Попутно это оставляет зовущему `ownerCancelsOwnEvent`
+  /// на ребёнка — ход, требующий ровно `isAgree == false`.
+  ///
+  /// **`lastActionType: 'created'`, А НЕ `'agreed'`, И ЭТО НЕ МЕЛОЧЬ.**
+  /// `onPersonalEventCreated` при имени `'agreed'` молчит нарочно (там гасится
+  /// пачка вечеров из принятого предложения). Поставь мы его здесь — и
+  /// приглашённый не узнал бы о приглашении НИЧЕМ. С именем `'created'`
+  /// работает уже существующая дорога: «Tədbirə əlavə olundunuz» тому
+  /// единственному, кто в составе. Функции этот шаг не трогает.
+  Future<String> createLineupInvitation({
+    required PersonalEvent parent,
+    required String callerUid,
+    required String inviteeUid,
+  }) async {
+    final ref = await _db.collection('personalEvents').add({
+      'ownerUid': callerUid,
+      'parentEventId': parent.id,
+      'date': parent.date,
+      'type': parent.type,
+      'location': parent.location,
+      'notes': parent.notes,
+      'musicians': [inviteeUid],
+      // Правило одно на всех писателей карты (`event_answers.dart`), а не
+      // строка здесь: иначе два места, решающих, что значит «состав»,
+      // разошлись бы молча. Даёт `waiting` — вопрос задан, ответа нет.
+      'answers': answersForParticipants(
+        [inviteeUid],
+        ownerUid: callerUid,
+        previousParticipants: null,
+      ),
+      // Карта заполнена ЦЕЛИКОМ по составу: отсутствующий в ней человек не
+      // «неизвестен», а не спрошен (N115).
+      kAnswersWrittenByOwner: true,
+      'isAgree': false,
+      'agreementChatId': null,
+      'partnerUid': null,
+      'partnerName': null,
+      'status': 'agreed',
+      'cancelRequestedBy': null,
+      'cancelRequestedAt': null,
+      'cancelConfirmedBy': null,
+      'cancelledAt': null,
+      'replacedEventId': null,
+      'lastActionBy': callerUid,
+      'lastActionType': 'created',
+      'lastActionAt': FieldValue.serverTimestamp(),
+      'createdAt': FieldValue.serverTimestamp(),
+    }).timeout(_writeTimeout);
+    return ref.id;
+  }
+
+  /// ЗАПИСЬ ШАБЛОНА СОСТАВА НА РОДИТЕЛЯ — одной операцией, в момент сбора.
+  ///
+  /// Работа 7, шаг 5. Разбор формы — `core/agreements/lineup.dart`.
+  ///
+  /// **ПИШЕТСЯ ТОЛЬКО `lineup`, И ЭТО ДВА РАЗНЫХ ДОВОДА, А НЕ АККУРАТНОСТЬ.**
+  ///
+  /// Первый — правила. Ветвь владельца в `allow update` перечисления ключей
+  /// не имеет, но запрещает имена отмены (`namesCancelDeed`) и повод
+  /// состояния (`serverOwnsUnsettledReason`); `lineup` не задевает ни того,
+  /// ни другого, значит **выкладка правил этому шагу не нужна вовсе**.
+  ///
+  /// Второй — уведомления. Тронь мы здесь заодно `lastActionBy`/
+  /// `lastActionType`, и `onPersonalEventUpdated` разослал бы составу рассказ
+  /// о поступке, которого не было (I54: поле, по которому автомат судит о
+  /// смысле произошедшего). Сам по себе `lineup` через `diffEvents` не
+  /// проходит — там читаются дата, место, заметки и состав, — то есть
+  /// молчание сервера здесь получено устройством, а не надеждой.
+  ///
+  /// **Список перезаписывается целиком, а не дополняется.** Он и есть ответ
+  /// на вопрос «кого звали в этот раз»; дописывание превратило бы его в
+  /// историю, у которой нет ни одного читателя.
+  Future<void> saveLineup({
+    required String eventId,
+    required List<LineupSlot> slots,
+  }) async {
+    await _db.collection('personalEvents').doc(eventId).update({
+      'lineup': lineupToFirestore(slots),
+    }).timeout(_writeTimeout);
   }
 
   /// Правка вечера владельцем. Карту собирает `eventEditUpdate` — чистое

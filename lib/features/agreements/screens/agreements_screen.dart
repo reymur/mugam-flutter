@@ -19,7 +19,11 @@ import '../../../core/agreements/day_buckets.dart';
 import '../../../core/agreements/event_lookup.dart';
 import '../../../core/agreements/day_role.dart';
 import '../../../core/agreements/left_member_actions.dart';
+import '../../../core/agreements/lineup.dart';
+import '../../../core/agreements/lineup_children.dart';
 import '../../../core/agreements/month_marks.dart';
+import '../../../core/chat/job_offer_round.dart';
+import '../../../core/chat/open_direct_chat.dart';
 import '../../../core/time/az_date_format.dart';
 import '../../day/screens/day_screen.dart';
 import '../../../firebase/firestore_service.dart';
@@ -2914,37 +2918,209 @@ class _PersonalEventDetailScreenState
   /// месте `if (event.isAgree)`, знайте, что ответ на вопрос 1 нарушен на
   /// деле при соблюдении на словах (I64).
   ///
-  /// **ЧЕГО ЭТОТ ШАГ ЕЩЁ НЕ ДЕЛАЕТ, И ЭТО СКАЗАНО ГРОМКО, ЧТОБЫ НЕ СОЙТИ ЗА
-  /// ГОТОВОЕ: приглашения не создаются.** Создание детей с `parentEventId`,
-  /// шаблон состава и отметка непозванного — шаг 5. Здесь лист открывается и
-  /// возвращает выбранных, а карточка честно называет, кого выбрали.
+  /// **ШАГ 5 ЗАМЕНИЛ ЗДЕСЬ ВРЕМЕННУЮ СТРОКУ «Seçildi: имена», А НЕ ДОПОЛНИЛ
+  /// ЕЁ** — как и было записано при её появлении. Та строка честно говорила,
+  /// кого выбрали, и ничего не обещала про отправку; теперь отправка есть, и
+  /// сообщать надо о ней.
   ///
-  /// **Почему подтверждение выбора всё-таки показывается, а не молчит.**
-  /// Кнопка, после которой ничего не происходит, неотличима от поломки —
-  /// этим уже оплачены N65 и N146. Строка «выбраны такие-то» не обещает
-  /// отправки: она сообщает ровно то, что произошло. **Она временная и
-  /// заменяется шагом 5, а не дополняется им.**
-  Future<void> _callMyPeople(List<User> allUsers) async {
+  /// **ЗДЕСЬ ЖИВЁТ ЕДИНСТВЕННОЕ НЕОБРАТИМОЕ В ДАННЫХ ВО ВСЕЙ РАБОТЕ.** Первое
+  /// приглашение с `parentEventId` не выглядит выкладкой и проходит обычным
+  /// нажатием кнопки; до него форму документа можно было переделать даром,
+  /// после — это миграция. Сам писатель и разбор формы —
+  /// `FirestoreService.createLineupInvitation`.
+  ///
+  /// **ЧАСТИЧНАЯ ОТПРАВКА, И ОНА НЕ ОСОБЫЙ СЛУЧАЙ, А ПРАВИЛО** (решение
+  /// владельца 08.09). Отправляем тем, кому можно, и **называем поимённо**
+  /// тех, кому не ушло, с дверью в их чат. Довод владельца дословно: человек
+  /// не должен узнавать о непозванном из тишины — иначе будет ждать ответа,
+  /// который не придёт. Блокировать весь состав из-за одного нельзя: один
+  /// чужой разговор про работу через месяц запер бы всю пятницу.
+  ///
+  /// **ПОРЯДОК ЗАПИСЕЙ ЗНАЧИМ: сперва дети, потом ОДНОЙ операцией шаблон.**
+  /// Оборвись ход посередине — дети остаются, и они сами себе свидетели
+  /// (`invitedUidsUnder` спрашивает документы, а не шаблон). Обратный порядок
+  /// оставил бы шаблон, утверждающий отправку, которой не было.
+  ///
+  /// **ЧЕГО ЭТОТ ШАГ НЕ ДЕЛАЕТ, СКАЗАНО ГРОМКО, ЧТОБЫ НЕ СОЙТИ ЗА ГОТОВОЕ:
+  /// карточка родителя строк состава не показывает.** Шаг «в карточке видно:
+  /// позвал троих, ответов нет» (`docs/check-call-my-people.md`) — следующий.
+  /// Сегодня зовущий узнаёт исход из окна отправки, а самого приглашения не
+  /// видит нигде: у него оно схлопнуто под родителем нарочно
+  /// (`collapsesUnderParent`).
+  Future<void> _callMyPeople(
+    PersonalEvent event,
+    List<User> allUsers,
+    List<PersonalEvent> myEvents,
+  ) async {
     final picked = await pickPeopleForLineup(context);
     // `null` — закрыл, не выбрав: это ответ «передумал», и он останавливает
     // ход целиком. Пустой список отличен от него по смыслу (I47), но сегодня
     // невозможен: кнопка «готово» при пустом наборе не нажимается.
     if (picked == null || picked.isEmpty || !mounted) return;
-    // Имя берётся ПО UID из живого списка, а запасного «Naməlum» здесь не
-    // выдумываем: человека только что выбрали из этого же списка, значит он
-    // в нём есть. Пропавший между выбором и показом — не «Naməlum», а
-    // сведения, которых нет, и врать про них строка не должна.
-    final names = picked
-        .map((uid) => _findUser(allUsers, uid)?.name ?? '')
-        .where((n) => n.isNotEmpty)
-        .join(', ');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Seçildi: $names'),
-        behavior: SnackBarBehavior.floating,
+
+    final service = ref.read(firestoreServiceProvider);
+    final myUid = widget.currentUid;
+    // Спрошено ОДИН раз до цикла: внутри него состояние потоков всё равно не
+    // обновится — дети, созданные этим же ходом, приедут позже, — а
+    // повторный вопрос создавал бы видимость свежести.
+    final already = invitedUidsUnder(myEvents, event.id);
+
+    final slots = <LineupSlot>[];
+    for (final uid in picked) {
+      // Имя — снимок НА МИГ СБОРА, и пересобирать его при чтении запрещено
+      // (требование приёмки 3). Пустое значит «сведений нет»: человек
+      // выбран из этого же списка, значит он в нём был, и врать вместо
+      // пустоты чужим именем нельзя.
+      final name = _findUser(allUsers, uid)?.name ?? '';
+      String? reason;
+      // ПОВТОРНОЕ НАЖАТИЕ НЕ ПЛОДИТ ДВОЙНИКОВ. Он уже позван — значит позван,
+      // и слот честно говорит именно это, а не «не ушло».
+      if (!already.contains(uid)) {
+        try {
+          final chatId = await resolveDirectChatId(
+            ref,
+            myUid: myUid,
+            otherUid: uid,
+          );
+          final meta = await service.fetchChatData(chatId);
+          // ОТКАЗ НА КОНКРЕТНОГО ЧЕЛОВЕКА, А НЕ НА ВЕСЬ СОСТАВ. Раунд живёт
+          // на документе чата, у каждой пары свой; правило то же самое, что
+          // у одиночного входа предложения работы (`jobOfferRoundOpen`), и
+          // читается оно здесь, а не пишется заново.
+          final open = jobOfferRoundOpen(
+            jobOfferBy: meta?['jobOfferBy'] as String?,
+            roundStep: meta?['roundStep'] as String?,
+            recipientAgreed: meta?['recipientAgreed'] as bool? ?? false,
+          );
+          if (open) {
+            reason = kNotInvitedOpenRound;
+          } else {
+            await service.createLineupInvitation(
+              parent: event,
+              callerUid: myUid,
+              inviteeUid: uid,
+            );
+          }
+        } catch (_) {
+          // ОТКАЗ ЗАПИСЫВАЕТСЯ, А НЕ ГЛОТАЕТСЯ. Молчание здесь неотличимо от
+          // успеха, и человек ждал бы ответа от того, кого не позвали (I14).
+          reason = kNotInvitedFailed;
+        }
+      }
+      slots.add(
+        LineupSlot(uid: uid, name: name, invited: reason == null, reason: reason),
+      );
+    }
+
+    // Шаблон пишется в момент сбора — здесь и есть тот момент. Отказ записи
+    // детей не отменяет: они уже созданы, и `invitedUidsUnder` спросит их, а
+    // не шаблон.
+    try {
+      await service.saveLineup(eventId: event.id, slots: slots);
+    } catch (_) {
+      // Молча: шаблон — про следующий раз, а исход этого хода человеку сейчас
+      // покажут окном ниже. Жаловаться на неудавшуюся память там, где он ждёт
+      // ответа про отправку, значит смешать два разных сообщения.
+    }
+
+    if (!mounted) return;
+    final notSent = slots.where((s) => !s.invited).toList();
+    if (notSent.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Çağırış göndərildi: ${slots.length} nəfər'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    await _showNotSentDialog(sent: slots.length - notSent.length, notSent: notSent);
+  }
+
+  /// НЕУШЕДШИЕ — ПОИМЁННО, С ДВЕРЬЮ В ЧАТ.
+  ///
+  /// Окном, а не строкой внизу экрана, и довод не про красоту: строка уезжает
+  /// сама, а здесь человеку надо прочитать имена и решить, идти ли в чат.
+  /// Исчезающее сообщение о том, что часть состава не позвана, — это та же
+  /// тишина, только с задержкой.
+  ///
+  /// **Сколько УШЛО названо первым.** Список одних неудач читается как «не
+  /// ушло ничего»; знаменатель рядом с ним врать не даёт (I40).
+  Future<void> _showNotSentDialog({
+    required int sent,
+    required List<LineupSlot> notSent,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (d) => AlertDialog(
+        backgroundColor: kBg2,
+        title: Text(
+          'Çağırış göndərildi: $sent nəfər',
+          style: const TextStyle(color: kText, fontSize: 17),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Bunlara getmədi:',
+              style: TextStyle(color: kTextSecondary, fontSize: 14),
+            ),
+            const SizedBox(height: 8),
+            for (final s in notSent)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        // Пустое имя — «Naməlum», а не пустая строка: строка
+                        // без имени читается как потерянный участник.
+                        '${s.name.isEmpty ? 'Naməlum' : s.name} — '
+                        '${_notSentReasonText(s.reason)}',
+                        style: const TextStyle(color: kText, fontSize: 14),
+                      ),
+                    ),
+                    // ДВЕРЬ ТОЛЬКО ТУДА, ГДЕ ЕЙ ЕСТЬ ЧТО ОТКРЫТЬ. При
+                    // сорвавшейся записи в чате не происходит ничего, и
+                    // кнопка, которой некуда вести, читается как поломка
+                    // (N65, N146).
+                    if (s.reason == kNotInvitedOpenRound)
+                      TextButton(
+                        onPressed: () {
+                          Navigator.pop(d);
+                          openDirectChat(
+                            context,
+                            ref,
+                            myUid: widget.currentUid,
+                            otherUid: s.uid,
+                          );
+                        },
+                        child: const Text('Aç', style: TextStyle(color: kGold)),
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(d),
+            child: const Text('Bağla', style: TextStyle(color: kMuted)),
+          ),
+        ],
       ),
     );
   }
+
+  /// Слова причины. Незнакомая причина называется незнакомой, а не
+  /// подменяется правдоподобной: повод, которого мы ещё не завели, обязан
+  /// быть заметен (I14).
+  String _notSentReasonText(String? reason) => switch (reason) {
+        kNotInvitedOpenRound => 'onunla artıq iş danışığı gedir',
+        kNotInvitedFailed => 'göndərmək alınmadı',
+        _ => 'səbəb bilinmir',
+      };
 
   Future<void> _cancelOwnEvent(
     PersonalEvent event,
@@ -3536,7 +3712,8 @@ class _PersonalEventDetailScreenState
                           _CardButton(
                             label: 'Öz adamlarımı çağır',
                             tone: _CardButtonTone.plain,
-                            onTap: () => _callMyPeople(allUsers),
+                            onTap: () =>
+                                _callMyPeople(event, allUsers, personalEvents),
                           ),
                           const SizedBox(height: 11),
                         ],
