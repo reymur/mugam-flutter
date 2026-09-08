@@ -34,18 +34,22 @@ void main() {
       expect(kEventEditWrites.length, 9);
     });
 
-    test('сохраняемых ровно 13', () {
-      expect(kEventEditPreserves.length, 13);
+    test('сохраняемых ровно 14', () {
+      // Стояло 13, верно до 08.09: работа 7, шаг 1 добавила
+      // `unsettledReason` — повод состояния, который правка НЕ трогает.
+      // Сложение вслух (I13): 9 переписываемых + 14 сохраняемых = 23 ключа
+      // документа.
+      expect(kEventEditPreserves.length, 14);
     });
 
     test('пересечение пусто — ни одно поле не в обеих половинах', () {
       expect(kEventEditWrites.intersection(kEventEditPreserves), isEmpty);
     });
 
-    test('объединение — ровно 22 ключа документа, без лишних и без дыр', () {
+    test('объединение — ровно 23 ключа документа, без лишних и без дыр', () {
       final union = {...kEventEditWrites, ...kEventEditPreserves};
-      expect(union.length, 22);
-      expect(kEventDocKeys.length, 22);
+      expect(union.length, 23);
+      expect(kEventDocKeys.length, 23);
       expect(union, kEventDocKeys);
     });
 
@@ -92,6 +96,12 @@ void main() {
         'cancelConfirmedBy',
         'cancelledAt',
         'replacedEventId',
+        // ПОВОД СОСТОЯНИЯ — 08.09, работа 7, шаг 1. Стоит именно здесь, и
+        // это весь смысл поля: до него повод жил в `lastActionType`, а тот
+        // правка ПЕРЕПИСЫВАЕТ. Обычная смена даты стирала причину, по
+        // которой вечер под вопросом, и выход наверх пропадал от
+        // постороннего действия.
+        'unsettledReason',
         'createdAt',
       });
     });

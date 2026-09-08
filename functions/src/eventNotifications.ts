@@ -98,7 +98,34 @@ export interface EventSnapshot {
    * (I47). Здесь читает только `remindableOf`.
    */
   answers?: Record<string, string> | null;
+  /**
+   * ОТЧЕГО ВЕЧЕР ПОД ВОПРОСОМ — заведено 08.09, работа 7, шаг 1.
+   *
+   * **Отдельно от `lastActionType`, и это не дублирование.** Тот отвечает
+   * «что сделали ПОСЛЕДНИМ», это — «отчего вечер стоит под вопросом». Два
+   * вопроса в одном поле были I47 в чистом виде, и второй ответ стирался
+   * первым: замер 07.09 — из девяти клиентских писателей `lastActionType`
+   * повод затирают четверо, и все четверо законны (правка вечера и три
+   * хода отмены). В проде это уже случилось у договора
+   * `h9VNI3WJJXYkmcsIt8kT`.
+   *
+   * Пишет только сервер; клиенту поле запрещено правилом
+   * `serverOwnsUnsettledReason()` (`firestore.rules`).
+   */
+  unsettledReason?: UnsettledReason | null;
 }
+
+/**
+ * Поводы «под вопроса» — их ровно два, и это ЗАКРЫТЫЙ набор.
+ *
+ * Тип отдельный от `EventActionType` нарочно: имён поступков много и
+ * прибавляется, поводов состояния два, и смешивать их — то самое слияние
+ * двух вопросов, ради разделения которого поле и заведено. Совпадение
+ * написания с двумя именами поступков историческое: до 08.09 повод жил в
+ * `lastActionType`, и переименовывать значения значило бы менять данные
+ * прода ради красоты.
+ */
+export type UnsettledReason = "memberLeft" | "workCancelled";
 
 export interface EventPush {
   /** Кому. */
@@ -227,14 +254,32 @@ function eventTitleOf(e: EventSnapshot): string {
 export function unsettledAfterMemberLeft(
   before: EventSnapshot,
   after: EventSnapshot,
-): { status: string; lastActionType: EventActionType } | null {
+): {
+  status: string;
+  lastActionType: EventActionType;
+  unsettledReason: UnsettledReason;
+} | null {
   if (after.lastActionType !== "left") return null;
   if (after.status !== "agreed") return null;
   const b = new Set(before.musicians ?? []);
   const a = new Set(after.musicians ?? []);
   const removed = [...b].filter((u) => !a.has(u));
   if (removed.length === 0) return null;
-  return { status: "unsettled", lastActionType: "memberLeft" };
+  // ОБА ПОЛЯ, И ОБА НУЖНЫ (08.09).
+  //
+  // `lastActionType: "memberLeft"` — по-прежнему верный ПОСТУПОК: последним
+  // тут произошёл уход участника. Оставлено ещё и затем, чтобы СТАРЫЕ
+  // СБОРКИ не ослепли: до этой правки строку повода на карточке и текст
+  // уведомления они брали именно отсюда. Сними его — и телефон, собранный
+  // вчера, показал бы вечер под вопросом без причины.
+  //
+  // `unsettledReason: "memberLeft"` — ПОВОД СОСТОЯНИЯ, и его больше никто
+  // не затрёт: клиенту поле запрещено правилом.
+  return {
+    status: "unsettled",
+    lastActionType: "memberLeft",
+    unsettledReason: "memberLeft",
+  };
 }
 
 // КОМУ ИДЁТ НАПОМИНАНИЕ — шаг 3 работы «договоры и мероприятия — одна
@@ -678,17 +723,52 @@ export type ReminderKind = "24h" | "3h" | "unsettled24h";
 // СЛОВА ВРЕМЕННЫЕ И ПОМЕЧЕНЫ: автор ещё не сказал своих. Стоят в одном
 // месте, замена — одна строка.
 export function unsettledReasonText(
-  lastActionType: EventActionType | null | undefined,
-): string {
-  return lastActionType === "workCancelled"
-    ? "iş ləğv olundu"
-    : "iştirakçı ayrıldı";
+  reason: UnsettledReason | null | undefined,
+): string | null {
+  if (reason === "workCancelled") return "iş ləğv olundu";
+  if (reason === "memberLeft") return "iştirakçı ayrıldı";
+  // ПОВОДА НЕТ — МОЛЧИМ О НЁМ, А НЕ ДОГОВАРИВАЕМ. Правка 08.09.
+  //
+  // ЗДЕСЬ СТОЯЛО УМОЛЧАНИЕ «iştirakçı ayrıldı» на всё, что не
+  // `workCancelled`, и до 08.09 оно было почти безвредным: повод жил в
+  // `lastActionType`, и у вечера под вопросом он почти всегда был.
+  //
+  // С отдельным полем ОТСУТСТВИЕ ПОВОДА СТАНОВИТСЯ НОРМОЙ, а не редкостью:
+  // на 07.09 поля `unsettledReason` нет у 121 документа прода ИЗ 121, и у
+  // трёх вечеров, стоящих «под вопросом» прямо сейчас, — тоже. Умолчание
+  // сказало бы всем троим «участник ушёл», а у одного из них это договор,
+  // где никто не уходил.
+  //
+  // Слова не выдуманы: это то же решение, что уже принято для карточки
+  // (`eventStatusView`, `event_status_view.dart`) — «повод неизвестен —
+  // молчим о нём, но само состояние показываем. Придумать причину значило
+  // бы сказать человеку неправду о том, почему его вечер под вопросом».
+  // Один вопрос — один ответ, в двух местах одинаковый (N49).
+  return null;
 }
 
 // Уведомление о САМОМ ПЕРЕХОДЕ. Без него состояние молчит: `diffEvents`
 // не сравнивает `status`, а разбор уведомлений ветвится по
 // `lastActionType`, где повода `memberLeft` нет. Вторая сторона узнавала
 // бы о вопросе, только открыв карточку.
+/**
+ * Тело сообщения о «под вопросом»: название вечера и повод, если он есть.
+ *
+ * **Одно место на оба сообщения** (переход и суточное напоминание): вопрос
+ * «как назвать вечер под вопросом» один, и два ответа на него разошлись бы
+ * в первой же правке (N49, N66).
+ *
+ * Повода нет — тире и хвост не приписываются вовсе. Строка «Toy, 9 Avqust»
+ * говорит правду и неполно; строка «Toy, 9 Avqust — iştirakçı ayrıldı» на
+ * вечере, откуда никто не уходил, говорит неправду и полно.
+ */
+function unsettledBody(e: EventSnapshot): string {
+  const reason = unsettledReasonText(e.unsettledReason);
+  return reason === null
+    ? eventTitleOf(e)
+    : `${eventTitleOf(e)} — ${reason}`;
+}
+
 export function pushUnsettled(
   uid: string,
   eventId: string,
@@ -697,7 +777,7 @@ export function pushUnsettled(
   return {
     uid,
     title: "Müqavilə şübhə altındadır",
-    body: `${eventTitleOf(e)} — ${unsettledReasonText(e.lastActionType)}`,
+    body: unsettledBody(e),
     data: openEvent(eventId, "event_unsettled"),
   };
 }
@@ -715,7 +795,7 @@ export function pushUnsettledReminder(
   return {
     uid,
     title: "Sabah: tədbir şübhə altında",
-    body: `${eventTitleOf(e)} — ${unsettledReasonText(e.lastActionType)}`,
+    body: unsettledBody(e),
     data: openEvent(eventId, "event_reminder_unsettled24h"),
   };
 }

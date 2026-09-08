@@ -2473,6 +2473,13 @@ function toEventSnapshot(d: Record<string, unknown>): EventSnapshot {
     replacedEventId: (d.replacedEventId as string) ?? null,
     lastActionBy: (d.lastActionBy as string) ?? null,
     lastActionType: (d.lastActionType as EventSnapshot["lastActionType"]) ?? null,
+    // Повод состояния — своё поле с 08.09. `?? null` здесь безопасно и
+    // нужно: у 121 документа прода поля нет ни у одного, и «нет повода»
+    // обязано дойти до читателей отличимым от повода (I47) — иначе
+    // `restoresEvent` и строка на карточке спутали бы «не знаем, отчего»
+    // с «ушёл участник».
+    unsettledReason:
+      (d.unsettledReason as EventSnapshot["unsettledReason"]) ?? null,
     // `?? null` здесь НЕЛЬЗЯ, и это не придирка: `undefined` (поля нет) и
     // `{}` (пустая карта) обязаны дойти разными, иначе теряется единственный
     // признак, по которому норма отличается от поломки (I47). Приводить

@@ -176,7 +176,19 @@ describe("время поступка — серверное (N181)", () => {
   });
 
   it("7/7 restoresEvent — возврат вечера после ухода, со временем", async () => {
-    await seed(env, { status: "unsettled", lastActionType: "memberLeft" });
+    // ПОВОД ЛЕЖИТ В СВОЁМ ПОЛЕ С 08.09 (работа 7, шаг 1). Сид ставит
+    // `lastActionType: "left"` — так документ и выглядит после ухода
+    // участника, — а повод отдельно; совпади они, вердикт прошёл бы и на
+    // старом правиле, читавшем поступок (I9).
+    //
+    // Этот сид покраснел от перевода правила на новое поле и тем показал
+    // ПЯТОГО читателя повода, которого не было в списке четырёх: тест в
+    // соседнем файле. Пойман прогоном, а не чтением.
+    await seed(env, {
+      status: "unsettled",
+      lastActionType: "left",
+      unsettledReason: "memberLeft",
+    });
     const db = env.authenticatedContext(OWNER).firestore();
     await assertSucceeds(
       updateDoc(doc(db, `personalEvents/${EVENT}`), {

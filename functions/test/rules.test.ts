@@ -404,12 +404,20 @@ const confirm = (uid: string) => ({
 
 // Ставит состояние «под вопросом» в обход правил — его пишет сервер, и
 // клиентского хода для входа нет вовсе.
+// ПОВОД КЛАДЁТСЯ В СВОЁ ПОЛЕ — `unsettledReason`, с 08.09.
+//
+// `lastActionType` тут ставится в `"left"` НАРОЧНО, а не в тот же повод:
+// именно так документ и выглядит в жизни после ухода участника, и именно
+// это расхождение доказывает, что правило читает ПОВОД СОСТОЯНИЯ, а не
+// последний поступок. Совпади оба поля — вердикты проходили бы и на старом
+// правиле, то есть не доказывали бы ничего (I9).
 async function seedUnsettled(reason = "memberLeft") {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     await updateDoc(doc(context.firestore(), `personalEvents/${EVENT}`), {
       status: "unsettled",
       lastActionBy: CONTACT,
-      lastActionType: reason,
+      lastActionType: "left",
+      unsettledReason: reason,
     });
   });
 }
@@ -428,19 +436,230 @@ test("возврат: владелец МОЖЕТ вернуть договор 
   );
 });
 
-// «Всё в силе» — решение того, кто договор держит. Участник, вернувшийся
-// в состав, ничего не решает про саму работу; не согласен — у него есть
-// обычный ход отмены по согласию.
-// ПОВОДОВ ДВА, А ВЫХОД В СИЛУ ОСМЫСЛЕН У ОДНОГО. Ушёл участник — вечер на
-// месте, «продолжаю без него» законно. Исчезла работа — возвращать не к
-// чему: родительский договор отменён по согласию, и обратного хода у
-// отмены нет вовсе. Без этого отказа кнопки в приложении нет, а дорога
-// открыта, и чужой клиент вернул бы в силу вечер, которого не существует.
-test("возврат: при поводе «работа исчезла» нельзя даже владельцу", async () => {
+// ВТОРОЙ ПОВОД ПУСКАЕТСЯ С 08.09 — работа 7, шаг 1 (`docs/plan.md`).
+//
+// ЗДЕСЬ СТОЯЛ ОБРАТНЫЙ ВЕРДИКТ — «при поводе „работа исчезла“ нельзя даже
+// владельцу», с доводом «возвращать не к чему: родительский договор
+// отменён, вечера нет». Записан снятием, а не стёрт: тест, ушедший
+// молча, назавтра заводят заново.
+//
+// ЧЕМ ДОВОД БЫЛ НЕВЕРЕН (решение владельца 08.09): вечер — это ДЕНЬ И
+// СОСТАВ, а не тот договор, под который звали. Зовущий, нашедший на тот же
+// день другую работу, продолжает с тем же составом; отняв у него ход, мы
+// заставляем распустить согласившихся и собрать заново.
+test("возврат: при поводе «работа исчезла» владелец МОЖЕТ вернуть в силу", async () => {
   await seedUnsettled("workCancelled");
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), restore(OWNER)),
+  );
+});
+
+// ВТОРАЯ ПОЛОВИНА РАСШИРЕНИЯ, И ОНА ВАЖНЕЕ ПЕРВОЙ: пустили ДВА повода, а
+// не «любой». Соблазн написать `!= 'cancelRequested'` или вовсе снять
+// строку велик — правило стало бы короче и на обоих сегодняшних поводах
+// вело бы себя так же. Разница вылезла бы на первом же новом поводе,
+// который мы заведём: он поехал бы в «можно вернуть» молча.
+//
+// Поводов, которые правила уже принимают именем, сегодня больше двух:
+// `ownerFirm`, `ownerDoubt`, `workCancelled` у `ownerSetsStatus`; плюс
+// четыре имени отмены. Ни одно из них выходом наверх не является.
+test("возврат: повод, которого нет в перечислении, НЕ пускается", async () => {
+  await seedUnsettled("ownerDoubt");
   const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
   await assertFails(
     updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), restore(OWNER)),
+  );
+});
+
+// ВТОРАЯ ПОЛОВИНА ЭТОГО ШАГА, И ОНА ВАЖНЕЕ ПЕРВОЙ: ПОЛЕ СЕРВЕРНОЕ.
+//
+// Ради этого поле и заводилось. Пусти сюда клиента — и он приписывает себе
+// повод, по которому правило открывает выход наверх; поле, которое мы
+// считаем серверным, оказалось бы клиентским (I54).
+//
+// Дыра, которую эти вердикты закрывают, ровно одна и названа в правиле:
+// **ветвь владельца перечисления ключей не имеет вовсе**. Остальные ходы
+// перечисляют ключи через `hasOnly` и поле не пропустят сами — но проверены
+// оба случая, потому что «не пропустит по устройству» и «не пропускает»
+// доказываются по-разному.
+test("повод: ВЛАДЕЛЕЦ не может записать его своей правкой", async () => {
+  await seedUnsettled("memberLeft");
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      unsettledReason: "workCancelled",
+      lastActionBy: OWNER,
+      lastActionType: "edited",
+    }),
+  );
+});
+
+// Тот же запрет, но приписанный к ЗАКОННОМУ ходу — так его и попробовали бы
+// обойти: не отдельной записью, а заодно с правкой места.
+test("повод: заодно с правкой вечера его тоже не протащить", async () => {
+  await seedUnsettled("memberLeft");
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      location: "Zal",
+      unsettledReason: "workCancelled",
+      lastActionBy: OWNER,
+      lastActionType: "edited",
+    }),
+  );
+});
+
+// КАНАРЕЙКА К ДВУМ ВЕРДИКТАМ ВЫШЕ, и без неё они ничего не стоят.
+//
+// Оба утверждают ОТКАЗ. Откажи правило по любой посторонней причине — из-за
+// имени поступка, из-за отметки автора, — и они были бы зелёными, ничего не
+// проверяя (I31, I14). Этот вердикт показывает, что та же самая правка БЕЗ
+// повода проходит: значит отказывают именно за повод.
+test("повод: канарейка — та же правка БЕЗ повода проходит", async () => {
+  await seedUnsettled("memberLeft");
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      location: "Zal",
+      lastActionBy: OWNER,
+      lastActionType: "edited",
+    }),
+  );
+});
+
+// ЭТОТ ВЕРДИКТ ПРОВЕРЯЕТ НЕ ЗАПРЕТ, А `hasOnly` — и назван так после
+// порчи, а не до неё.
+//
+// Я ждал, что снятие `serverOwnsUnsettledReason()` уронит и его. Не
+// уронило: вторая сторона — не владелец, её правка идёт ветвью именованных
+// ходов, а те перечисляют ключи и повод не пропустят сами. То есть вердикт
+// зелен по ДРУГОЙ причине и от запрета не зависит вовсе (I9).
+//
+// Оставлен нарочно: он сторожит, что ветвь именованных ходов не обзаведётся
+// свободным списком ключей. Но считать его проверкой запрета нельзя, и
+// потому это написано здесь, а не подразумевается.
+test("повод: вторая сторона не может записать его — держит hasOnly, а не запрет", async () => {
+  await seedUnsettled("memberLeft");
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), {
+      unsettledReason: "workCancelled",
+      lastActionBy: CONTACT,
+      lastActionType: "edited",
+    }),
+  );
+});
+
+// И ГЛАВНОЕ ПРО НЕЗАТИРАЕМОСТЬ, РАДИ ЧЕГО ВСЁ ЗАТЕЯНО.
+//
+// Обычная правка вечера проходит (канарейка выше) — и повод после неё
+// ОСТАЁТСЯ. До 08.09 повод жил в `lastActionType`, и эта же правка стирала
+// его: в проде так и случилось у договора `h9VNI3WJJXYkmcsIt8kT`.
+test("повод: ПЕРЕЖИВАЕТ обычную правку вечера, и выход наверх остаётся", async () => {
+  await seedUnsettled("workCancelled");
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      location: "Zal",
+      lastActionBy: OWNER,
+      lastActionType: "edited",
+    }),
+  );
+  // Повод не тронут — значит выход наверх по-прежнему открыт. Это и есть
+  // то, чего не было до заведения поля.
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), restore(OWNER)),
+  );
+});
+
+// Тот же вопрос с другой стороны: ПУСТОЙ повод — не пропуск, а отказ.
+// `resource.data.get('lastActionType', null)` вернёт `null`, и `in`
+// списка его не найдёт. Проверяется отдельно, потому что «поля нет» и
+// «поле не то» — два разных пути в правило, и второй не доказывает
+// первого.
+test("возврат: без повода вовсе вернуть нельзя", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), `personalEvents/${EVENT}`), {
+      ownerUid: OWNER,
+      musicians: [OWNER, CONTACT],
+      isAgree: true,
+      status: "unsettled",
+      date: "2026-09-20T20:00:00",
+      // Поля повода нет вовсе — так выглядят ВСЕ 121 документ прода на
+      // 07.09 и все, что записаны старыми сборками. Проверяется именно
+      // этот вид, а не «повод пустая строка».
+    });
+  });
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), restore(OWNER)),
+  );
+});
+
+// ЧЕГО РАСШИРЕНИЕ НЕ СДЕЛАЛО, и это проверяется, а не подразумевается:
+// вернуть в силу можно РЕБЁНКА, а не родителя. Отменённый родитель
+// остаётся отменённым — из `cancelled` выхода по-прежнему нет ни у кого,
+// какой бы повод там ни стоял.
+test("возврат: отменённый с поводом «работа исчезла» всё равно не возвращается", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), `personalEvents/${EVENT}`), {
+      status: "cancelled",
+      lastActionBy: CONTACT,
+      lastActionType: "workCancelled",
+    });
+  });
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertFails(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), restore(OWNER)),
+  );
+});
+
+// Вторая сторона не возвращает и по новому поводу: расширен ПОВОД, а не
+// круг решающих. Проверяется отдельно от такой же пробы на `memberLeft`
+// ниже — иначе «можно владельцу по обоим поводам» и «можно любому по
+// новому» неотличимы.
+test("возврат: вторая сторона НЕ может вернуть и по поводу «работа исчезла»", async () => {
+  await seedUnsettled("workCancelled");
+  const contactDb = testEnv.authenticatedContext(CONTACT).firestore();
+  await assertFails(
+    updateDoc(doc(contactDb, `personalEvents/${EVENT}`), restore(CONTACT)),
+  );
+});
+
+test("возврат: посторонний не может и по поводу «работа исчезла»", async () => {
+  await seedUnsettled("workCancelled");
+  const strangerDb = testEnv.authenticatedContext(STRANGER).firestore();
+  await assertFails(
+    updateDoc(doc(strangerDb, `personalEvents/${EVENT}`), restore(STRANGER)),
+  );
+});
+
+// ЧТО ИМЕННО РАСШИРЕНИЕ ПРАВ ДАЁТ, И ЭТО ПРОВЕРЯЕТСЯ, А НЕ ПРОЧИТЫВАЕТСЯ.
+//
+// Соблазн сказать «владелец получил возможность вернуть вечер в силу» —
+// и это было бы НЕВЕРНО. Он её уже имеет: `ownerSetsStatus` пускает
+// владельца писать `agreed` с именем `ownerFirm`, не спрашивая ни
+// нынешнего состояния, ни повода. Значит выход из `unsettled` по любому
+// поводу у владельца был и до 08.09.
+//
+// Расширение даёт не ДОСТУП, а ИМЯ ПОСТУПКА: `restored` вместо
+// `ownerFirm`. Разница не косметическая — по `lastActionType` сервер
+// выбирает текст уведомления, а карточка строит строку «что случилось».
+//
+// Вердикт стоит здесь именно ради этого различения: он утверждает
+// НАЛИЧИЕ обходного пути, то есть сам себе канарейка (I31). Покраснеет —
+// значит `ownerSetsStatus` сузили, и тогда расширение из этой работы
+// становится настоящим расширением доступа, а не переименованием.
+test("до расширения: владелец И ТАК мог вывести вечер из «под вопроса» через ownerFirm", async () => {
+  await seedUnsettled("workCancelled");
+  const ownerDb = testEnv.authenticatedContext(OWNER).firestore();
+  await assertSucceeds(
+    updateDoc(doc(ownerDb, `personalEvents/${EVENT}`), {
+      status: "agreed",
+      lastActionBy: OWNER,
+      lastActionType: "ownerFirm",
+    }),
   );
 });
 

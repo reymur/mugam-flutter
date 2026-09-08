@@ -45,7 +45,7 @@ void main() {
     test('ушёл участник: имя названо, когда оно известно', () {
       final v = eventStatusView(
         status: kStatusUnsettled,
-        lastActionType: kReasonMemberLeft,
+        unsettledReason: kReasonMemberLeft,
         leftMemberName: 'Teymur',
       );
       expect(v.reason, 'Teymur ayrıldı');
@@ -56,7 +56,7 @@ void main() {
       // человек не понимает. Имя может не доехать, повод — обязан.
       final v = eventStatusView(
         status: kStatusUnsettled,
-        lastActionType: kReasonMemberLeft,
+        unsettledReason: kReasonMemberLeft,
       );
       expect(v.reason, 'İştirakçı ayrıldı');
     });
@@ -64,7 +64,7 @@ void main() {
     test('исчезла работа — свой повод, другими словами', () {
       final v = eventStatusView(
         status: kStatusUnsettled,
-        lastActionType: kReasonWorkCancelled,
+        unsettledReason: kReasonWorkCancelled,
       );
       expect(v.reason, 'İş ləğv olundu');
       expect(
@@ -72,7 +72,7 @@ void main() {
         isNot(
           eventStatusView(
             status: kStatusUnsettled,
-            lastActionType: kReasonMemberLeft,
+            unsettledReason: kReasonMemberLeft,
           ).reason,
         ),
       );
@@ -81,7 +81,7 @@ void main() {
     test('повод неизвестен — молчим, а не выдумываем причину', () {
       final v = eventStatusView(
         status: kStatusUnsettled,
-        lastActionType: 'нечто',
+        unsettledReason: 'нечто',
       );
       expect(v.reason, isNull);
       // Само состояние при этом показано: неизвестен повод, а не состояние.
@@ -89,57 +89,176 @@ void main() {
     });
   });
 
-  group('«Onsuz davam edirəm» — те же три условия, что в правиле', () {
+  group('выход наверх — те же три условия, что в правиле restoresEvent', () {
     test('владельцу, из unsettled, по поводу ушедшего — да', () {
       expect(
-        showsContinueWithout(
+        showsRestore(
           isOwner: true,
           status: kStatusUnsettled,
-          lastActionType: kReasonMemberLeft,
+          unsettledReason: kReasonMemberLeft,
         ),
         isTrue,
       );
     });
 
-    test('НЕ владельцу — нет', () {
-      // `restoresEvent()` требует `ownerUid == uid`; покажи кнопку другому — и
-      // он получит отказ по правам, ничего не поняв.
+    // ВТОРАЯ ПОЛОВИНА, ЗАВЕДЕНА 08.09 (работа 7, шаг 1).
+    //
+    // ЗДЕСЬ СТОЯЛ ОБРАТНЫЙ ВЕРДИКТ — «по поводу „исчезла работа“ — НЕТ, и это
+    // не строгость», с доводом «возвращать не к чему». Записан снятием, а не
+    // стёрт: снятый молча вердикт назавтра заводят заново.
+    //
+    // Довод был неверен: вечер — это ДЕНЬ И СОСТАВ, а не тот договор, под
+    // который звали. Решение владельца 08.09.
+    test('по поводу «исчезла работа» — ТОЖЕ да', () {
       expect(
-        showsContinueWithout(
-          isOwner: false,
+        showsRestore(
+          isOwner: true,
           status: kStatusUnsettled,
-          lastActionType: kReasonMemberLeft,
+          unsettledReason: kReasonWorkCancelled,
         ),
-        isFalse,
+        isTrue,
       );
     });
 
-    test('из «в силе» и из отменённого — нет', () {
-      for (final s in [kStatusAgreed, kStatusCancelled]) {
+    test('НЕ владельцу — нет, и по обоим поводам', () {
+      // `restoresEvent()` требует `ownerUid == uid`; покажи кнопку другому — и
+      // он получит отказ по правам, ничего не поняв.
+      //
+      // Оба повода проверяются порознь нарочно: расширен ПОВОД, а не круг
+      // решающих, и одна проба этого не доказала бы.
+      for (final r in [kReasonMemberLeft, kReasonWorkCancelled]) {
         expect(
-          showsContinueWithout(
-            isOwner: true,
-            status: s,
-            lastActionType: kReasonMemberLeft,
+          showsRestore(
+            isOwner: false,
+            status: kStatusUnsettled,
+            unsettledReason: r,
           ),
           isFalse,
-          reason: 'состояние $s не имеет выхода «продолжаю без него»',
+          reason: 'по поводу $r выход наверх есть только у владельца',
         );
       }
     });
 
-    test('по поводу «исчезла работа» — НЕТ, и это не строгость', () {
-      // Возвращать не к чему: родительский договор отменён по согласию обеих
-      // сторон, и обратного хода у отмены нет вовсе. «Всё в силе» на
-      // приглашении без работы обещает несуществующее.
+    test('из «в силе» и из отменённого — нет, и по обоим поводам', () {
+      for (final s in [kStatusAgreed, kStatusCancelled]) {
+        for (final r in [kReasonMemberLeft, kReasonWorkCancelled]) {
+          expect(
+            showsRestore(isOwner: true, status: s, unsettledReason: r),
+            isFalse,
+            reason: 'состояние $s не имеет выхода наверх (повод $r)',
+          );
+        }
+      }
+    });
+
+    // ПЕРЕЧИСЛЕНИЕ, А НЕ «ЛЮБОЙ ПОВОД» — вердикт ради того, чтобы условие не
+    // упростили до «состояние unsettled и владелец». На двух сегодняшних
+    // поводах упрощение вело бы себя одинаково, а первый же новый повод
+    // поехал бы в «можно вернуть» молча.
+    //
+    // Имена взяты живые: `ownerDoubt` правила уже принимают в
+    // `ownerSetsStatus`, `cancelRequested` — одно из четырёх имён отмены.
+    test('повод не из перечисленных — нет', () {
+      for (final r in ['ownerDoubt', 'cancelRequested', 'restored', '']) {
+        expect(
+          showsRestore(
+            isOwner: true,
+            status: kStatusUnsettled,
+            unsettledReason: r,
+          ),
+          isFalse,
+          reason: 'повод «$r» выхода наверх не даёт',
+        );
+      }
+    });
+
+    test('повода нет вовсе — нет', () {
+      // «Поля нет» и «поле не то» — два разных пути, и второй не доказывает
+      // первого (I47).
       expect(
-        showsContinueWithout(
+        showsRestore(
           isOwner: true,
           status: kStatusUnsettled,
-          lastActionType: kReasonWorkCancelled,
+          unsettledReason: null,
         ),
         isFalse,
       );
+    });
+  });
+
+  group('надпись выхода наверх', () {
+    // ГЛАВНЫЙ ВЕРДИКТ ГРУППЫ: показ и надпись не могут разойтись.
+    //
+    // Он утверждает НАЛИЧИЕ, значит сам себе канарейка (I31): ослепни разбор
+    // — и надписи не найдётся ни одной, вердикт покраснеет.
+    test('у каждого повода, где выход есть, надпись НАЙДЕНА', () {
+      for (final r in [kReasonMemberLeft, kReasonWorkCancelled]) {
+        expect(
+          showsRestore(isOwner: true, status: kStatusUnsettled,
+              unsettledReason: r),
+          isTrue,
+          reason: 'повод $r обязан давать выход наверх',
+        );
+        expect(
+          restoreLabel(r),
+          isNotNull,
+          reason: 'у повода $r выход есть, а слов для кнопки нет — '
+              'человек увидел бы кнопку без надписи',
+        );
+      }
+    });
+
+    // Обратная половина. Без неё «надписи есть у всех» было бы истинно и
+    // тогда, когда надпись выдаётся ЛЮБОМУ поводу: кнопка нашлась бы там,
+    // где сервер откажет.
+    test('где выхода нет, надписи ТОЖЕ нет', () {
+      for (final r in ['ownerDoubt', 'cancelRequested', 'restored', '', null]) {
+        expect(
+          showsRestore(isOwner: true, status: kStatusUnsettled,
+              unsettledReason: r),
+          isFalse,
+          reason: 'повод «$r» выхода наверх не даёт',
+        );
+        expect(
+          restoreLabel(r),
+          isNull,
+          reason: 'у повода «$r» выхода нет, а надпись нашлась — кнопка '
+              'появилась бы там, где правило откажет',
+        );
+      }
+    });
+
+    test('надписи у двух поводов РАЗНЫЕ', () {
+      expect(kRestoreLabelMemberLeft, isNot(kRestoreLabelWorkCancelled));
+    });
+
+    // N205 — ЛОВУШКА ПРОБЕЛА, и этот вердикт заведён из-за неё.
+    //
+    // По-азербайджански «всё равно» — `onsuz da`, «без него» — `onsuz`.
+    // Значит «Onsuz da davam edirik» значит ровно то, что нужно второму
+    // поводу, и отличается от надписи первого ОДНИМ ПРОБЕЛОМ. Две кнопки
+    // разного смысла, различимые пробелом, — правило и его нарушение на
+    // самом опасном расстоянии (I42): не вплотную, чтобы заметить глазом,
+    // и не в разных файлах, чтобы заметить несогласием.
+    //
+    // Вердикт запрещает не сам пробел, а НАЧАЛО со слова `Onsuz` — потому
+    // что именно оно делает две надписи неразличимыми при беглом чтении.
+    test('надпись второго повода НЕ начинается со слова «Onsuz» (N205)', () {
+      expect(
+        kRestoreLabelWorkCancelled.startsWith('Onsuz'),
+        isFalse,
+        reason: 'N205: «Onsuz da davam edirik» отличается от '
+            '«$kRestoreLabelMemberLeft» одним пробелом. Две кнопки разного '
+            'смысла, различимые пробелом, — правило и его нарушение на самом '
+            'опасном расстоянии.',
+      );
+      // Соседка-канарейка к вердикту выше: она проверяет ОТСУТСТВИЕ, и
+      // ослепни разбор (пустая строка вместо надписи), ноль совпадений
+      // читался бы как порядок. Здесь ноль означал бы «надписи нет вовсе».
+      expect(kRestoreLabelWorkCancelled, isNotEmpty);
+      expect(kRestoreLabelMemberLeft.startsWith('Onsuz'), isTrue,
+          reason: 'канарейка: разбор `startsWith` умеет находить это слово — '
+              'иначе вердикт выше был бы зелёным от слепоты');
     });
   });
 }

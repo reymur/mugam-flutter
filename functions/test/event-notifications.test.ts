@@ -70,9 +70,20 @@ describe("договор становится «под вопросом» (Ча�
       musicians: [OWNER],
       lastActionType: "left",
     });
+    // ТРИ ПОЛЯ, А НЕ ДВА, с 08.09 (работа 7, шаг 1).
+    //
+    // `deepEqual`, а не проверка отдельных ключей, и это здесь важно:
+    // забудь писатель повод — равенство назовёт, чего не хватает, а
+    // проверка «повод верный» прошла бы мимо (I13 — состав, а не
+    // количество).
+    //
+    // `lastActionType: "memberLeft"` остаётся НАРОЧНО: поступок и правда
+    // «ушёл участник», и на нём же держатся СТАРЫЕ СБОРКИ, читавшие повод
+    // оттуда до этой правки.
     assert.deepEqual(unsettledAfterMemberLeft(before, after), {
       status: "unsettled",
       lastActionType: "memberLeft",
+      unsettledReason: "memberLeft",
     });
   });
 
@@ -126,7 +137,14 @@ describe("договор становится «под вопросом» (Ча�
 });
 
 describe("сообщения о «под вопросом» (Часть 6а)", () => {
-  const e = ev({ status: "unsettled", lastActionType: "memberLeft" });
+  // ПОВОД БЕРЁТСЯ ИЗ СВОЕГО ПОЛЯ, а `lastActionType` намеренно поставлен
+  // ДРУГИМ (08.09). Совпади они — вердикты проходили бы и на старом коде,
+  // который читал повод из поступка, то есть не доказывали бы правки (I9).
+  const e = ev({
+    status: "unsettled",
+    lastActionType: "left",
+    unsettledReason: "memberLeft",
+  });
 
   it("повод назван в уведомлении о переходе", () => {
     const p = pushUnsettled("u", "ev1", e);
@@ -137,9 +155,52 @@ describe("сообщения о «под вопросом» (Часть 6а)", (
     const p = pushUnsettled(
       "u",
       "ev1",
-      ev({ status: "unsettled", lastActionType: "workCancelled" }),
+      ev({
+        status: "unsettled",
+        lastActionType: "left",
+        unsettledReason: "workCancelled",
+      }),
     );
     assert.ok(p.body.includes("iş ləğv olundu"));
+  });
+
+  // ПОВОДА НЕТ — НЕ ДОГОВАРИВАЕМ. Заведено 08.09 вместе с полем.
+  //
+  // До разделения отсутствие повода было редкостью; теперь это НОРМА —
+  // поля `unsettledReason` нет ни у одного из 121 документа прода
+  // (замер 07.09 22:07 UTC), включая три вечера, стоящих «под вопросом».
+  // Прежнее умолчание сказало бы всем троим «участник ушёл», а один из
+  // них — договор, откуда никто не уходил.
+  it("повода нет — уведомление молчит о нём, а не выдумывает", () => {
+    const p = pushUnsettled(
+      "u",
+      "ev1",
+      ev({ status: "unsettled", lastActionType: "cancelWithdrawn" }),
+    );
+    assert.ok(!p.body.includes("iştirakçı ayrıldı"));
+    assert.ok(!p.body.includes("iş ləğv olundu"));
+    // Соседка: само сообщение не опустело — вечер в нём назван. Иначе
+    // «повода нет» было бы неотличимо от «тело собралось пустым» (I31).
+    assert.ok(p.body.length > 0);
+  });
+
+  // ЧИТАЕТ ЛИ ПОВОД ИМЕННО СВОЁ ПОЛЕ — вердикт против возврата к старому.
+  //
+  // Документ, у которого `lastActionType` говорит один повод, а
+  // `unsettledReason` — другой. Прочитай код поступок, и текст был бы про
+  // ушедшего; правильный ответ — про исчезнувшую работу.
+  it("при расхождении полей повод берётся из unsettledReason", () => {
+    const p = pushUnsettled(
+      "u",
+      "ev1",
+      ev({
+        status: "unsettled",
+        lastActionType: "memberLeft",
+        unsettledReason: "workCancelled",
+      }),
+    );
+    assert.ok(p.body.includes("iş ləğv olundu"));
+    assert.ok(!p.body.includes("iştirakçı ayrıldı"));
   });
 
   // ГЛАВНОЕ В ЭТОМ НАБОРЕ. Ключ отметки обязан различать, ЧТО отправлено:
@@ -175,12 +236,25 @@ describe("сообщения о «под вопросом» (Часть 6а)", (
     assert.ok(p.body.includes("iştirakçı ayrıldı"));
   });
 
-  // Соседка: без неё разбор повода мог бы возвращать пустоту, и три
-  // проверки выше прошли бы на пустой строке.
-  it("повод непустой при любом значении", () => {
-    assert.ok(unsettledReasonText("memberLeft").length > 0);
-    assert.ok(unsettledReasonText("workCancelled").length > 0);
-    assert.ok(unsettledReasonText(null).length > 0);
+  // Соседка: без неё разбор повода мог бы возвращать пустоту, и проверки
+  // выше прошли бы на пустой строке.
+  //
+  // Имя вердикта поправлено 08.09: стояло «при любом значении», а с этого
+  // дня у неизвестного повода ответа НЕТ — и это не исключение из правила,
+  // а само правило (не договаривать за данные).
+  it("повод непустой у КАЖДОГО ИЗ ДВУХ, и молчит у неизвестного", () => {
+    assert.ok((unsettledReasonText("memberLeft") ?? "").length > 0);
+    assert.ok((unsettledReasonText("workCancelled") ?? "").length > 0);
+    // ЗДЕСЬ СТОЯЛО `unsettledReasonText(null).length > 0` — то есть вердикт
+    // ТРЕБОВАЛ умолчания, договаривающего за данные. Снят 08.09 вместе с
+    // самим умолчанием: у неизвестного повода ответа нет.
+    assert.equal(unsettledReasonText(null), null);
+    // Два повода говорят РАЗНОЕ. Без этого «оба непусты» было бы истинно и
+    // тогда, когда функция отвечает одной строкой на всё (I14).
+    assert.notEqual(
+      unsettledReasonText("memberLeft"),
+      unsettledReasonText("workCancelled"),
+    );
   });
 });
 
