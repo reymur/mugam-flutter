@@ -21,6 +21,7 @@ import '../../../core/agreements/day_role.dart';
 import '../../../core/agreements/left_member_actions.dart';
 import '../../../core/agreements/lineup.dart';
 import '../../../core/agreements/lineup_children.dart';
+import '../../../core/agreements/lineup_rows.dart';
 import '../../../core/agreements/month_marks.dart';
 import '../../../core/chat/job_offer_round.dart';
 import '../../../core/chat/open_direct_chat.dart';
@@ -3563,6 +3564,81 @@ class _PersonalEventDetailScreenState
                       }),
                     ],
 
+                    // 4а. КОГО Я ПОЗВАЛ — работа 7, шаг 5а, 09.09.
+                    //
+                    // ЗАВЕДЕНО ПРОБОЙ, А НЕ РАЗБОРОМ (N210). Шаг 5 прошёл все
+                    // четыре пробы и оставил зовущего без ответа на вопрос
+                    // «кого я позвал»: граница была названа заранее и в трёх
+                    // местах — и всё равно прочиталась как недоделка.
+                    //
+                    // ОТДЕЛЬНЫЙ РАЗДЕЛ, А НЕ ДОПИСКА К СОСТАВУ ВЫШЕ, и довод
+                    // не про порядок на экране. Состав вечера — это ЭТОТ
+                    // документ (`musicians`); позванные живут в ДРУГИХ
+                    // документах, своих у каждого. Слить их в один список
+                    // значило бы показать двумя строками одного вида две
+                    // разные вещи — и первый же, кто захочет убрать человека,
+                    // не поймёт, откуда его убирают (I58).
+                    //
+                    // ТОЛЬКО ВЛАДЕЛЬЦУ: приглашённый видит своё приглашение
+                    // своей карточкой, а кого ещё позвали — не его дело и не
+                    // его данные (правило чтения не пустит его к чужим
+                    // приглашениям вовсе).
+                    if (isOwner) ...[
+                      Builder(builder: (context) {
+                        final rows = lineupRows(
+                          lineup: event.lineup,
+                          children: personalEvents,
+                          parentEventId: event.id,
+                          nameOf: (uid) => _findUser(allUsers, uid)?.name,
+                        );
+                        if (rows.isEmpty) return const SizedBox.shrink();
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 20),
+                            Text(
+                              _lineupHeader(rows),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                letterSpacing: 1.5,
+                                color: kMuted,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            ...rows.map(
+                              (r) => _PartyMemberRow(
+                                // Пустое имя — «Naməlum», а не uid: здесь, в
+                                // отличие от состава вечера, человек мог
+                                // исчезнуть из списка совсем, и машинный код
+                                // ему не подпись. Запасное имя уже подставлено
+                                // правилом, пустота значит «сведений нет».
+                                name: r.name.isEmpty ? 'Naməlum' : r.name,
+                                // СЛОВАРЬ ОБЩИЙ С СОСТАВОМ ВЕЧЕРА, а не свой:
+                                // «gəlir», «cavab gözlənilir», «bacarmır» уже
+                                // говорят про людей на этом же экране. Второй
+                                // словарь про то же самое заставил бы человека
+                                // учить два.
+                                answer: _lineupAnswerOf(r),
+                                note: _lineupNoteOf(r),
+                                onTap: () =>
+                                    _openUserProfile(context, allUsers, r.uid),
+                                // ДВЕРЬ ТОЛЬКО ТУДА, ГДЕ ЕЙ ЕСТЬ ЧТО ОТКРЫТЬ.
+                                onOpenChat: r.kind == LineupRowKind.notInvited &&
+                                        r.reason == kNotInvitedOpenRound
+                                    ? () => openDirectChat(
+                                          context,
+                                          ref,
+                                          myUid: widget.currentUid,
+                                          otherUid: r.uid,
+                                        )
+                                    : null,
+                              ),
+                            ),
+                          ],
+                        );
+                      }),
+                    ],
+
                     // ЗАМЕТКА — если она есть. В макете её нет вовсе, но поле живое
                     // («Qalstuk, qara kostyum») и молчать о нём нельзя: это то, что
                     // человек должен надеть, придя на вечер.
@@ -4147,6 +4223,58 @@ String _partyHeader(PersonalEvent e) {
   return '$head · $n NƏFƏR';
 }
 
+/// Заголовок раздела позванных — со СЧЁТОМ, а не голым словом.
+///
+/// Число здесь не украшение: «ÇAĞIRILANLAR» без него утверждает наличие
+/// списка и молчит о его длине, а владелец пришёл сюда ровно за длиной —
+/// скольких позвал и скольких недосчитался. Тот же довод, что у
+/// `_partyHeader` рядом.
+String _lineupHeader(List<LineupRow> rows) {
+  final sent = rows.where((r) => r.kind == LineupRowKind.invited).length;
+  // ДОЛЯ, А НЕ ОДНО ЧИСЛО. «Позвано 2» и «позвано 2 из 3» — разные
+  // сообщения, и второе врать не может: без знаменателя непозванный виден
+  // только тому, кто пересчитает строки сам (I40).
+  return sent == rows.length
+      ? 'ÇAĞIRILANLAR · $sent'
+      : 'ÇAĞIRILANLAR · $sent / ${rows.length}';
+}
+
+/// Ответ строки в словаре состава — ОДНО правило на три вида.
+///
+/// **`notAsked` у непозванного — это не натяжка, а точное слово.** Его и
+/// правда не спрашивали: приглашения не создано, вопрос не задан. Словарь
+/// проекта уже говорит про такого человека «soruşulmayıb», и заводить второе
+/// слово о том же значило бы держать два ответа на один вопрос (N49).
+///
+/// **У снятого приглашения ответа НЕТ ВОВСЕ, и `null` здесь намеренный.**
+/// Ни один из пяти существующих ответов про него не верен: его спрашивали, и
+/// вопрос сняли. Слово для этого случая стоит второй строкой, в [_lineupNoteOf],
+/// а кольцо остаётся серым — тем же, что у «не спрашивали». Свести их в один
+/// ОТВЕТ нельзя (I47), но выглядеть одинаково тихо они обязаны: от обоих
+/// сегодня никто ничего не ждёт.
+String? _lineupAnswerOf(LineupRow r) => switch (r.kind) {
+      LineupRowKind.invited => r.answer,
+      LineupRowKind.notInvited => kAnswerNotAsked,
+      LineupRowKind.withdrawn => null,
+    };
+
+/// Вторая строка под ответом — почему ответа нет.
+///
+/// Пусто у позванного: там всё сказано словом ответа, и лишняя подпись
+/// превратила бы объяснение в шум.
+///
+/// **Незнакомая причина называется незнакомой** (I14): повод, которого мы ещё
+/// не завели, обязан быть заметен, а не подменяться правдоподобным.
+String _lineupNoteOf(LineupRow r) => switch (r.kind) {
+      LineupRowKind.invited => '',
+      LineupRowKind.withdrawn => 'dəvət geri götürüldü',
+      LineupRowKind.notInvited => switch (r.reason) {
+          kNotInvitedOpenRound => 'onunla artıq iş danışığı gedir',
+          kNotInvitedFailed => 'göndərmək alınmadı',
+          _ => 'səbəb bilinmir',
+        },
+    };
+
 /// СТРОКА УЧАСТНИКА — кружок с двумя буквами в обводке по ответу, имя, под
 /// ним ответ. Из макета `mugam-6-kart` (классы `.av2`, `.st`).
 ///
@@ -4160,11 +4288,32 @@ class _PartyMemberRow extends StatelessWidget {
     required this.answer,
     required this.onTap,
     this.onRemove,
+    this.note,
+    this.onOpenChat,
   });
 
   final String name;
   final String? answer;
   final VoidCallback onTap;
+
+  /// Вторая строка под словом ответа — ПОЧЕМУ ответа нет.
+  ///
+  /// Приходит готовыми словами: строка не решает, что показать, она
+  /// показывает. `null` — второй строки нет вовсе, и так у всего состава
+  /// вечера.
+  ///
+  /// **ЭТО ДАННЫЕ, А НЕ ПЕРЕКЛЮЧАТЕЛЬ, и различие тут существенное** (I58).
+  /// Строке не приходится знать, состав она рисует или позванных; ей дают
+  /// лишнюю подпись, и она её печатает. Появись здесь `if (лист позванных)`
+  /// — значит склеены два дела, и разводить их надо обратно.
+  final String? note;
+
+  /// Дверь в переписку с этим человеком. `null` — двери нет.
+  ///
+  /// Решает НЕ эта строка: у непозванного по причине «идёт другой разговор»
+  /// дверь есть, у непозванного по отказу записи — нет, потому что в чате
+  /// ничего не произошло и вести туда некуда (N65, N146).
+  final VoidCallback? onOpenChat;
 
   /// Крестик справа — есть только у вышедшего и только у владельца.
   ///
@@ -4308,9 +4457,34 @@ class _PartyMemberRow extends StatelessWidget {
                         ],
                       ),
                     ),
+                  // ПРИЧИНА — ТРЕТЬЕЙ СТРОКОЙ И ТИШЕ СЛОВА ОТВЕТА.
+                  //
+                  // Тише нарочно: слово отвечает «что с человеком», причина —
+                  // «почему так вышло». Дай им один вес, и строка начнёт
+                  // читаться как два равных сообщения об одном человеке.
+                  if (note != null && note!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        note!,
+                        style: const TextStyle(fontSize: 12, color: kMuted),
+                      ),
+                    ),
                 ],
               ),
             ),
+            // «AÇ» — ДВЕРЬ В ЧАТ, И ОНА ЗДЕСЬ ПОТОМУ, ЧТО ОКНО ОТПРАВКИ
+            // ИСЧЕЗАЕТ, А КАРТОЧКА ОСТАЁТСЯ.
+            //
+            // При отправке неушедшие названы поимённо и дверь дана. Через час,
+            // когда человек вернулся посмотреть, кого не позвали, окна уже
+            // нет — назвать беду и не дать хода значит выполнить обещание
+            // наполовину (решение владельца 08.09).
+            if (onOpenChat != null)
+              TextButton(
+                onPressed: onOpenChat,
+                child: const Text('Aç', style: TextStyle(color: kGold)),
+              ),
             // КРЕСТИК — отдельным нажатием, а не частью строки: нажатие на
             // строку ведёт в карточку человека, и подменять этот привычный
             // ход у одного участника из пяти значило бы завести две разные
