@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
+import '../../../core/time/az_date_format.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import 'edit_profile_screen.dart';
 import 'profile_settings_screen.dart';
@@ -513,7 +514,7 @@ class _StatItem extends StatelessWidget {
           ),
         ),
         Text(
-          label.toUpperCase(),
+          azUpperCase(label),
           style: const TextStyle(
             fontSize: 11,
             color: kMuted,

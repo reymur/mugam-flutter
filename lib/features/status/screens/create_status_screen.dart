@@ -18,6 +18,7 @@ import '../../../core/media/video_compressor.dart';
 import '../../../core/settings/image_quality_settings.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
+import '../../../core/time/az_date_format.dart';
 import '../../../shared/widgets/status_video_player.dart' as status_video;
 import '../../chat/screens/custom_camera_backup/camera_capture_screen.dart';
 import '../../chat/screens/video_message_widgets.dart' show UploadProgressOverlay;
@@ -974,14 +975,14 @@ class _PrivacyPickerScreenState extends ConsumerState<PrivacyPickerScreen> {
                       ),
                     );
                   }
-                  final query = _friendSearch.trim().toLowerCase();
+                  final query = azLowerCase(_friendSearch.trim());
                   final visibleUids = query.isEmpty
                       ? friendUids
                       : friendUids.where((uid) {
                           final name =
                               ref.watch(currentUserProvider(uid)).value?.name ??
                               '';
-                          return name.toLowerCase().contains(query);
+                          return azLowerCase(name).contains(query);
                         }).toList();
                   if (visibleUids.isEmpty) {
                     return const Center(

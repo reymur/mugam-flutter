@@ -6,6 +6,8 @@
 // и оба неподвижны: приклеенное окончание не умеет меняться вслед за
 // именем, а в азербайджанском оно обязано.
 
+import '../time/az_date_format.dart';
+
 /// Гласные заднего ряда. После них идёт `-dan`.
 const _back = {'a', 'ı', 'o', 'u'};
 
@@ -26,7 +28,7 @@ const _front = {'e', 'ə', 'i', 'ö', 'ü'};
 /// выбирать не из чего, а падать на имени — хуже, чем ошибиться в
 /// окончании у строки, которой в жизни не бывает.
 String azAblativeSuffix(String word) {
-  final lower = word.toLowerCase();
+  final lower = azLowerCase(word);
   for (var i = lower.length - 1; i >= 0; i--) {
     final ch = lower[i];
     if (_front.contains(ch)) return 'dən';

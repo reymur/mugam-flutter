@@ -11,6 +11,7 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../chats/screens/create_group_screen.dart';
+import '../../../core/time/az_date_format.dart';
 import '../../search/screens/filter_sheet.dart';
 import '../../status/screens/create_status_screen.dart';
 import 'chat_screen.dart';
@@ -744,14 +745,14 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
                         ),
                       );
                     }
-                    final query = _search.trim().toLowerCase();
+                    final query = azLowerCase(_search.trim());
                     final hasFilters = _filters.activeCount > 0;
                     if (query.isNotEmpty || hasFilters) {
                       final filtered = targets
                           .where(
                             (c) =>
                                 (query.isEmpty ||
-                                    c.name.toLowerCase().contains(query)) &&
+                                    azLowerCase(c.name).contains(query)) &&
                                 _chatMatchesFilters(c),
                           )
                           .toList();
