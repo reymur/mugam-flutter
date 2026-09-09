@@ -45,6 +45,8 @@ import {
   unsettledAfterMemberLeft,
   eventWallClock,
   BAKU_OFFSET_MS,
+  childPatchForParentEdit,
+  kMaxLineupChildren,
 } from "./eventNotifications";
 import { planOfferPushes } from "./jobOfferNotifications";
 import {
@@ -2429,6 +2431,29 @@ export const sweepOrphanMediaDaily = onSchedule(
 // одной доставки и различен у разных изменений. Маркер кладётся в отдельную
 // коллекцию, а НЕ в документ мероприятия: запись в него подняла бы этот же
 // триггер снова и породила уведомление о собственном уведомлении.
+/**
+ * ЗАМОК ПЕРЕНОСА — СВОЁ ПРОСТРАНСТВО КЛЮЧЕЙ, И ЭТО НЕ АККУРАТНОСТЬ (шаг 6).
+ *
+ * **`event.id` У ВСЕХ ТРИГГЕРОВ ОДНОЙ ЗАПИСИ ОБЩИЙ.** Возьми перенос тот же
+ * ключ, что `claimNotificationOnce`, — и две функции подрались бы за один
+ * `create`: победитель сделал бы своё, проигравший **молча пропустил бы
+ * свою работу**. То есть либо не ушли бы уведомления, либо не перенеслись бы
+ * поля, и вслепую эти два исхода неотличимы.
+ *
+ * Приставка к ключу разводит их насовсем. Заводить отдельную коллекцию не
+ * стали: смысл у обоих один — «эта доставка уже обработана», — и держать их
+ * рядом полезнее, чем врозь.
+ *
+ * **ЗАМОК ЗДЕСЬ — СТРАХОВКА, А НЕ НЕСУЩАЯ ЧАСТЬ, и это сказано вслух.**
+ * Сама запись переноса идемпотентна по следствию: второй проход пишет те же
+ * значения, `diffEvents` у ребёнка не видит разницы и молчит. Замок бережёт
+ * от лишних записей, а не от лишних уведомлений — от тех бережёт признак
+ * перехода у ребёнка.
+ */
+async function claimPropagateOnce(eventKey: string): Promise<boolean> {
+  return claimNotificationOnce(`propagate:${eventKey}`);
+}
+
 async function claimNotificationOnce(eventKey: string): Promise<boolean> {
   const ref = db.collection("maintenance").doc("eventNotifications")
     .collection("sent").doc(eventKey);
@@ -2480,6 +2505,13 @@ function toEventSnapshot(d: Record<string, unknown>): EventSnapshot {
     // с «ушёл участник».
     unsettledReason:
       (d.unsettledReason as EventSnapshot["unsettledReason"]) ?? null,
+    // Работа 7, шаг 6. Чтение защитное по той же причине, что у соседей
+    // (I49): документ вечера правят наш клиент, наш сервер мимо правил и
+    // рука в консоли, а на этом поле держится решение «запускать ли обход
+    // детей». Чужой тип здесь читается как «поля нет», то есть как обычный
+    // вечер, — сторона выбрана в сторону 121 документа прода без поля.
+    parentEventId:
+      typeof d.parentEventId === "string" ? d.parentEventId : null,
     // `?? null` здесь НЕЛЬЗЯ, и это не придирка: `undefined` (поля нет) и
     // `{}` (пустая карта) обязаны дойти разными, иначе теряется единственный
     // признак, по которому норма отличается от поломки (I47). Приводить
@@ -2670,6 +2702,74 @@ export const onPersonalEventUpdated = onDocumentUpdated(
     await clearReadMark(event.params.eventId, recipientsOf(a, actor));
     if (!(await claimNotificationOnce(event.id))) return;
     await sendEventPushes(pushes);
+  },
+);
+
+// ПРАВКА РОДИТЕЛЯ ПЕРЕЕЗЖАЕТ В ПРИГЛАШЕНИЯ — работа 7, шаг 6 (`docs/plan.md`).
+//
+// ОТДЕЛЬНЫЙ ТРИГГЕР, А НЕ ВЕТКА В `onPersonalEventUpdated`, и довод тот же,
+// что у `markEventUnsettled` соседом ниже: тот выходит на `pushes.length ===
+// 0` РАНЬШЕ всякой записи, и «уведомлять некого» не должно означать «поля не
+// переносить». Слепи их — и правка вечера, сделанная владельцем в одиночку,
+// разослала бы себе ноль писем и заодно не сдвинула бы детей.
+//
+// ЧТО ДЕЛАЕТ: переписывает `date`/`location`/`notes` в документах-детях.
+// Уведомление детям НЕ ШЛЁТ и слать не должно — его разошлёт
+// `onPersonalEventUpdated`, сработавший НА КАЖДОМ РЕБЁНКЕ от этой самой
+// записи, и понесёт id ребёнка, то есть поведёт туда, что приглашённый
+// вправе открыть (разбор — у `childPatchForParentEdit`).
+//
+// ЧЕГО ОН НЕ ДЕЛАЕТ, чтобы на него не положились шире: отмену родителя он не
+// разбирает вовсе. Дети при отмене уходят ПОД ВОПРОС с поводом
+// `workCancelled`, а не в отмену, и это шаг 8 — отдельная выкладка с одной
+// переменной (I48).
+export const propagateParentEdits = onDocumentUpdated(
+  "personalEvents/{eventId}",
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after) return;
+    // ПРИЗНАК ПЕРЕХОДА — ПЕРВЫМ, ДО ЗАМКА И ДО ЗАПРОСА. Правил не то —
+    // выходим, не потратив ни чтения. Порядок значим: запри мы сперва, и
+    // каждая посторонняя запись в вечер жгла бы по документу замка.
+    const patch = childPatchForParentEdit(
+      toEventSnapshot(before),
+      toEventSnapshot(after),
+    );
+    if (!patch) return;
+
+    const children = await db.collection("personalEvents")
+      .where("parentEventId", "==", event.params.eventId)
+      .limit(kMaxLineupChildren)
+      .get();
+    if (children.empty) return;
+
+    // УСЕЧЕНИЕ НЕ МОЛЧИТ (I13). Вернулось ровно столько, сколько просили, —
+    // значит их может быть больше, и часть состава осталась бы на старой
+    // дате. Это единственный исход здесь, который нельзя заметить снаружи.
+    if (children.size === kMaxLineupChildren) {
+      logger.error(
+        `[lineup-propagate] упёрлись в потолок: ${children.size} приглашений ` +
+        `у ${event.params.eventId}, часть могла остаться непереписанной`,
+      );
+    }
+
+    // ЗАМОК ПОСЛЕ ПРИЗНАКА И ПОСЛЕ ЗАПРОСА, НО ДО ЗАПИСИ. Он бережёт от
+    // повторной ДОСТАВКИ одного и того же события Cloud Functions, а не от
+    // повторных правок: у тех свой `event.id`, и каждая обязана доехать.
+    if (!(await claimPropagateOnce(event.id))) return;
+
+    // ПАЧКОЙ, А НЕ ПО ОДНОЙ. Десять приглашений — десять записей, и порознь
+    // они дали бы десять раздельных отказов вместо одного: часть детей
+    // переехала бы, часть нет, и снаружи это выглядело бы как «у половины
+    // состава другая дата».
+    const batch = db.batch();
+    for (const doc of children.docs) batch.update(doc.ref, patch);
+    await batch.commit();
+    logger.info(
+      `[lineup-propagate] ${event.params.eventId} → ${children.size} ` +
+      `приглашений, поля: ${Object.keys(patch).join(",")}`,
+    );
   },
 );
 
