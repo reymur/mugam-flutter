@@ -1,5 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/agreements/event_status_view.dart';
+import 'package:mugam_flutter/firebase/models.dart';
+
+import 'support/source_text.dart';
 
 // ШАГ 6 — состояние вечера на карточке. Починка N116: до неё карточка вечера
 // не показывала состояние ВООБЩЕ (ноль упоминаний `event.status` против
@@ -259,6 +262,99 @@ void main() {
       expect(kRestoreLabelMemberLeft.startsWith('Onsuz'), isTrue,
           reason: 'канарейка: разбор `startsWith` умеет находить это слово — '
               'иначе вердикт выше был бы зелёным от слепоты');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // ПРОВОДКА ВЫХОДА НАВЕРХ — работа 7, шаг 8, клиентская половина, 09.09
+  // -------------------------------------------------------------------------
+  // ЗАЧЕМ ЭТИ ВЕРДИКТЫ, ЕСЛИ ПРАВИЛО УЖЕ ПОКРЫТО ВЫШЕ. Правило было покрыто и
+  // зелено с 08.09 — и всё это время НЕДОСТИЖИМО: модель не читала
+  // `unsettledReason`, подать повод было нечем, а экран `showsRestore` не звал
+  // вовсе. Тест этого не видел, потому что подаёт повод сам (I9: проверка,
+  // которая не может провалиться, ничего не доказывает про прод).
+  //
+  // Отсюда два вердикта на то, чего правило о себе не знает: что поле доезжает
+  // ИЗ ДОКУМЕНТА и что экран зовёт правило, а не пишет своё условие.
+  group('выход наверх проведён до конца, а не только написан', () {
+    test('повод доезжает ИЗ ДОКУМЕНТА в модель', () {
+      final e = PersonalEvent.fromFirestore('e', {
+        'ownerUid': 'rafael',
+        'date': '2026-09-16T18:00:00',
+        'musicians': const <String>[],
+        'status': kStatusUnsettled,
+        'unsettledReason': kReasonWorkCancelled,
+      });
+      expect(e.unsettledReason, kReasonWorkCancelled);
+      // И правило на этом поводе открывает выход — то есть цепочка
+      // «документ → модель → правило» сомкнулась.
+      expect(
+        showsRestore(
+          isOwner: true,
+          status: e.status,
+          unsettledReason: e.unsettledReason,
+        ),
+        isTrue,
+      );
+    });
+
+    test('поля нет — повода нет, и это НЕ «повод неизвестен»', () {
+      // Замер 07.09: поля нет у 121 документа прода из 121. Значит `null`
+      // здесь сегодня обычная жизнь, и выход наверх открывать не по чему.
+      final e = PersonalEvent.fromFirestore('e', {
+        'ownerUid': 'rafael',
+        'date': '2026-09-16T18:00:00',
+        'musicians': const <String>[],
+        'status': kStatusUnsettled,
+      });
+      expect(e.unsettledReason, isNull);
+      expect(
+        showsRestore(isOwner: true, status: e.status, unsettledReason: null),
+        isFalse,
+      );
+    });
+
+    test('ЧУЖОЙ ТИП В ПОЛЕ не роняет разбор — падение уронило бы календарь', () {
+      // I49: поле пишет сервер мимо правил, плюс рука в консоли.
+      //
+      // **ЭТОТ ВЕРДИКТ САМ ПО СЕБЕ НЕ ДОКАЗЫВАЕТ НИЧЕГО, и это выяснено
+      // порчей 09.09.** Ожидаемый ответ здесь `null` — а `null` выходит и
+      // когда защита работает, и когда поле НЕ ЧИТАЮТ ВОВСЕ. Порча «модель
+      // перестала читать повод» его не уронила: я предсказал два упавших,
+      // упал один.
+      //
+      // Он держится на соседе выше — «повод доезжает ИЗ ДОКУМЕНТА», — который
+      // от той же порчи краснеет. Порознь брать нельзя: сам по себе он тот
+      // случай, что I9, — проверка, которая не может провалиться.
+      final e = PersonalEvent.fromFirestore('e', {
+        'ownerUid': 'rafael',
+        'date': '2026-09-16T18:00:00',
+        'musicians': const <String>[],
+        'status': kStatusUnsettled,
+        'unsettledReason': 42,
+      });
+      expect(e.unsettledReason, isNull);
+    });
+
+    test('ЭКРАН ЗОВЁТ ПРАВИЛО, а не пишет своё условие', () {
+      // Своё условие на экране разошлось бы с сервером МОЛЧА, и человек
+      // получил бы кнопку, которой отказывают. Проверяется по исходнику:
+      // разметку тестом не прогнать (I32).
+      final code = readCode('lib/features/agreements/screens/agreements_screen.dart');
+      // Канарейка к вырезке: кусок читается, иначе ноль ниже — слепота.
+      expect(code.contains('_restoreEvent('), isTrue,
+          reason: 'канарейка: ход возврата исчез, вердикты ниже зелены даром');
+      expect(code.contains('showsRestore('), isTrue,
+          reason: 'экран перестал звать правило показа: условие уехало в '
+              'разметку, где его не сторожит никто');
+      expect(code.contains('restoreLabel('), isTrue,
+          reason: 'надпись зашита на экране: у двух поводов она РАЗНАЯ, и '
+              'второе место с тем же решением разойдётся (N49)');
+      // Надписи В РАЗМЕТКЕ быть не должно — только через правило.
+      expect(code.contains("'Onsuz davam edirəm'"), isFalse,
+          reason: 'надпись первого повода вписана в экран мимо правила');
+      expect(code.contains("'Yenə də davam edirik'"), isFalse,
+          reason: 'надпись второго повода вписана в экран мимо правила');
     });
   });
 }
