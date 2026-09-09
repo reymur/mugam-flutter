@@ -1,9 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mugam_flutter/core/agreements/day_buckets.dart';
 import 'package:mugam_flutter/core/agreements/day_role.dart';
+import 'package:mugam_flutter/core/agreements/month_marks.dart';
+import 'package:mugam_flutter/core/agreements/occupied_days.dart';
 import 'package:mugam_flutter/core/agreements/event_answers.dart';
 import 'package:mugam_flutter/core/agreements/lineup.dart';
 import 'package:mugam_flutter/core/agreements/lineup_children.dart';
 import 'package:mugam_flutter/firebase/models.dart';
+import 'package:mugam_flutter/shared/widgets/event_conflict_banner.dart';
 
 // ПРИГЛАШЕНИЯ СВОИХ — работа 7, шаг 5 (`docs/plan.md`), 09.09.
 //
@@ -163,6 +167,136 @@ void main() {
     test('ПУСТОЙ uid НЕ ПРЯЧЕТ НИЧЕГО — пустой экран читался бы как успех', () {
       expect(collapsesUnderParent(child, ''), isFalse);
       expect(showsInCalendarOf(child, ''), isTrue);
+    });
+  });
+
+  // СХЛОПЫВАНИЕ — ПО ОДНОМУ ВЕРДИКТУ НА КАЖДОЕ ПЕРЕЧИСЛЯЮЩЕЕ МЕСТО (N211,
+  // N212, 09.09).
+  //
+  // ПОЧЕМУ ГРУППЫ РАЗНЫЕ, А НЕ ОДНА ОБЩАЯ. Правило одно — `collapsesUnderParent`
+  // — но проверять надо не правило, а КАЖДОГО, КТО ПОД НЕГО ПОДПАДАЕТ (I64).
+  // Прошлый заход это и провалил: три порчи целились в `showsInCalendarOf`,
+  // все три совпали, и пропуск в трёх соседних местах остался незамеченным.
+  // Общий вердикт на «правило работает» повторил бы ту же ошибку.
+  //
+  // ЗНАМЕНАТЕЛЬ, СНЯТЫЙ ОБХОДОМ 09.09: перечисляют вечера ЧЕТЫРЕ места,
+  // схлопывают теперь ЧЕТЫРЕ. Список поимённо — `buildDayBuckets`,
+  // `dayMarkOf`, `occupiedEventsByDayOf`, `conflictEventsOnDay`.
+  group('схлопывание в ЧЕТЫРЁХ местах — по вердикту на каждое', () {
+    final parent = PersonalEvent.fromFirestore('p', {
+      'ownerUid': 'rafael',
+      'date': '2026-09-11T20:00:00',
+      'musicians': const <String>[],
+      'status': 'agreed',
+    });
+    List<PersonalEvent> childrenOf(int n) => [
+          for (var i = 0; i < n; i++)
+            PersonalEvent.fromFirestore('c$i', {
+              'ownerUid': 'rafael',
+              'parentEventId': 'p',
+              'date': '2026-09-11T20:00:00',
+              'musicians': ['guest$i'],
+              'answers': {'guest$i': kAnswerWaiting},
+              'answersWrittenByOwner': true,
+              'status': 'agreed',
+            }),
+        ];
+
+    test('1/4 buildDayBuckets — список дня показывает ОДИН вечер', () {
+      final buckets = buildDayBuckets(
+        own: [parent, ...childrenOf(3)],
+        asParticipant: const [],
+        now: DateTime(2026, 9, 10),
+        viewerUid: 'rafael',
+      );
+      final all = [
+        ...buckets.today,
+        ...buckets.tomorrow,
+        if (buckets.next != null) buckets.next!,
+        for (final d in buckets.week) ...d.events,
+      ];
+      expect(all.where((e) => e.id == 'p').length, 1);
+      expect(all.where((e) => e.parentEventId != null), isEmpty,
+          reason: 'дети зовущего попали в список дня');
+    });
+
+    test('2/4 dayMarkOf — пометка клетки считает ОДИН вечер', () {
+      // Сегодня повторы этот ответ не меняют — у детей тот же владелец и та
+      // же дата. Вердикт стоит на СОСТАВ перечня, а не на вид пометки:
+      // совпадение вида — не довод, оно разойдётся на шаге 8 работы 7.
+      final mark = dayMarkOf(
+        [parent, ...childrenOf(3)],
+        const {'rafael': 'Rafael'},
+        currentUid: 'rafael',
+      );
+      expect(mark, isNotNull);
+      expect(mark!.ownerUid, 'rafael');
+      // Клетка, где остались ОДНИ дети, пуста — согласовано со списком дня.
+      expect(
+        dayMarkOf(childrenOf(2), const {}, currentUid: 'rafael'),
+        isNull,
+        reason: 'дети без родителя пометили клетку зовущего',
+      );
+    });
+
+    test('3/4 occupiedEventsByDayOf — «чем занят день» без повторов', () {
+      final byDay = occupiedEventsByDayOf(
+        own: [parent, ...childrenOf(3)],
+        asParticipant: const [],
+        uid: 'rafael',
+      );
+      final day = byDay[DateTime(2026, 9, 11)] ?? const <PersonalEvent>[];
+      expect(day.length, 1, reason: 'полоса занятости показала вечер ${day.length} раз');
+      expect(day.single.id, 'p');
+    });
+
+    test('4/4 conflictEventsOnDay — ОДИН конфликт, а не четыре', () {
+      final conflicts = conflictEventsOnDay(
+        DateTime(2026, 9, 11, 20),
+        [parent, ...childrenOf(3)],
+        currentUid: 'rafael',
+      );
+      expect(conflicts.length, 1);
+      expect(conflicts.single.id, 'p');
+    });
+
+    test('КАНАРЕЙКА: настоящий конфликт НЕ теряется', () {
+      // I14, вторая половина: назвать, каким был бы вывод на исправном.
+      // Здесь он «один конфликт», а не «ни одного», — и без этой соседки
+      // схлопывание, съевшее заодно родителя, выглядело бы успехом.
+      final conflicts = conflictEventsOnDay(
+        DateTime(2026, 9, 11, 20),
+        [parent],
+        currentUid: 'rafael',
+      );
+      expect(conflicts.length, 1,
+          reason: 'схлопывание съело сам вечер, а не только его повторы');
+    });
+
+    test('ПРИГЛАШЁННОМУ его вечер виден во всех четырёх', () {
+      final all = [parent, ...childrenOf(1)];
+      final buckets = buildDayBuckets(
+        own: const [],
+        asParticipant: all,
+        now: DateTime(2026, 9, 10),
+        viewerUid: 'guest0',
+      );
+      final shown = [
+        ...buckets.today,
+        ...buckets.tomorrow,
+        if (buckets.next != null) buckets.next!,
+        for (final d in buckets.week) ...d.events,
+      ];
+      expect(shown.any((e) => e.id == 'c0'), isTrue);
+      // Занятости и конфликта у него нет — он ещё не ответил (N126).
+      expect(
+        occupiedEventsByDayOf(
+          own: const [],
+          asParticipant: all,
+          uid: 'guest0',
+        )[DateTime(2026, 9, 11)],
+        isNull,
+      );
     });
   });
 
