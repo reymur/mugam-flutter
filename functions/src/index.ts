@@ -46,6 +46,7 @@ import {
   eventWallClock,
   BAKU_OFFSET_MS,
   childPatchForParentEdit,
+  unsettledAfterWorkCancelled,
   kMaxLineupChildren,
 } from "./eventNotifications";
 import { planOfferPushes } from "./jobOfferNotifications";
@@ -2814,6 +2815,87 @@ export const markEventUnsettled = onDocumentUpdated(
         pushUnsettled(uid, event.params.eventId, a),
       ),
     );
+  },
+);
+
+// ОТМЕНИЛИ РОДИТЕЛЯ — ПРИГЛАШЕНИЯ УХОДЯТ ПОД ВОПРОС (работа 7, шаг 8).
+//
+// РЕШЕНИЕ ВЛАДЕЛЬЦА 08.09: дети под вопрос с поводом `workCancelled`, а не в
+// отмену и не «оставить как есть». Отмена детей отменяла бы за людей то,
+// чего они не отменяли; «оставить» — молчание, которое здесь хуже отказа.
+//
+// ОТДЕЛЬНЫЙ ТРИГГЕР, а не ветка в `propagateParentEdits`: тот выходит на
+// «поля не менялись» раньше всякой записи, а отмена как раз полей не меняет.
+// Слепи их — и отмена родителя не тронула бы детей ни разу.
+//
+// УВЕДОМЛЕНИЕ ШЛЁТСЯ ЗДЕСЬ ЖЕ, И ЭТО НЕ ДУБЛИРОВАНИЕ. Наша запись в ребёнка
+// прошла бы МОЛЧА: `diffEvents` не сравнивает `status`, а `planUpdatePushes`
+// ветвится по `lastActionType`, где повода `workCancelled` нет. Приглашённый
+// узнавал бы о вопросе, только открыв карточку. Тот же довод и то же
+// устройство, что у `markEventUnsettled` соседом выше.
+export const unsettleChildrenOnParentCancel = onDocumentUpdated(
+  "personalEvents/{eventId}",
+  async (event) => {
+    const before = event.data?.before.data();
+    const after = event.data?.after.data();
+    if (!before || !after) return;
+    // ПРИЗНАК ПЕРЕХОДА — ПЕРВЫМ, до замка и до запроса. Считай мы по
+    // состоянию «отменён», каждая последующая запись в отменённый вечер
+    // снова гнала бы детей под вопрос — включая ту, которой владелец вернул
+    // бы вечер в силу.
+    const patch = unsettledAfterWorkCancelled(
+      toEventSnapshot(before),
+      toEventSnapshot(after),
+    );
+    if (!patch) return;
+
+    const children = await db.collection("personalEvents")
+      .where("parentEventId", "==", event.params.eventId)
+      .limit(kMaxLineupChildren)
+      .get();
+    if (children.empty) return;
+
+    // УСЕЧЕНИЕ НЕ МОЛЧИТ (I13) — тот же потолок и тот же довод, что у
+    // переноса полей: часть состава осталась бы в силе на вечере, которого
+    // больше нет, и заметить это было бы нечем.
+    if (children.size === kMaxLineupChildren) {
+      logger.error(
+        `[lineup-unsettle] упёрлись в потолок: ${children.size} приглашений ` +
+        `у ${event.params.eventId}, часть могла остаться в силе`,
+      );
+    }
+
+    // СВОЙ КЛЮЧ ЗАМКА, И ЭТО ТОТ ЖЕ РАЗБОР, ЧТО У ПЕРЕНОСА: `event.id` у всех
+    // триггеров одной записи ОБЩИЙ, и общий ключ означал бы, что одна из
+    // функций молча пропустит свою работу. Здесь их на одну запись уже три —
+    // `onPersonalEventUpdated`, `propagateParentEdits` и эта.
+    if (!(await claimNotificationOnce(`unsettleChildren:${event.id}`))) return;
+
+    const batch = db.batch();
+    for (const doc of children.docs) batch.update(doc.ref, patch);
+    await batch.commit();
+    logger.info(
+      `[lineup-unsettle] ${event.params.eventId} → ${children.size} ` +
+      `приглашений под вопрос (${patch.unsettledReason})`,
+    );
+
+    // КАЖДОМУ ПРИГЛАШЁННОМУ — ПРО ЕГО ДОКУМЕНТ, а не про родителя.
+    //
+    // Тот же довод, что у переноса полей: приглашённого нет в `musicians`
+    // родителя, и push с id родителя открыл бы отказ по правам. Здесь id
+    // берётся у ребёнка — `doc.id`.
+    //
+    // АВТОР СНИМАЕТСЯ ИЗ САМОГО РЕБЁНКА, а не из родителя. У договорённости
+    // отмену мог подтвердить НЕ владелец, а вторая сторона; она приглашений
+    // не видела, и вычитать её из получателей было бы нечего, зато назвать
+    // её автором чужого документа — прямая неправда (I54).
+    const pushes = children.docs.flatMap((doc) => {
+      const child = toEventSnapshot({ ...doc.data(), ...patch });
+      return recipientsOf(child, child.lastActionBy ?? null).map((uid) =>
+        pushUnsettled(uid, doc.id, child),
+      );
+    });
+    await sendEventPushes(pushes);
   },
 );
 

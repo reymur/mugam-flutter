@@ -4,6 +4,7 @@ import {
   childPatchForParentEdit,
   diffEvents,
   kMaxLineupChildren,
+  unsettledAfterWorkCancelled,
   editedBody,
   EventPush,
   EventSnapshot,
@@ -1391,5 +1392,132 @@ describe("удаление вслед за уходом (N121, шаг 2)", () =>
     body.includes("logger.error"),
     "упор в потолок перестал быть громким: часть состава осталась бы на " +
       "старой дате, и заметить это было бы нечем (I13)",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ОТМЕНА РОДИТЕЛЯ → ПРИГЛАШЕНИЯ ПОД ВОПРОС — работа 7, шаг 8, 09.09
+// ---------------------------------------------------------------------------
+{
+  const p: EventSnapshot = {
+    ownerUid: "rafael",
+    date: "2026-09-16T18:00:00",
+    type: "Toy",
+    location: "Zal",
+    notes: "",
+    musicians: [],
+    status: "agreed",
+  };
+  const at = (over: Partial<EventSnapshot>): EventSnapshot => ({ ...p, ...over });
+
+  // ПЕРЕХОД В ОТМЕНУ — дети под вопрос с поводом workCancelled.
+  assert.deepEqual(
+    unsettledAfterWorkCancelled(p, at({ status: "cancelled" })),
+    {
+      status: "unsettled",
+      lastActionType: "workCancelled",
+      unsettledReason: "workCancelled",
+    },
+  );
+
+  // ОБА ПУТИ ОТМЕНЫ ПОКРЫТЫ ОДНИМ ПРИЗНАКОМ: личный вечер отменяется одним
+  // владельцем (ownerCancelled), договорённость по согласию двоих
+  // (cancelConfirmed). Ветвись мы по имени поступка, третий путь, когда он
+  // появится, прошёл бы молча (требование 17 check-call-my-people.md).
+  for (const deed of ["ownerCancelled", "cancelConfirmed"] as const) {
+    assert.ok(
+      unsettledAfterWorkCancelled(
+        p,
+        at({ status: "cancelled", lastActionType: deed }),
+      ) !== null,
+      `путь отмены ${deed} перестал доходить до детей`,
+    );
+  }
+
+  // ПРИЗНАК ПЕРЕХОДА, А НЕ СОСТОЯНИЯ. Уже был отменён — второй раз детей не
+  // гоним. Иначе КАЖДАЯ последующая запись в отменённый вечер снова ставила
+  // бы их под вопрос, включая ту, которой владелец вернул бы вечер в силу.
+  assert.equal(
+    unsettledAfterWorkCancelled(
+      at({ status: "cancelled" }),
+      at({ status: "cancelled", location: "Baglar" }),
+    ),
+    null,
+  );
+
+  // Не отмена — ничего. Правка вечера детей под вопрос не ставит.
+  assert.equal(unsettledAfterWorkCancelled(p, at({ location: "Baglar" })), null);
+  assert.equal(unsettledAfterWorkCancelled(p, at({ status: "unsettled" })), null);
+
+  // ВОЗВРАТ В СИЛУ ДЕТЕЙ НЕ ТРОГАЕТ: cancelled → agreed это не переход В
+  // отмену. Что делать с детьми при возврате родителя — вопрос ОТКРЫТЫЙ,
+  // решения владельца на него нет, и молча его тут не принимают.
+  assert.equal(
+    unsettledAfterWorkCancelled(at({ status: "cancelled" }), p),
+    null,
+  );
+
+  // РЕБЁНОК ДЕТЕЙ НЕ ИМЕЕТ — обход по нему не запускается. Без этого отмена
+  // приглашения (владелец вправе) искала бы его собственных детей.
+  assert.equal(
+    unsettledAfterWorkCancelled(
+      at({ parentEventId: "p" }),
+      at({ parentEventId: "p", status: "cancelled" }),
+    ),
+    null,
+  );
+
+  // СТАТУС ДЕТЕЙ — ИМЕННО unsettled, А НЕ cancelled. Отмена отменяла бы за
+  // людей то, чего они не отменяли, и вернуть было бы нельзя: из cancelled
+  // выхода нет ни у кого (решение владельца 08.09).
+  const patch = unsettledAfterWorkCancelled(p, at({ status: "cancelled" }));
+  assert.equal(patch?.status, "unsettled");
+  assert.notEqual(patch?.status, "cancelled");
+}
+
+// ---------------------------------------------------------------------------
+// ПРОВОДКА ОТМЕНЫ РОДИТЕЛЯ — сторож по исходнику
+// ---------------------------------------------------------------------------
+{
+  const src = readFileSync(`${__dirname}/../src/index.ts`, "utf8");
+  const start = src.indexOf("export const unsettleChildrenOnParentCancel");
+  assert.ok(start !== -1, "триггер отмены исчез — сторож смотрит в пустоту");
+  const end = src.indexOf("export const onPersonalEventDeleted", start);
+  assert.ok(end !== -1, "вторая граница вырезки потеряна");
+  const body = src.slice(start, end);
+  // КАНАРЕЙКА К ВЫРЕЗКЕ (I13, I31).
+  assert.ok(
+    body.includes("unsettledAfterWorkCancelled("),
+    "канарейка: тело триггера не читается — вердикты ниже зелены даром",
+  );
+
+  // СВОЙ КЛЮЧ ЗАМКА. На одну запись в вечер триггеров уже ТРИ, и общий ключ
+  // означал бы, что одна из них молча пропустит свою работу.
+  assert.ok(
+    body.includes('claimNotificationOnce(`unsettleChildren:${event.id}`)'),
+    "замок отмены перестал быть своим: event.id у триггеров одной записи " +
+      "общий, и одна из трёх функций молча пропустит работу",
+  );
+
+  // УВЕДОМЛЕНИЕ — ПРО ДОКУМЕНТ РЕБЁНКА, А НЕ РОДИТЕЛЯ. Приглашённого нет в
+  // musicians родителя, и push с его id открыл бы отказ по правам.
+  assert.ok(
+    body.includes("pushUnsettled(uid, doc.id, child)"),
+    "уведомление понесло id родителя: приглашённый его читать не вправе, и " +
+      "нажатие откроет отказ по правам",
+  );
+  assert.ok(
+    !body.includes("event.params.eventId, child"),
+    "id родителя попал в уведомление приглашённому",
+  );
+
+  // ПОТОЛОК ПРОВЕДЁН И УПОР ГРОМКИЙ.
+  assert.ok(
+    body.includes("limit(kMaxLineupChildren)"),
+    "потолок на число детей не проведён в запрос",
+  );
+  assert.ok(
+    body.includes("logger.error"),
+    "упор в потолок перестал быть громким: часть состава осталась бы в силе",
   );
 }
