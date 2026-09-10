@@ -1183,6 +1183,79 @@ describe("вечер снова в силе: «Dəqiq» и «Yenə də davam edi
     for (const p of pushes) assert.notEqual(p.uid, OWNER);
   });
 
+  it("ВЫШЕДШЕМУ НЕ ПИШЕМ «тебя вернули» — вопрос владельца 11.09", () => {
+    // ВОПРОС БЫЛ ТАКОЙ: вечер ушёл под вопрос ИЗ-ЗА УХОДА самого адресата;
+    // владелец жмёт «Onsuz davam edirəm»; не получит ли ушедший «Rafael
+    // yenidən qüvvəyə saldı» и не прочтёт ли это как «меня вернули насильно»?
+    //
+    // ОТВЕТ: путь недостижим, и держит его НЕ эта ветвь, а `recipientsOf` —
+    // единственное место, где решается «кто ещё живой в этом вечере». Оно
+    // отсеивает всякого, у кого `answers[uid] === 'left'`, а это ровно
+    // подпись ушедшего: правило `answersForSelf()` не пускает чужой ключ.
+    //
+    // ВЕРДИКТ СТОИТ ЗДЕСЬ, ХОТЯ ПРАВИЛО ЖИВЁТ ТАМ, И ЭТО НАРОЧНО. Он
+    // проверяет не `recipientsOf` (у того свои вердикты), а СВЯЗКУ: что
+    // новая ветвь зовёт именно отсеивающий отбор, а не собственный список.
+    // Напиши кто-нибудь здесь `[after.ownerUid, ...after.musicians]` —
+    // `recipientsOf` остался бы зелёным, а ушедший получил бы письмо.
+    const left = ev({
+      musicians: [OWNER, GUEST, OTHER],
+      status: "unsettled",
+      unsettledReason: "memberLeft",
+      answers: { [GUEST]: "left" },
+    });
+    const pushes = plan({
+      eventId: "e1",
+      before: left,
+      after: {
+        ...left,
+        status: "agreed",
+        lastActionBy: OWNER,
+        lastActionType: "restored",
+      },
+      actorName: "Rafael",
+    });
+    // КАНАРЕЙКА ВНУТРИ ОДНОГО ВЕРДИКТА (I31): проверка «ушедшему не пришло»
+    // утверждает ОТСУТСТВИЕ и зазеленела бы от пустого списка целиком.
+    // Поэтому рядом, тем же вызовом, стоит утверждение НАЛИЧИЯ: третьему,
+    // который не уходил, письмо ушло.
+    assert.deepEqual(pushes.map((p) => p.uid), [OTHER]);
+  });
+
+  it("ТО ЖЕ У ТРЁХ ОСТАЛЬНЫХ ХОДОВ: вышедшего не трогает ни один", () => {
+    // Вопрос владельца был про возврат в силу, но отбор получателей общий,
+    // и проверять его надо у КАЖДОГО, кто под него подпадает (I64). Иначе
+    // «проверено» относилось бы к одному ходу из четырёх.
+    const base = ev({
+      musicians: [OWNER, GUEST, OTHER],
+      answers: { [GUEST]: "left" },
+    });
+    const moves = [
+      ["ownerCancelled", "agreed", "cancelled"],
+      ["ownerDoubt", "agreed", "unsettled"],
+      ["ownerFirm", "unsettled", "agreed"],
+      ["restored", "unsettled", "agreed"],
+    ] as const;
+    for (const [deed, from, to] of moves) {
+      const pushes = plan({
+        eventId: "e1",
+        before: { ...base, status: from },
+        after: {
+          ...base,
+          status: to,
+          lastActionBy: OWNER,
+          lastActionType: deed,
+        },
+        actorName: "Rafael",
+      });
+      assert.deepEqual(
+        pushes.map((p) => p.uid),
+        [OTHER],
+        `${deed}: получатели разошлись с отбором «кто ещё живой»`,
+      );
+    }
+  });
+
   it("НИЧЕГО НЕ МЕНЯЛОСЬ — МОЛЧИМ: «Dəqiq» на вечере, который и так в силе", () => {
     // Без этого условия каждое нажатие «Dəqiq» рассылало бы новость об
     // отсутствии перемены. Условие названо, а не подразумевается: тот, кого
