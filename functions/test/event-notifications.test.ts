@@ -1118,27 +1118,190 @@ describe("отмена личного вечера владельцем (N213)",
     assert.equal(pushes.length, 0);
   });
 
-  it("ТРОЕ ОСТАЛЬНЫХ ВСЁ ЕЩЁ МОЛЧАТ, и это записано, а не забыто", () => {
-    // N214, N215, N216. Вердикт стоит здесь затем, чтобы починка любого из
-    // них не прошла молча: заведи ветвь — покраснеет тут и в
-    // `test/event_deed_wiring_test.dart`.
-    //
-    // I14 в обе стороны: пустой список тут — ПРАВИЛЬНЫЙ ответ, поэтому
-    // рядом, той же формой, стоит проверка на непустой (ownerCancelled
-    // выше). Совпади они — разбор не сказал бы ничего.
+  it("ТРОЕ ОСТАЛЬНЫХ ЗАГОВОРИЛИ 11.09 — по одному письму составу", () => {
+    // ЗДЕСЬ СТОЯЛО «ТРОЕ ОСТАЛЬНЫХ ВСЁ ЕЩЁ МОЛЧАТ», и вердикт перевёрнут, а
+    // не снят: он и заводился затем, чтобы починка не прошла молча мимо
+    // таблицы. Прошла — он покраснел — таблица поправлена. Сработал.
     for (const deed of ["ownerFirm", "ownerDoubt", "restored"] as const) {
+      const doubt = deed === "ownerDoubt";
       const pushes = plan({
         eventId: "e1",
-        before,
+        before: ev({ status: doubt ? "agreed" : "unsettled" }),
         after: ev({
-          status: deed === "ownerDoubt" ? "unsettled" : "agreed",
+          status: doubt ? "unsettled" : "agreed",
           lastActionBy: OWNER,
           lastActionType: deed,
         }),
         actorName: "Rafael",
       });
-      assert.equal(pushes.length, 0, `${deed} заговорил — поправить таблицу`);
+      assert.deepEqual(
+        pushes.map((p) => p.uid),
+        [GUEST],
+        `${deed} снова молчит`,
+      );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N214 + N216 — ВЕЧЕР СНОВА В СИЛЕ
+// ---------------------------------------------------------------------------
+describe("вечер снова в силе: «Dəqiq» и «Yenə də davam edirik» (N214, N216)", () => {
+  const unsettled = ev({ status: "unsettled" });
+  const back = (deed: "ownerFirm" | "restored") =>
+    ev({ status: "agreed", lastActionBy: OWNER, lastActionType: deed });
+
+  it("ОБА ПОСТУПКА ДАЮТ ОДНО И ТО ЖЕ ПИСЬМО, слово в слово", () => {
+    // ЭТО И ЕСТЬ ПРОВЕРКА РЕШЕНИЯ ПО I58, А НЕ УКРАШЕНИЕ. Слить две ветви
+    // можно было только если ответ адресату одинаков; разойдись тексты —
+    // значит поступка два, и ветвей должно быть две.
+    const first = plan({
+      eventId: "e1", before: unsettled, after: back("ownerFirm"),
+      actorName: "Rafael",
+    });
+    const second = plan({
+      eventId: "e1", before: unsettled, after: back("restored"),
+      actorName: "Rafael",
+    });
+    assert.deepEqual(first, second);
+    assert.equal(first.length, 1);
+    assert.equal(first[0].uid, GUEST);
+    assert.equal(first[0].title, "Tədbir qüvvədədir");
+    assert.equal(
+      first[0].body,
+      "Rafael «Toy» tədbirini yenidən qüvvəyə saldı — 8 Avqust 2026, 17:30",
+    );
+    assert.equal(first[0].data.type, "event_back_in_force");
+  });
+
+  it("ВЛАДЕЛЬЦУ НЕ ШЛЁМ — он автор, и другим быть не может по правилам", () => {
+    const pushes = plan({
+      eventId: "e1", before: unsettled, after: back("restored"),
+      actorName: "Rafael",
+    });
+    assert.equal(pushes.length, 1);
+    for (const p of pushes) assert.notEqual(p.uid, OWNER);
+  });
+
+  it("НИЧЕГО НЕ МЕНЯЛОСЬ — МОЛЧИМ: «Dəqiq» на вечере, который и так в силе", () => {
+    // Без этого условия каждое нажатие «Dəqiq» рассылало бы новость об
+    // отсутствии перемены. Условие названо, а не подразумевается: тот, кого
+    // оно не поймало, получает ничего — и это верный ответ, потому что и не
+    // произошло ничего (I34).
+    const pushes = plan({
+      eventId: "e1",
+      before: ev({ status: "agreed" }),
+      after: back("ownerFirm"),
+      actorName: "Rafael",
+    });
+    assert.equal(pushes.length, 0);
+  });
+
+  it("РАССКАЗ РАЗОШЁЛСЯ С ДЕЛОМ — молчим, а не врём", () => {
+    // Правила перечисляют имена и статусы ПОРОЗНЬ (`ownerSetsStatus`),
+    // значит сочетание «имя ownerFirm, статус unsettled» пройдёт запись.
+    // Письмо «вечер в силе» о вечере под вопросом было бы неправдой;
+    // молчание — всего лишь неполнотой (I54).
+    const pushes = plan({
+      eventId: "e1",
+      before: ev({ status: "agreed" }),
+      after: ev({
+        status: "unsettled",
+        lastActionBy: OWNER,
+        lastActionType: "ownerFirm",
+      }),
+      actorName: "Rafael",
+    });
+    assert.equal(pushes.length, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N215 — ВЛАДЕЛЕЦ САМ УСОМНИЛСЯ, И ОКОШКО ЭТО ОБЕЩАЛО
+// ---------------------------------------------------------------------------
+describe("владелец сам поставил «İş dəqiq deyil» (N215)", () => {
+  const doubted = ev({
+    status: "unsettled",
+    lastActionBy: OWNER,
+    lastActionType: "ownerDoubt",
+  });
+
+  it("состав узнаёт — ТЕМ ЖЕ письмом, что и по трём другим дорогам", () => {
+    // Одно состояние — одно сообщение (I58). Разойдись тексты, «под
+    // вопросом» звучало бы по-разному в зависимости от того, КАК туда
+    // попали, а человеку важно само состояние.
+    const pushes = plan({
+      eventId: "e1",
+      before: ev({ status: "agreed" }),
+      after: doubted,
+      actorName: "Rafael",
+    });
+    assert.deepEqual(pushes.map((p) => p.uid), [GUEST]);
+    assert.equal(pushes[0].title, "Tədbir şübhə altındadır");
+    assert.equal(pushes[0].data.type, "event_unsettled");
+  });
+
+  it("ПОВОДА В ТЕЛЕ НЕТ, и это верно: клиенту его писать запрещено", () => {
+    // `serverOwnsUnsettledReason` не пускает `unsettledReason` от клиента,
+    // значит по этой дороге повод всегда пуст. Придумать его значило бы
+    // сказать неправду о том, ПОЧЕМУ вечер под вопросом.
+    const pushes = plan({
+      eventId: "e1",
+      before: ev({ status: "agreed" }),
+      after: doubted,
+      actorName: "Rafael",
+    });
+    assert.equal(pushes[0].body, "«Toy», 8 Avqust 2026, 17:30");
+    assert.equal(/ayrıldı|ləğv/.test(pushes[0].body), false);
+  });
+
+  it("УЖЕ БЫЛО ПОД ВОПРОСОМ — молчим", () => {
+    const pushes = plan({
+      eventId: "e1",
+      before: ev({ status: "unsettled" }),
+      after: doubted,
+      actorName: "Rafael",
+    });
+    assert.equal(pushes.length, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N217 — ОБЩЕЕ СООБЩЕНИЕ «ПОД ВОПРОСОМ»: СЛОВО И ДАТА
+// ---------------------------------------------------------------------------
+describe("сообщение «под вопросом» называет предмет и день (N217)", () => {
+  it("заголовок говорит «Tədbir», а не «Müqavilə»", () => {
+    // По этой дороге ходят и ЛИЧНЫЕ вечера, где договора нет вовсе.
+    // Признак, по которому ошибку видно без спора: собственное напоминание
+    // рядом всё это время говорило «tədbir».
+    const p = pushUnsettled(GUEST, "e1", ev({ status: "unsettled" }));
+    assert.equal(p.title, "Tədbir şübhə altındadır");
+    assert.equal(/Müqavilə/.test(p.title), false);
+    // Соседка через границу: собственное напоминание говорит то же слово.
+    assert.ok(pushUnsettledReminder(GUEST, "e1", ev()).title.includes("tədbir"));
+  });
+
+  it("ДЕНЬ НАЗВАН — иначе непонятно, КАКОЙ вечер под вопросом", () => {
+    // Комментарий над `unsettledBody` обещал «Toy, 9 Avqust» дважды, а код
+    // отдавал голое «Toy». Тот же довод, что у `pushDeleted`: у человека в
+    // календаре несколько вечеров.
+    const p = pushUnsettled(GUEST, "e1", ev({ status: "unsettled" }));
+    assert.equal(p.body, "«Toy», 8 Avqust 2026, 17:30");
+  });
+
+  it("повод, когда он есть, приписывается ПОСЛЕ дня", () => {
+    const p = pushUnsettled(
+      GUEST, "e1",
+      ev({ status: "unsettled", unsettledReason: "workCancelled" }),
+    );
+    assert.equal(p.body, "«Toy», 8 Avqust 2026, 17:30 — iş ləğv olundu");
+  });
+
+  it("КАНАРЕЙКА: даты нет — строка не врёт и не печатает пустоту", () => {
+    // Без неё «дата добавлена» проверялось бы только на входе, где она
+    // есть, и вечер без даты дал бы «Toy, » с висящей запятой.
+    const p = pushUnsettled(GUEST, "e1", ev({ status: "unsettled", date: "" }));
+    assert.equal(p.body, "«Toy»");
   });
 });
 
