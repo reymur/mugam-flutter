@@ -986,6 +986,162 @@ describe("отмена по согласию", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// N213 — ВЛАДЕЛЕЦ ОТМЕНИЛ ЛИЧНЫЙ ВЕЧЕР
+// ---------------------------------------------------------------------------
+// Подтверждено ДЕЛОМ 11.09, а не чтением цепочки: контроль «сменили время»
+// дошёл до трубки, отмена минутой позже — тишина; три вызова функции, одна
+// строка `[event-push] шлём` на весь заход. До починки все проверки ниже
+// падали бы одинаково — пустым списком.
+describe("отмена личного вечера владельцем (N213)", () => {
+  const before = ev({ status: "agreed" });
+  const after = ev({
+    status: "cancelled",
+    lastActionBy: OWNER,
+    lastActionType: "ownerCancelled",
+  });
+
+  it("состав узнаёт — по одному письму каждому, кроме автора", () => {
+    const pushes = plan({ eventId: "e1", before, after, actorName: "Rafael" });
+    assert.deepEqual(pushes.map((p) => p.uid), [GUEST]);
+    assert.equal(pushes[0].title, "Tədbir ləğv olundu");
+    assert.equal(
+      pushes[0].body,
+      "Rafael «Toy» tədbirini ləğv etdi — 8 Avqust 2026, 17:30",
+    );
+  });
+
+  it("троим — двоим, и оба разные люди, а не один дважды", () => {
+    // Счёт, а не «непусто» (I13): ошибка в получателях чаще всего даёт не
+    // ноль, а одного и того же человека дважды.
+    const pushes = plan({
+      eventId: "e1",
+      before: ev({ musicians: [OWNER, GUEST, OTHER], status: "agreed" }),
+      after: ev({
+        musicians: [OWNER, GUEST, OTHER],
+        status: "cancelled",
+        lastActionBy: OWNER,
+        lastActionType: "ownerCancelled",
+      }),
+      actorName: "Rafael",
+    });
+    assert.equal(pushes.length, 2);
+    assert.deepEqual(new Set(pushes.map((p) => p.uid)), new Set([GUEST, OTHER]));
+  });
+
+  it("ВЕДЁТ В КАРТОЧКУ, а не в список", () => {
+    // Отменённый вечер по правилам читается: состав в `musicians` цел.
+    // `openList` заведён для тех, кому карточку читать уже нельзя.
+    const pushes = plan({ eventId: "e1", before, after, actorName: "Rafael" });
+    assert.equal(pushes[0].data.eventId, "e1");
+    assert.equal(pushes[0].data.type, "event_cancelled");
+    assert.equal(pushes[0].data.openList, undefined);
+  });
+
+  it("автор своего же хода не получает ничего", () => {
+    const pushes = plan({ eventId: "e1", before, after, actorName: "Rafael" });
+    // СЧЁТ ПЕРВЫМ, И ЭТО НЕ ЛИШНЯЯ СТРОКА (I9). Один обход по пустому списку
+    // проходит всегда — то есть без этой строки вердикт был бы зелёным и
+    // при снятой ветви, когда не приходит вообще ничего. Проверка, которая
+    // не может провалиться, не доказывает ничего.
+    assert.equal(pushes.length, 1);
+    for (const p of pushes) assert.notEqual(p.uid, OWNER);
+  });
+
+  it("ОТМЕНА НЕ ТЯНЕТ ЗА СОБОЙ «поля изменились»", () => {
+    // Ветвь обрывает разбор тем же `return`, что и четыре хода договора:
+    // иначе смена `status` вместе с переездом дала бы две новости об одном.
+    const pushes = plan({
+      eventId: "e1",
+      before,
+      after: ev({
+        status: "cancelled",
+        location: "Başqa yer",
+        lastActionBy: OWNER,
+        lastActionType: "ownerCancelled",
+      }),
+      actorName: "Rafael",
+    });
+    assert.equal(pushes.length, 1);
+    assert.equal(pushes[0].title, "Tədbir ləğv olundu");
+  });
+
+  it("СОСЕДКА ДОГОВОРА НЕ ЗАДЕТА: cancelConfirmed говорит своё и адресно", () => {
+    // Требование владельца, и оно не формальность: новая ветвь стоит в том
+    // же `switch`, и перепутанный порядок или общее тело сказали бы
+    // запросившему «tədbir ləğv olundu» вместо «ləğvi təsdiqlədi» — рассказ
+    // о поступке, которого не было (I58: сводить по задаче, а не по
+    // совпадению исхода).
+    const pushes = plan({
+      eventId: "e1",
+      before: ev({ cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 }),
+      after: ev({
+        cancelRequestedBy: OWNER,
+        cancelRequestedAtMs: 1000,
+        cancelConfirmedBy: GUEST,
+        status: "cancelled",
+        lastActionBy: GUEST,
+        lastActionType: "cancelConfirmed",
+      }),
+      actorName: "Teymur",
+    });
+    assert.equal(pushes.length, 1);
+    // Адресно ПРОСИВШЕМУ, а не «всем кроме автора».
+    assert.equal(pushes[0].uid, OWNER);
+    assert.equal(pushes[0].title, "Müqavilə ləğv edildi");
+    assert.equal(pushes[0].data.type, "event_cancel_confirmed");
+  });
+
+  it("СТЫК С ШАГОМ 8: workCancelled остаётся без ветви, и это НАРОЧНО", () => {
+    // ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ЭТА ПОЧИНКА И ШАГ 8 (`docs/plan.md`)
+    // СОПРИКАСАЮТСЯ, И ПОТОМУ ВЕРДИКТ СТОИТ ЗДЕСЬ, А НЕ У ШАГА 8.
+    //
+    // `unsettleChildrenOnParentCancel` пишет детям `workCancelled` и САМ
+    // шлёт им `pushUnsettled`. Каждая такая запись поднимает
+    // `onPersonalEventUpdated` на ребёнке — то есть проходит через этот
+    // самый `switch`, в который починка N213 добавила ветвь. Заведись ветвь
+    // и для `workCancelled` — приглашённый получил бы ДВА письма об одном
+    // действии, и виновата была бы починка, а сломался бы шаг 8.
+    //
+    // Именно этот вердикт делает две работы одной выкладкой честной: он
+    // держит границу между ними числом, а не намерением.
+    const pushes = plan({
+      eventId: "e1",
+      before,
+      after: ev({
+        status: "unsettled",
+        lastActionBy: OWNER,
+        lastActionType: "workCancelled",
+      }),
+      actorName: "Rafael",
+    });
+    assert.equal(pushes.length, 0);
+  });
+
+  it("ТРОЕ ОСТАЛЬНЫХ ВСЁ ЕЩЁ МОЛЧАТ, и это записано, а не забыто", () => {
+    // N214, N215, N216. Вердикт стоит здесь затем, чтобы починка любого из
+    // них не прошла молча: заведи ветвь — покраснеет тут и в
+    // `test/event_deed_wiring_test.dart`.
+    //
+    // I14 в обе стороны: пустой список тут — ПРАВИЛЬНЫЙ ответ, поэтому
+    // рядом, той же формой, стоит проверка на непустой (ownerCancelled
+    // выше). Совпади они — разбор не сказал бы ничего.
+    for (const deed of ["ownerFirm", "ownerDoubt", "restored"] as const) {
+      const pushes = plan({
+        eventId: "e1",
+        before,
+        after: ev({
+          status: deed === "ownerDoubt" ? "unsettled" : "agreed",
+          lastActionBy: OWNER,
+          lastActionType: deed,
+        }),
+        actorName: "Rafael",
+      });
+      assert.equal(pushes.length, 0, `${deed} заговорил — поправить таблицу`);
+    }
+  });
+});
+
 describe("удаление", () => {
   it("текст читается как законченный факт, без задачи для читателя", () => {
     const p = pushDeleted(GUEST, "e1", "Rafael", ev());
@@ -1450,8 +1606,15 @@ describe("удаление вслед за уходом (N121, шаг 2)", () =>
   assert.equal(unsettledAfterWorkCancelled(p, at({ status: "unsettled" })), null);
 
   // ВОЗВРАТ В СИЛУ ДЕТЕЙ НЕ ТРОГАЕТ: cancelled → agreed это не переход В
-  // отмену. Что делать с детьми при возврате родителя — вопрос ОТКРЫТЫЙ,
-  // решения владельца на него нет, и молча его тут не принимают.
+  // отмену.
+  //
+  // **РЕШЕНИЕ ВЛАДЕЛЬЦА 11.09, а не открытый вопрос** (здесь стояло «вопрос
+  // ОТКРЫТЫЙ»): дети остаются под вопросом, зовущий возвращает каждого сам.
+  // Довод: автоматический возврат был бы зеркальным «отменить за людей», а
+  // ровно этим доводом 08.09 отвергнута отмена детей вместе с родителем.
+  // Значит этот вердикт держит РЕШЕНИЕ, а не временное неведение, и снимать
+  // его при появлении «возврата детей» нельзя — такой работы не будет.
+  // Разбор — `docs/plan.md`, решение 6.
   assert.equal(
     unsettledAfterWorkCancelled(at({ status: "cancelled" }), p),
     null,
