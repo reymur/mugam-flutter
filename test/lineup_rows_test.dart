@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/agreements/event_answers.dart';
+import 'package:mugam_flutter/core/agreements/event_status_view.dart';
 import 'package:mugam_flutter/core/agreements/lineup.dart';
 import 'package:mugam_flutter/core/agreements/lineup_rows.dart';
 import 'package:mugam_flutter/firebase/models.dart';
@@ -21,6 +22,7 @@ void main() {
     String invitee = 'guest',
     String answer = kAnswerWaiting,
     String status = 'agreed',
+    String? reason,
   }) =>
       PersonalEvent.fromFirestore(id, {
         'ownerUid': 'rafael',
@@ -30,6 +32,7 @@ void main() {
         'answers': {invitee: answer},
         'answersWrittenByOwner': true,
         'status': status,
+        if (reason != null) 'unsettledReason': reason,
       });
 
   List<LineupRow> rowsOf({
@@ -194,6 +197,93 @@ void main() {
 
     test('пусто и там и там — ни одной строки, и раздел не рисуется', () {
       expect(rowsOf(), isEmpty);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // ВОЗВРАТ РЕБЁНКА В СИЛУ НА СТРОКЕ ПОЗВАННОГО — N220, 11.09
+  // -------------------------------------------------------------------------
+  // ЧТО ЭТО ЗАКРЫВАЕТ. Шаг 8 обещал выход наверх («состояние без выхода —
+  // скрытая отмена», решение владельца 08.09), и выхода не было НИ У КОГО:
+  // приглашённый не владелец документа, а у зовущего ребёнок схлопнут под
+  // родителем и в календаре не показан.
+  group('возврат ребёнка в силу предлагается на строке (N220)', () {
+    PersonalEvent gone(String answer) => child(
+          answer: answer,
+          status: kStatusUnsettled,
+          reason: kReasonWorkCancelled,
+        );
+
+    test('СОГЛАСИВШЕМУСЯ — предлагается, и строка несёт чем его вернуть', () {
+      final r = rowsOf(children: [gone(kAnswerGoing)]).single;
+      expect(offersLineupRestore(r), isTrue);
+      // Одного «предлагается» мало: без id вызывающему нечего звать, и
+      // кнопка вышла бы нажимаемой в никуда (N147).
+      expect(r.eventId, 'c');
+      expect(r.unsettledReason, kReasonWorkCancelled);
+    });
+
+    // ТРИ СОСТОЯНИЯ, А НЕ ДВА — слова владельца 11.09: «у молчащего отказа не
+    // было, вернуть его значит вернуть ВОПРОС».
+    test('ОТКАЗАВШЕМУСЯ — не предлагается', () {
+      expect(offersLineupRestore(rowsOf(children: [gone(kAnswerCant)]).single),
+          isFalse);
+    });
+
+    test('МОЛЧАЩЕМУ — не предлагается', () {
+      expect(
+          offersLineupRestore(rowsOf(children: [gone(kAnswerWaiting)]).single),
+          isFalse);
+    });
+
+    // КАНАРЕЙКА К ТРЁМ ОТРИЦАНИЯМ ВЫШЕ (I31): они утверждают ОТСУТСТВИЕ и
+    // зазеленели бы все разом, ослепни правило до `false`. Здесь то же
+    // правило говорит «да» — значит отрицания что-то да значат.
+    test('КАНАРЕЙКА: правило не сводится к «никогда»', () {
+      final yes = offersLineupRestore(rowsOf(children: [gone(kAnswerGoing)]).single);
+      final no = offersLineupRestore(rowsOf(children: [gone(kAnswerCant)]).single);
+      expect(yes && !no, isTrue,
+          reason: 'правило схлопнулось: согласившийся и отказавшийся равны');
+    });
+
+    test('вечер В СИЛЕ — возврат не предлагается никому', () {
+      for (final a in [kAnswerGoing, kAnswerCant, kAnswerWaiting]) {
+        expect(offersLineupRestore(rowsOf(children: [child(answer: a)]).single),
+            isFalse,
+            reason: 'вернуть в силу предложено тому, кто и так в силе ($a)');
+      }
+    });
+
+    test('ПОД ВОПРОСОМ ИЗ-ЗА УХОДА УЧАСТНИКА — тоже не предлагается', () {
+      // Сужение сделано под `workCancelled`, и у соседнего повода поведение
+      // обязано остаться прежним (I34). У ребёнка `memberLeft` быть не может
+      // — состав из одного человека, — но правило об этом не знает, и
+      // полагаться на «так не бывает» здесь нечем (I49).
+      final r = rowsOf(children: [
+        child(
+          answer: kAnswerGoing,
+          status: kStatusUnsettled,
+          reason: kReasonMemberLeft,
+        )
+      ]).single;
+      expect(offersLineupRestore(r), isFalse);
+    });
+
+    test('СНЯТОЕ и НЕПОЗВАННОЕ — полей документа нет вовсе', () {
+      // У них ребёнка не существует, и `eventId` обязан быть пуст: иначе
+      // кнопка позвала бы возврат на чужом или несуществующем документе.
+      final withdrawn = rowsOf(
+        lineup: const [LineupSlot(uid: 'guest', name: 'G', invited: true)],
+      ).single;
+      expect(withdrawn.kind, LineupRowKind.withdrawn);
+      expect(withdrawn.eventId, isNull);
+      expect(offersLineupRestore(withdrawn), isFalse);
+
+      final notInvited = rowsOf(
+        lineup: const [LineupSlot(uid: 'guest', name: 'G', invited: false)],
+      ).single;
+      expect(notInvited.eventId, isNull);
+      expect(offersLineupRestore(notInvited), isFalse);
     });
   });
 }

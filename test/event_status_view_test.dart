@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mugam_flutter/core/agreements/event_answers.dart';
 import 'package:mugam_flutter/core/agreements/event_status_view.dart';
 import 'package:mugam_flutter/firebase/models.dart';
 
@@ -355,6 +356,88 @@ void main() {
           reason: 'надпись первого повода вписана в экран мимо правила');
       expect(code.contains("'Yenə də davam edirik'"), isFalse,
           reason: 'надпись второго повода вписана в экран мимо правила');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // КАКИЕ ОТВЕТЫ ПРЕДЛОЖИТЬ — N221 и N222, 11.09
+  // -------------------------------------------------------------------------
+  // ОДНО ПРАВИЛО НА ДВА ЭКРАНА: карточка вечера и подвал экрана приглашения
+  // обязаны показывать одни кнопки в одних случаях. Вердикты стоят на
+  // правиле, а не на разметке, — её тестом не прогнать (I32).
+  group('какие ответы предложить (N221, N222)', () {
+    AnswerOffer offer(String status, String? reason, String? mine) =>
+        answerOfferFor(
+          status: status,
+          unsettledReason: reason,
+          myAnswer: mine,
+        );
+
+    test('вечер в силе — оба ответа, кто бы что ни ответил', () {
+      for (final mine in [kAnswerGoing, kAnswerCant, kAnswerWaiting, null]) {
+        expect(offer(kStatusAgreed, null, mine), AnswerOffer.both,
+            reason: 'обычная жизнь изменилась для ответа $mine');
+      }
+    });
+
+    test('РАБОТЫ НЕТ, а человек согласился — остаётся ТОЛЬКО отказ', () {
+      // Кнопка, которая остаётся, — та, что ОСВОБОЖДАЕТ человека: он держит
+      // день занятым под работу, которой больше нет.
+      expect(
+        offer(kStatusUnsettled, kReasonWorkCancelled, kAnswerGoing),
+        AnswerOffer.onlyDecline,
+      );
+    });
+
+    test('РАБОТЫ НЕТ, а человек молчал — не предлагается НИЧЕГО', () {
+      // Слова владельца 11.09: «у молчащего отказа не было, вернуть его
+      // значит вернуть вопрос». Оставь ему «Bacarmıram» — в данных появилась
+      // бы запись отказа, которого он не давал.
+      expect(
+        offer(kStatusUnsettled, kReasonWorkCancelled, kAnswerWaiting),
+        AnswerOffer.none,
+      );
+    });
+
+    test('РАБОТЫ НЕТ, а человек уже отказался — тоже ничего', () {
+      expect(
+        offer(kStatusUnsettled, kReasonWorkCancelled, kAnswerCant),
+        AnswerOffer.none,
+      );
+    });
+
+    test('УШЁЛ УЧАСТНИК — поведение ПРЕЖНЕЕ, оба ответа', () {
+      // Сужение сделано под один повод, и у соседнего ничего не меняется.
+      // Это I34 проверкой, а не словами: спрошено, что получает тот, кого
+      // условие не поймало.
+      for (final mine in [kAnswerGoing, kAnswerCant, kAnswerWaiting]) {
+        expect(offer(kStatusUnsettled, kReasonMemberLeft, mine),
+            AnswerOffer.both);
+      }
+    });
+
+    test('ПОВОД НЕИЗВЕСТЕН — оба ответа, а не молчание', () {
+      // Повода нет у 121 документа прода из 121 (замер 07.09). Сузься
+      // правило по `status` вместо повода — все они разом лишились бы кнопок.
+      expect(offer(kStatusUnsettled, null, kAnswerGoing), AnswerOffer.both);
+    });
+
+    test('КАНАРЕЙКА: правило даёт ТРИ разных ответа, а не один', () {
+      final all = {
+        offer(kStatusAgreed, null, kAnswerGoing),
+        offer(kStatusUnsettled, kReasonWorkCancelled, kAnswerGoing),
+        offer(kStatusUnsettled, kReasonWorkCancelled, kAnswerWaiting),
+      };
+      expect(all.length, 3,
+          reason: 'правило схлопнулось: разные случаи дают один ответ');
+    });
+
+    test('строка для того, кому отвечать нечего, НЕ ПУСТА', () {
+      // Экран без кнопок и без слов нем: человек не знает, приглашение умерло
+      // или висит (N210). Проверяется и то, что сказано ЧЬЁ решение.
+      expect(kWorkGoneWaitingText, isNotEmpty);
+      expect(kWorkGoneWaitingText.contains('Çağıran'), isTrue,
+          reason: 'не сказано, чьё теперь решение');
     });
   });
 }

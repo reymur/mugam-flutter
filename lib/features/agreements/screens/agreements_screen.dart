@@ -2431,6 +2431,15 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
   @override
   Widget build(BuildContext context) {
     final mine = widget.event.answerFor(widget.currentUid);
+    // ЧТО ЧЕЛОВЕК МОЖЕТ ОТВЕТИТЬ СЕЙЧАС — ПРАВИЛОМ, А НЕ УСЛОВИЕМ ЗДЕСЬ
+    // (N221, N222). Обе раскладки читают один и тот же ответ: карточка вечера
+    // и подвал экрана приглашения обязаны показывать одни кнопки в одних
+    // случаях, иначе разойдутся в первой правке (N49).
+    final offer = answerOfferFor(
+      status: widget.event.status,
+      unsettledReason: widget.event.unsettledReason,
+      myAnswer: mine,
+    );
 
     // ПОДВАЛЬНАЯ ФОРМА — экран `DƏVƏT`. Ни рамки, ни подписи «Cavabınız»:
     // там ответ не соседствует ни с чем, и называть его отдельно значит
@@ -2439,6 +2448,37 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
     // Плашка занятого дня остаётся — она предупреждение, а не украшение, и
     // теряться от смены раскладки не должна.
     if (widget.form == _AnswerCardForm.footer) {
+      // РАБОТЫ НЕТ — ОТВЕЧАТЬ НЕ НА ЧТО, И ЭКРАН ГОВОРИТ ЭТО СЛОВАМИ (N221).
+      //
+      // **Кнопок не остаётся ни одной, и это не половина решения.** У
+      // молчавшего отказа НЕ БЫЛО: оставь ему «Bacarmıram» — в данных
+      // появилась бы запись отказа, которого он не давал, а «Gəlirəm» было бы
+      // согласием на работу, которой нет.
+      //
+      // **Строка обязательна, иначе экран нем** (N210): человек видит
+      // приглашение без кнопок и не знает, оно умерло или висит. Сказано и
+      // что случилось, и ЧЬЁ теперь решение — иначе он ждёт действия от себя.
+      //
+      // Плашка занятого дня здесь снимается вместе с кнопками: она
+      // предупреждение перед выбором, а выбора больше нет.
+      if (offer == AnswerOffer.none) {
+        return Container(
+          padding: const EdgeInsets.all(14),
+          // ПАЛИТРА ПРЕДУПРЕЖДЕНИЯ ВЗЯТА ГОТОВОЙ, А НЕ ПОДОБРАНА (I41).
+          // Заливка и рамка — альфой по чёрному (так и задумано), текст —
+          // ЯВНЫМ светлым тоном: альфа на чёрном не осветляет, и красным по
+          // чёрному строка не читалась бы.
+          decoration: BoxDecoration(
+            color: kWarnBg,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: kWarnBorder),
+          ),
+          child: Text(
+            kWorkGoneWaitingText,
+            style: const TextStyle(fontSize: 14, color: kWarnTitle),
+          ),
+        );
+      }
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2461,13 +2501,15 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
           // **Немой оказалась не кнопка, а состояние, у которого не было
           // показа** — и заметно это стало только на том ответе, который
           // экрана не меняет.
-          _answerButton(
-            label: 'Gəlirəm',
-            selected: mine == kAnswerGoing,
-            onTap: _saving ? null : _sayGoing,
-            big: true,
-          ),
-          const SizedBox(height: 11),
+          if (offer == AnswerOffer.both) ...[
+            _answerButton(
+              label: 'Gəlirəm',
+              selected: mine == kAnswerGoing,
+              onTap: _saving ? null : _sayGoing,
+              big: true,
+            ),
+            const SizedBox(height: 11),
+          ],
           _answerButton(
             label: 'Bacarmıram',
             selected: mine == kAnswerCant,
@@ -2512,16 +2554,23 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
             _dayNoticeBox(),
           ],
           const SizedBox(height: 10),
+          // СОГЛАСИЕ ВСЛЕПУЮ НЕ ПРЕДЛАГАЕМ (N222): при `onlyDecline` работы
+          // больше нет, и «Gəlirəm» подтверждал бы участие в том, чего не
+          // существует. Отказ остаётся — он ОСВОБОЖДАЕТ день, который человек
+          // до сих пор держит занятым, и это единственное, что ему сейчас
+          // нужно. Разбор — `AnswerOffer.onlyDecline`.
           Row(
             children: [
-              Expanded(
-                child: _answerButton(
-                  label: 'Gəlirəm',
-                  selected: mine == kAnswerGoing,
-                  onTap: _saving ? null : _sayGoing,
+              if (offer == AnswerOffer.both) ...[
+                Expanded(
+                  child: _answerButton(
+                    label: 'Gəlirəm',
+                    selected: mine == kAnswerGoing,
+                    onTap: _saving ? null : _sayGoing,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
+                const SizedBox(width: 8),
+              ],
               Expanded(
                 child: _answerButton(
                   // Слово из макета (`mugam-6-kart.html`), а не своё:
@@ -2748,11 +2797,17 @@ class _PersonalEventDetailScreenState
   /// владельца, только из `unsettled` и только по поводу из перечисленных;
   /// успей состояние измениться под руками — человек обязан узнать об этом
   /// словами, а не увидеть, что «ничего не произошло».
+  /// **ПАРАМЕТР СУЖЕН 11.09 С `PersonalEvent` ДО ДВУХ ПОЛЕЙ (N220), и это
+  /// сделано затем, чтобы вызывающих стало два, а функция осталась ОДНА.**
+  /// Второй вызывающий — строка позванного на карточке родителя: у неё на
+  /// руках `eventId` и повод, а целого документа нет и не нужно. Заведи мы
+  /// ей свой возврат — получили бы два места, где живёт один ход (N49).
   Future<void> _restoreEvent(
-    PersonalEvent event,
+    String eventId,
+    String? unsettledReason,
     FirestoreService service,
   ) async {
-    final label = restoreLabel(event.unsettledReason);
+    final label = restoreLabel(unsettledReason);
     // Кнопки без слов не бывает: сюда не попасть, пока `showsRestore` не
     // сказал «да», а он и `restoreLabel` согласованы вердиктом. Проверка
     // стоит на случай третьего повода, заведённого без надписи, — тогда ход
@@ -2786,7 +2841,7 @@ class _PersonalEventDetailScreenState
     final messenger = ScaffoldMessenger.of(context);
     try {
       await service.setEventStatus(
-        event.id,
+        eventId,
         widget.currentUid,
         kStatusAgreed,
         // Имя поступка прибито правилом: `restoresEvent()` принимает ровно
@@ -3439,7 +3494,17 @@ class _PersonalEventDetailScreenState
                             return const SizedBox.shrink();
                           }
                           final gone = deed.tone == DeedTone.memberGone;
-                          final tone = gone ? kAnswerCantText : kMuted;
+                          // ТРИ ТОНА, А НЕ ДВА (N222, 11.09). Третий —
+                          // «работы не стало»: он ПРЕДУПРЕЖДАЮЩИЙ и берёт
+                          // готовую палитру `kWarn*`, а не кирпичную пару
+                          // ухода. Слить их значило бы сказать «человека не
+                          // стало» о работе — ровно то, от чего довод у
+                          // `DeedTone.memberGone` и защищает.
+                          final tone = switch (deed.tone) {
+                            DeedTone.memberGone => kAnswerCantText,
+                            DeedTone.workGone => kWarnTitle,
+                            DeedTone.plain => kMuted,
+                          };
                           return Padding(
                             padding: const EdgeInsets.only(top: 8),
                             child: Row(
@@ -3687,6 +3752,32 @@ class _PersonalEventDetailScreenState
                                 note: _lineupNoteOf(r),
                                 onTap: () =>
                                     _openUserProfile(context, allUsers, r.uid),
+                                // ВОЗВРАТ РЕБЁНКА В СИЛУ — ТОЛЬКО У
+                                // СОГЛАСИВШИХСЯ (N220, решение владельца
+                                // 11.09).
+                                //
+                                // Условие здесь НЕ ПИШЕТСЯ: готовый ответ даёт
+                                // `offersLineupRestore`, тот же приём и тот же
+                                // довод, что у крестика ниже (I32 — разметку
+                                // тестом не прогнать).
+                                //
+                                // **Кнопка в строке, а не одно действие на
+                                // раздел**, и довод не в удобстве: возвращать
+                                // можно НЕ ВСЕХ, значит действие на раздел
+                                // обязано было бы объяснять, кого берёт, а
+                                // кого нет, — то есть нести переключатель
+                                // (I58). Плюс отмена и возврат несимметричны:
+                                // отменяли ВЕЧЕР, одним нажатием на одном
+                                // документе, а возвращают ЛЮДЕЙ, по документу
+                                // на человека.
+                                onRestore: offersLineupRestore(r) &&
+                                        r.eventId != null
+                                    ? () => _restoreEvent(
+                                          r.eventId!,
+                                          r.unsettledReason,
+                                          firestoreService,
+                                        )
+                                    : null,
                                 // ДВЕРЬ ТОЛЬКО ТУДА, ГДЕ ЕЙ ЕСТЬ ЧТО ОТКРЫТЬ.
                                 onOpenChat: r.kind == LineupRowKind.notInvited &&
                                         r.reason == kNotInvitedOpenRound
@@ -3789,7 +3880,25 @@ class _PersonalEventDetailScreenState
                     // на `margin-top:auto` и без рамки с подписью «Cavabınız».
                     // Здесь возвращается ТОЛЬКО вызов: у починки поломки одна
                     // переменная, иначе не отличить, что именно её вылечило.
-                    if (!isOwner && event.answerFor(currentUid) != null) ...[
+                    // N222, 11.09: РАБОТЫ НЕТ — СПРАШИВАТЬ НЕ О ЧЕМ.
+                    //
+                    // Условие даёт `answerOfferFor`, а не разметка: тот же
+                    // вопрос решает подвал экрана приглашения, и два места с
+                    // одним решением разошлись бы в первой правке (N49, I32).
+                    //
+                    // `AnswerOffer.none` сюда не доходит: у неответившего роль
+                    // `invited`, и дверь ведёт его на экран приглашения, а не
+                    // на эту карточку. Ветвь всё равно перечислена целиком —
+                    // сужение, отвечающее только на «свой» случай, молча
+                    // отвечает и на соседний (I34).
+                    if (!isOwner &&
+                        event.answerFor(currentUid) != null &&
+                        answerOfferFor(
+                              status: event.status,
+                              unsettledReason: event.unsettledReason,
+                              myAnswer: event.answerFor(currentUid),
+                            ) !=
+                            AnswerOffer.none) ...[
                       const SizedBox(height: 20),
                       _MyAnswerCard(
                         event: event,
@@ -3926,7 +4035,11 @@ class _PersonalEventDetailScreenState
                           // надпись.
                           label: restoreLabel(event.unsettledReason) ?? '',
                           tone: _CardButtonTone.gold,
-                          onTap: () => _restoreEvent(event, firestoreService),
+                          onTap: () => _restoreEvent(
+                            event.id,
+                            event.unsettledReason,
+                            firestoreService,
+                          ),
                         ),
                       ],
                     ],
@@ -4362,6 +4475,25 @@ String? _lineupAnswerOf(LineupRow r) => switch (r.kind) {
 /// **Незнакомая причина называется незнакомой** (I14): повод, которого мы ещё
 /// не завели, обязан быть заметен, а не подменяться правдоподобным.
 String _lineupNoteOf(LineupRow r) => switch (r.kind) {
+      // ПОД ВОПРОСОМ ИЗ-ЗА ИСЧЕЗНУВШЕЙ РАБОТЫ — СКАЗАТЬ, ЧТО ДЕЛАТЬ (N220).
+      //
+      // **Отсутствие кнопки обязано быть названо словом.** Иначе строка без
+      // кнопки рядом со строкой с кнопкой читается как поломка — ровно N210:
+      // у объявленной пропажи нет отличительного признака, и на экране она
+      // выглядит как забытая.
+      //
+      // **ОДНА ПОДПИСЬ НА ДВА СЛУЧАЯ, И ЭТО НЕ СЛИЯНИЕ ДВУХ НЕЗНАНИЙ.**
+      // Отказавшийся и молчащий — состояния РАЗНЫЕ, и они уже различены
+      // словом ответа («bacarmır» против «cavab gözlənilir»), которое стоит
+      // строкой выше. Подпись же отвечает на другой вопрос — «что теперь
+      // делать зовущему», — и ответ у обоих один: позвать заново. Развести
+      // подписи значило бы сказать дважды то, что уже сказано (I47:
+      // различать там, где решается «норма или поломка», и не там, где
+      // решается «что показать»).
+      LineupRowKind.invited when r.status == kStatusUnsettled &&
+              r.unsettledReason == kReasonWorkCancelled &&
+              r.answer != kAnswerGoing =>
+        'yenidən çağırmaq lazımdır',
       LineupRowKind.invited => '',
       LineupRowKind.withdrawn => 'dəvət geri götürüldü',
       LineupRowKind.notInvited => switch (r.reason) {
@@ -4386,6 +4518,7 @@ class _PartyMemberRow extends StatelessWidget {
     this.onRemove,
     this.note,
     this.onOpenChat,
+    this.onRestore,
   });
 
   final String name;
@@ -4424,6 +4557,19 @@ class _PartyMemberRow extends StatelessWidget {
   /// самое: «?» открывала окошко из двух ходов, крестик **удаляет вышедшего
   /// из состава сразу**, спросив подтверждение.
   final VoidCallback? onRemove;
+
+  /// ВЕРНУТЬ ЭТОГО ПОЗВАННОГО В СИЛУ. `null` — не предлагать (N220).
+  ///
+  /// **Решает НЕ эта строка, а `offersLineupRestore`** — тот же приём и тот
+  /// же довод, что у крестика выше: условие можно прогнать тестом, разметку
+  /// нельзя (I32). Сюда приходит готовый ответ.
+  ///
+  /// **Отсутствие кнопки не читается как поломка, потому что рядом стоит
+  /// подпись** (`note`): у тех, кому возврат не предлагается, написано
+  /// «yenidən çağırmaq lazımdır». Две половины одного решения, и разводить их
+  /// по разным заходам нельзя — иначе один заход покажет строку без кнопки и
+  /// без объяснения (N210).
+  final VoidCallback? onRestore;
 
   @override
   Widget build(BuildContext context) {
@@ -4595,6 +4741,20 @@ class _PartyMemberRow extends StatelessWidget {
             // Область нажатия шире рисунка: 16 пунктов пальцем не берутся, а
             // кнопка, которую не нажать, — та же мёртвая кнопка, только с
             // другой стороны (N147).
+            // ВОЗВРАТ В СИЛУ — СЛОВОМ, А НЕ ЗНАЧКОМ, И ЭТО НЕ ВКУС.
+            //
+            // На этой строке уже живут два значка — «?» у ждущего ответа и
+            // «ушёл» у вышедшего, — и третий пришлось бы объяснять. Довод тот
+            // же, что 28.08 развёл крестик и круглую «?»: два знака на одной
+            // строке, и непонятно, какой нажимается (N174).
+            //
+            // Слово «Qaytar» («верни») названо действием, как соседняя «Aç»:
+            // обе говорят, ЧТО произойдёт, а не куда ведут.
+            if (onRestore != null)
+              TextButton(
+                onPressed: onRestore,
+                child: const Text('Qaytar', style: TextStyle(color: kGold)),
+              ),
             if (onRemove != null)
               GestureDetector(
                 onTap: onRemove,
