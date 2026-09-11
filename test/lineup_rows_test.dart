@@ -203,87 +203,55 @@ void main() {
   // -------------------------------------------------------------------------
   // ВОЗВРАТ РЕБЁНКА В СИЛУ НА СТРОКЕ ПОЗВАННОГО — N220, 11.09
   // -------------------------------------------------------------------------
-  // ЧТО ЭТО ЗАКРЫВАЕТ. Шаг 8 обещал выход наверх («состояние без выхода —
-  // скрытая отмена», решение владельца 08.09), и выхода не было НИ У КОГО:
-  // приглашённый не владелец документа, а у зовущего ребёнок схлопнут под
-  // родителем и в календаре не показан.
-  group('возврат ребёнка в силу предлагается на строке (N220)', () {
-    PersonalEvent gone(String answer) => child(
-          answer: answer,
-          status: kStatusUnsettled,
-          reason: kReasonWorkCancelled,
-        );
+  // ЗДЕСЬ БЫЛА ГРУППА «возврат ребёнка в силу предлагается на строке (N220)» —
+  // семь вердиктов на плитку «Qaytar». Снята 12.09 вместе с самой плиткой:
+  // возврата по одному человеку больше нет, под вопрос ставит хозяин вечера и
+  // снимает вопрос он же, сразу со всего вечера.
+  //
+  // На её место встало правило «кому передаётся выбранное состояние». Оно
+  // отвечает на тот же вопрос, что плитка, только не по одному человеку: один
+  // ход владельца ложится на родителя и на ВСЕ его приглашения разом.
+  group('кому передаётся выбор владельца (12.09)', () {
+    PersonalEvent parentDoc() => PersonalEvent.fromFirestore('p', {
+          'ownerUid': 'rafael',
+          'date': '2026-09-11T20:00:00',
+          'musicians': const <String>[],
+          'status': 'agreed',
+        });
 
-    test('СОГЛАСИВШЕМУСЯ — предлагается, и строка несёт чем его вернуть', () {
-      final r = rowsOf(children: [gone(kAnswerGoing)]).single;
-      expect(offersLineupRestore(r), isTrue);
-      // Одного «предлагается» мало: без id вызывающему нечего звать, и
-      // кнопка вышла бы нажимаемой в никуда (N147).
-      expect(r.eventId, 'c');
-      expect(r.unsettledReason, kReasonWorkCancelled);
+    test('все приглашения этого вечера — поимённо, а не числом', () {
+      final ids = invitationsFollowing('p', [
+        child(id: 'c1', invitee: 'a'),
+        child(id: 'c2', invitee: 'b'),
+      ]);
+      expect(ids, ['c1', 'c2']);
     });
 
-    // ТРИ СОСТОЯНИЯ, А НЕ ДВА — слова владельца 11.09: «у молчащего отказа не
-    // было, вернуть его значит вернуть ВОПРОС».
-    test('ОТКАЗАВШЕМУСЯ — не предлагается', () {
-      expect(offersLineupRestore(rowsOf(children: [gone(kAnswerCant)]).single),
-          isFalse);
+    test('ОТМЕНЁННОЕ приглашение не трогается', () {
+      // Снятое приглашение возвращать нечем и незачем: вопрос человеку сняли,
+      // и заново он задаётся обычным приглашением, а не сменой состояния.
+      final ids = invitationsFollowing('p', [
+        child(id: 'c1'),
+        child(id: 'c2', status: kStatusCancelled),
+      ]);
+      expect(ids, ['c1']);
     });
 
-    test('МОЛЧАЩЕМУ — не предлагается', () {
-      expect(
-          offersLineupRestore(rowsOf(children: [gone(kAnswerWaiting)]).single),
-          isFalse);
+    test('ЧУЖИЕ ПРИГЛАШЕНИЯ И САМ РОДИТЕЛЬ не попадают', () {
+      // Родитель пишется отдельно, первым id: попади он сюда вторым разом,
+      // одна и та же запись ушла бы в пакет дважды.
+      final ids = invitationsFollowing('p', [
+        child(id: 'c1'),
+        child(id: 'other', parent: 'p2'),
+        parentDoc(),
+      ]);
+      expect(ids, ['c1']);
     });
 
-    // КАНАРЕЙКА К ТРЁМ ОТРИЦАНИЯМ ВЫШЕ (I31): они утверждают ОТСУТСТВИЕ и
-    // зазеленели бы все разом, ослепни правило до `false`. Здесь то же
-    // правило говорит «да» — значит отрицания что-то да значат.
-    test('КАНАРЕЙКА: правило не сводится к «никогда»', () {
-      final yes = offersLineupRestore(rowsOf(children: [gone(kAnswerGoing)]).single);
-      final no = offersLineupRestore(rowsOf(children: [gone(kAnswerCant)]).single);
-      expect(yes && !no, isTrue,
-          reason: 'правило схлопнулось: согласившийся и отказавшийся равны');
-    });
-
-    test('вечер В СИЛЕ — возврат не предлагается никому', () {
-      for (final a in [kAnswerGoing, kAnswerCant, kAnswerWaiting]) {
-        expect(offersLineupRestore(rowsOf(children: [child(answer: a)]).single),
-            isFalse,
-            reason: 'вернуть в силу предложено тому, кто и так в силе ($a)');
-      }
-    });
-
-    test('ПОД ВОПРОСОМ ИЗ-ЗА УХОДА УЧАСТНИКА — тоже не предлагается', () {
-      // Сужение сделано под `workCancelled`, и у соседнего повода поведение
-      // обязано остаться прежним (I34). У ребёнка `memberLeft` быть не может
-      // — состав из одного человека, — но правило об этом не знает, и
-      // полагаться на «так не бывает» здесь нечем (I49).
-      final r = rowsOf(children: [
-        child(
-          answer: kAnswerGoing,
-          status: kStatusUnsettled,
-          reason: kReasonMemberLeft,
-        )
-      ]).single;
-      expect(offersLineupRestore(r), isFalse);
-    });
-
-    test('СНЯТОЕ и НЕПОЗВАННОЕ — полей документа нет вовсе', () {
-      // У них ребёнка не существует, и `eventId` обязан быть пуст: иначе
-      // кнопка позвала бы возврат на чужом или несуществующем документе.
-      final withdrawn = rowsOf(
-        lineup: const [LineupSlot(uid: 'guest', name: 'G', invited: true)],
-      ).single;
-      expect(withdrawn.kind, LineupRowKind.withdrawn);
-      expect(withdrawn.eventId, isNull);
-      expect(offersLineupRestore(withdrawn), isFalse);
-
-      final notInvited = rowsOf(
-        lineup: const [LineupSlot(uid: 'guest', name: 'G', invited: false)],
-      ).single;
-      expect(notInvited.eventId, isNull);
-      expect(offersLineupRestore(notInvited), isFalse);
+    // КАНАРЕЙКА (I31): три вердикта выше утверждают ОТСУТСТВИЕ лишнего и
+    // зазеленели бы разом, ослепни правило до пустого списка.
+    test('КАНАРЕЙКА: правило вообще что-то находит', () {
+      expect(invitationsFollowing('p', [child(id: 'c1')]), isNotEmpty);
     });
   });
 }

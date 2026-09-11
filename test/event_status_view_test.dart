@@ -94,100 +94,65 @@ void main() {
     });
   });
 
-  group('выход наверх — те же три условия, что в правиле restoresEvent', () {
-    test('владельцу, из unsettled, по поводу ушедшего — да', () {
-      expect(
-        showsRestore(
-          isOwner: true,
-          status: kStatusUnsettled,
-          unsettledReason: kReasonMemberLeft,
-        ),
-        isTrue,
-      );
+  // ВЫХОД НАВЕРХ ПОВТОРЯЕТ УСЛОВИЯ `ownerSetsStatus`, А НЕ `restoresEvent`.
+  //
+  // **ХОД СМЕНИЛСЯ 12.09**: возврат пишется как `agreed` + `ownerFirm`, и
+  // правило сервера повода не спрашивает вовсе. Прежние вердикты требовали
+  // повод из двух — они сохранены ниже снятием, а не стёрты, потому что
+  // снятый молча вердикт назавтра заводят заново.
+  group('выход наверх — те же условия, что в правиле ownerSetsStatus', () {
+    test('владельцу, из «под вопросом» — да, при любом поводе', () {
+      for (final r in <String?>[
+        kReasonMemberLeft,
+        kReasonWorkCancelled,
+        null,
+        'незнакомый',
+      ]) {
+        expect(
+          showsRestore(isOwner: true, status: kStatusUnsettled),
+          isTrue,
+          reason: 'повод $r на показ выхода не влияет',
+        );
+      }
     });
 
-    // ВТОРАЯ ПОЛОВИНА, ЗАВЕДЕНА 08.09 (работа 7, шаг 1).
+    // ЗДЕСЬ СТОЯЛИ ДВА ВЕРДИКТА — «повод не из перечисленных — нет» и «повода
+    // нет вовсе — нет». Сняты 12.09 вместе с самим перечислением.
     //
-    // ЗДЕСЬ СТОЯЛ ОБРАТНЫЙ ВЕРДИКТ — «по поводу „исчезла работа“ — НЕТ, и это
-    // не строгость», с доводом «возвращать не к чему». Записан снятием, а не
-    // стёрт: снятый молча вердикт назавтра заводят заново.
-    //
-    // Довод был неверен: вечер — это ДЕНЬ И СОСТАВ, а не тот договор, под
-    // который звали. Решение владельца 08.09.
-    test('по поводу «исчезла работа» — ТОЖЕ да', () {
-      expect(
-        showsRestore(
-          isOwner: true,
-          status: kStatusUnsettled,
-          unsettledReason: kReasonWorkCancelled,
-        ),
-        isTrue,
-      );
+    // **Цена прежнего условия названа числом:** у вечера, который владелец
+    // пометил «İş dəqiq deyil», повода НЕТ (клиенту писать его запрещено), и
+    // выхода наверх у такого вечера не было ни одного. Состояние без выхода —
+    // скрытая отмена (решение владельца 08.09).
+    test('повода нет вовсе — ТЕПЕРЬ ДА, и это главный случай', () {
+      expect(showsRestore(isOwner: true, status: kStatusUnsettled), isTrue);
     });
 
-    test('НЕ владельцу — нет, и по обоим поводам', () {
-      // `restoresEvent()` требует `ownerUid == uid`; покажи кнопку другому — и
+    test('НЕ владельцу — нет', () {
+      // `ownerSetsStatus` требует `ownerUid == uid`; покажи кнопку другому — и
       // он получит отказ по правам, ничего не поняв.
-      //
-      // Оба повода проверяются порознь нарочно: расширен ПОВОД, а не круг
-      // решающих, и одна проба этого не доказала бы.
-      for (final r in [kReasonMemberLeft, kReasonWorkCancelled]) {
-        expect(
-          showsRestore(
-            isOwner: false,
-            status: kStatusUnsettled,
-            unsettledReason: r,
-          ),
-          isFalse,
-          reason: 'по поводу $r выход наверх есть только у владельца',
-        );
-      }
+      expect(showsRestore(isOwner: false, status: kStatusUnsettled), isFalse);
     });
 
-    test('из «в силе» и из отменённого — нет, и по обоим поводам', () {
+    test('из «в силе» и из отменённого — нет', () {
+      // Из отмены возврата нет ни у кого: `ownerSetsStatus` принимает только
+      // `agreed` и `unsettled`, а `ownerRestoresOwnEvent` писателя не имеет.
       for (final s in [kStatusAgreed, kStatusCancelled]) {
-        for (final r in [kReasonMemberLeft, kReasonWorkCancelled]) {
-          expect(
-            showsRestore(isOwner: true, status: s, unsettledReason: r),
-            isFalse,
-            reason: 'состояние $s не имеет выхода наверх (повод $r)',
-          );
-        }
-      }
-    });
-
-    // ПЕРЕЧИСЛЕНИЕ, А НЕ «ЛЮБОЙ ПОВОД» — вердикт ради того, чтобы условие не
-    // упростили до «состояние unsettled и владелец». На двух сегодняшних
-    // поводах упрощение вело бы себя одинаково, а первый же новый повод
-    // поехал бы в «можно вернуть» молча.
-    //
-    // Имена взяты живые: `ownerDoubt` правила уже принимают в
-    // `ownerSetsStatus`, `cancelRequested` — одно из четырёх имён отмены.
-    test('повод не из перечисленных — нет', () {
-      for (final r in ['ownerDoubt', 'cancelRequested', 'restored', '']) {
         expect(
-          showsRestore(
-            isOwner: true,
-            status: kStatusUnsettled,
-            unsettledReason: r,
-          ),
+          showsRestore(isOwner: true, status: s),
           isFalse,
-          reason: 'повод «$r» выхода наверх не даёт',
+          reason: 'состояние $s выхода наверх не имеет',
         );
       }
     });
 
-    test('повода нет вовсе — нет', () {
-      // «Поля нет» и «поле не то» — два разных пути, и второй не доказывает
-      // первого (I47).
-      expect(
-        showsRestore(
-          isOwner: true,
-          status: kStatusUnsettled,
-          unsettledReason: null,
-        ),
-        isFalse,
-      );
+    // КАНАРЕЙКА: правило не свелось к «всегда да». Без неё вердикты выше
+    // прошли бы и на функции, возвращающей `true` при любом входе (I9).
+    test('КАНАРЕЙКА: правило даёт оба ответа', () {
+      final all = {
+        showsRestore(isOwner: true, status: kStatusUnsettled),
+        showsRestore(isOwner: true, status: kStatusAgreed),
+      };
+      expect(all.length, 2, reason: 'правило схлопнулось в один ответ');
     });
   });
 
@@ -196,41 +161,34 @@ void main() {
     //
     // Он утверждает НАЛИЧИЕ, значит сам себе канарейка (I31): ослепни разбор
     // — и надписи не найдётся ни одной, вердикт покраснеет.
-    test('у каждого повода, где выход есть, надпись НАЙДЕНА', () {
-      for (final r in [kReasonMemberLeft, kReasonWorkCancelled]) {
-        expect(
-          showsRestore(isOwner: true, status: kStatusUnsettled,
-              unsettledReason: r),
-          isTrue,
-          reason: 'повод $r обязан давать выход наверх',
-        );
+    test('надпись есть при ЛЮБОМ поводе, включая его отсутствие', () {
+      // ЗДЕСЬ СТОЯЛА ПАРА «у повода надпись НАЙДЕНА» / «где выхода нет,
+      // надписи ТОЖЕ нет». Вторая половина снята 12.09 вместе с проверкой
+      // повода в `showsRestore`: теперь выход есть у любого вечера под
+      // вопросом, и `null` означал бы кнопку без слов.
+      for (final r in <String?>[
+        kReasonMemberLeft,
+        kReasonWorkCancelled,
+        null,
+        'ownerDoubt',
+        '',
+      ]) {
         expect(
           restoreLabel(r),
-          isNotNull,
-          reason: 'у повода $r выход есть, а слов для кнопки нет — '
-              'человек увидел бы кнопку без надписи',
+          isNotEmpty,
+          reason: 'у повода «$r» кнопка есть, а слов для неё нет',
         );
       }
     });
 
-    // Обратная половина. Без неё «надписи есть у всех» было бы истинно и
-    // тогда, когда надпись выдаётся ЛЮБОМУ поводу: кнопка нашлась бы там,
-    // где сервер откажет.
-    test('где выхода нет, надписи ТОЖЕ нет', () {
-      for (final r in ['ownerDoubt', 'cancelRequested', 'restored', '', null]) {
-        expect(
-          showsRestore(isOwner: true, status: kStatusUnsettled,
-              unsettledReason: r),
-          isFalse,
-          reason: 'повод «$r» выхода наверх не даёт',
-        );
-        expect(
-          restoreLabel(r),
-          isNull,
-          reason: 'у повода «$r» выхода нет, а надпись нашлась — кнопка '
-              'появилась бы там, где правило откажет',
-        );
-      }
+    // КАНАРЕЙКА К ВЕРДИКТУ ВЫШЕ: надпись не одна на всех. Без неё «слова
+    // находятся всегда» прошло бы и на функции, отдающей одну строку при
+    // любом поводе, — а у ушедшего участника слова СВОИ.
+    test('у ушедшего участника надпись ДРУГАЯ, а не общая', () {
+      expect(restoreLabel(kReasonMemberLeft), kRestoreLabelMemberLeft);
+      expect(restoreLabel(null), kRestoreLabelWorkCancelled);
+      expect(restoreLabel(kReasonMemberLeft),
+          isNot(restoreLabel(kReasonWorkCancelled)));
     });
 
     test('надписи у двух поводов РАЗНЫЕ', () {
@@ -288,21 +246,16 @@ void main() {
         'unsettledReason': kReasonWorkCancelled,
       });
       expect(e.unsettledReason, kReasonWorkCancelled);
-      // И правило на этом поводе открывает выход — то есть цепочка
-      // «документ → модель → правило» сомкнулась.
-      expect(
-        showsRestore(
-          isOwner: true,
-          status: e.status,
-          unsettledReason: e.unsettledReason,
-        ),
-        isTrue,
-      );
+      // Повод решает не показ кнопки, а её СЛОВА: цепочка «документ → модель
+      // → надпись» сомкнулась.
+      expect(restoreLabel(e.unsettledReason), kRestoreLabelWorkCancelled);
+      expect(showsRestore(isOwner: true, status: e.status), isTrue);
     });
 
-    test('поля нет — повода нет, и это НЕ «повод неизвестен»', () {
-      // Замер 07.09: поля нет у 121 документа прода из 121. Значит `null`
-      // здесь сегодня обычная жизнь, и выход наверх открывать не по чему.
+    test('поля нет — выход ЕСТЬ, и это главный случай (12.09)', () {
+      // Замер 07.09: поля нет у 121 документа прода из 121. Прежде вердикт
+      // требовал здесь `isFalse` — то есть у всех этих вечеров выхода наверх
+      // не было бы ни одного. Перевёрнут вместе с правилом.
       final e = PersonalEvent.fromFirestore('e', {
         'ownerUid': 'rafael',
         'date': '2026-09-16T18:00:00',
@@ -310,10 +263,8 @@ void main() {
         'status': kStatusUnsettled,
       });
       expect(e.unsettledReason, isNull);
-      expect(
-        showsRestore(isOwner: true, status: e.status, unsettledReason: null),
-        isFalse,
-      );
+      expect(showsRestore(isOwner: true, status: e.status), isTrue);
+      expect(restoreLabel(e.unsettledReason), kRestoreLabelWorkCancelled);
     });
 
     test('ЧУЖОЙ ТИП В ПОЛЕ не роняет разбор — падение уронило бы календарь', () {
@@ -367,7 +318,7 @@ void main() {
   // `PersonalEvent.fromFirestore`, тем путём, которым вечер приходит в прод.
   // Прежние подавали правилу `status` и повод руками — ровно так N223
   // проглядела, что нужного сочетания у живого вызывающего не бывает.
-  group('приглашение под вопросом (N221, N222)', () {
+  group('вечер закрыт для ответа (N221, N222, N224)', () {
     PersonalEvent doc(Map<String, dynamic> fields) =>
         PersonalEvent.fromFirestore('child', {
           'ownerUid': 'caller',
@@ -380,81 +331,90 @@ void main() {
     const parent = {'parentEventId': 'parent'};
 
     test('в силе — строки состояния нет, ответ спрашивается', () {
-      final e = doc({...parent, 'status': kStatusAgreed});
-      expect(invitationStateLabel(e), isNull);
-      expect(invitationInDoubt(e), isFalse);
+      for (final e in [
+        doc({...parent, 'status': kStatusAgreed}),
+        doc({'status': kStatusAgreed}),
+      ]) {
+        expect(eventStateLabel(e), isNull);
+        expect(answersClosed(e), isFalse);
+      }
     });
 
-    test('работу отменили — «Şübhə altında», ответа не спрашивают', () {
+    test('под вопросом — «Şübhə altında», ответа не спрашивают', () {
       final e = doc({
         ...parent,
         'status': kStatusUnsettled,
         'unsettledReason': kReasonWorkCancelled,
       });
-      expect(invitationStateLabel(e), 'Şübhə altında');
-      expect(invitationInDoubt(e), isTrue);
+      expect(eventStateLabel(e), 'Şübhə altında');
+      expect(answersClosed(e), isTrue);
     });
 
-    test('ПОВОД ДРУГОЙ — СОСТОЯНИЕ ТО ЖЕ: строка есть при любом поводе', () {
+    test('ОТМЕНЁН — «Ləğv edilib», ответа тоже не спрашивают (N224)', () {
+      // Прежде отменённый вечер правило не ловило вовсе: вторая сторона
+      // видела «Cavabınız» с обеими кнопками на вечере, которого нет.
+      final e = doc({...parent, 'status': kStatusCancelled});
+      expect(eventStateLabel(e), 'Ləğv edilib');
+      expect(answersClosed(e), isTrue);
+    });
+
+    test('ПОВОД НЕ РЕШАЕТ: строка есть при любом поводе', () {
       for (final reason in <String?>[null, kReasonMemberLeft, 'незнакомый']) {
         final e = doc({
           ...parent,
           'status': kStatusUnsettled,
           'unsettledReason': ?reason,
         });
-        expect(invitationStateLabel(e), 'Şübhə altında', reason: '$reason');
-        expect(invitationInDoubt(e), isTrue, reason: '$reason');
+        expect(eventStateLabel(e), 'Şübhə altında', reason: '$reason');
+        expect(answersClosed(e), isTrue, reason: '$reason');
       }
     });
 
-    test('ОТВЕТ ПРИГЛАШЁННОГО НЕ РЕШАЕТ: кнопок нет ни у кого', () {
-      // Здесь стояло «у согласившегося остаётся только отказ» — снято тем же
-      // решением: вопрос теперь у зовущего.
+    test('ОТВЕТ ЧЕЛОВЕКА НЕ РЕШАЕТ: кнопок нет ни у кого', () {
+      // Здесь стояло «у согласившегося остаётся только отказ» — снято
+      // решением владельца: под вопрос ставит хозяин, и ответ приглашённого
+      // этого вопроса не снимает.
       for (final mine in [kAnswerGoing, kAnswerWaiting, kAnswerCant]) {
         final e = doc({
           ...parent,
           'status': kStatusUnsettled,
-          'unsettledReason': kReasonWorkCancelled,
           'answers': {'me': mine},
         });
-        expect(invitationInDoubt(e), isTrue, reason: mine);
+        expect(answersClosed(e), isTrue, reason: mine);
       }
     });
 
-    test('ОБЫЧНЫЙ ВЕЧЕР под вопросом — прежнее: строки нет, ответ есть', () {
-      // I34: тот, кого условие не поймало. Повода нет у 121 документа прода
-      // из 121 (замер 07.09, до появления приглашений) — сузься правило по
-      // одному `status`, они разом лишились бы кнопок.
-      for (final reason in <String?>[null, kReasonMemberLeft]) {
-        final e = doc({
-          'status': kStatusUnsettled,
-          'unsettledReason': ?reason,
-        });
-        expect(invitationStateLabel(e), isNull, reason: '$reason');
-        expect(invitationInDoubt(e), isFalse, reason: '$reason');
-      }
+    test('ПРИГЛАШЕНИЕ И СОСТАВ — ОДИНАКОВО, и это решение 12.09', () {
+      // ЗДЕСЬ СТОЯЛ ОБРАТНЫЙ ВЕРДИКТ: «обычный вечер под вопросом — прежнее,
+      // строки нет, ответ есть», то есть добавленный в состав видел вопрос
+      // «придёшь?» на вечере, который владелец сам пометил под вопросом.
+      // Перевёрнут решением владельца: решает СОСТОЯНИЕ вечера, а не путь,
+      // каким человек в него попал.
+      final invited = doc({...parent, 'status': kStatusUnsettled});
+      final inLineup = doc({'status': kStatusUnsettled});
+      expect(eventStateLabel(invited), eventStateLabel(inLineup));
+      expect(answersClosed(invited), answersClosed(inLineup));
+      expect(answersClosed(inLineup), isTrue);
     });
 
     test('ПЕРЕХОД ТУДА: в силе → под вопрос — строка есть, блока нет', () {
       final before = doc({...parent, 'status': kStatusAgreed});
-      // Так пишет сервер (`unsettledAfterWorkCancelled`).
+      // Так пишет клиент за владельца: родителю и приглашениям разом.
       final after = doc({
         ...parent,
         'status': kStatusUnsettled,
-        'unsettledReason': kReasonWorkCancelled,
-        'lastActionType': kDeedWorkCancelled,
+        'lastActionType': kDeedOwnerDoubt,
       });
-      expect([invitationInDoubt(before), invitationInDoubt(after)],
-          [false, true]);
-      expect([invitationStateLabel(before), invitationStateLabel(after)],
+      expect([answersClosed(before), answersClosed(after)], [false, true]);
+      expect([eventStateLabel(before), eventStateLabel(after)],
           [null, 'Şübhə altında']);
     });
 
-    test('ПЕРЕХОД ОБРАТНО: «Qaytar» — строка уходит, блок возвращается', () {
-      // ДОКУМЕНТ ТАКОЙ, КАКИМ ЕГО ОСТАВЛЯЕТ ВОЗВРАТ, а не чистый:
-      // `restoresEvent` меняет только `status` и `lastAction*`, повод
-      // `workCancelled` остаётся лежать. Правило по поводу держало бы
-      // вернувшееся приглашение под вопросом — этот вердикт сторожит ключ.
+    test('ПЕРЕХОД ОБРАТНО: вопрос снят — строка уходит, блок возвращается', () {
+      // ДОКУМЕНТ ТАКОЙ, КАКИМ ЕГО ОСТАВЛЯЕТ ВОЗВРАТ, а не чистый: ход
+      // `ownerFirm` меняет только `status` и `lastAction*`, а повод, если он
+      // был, остаётся лежать. Правило по поводу держало бы вернувшийся вечер
+      // под вопросом навсегда — этот вердикт сторожит ключ.
       final before = doc({
         ...parent,
         'status': kStatusUnsettled,
@@ -464,20 +424,11 @@ void main() {
         ...parent,
         'status': kStatusAgreed,
         'unsettledReason': kReasonWorkCancelled,
-        'lastActionType': kDeedRestored,
+        'lastActionType': kDeedOwnerFirm,
       });
-      expect([invitationInDoubt(before), invitationInDoubt(after)],
-          [true, false]);
-      expect([invitationStateLabel(before), invitationStateLabel(after)],
+      expect([answersClosed(before), answersClosed(after)], [true, false]);
+      expect([eventStateLabel(before), eventStateLabel(after)],
           ['Şübhə altında', null]);
-    });
-
-    test('строка ожидания: чьё решение сказано, а повода в ней нет', () {
-      expect(kAwaitingCallerText.contains('Çağıran'), isTrue,
-          reason: 'не сказано, чьё теперь решение');
-      // Повод бывает разный; строка, утверждающая отмену работы, соврала бы
-      // у приглашения под вопросом по другой причине.
-      expect(kAwaitingCallerText.contains('ləğv'), isFalse);
     });
   });
 }

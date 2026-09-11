@@ -3952,14 +3952,30 @@ class FirestoreService {
   /// Пишет ровно три ключа, как требует правило `ownerSetsStatus()`. Отказ не
   /// глотается: `permission-denied` здесь означает, что ход не тот — например,
   /// вечер с договорённостью пытаются отменить в одиночку.
+  /// ОДИН ХОД — ОДНА ЗАПИСЬ, СКОЛЬКО БЫ ДОКУМЕНТОВ ОН НИ ТРОГАЛ (12.09).
+  ///
+  /// [alsoIds] — приглашения этого вечера: владелец у них тот же, и
+  /// выбранное им состояние получают все разом. **Пакетом, а не циклом:**
+  /// иначе половина вечера осталась бы в одном состоянии, а половина в
+  /// другом, и никто бы не узнал, какая именно.
+  ///
+  /// **Уведомление шлёт КАЖДЫЙ документ сам** — тем же именем поступка,
+  /// значит и теми же словами: состав узнаёт по родителю, приглашённый по
+  /// своему приглашению. Отдельной ветви «а этим напиши иначе» нет нигде, и
+  /// заводить её было бы склейкой двух дел (I58).
   Future<void> setEventStatus(String eventId, String uid, String status,
-      String deed) {
-    return _db.collection('personalEvents').doc(eventId).update({
+      String deed, {List<String> alsoIds = const []}) {
+    final patch = {
       'status': status,
       'lastActionBy': uid,
       'lastActionType': deed,
       'lastActionAt': FieldValue.serverTimestamp(),
-    }).timeout(_writeTimeout);
+    };
+    final batch = _db.batch();
+    for (final id in [eventId, ...alsoIds]) {
+      batch.update(_db.collection('personalEvents').doc(id), patch);
+    }
+    return batch.commit().timeout(_writeTimeout);
   }
 
   /// ОТВЕТ УЧАСТНИКА ЗА СЕБЯ — шаг 4, пункт 3 (`docs/plan.md`).

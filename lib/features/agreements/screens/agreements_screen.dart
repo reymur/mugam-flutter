@@ -2305,41 +2305,40 @@ Color _deedColor(DeedTone tone) => switch (tone) {
       DeedTone.plain => kMuted,
     };
 
-/// СТРОКА СОСТОЯНИЯ ПРИГЛАШЕНИЯ — единственная красная (решение владельца
-/// 11.09: красный должен значить одно). Цвет — `kWarnTitle`, тот же, что у
-/// плашки занятого дня: предупреждение, читаемое на чёрном (I41).
-class _InvitationStateLine extends StatelessWidget {
-  const _InvitationStateLine(this.label);
+/// СТРОКА СОСТОЯНИЯ ВЕЧЕРА — форма у «под вопросом», красный у отмены.
+///
+/// **ПО РЕШЕНИЮ О ФОРМЕ СТАТУСА (`docs/plan.md`, 10.08), А НЕ ПО ВКУСУ:**
+/// «состояние показывается ФОРМОЙ, а не пятым цветом; залито — точно, рамка —
+/// под вопросом; `kRed` означает ОТМЕНУ». Поэтому под вопросом здесь контур
+/// без заливки, а красным написана только отмена.
+///
+/// **ЗДЕСЬ 11.09 СТОЯЛ `kWarnTitle` У ОБОИХ** — тон плашки занятого дня,
+/// то есть красная семья. Это была та самая ошибка, которую решение 10.08 и
+/// называет дефектом: «под вопросом» читалось как исход (N110). Снято 12.09
+/// сверкой с записанными правилами.
+///
+/// **Второй строки-объяснения рядом нет** (была «Çağıran davam edib-…»,
+/// снята 12.09): состояние сказано, кнопок ответа нет, объяснять нечего.
+class _EventStateLine extends StatelessWidget {
+  const _EventStateLine(this.label, {required this.cancelled});
 
   final String label;
+  final bool cancelled;
 
   @override
-  Widget build(BuildContext context) => Text(
-        label,
-        style: const TextStyle(fontSize: 15, color: kWarnTitle),
-      );
-}
-
-/// ВМЕСТО ОТВЕТА — ОЖИДАНИЕ. Одна на два места, потому что задача одна:
-/// сказать, что отвечать сейчас не на что и чьё это решение (I58: сведено по
-/// задаче). Не красная — красный отдан состоянию строкой выше.
-class _AwaitingCallerLine extends StatelessWidget {
-  const _AwaitingCallerLine();
-
-  @override
-  Widget build(BuildContext context) => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: kBg3,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: kBorder),
-        ),
-        child: const Text(
-          kAwaitingCallerText,
-          style: TextStyle(fontSize: 14, color: kTextSecondary),
-        ),
-      );
+  Widget build(BuildContext context) => cancelled
+      ? Text(label, style: const TextStyle(fontSize: 15, color: kRed))
+      : Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: kTextSecondary),
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 14, color: kText),
+          ),
+        );
 }
 
 class _MyAnswerCard extends StatefulWidget {
@@ -2491,9 +2490,10 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
   Widget build(BuildContext context) {
     final mine = widget.event.answerFor(widget.currentUid);
     // МОЖНО ЛИ ОТВЕЧАТЬ, решает НЕ ЭТОТ ВИДЖЕТ, а оба вызывающих — по
-    // `invitationInDoubt`: под вопросом он не рисуется вовсе, вместо него
-    // `_AwaitingCallerLine`. Здесь стояло `answerOfferFor` с урезанием кнопок
-    // изнутри; снято 11.09 вечером вместе с «только отказом».
+    // `answersClosed`: под вопросом и у отменённого он не рисуется вовсе, и
+    // вместо него не рисуется ничего — состояние сказано строкой выше.
+    // Здесь стояло `answerOfferFor` с урезанием кнопок изнутри; снято 11.09
+    // вечером вместе с «только отказом», а 12.09 снята и строка ожидания.
 
     // ПОДВАЛЬНАЯ ФОРМА — экран `DƏVƏT`. Ни рамки, ни подписи «Cavabınız»:
     // там ответ не соседствует ни с чем, и называть его отдельно значит
@@ -2817,16 +2817,11 @@ class _PersonalEventDetailScreenState
   /// руках `eventId` и повод, а целого документа нет и не нужно. Заведи мы
   /// ей свой возврат — получили бы два места, где живёт один ход (N49).
   Future<void> _restoreEvent(
-    String eventId,
-    String? unsettledReason,
+    PersonalEvent event,
+    List<PersonalEvent> myEvents,
     FirestoreService service,
   ) async {
-    final label = restoreLabel(unsettledReason);
-    // Кнопки без слов не бывает: сюда не попасть, пока `showsRestore` не
-    // сказал «да», а он и `restoreLabel` согласованы вердиктом. Проверка
-    // стоит на случай третьего повода, заведённого без надписи, — тогда ход
-    // молча не состоится, а не отправит запись, которую сервер отвергнет.
-    if (label == null) return;
+    final label = restoreLabel(event.unsettledReason);
     final ok = await showDialog<bool>(
       context: context,
       builder: (d) => AlertDialog(
@@ -2855,12 +2850,17 @@ class _PersonalEventDetailScreenState
     final messenger = ScaffoldMessenger.of(context);
     try {
       await service.setEventStatus(
-        eventId,
+        event.id,
         widget.currentUid,
         kStatusAgreed,
-        // Имя поступка прибито правилом: `restoresEvent()` принимает ровно
-        // `'restored'`. Любое другое — отказ по правам.
-        'restored',
+        // ХОД СМЕНИЛСЯ 12.09 С `restored` НА `ownerFirm`, и это не косметика.
+        // `restoresEvent()` требует повод из перечисленных, а у вечера,
+        // который владелец сам пометил «İş dəqiq deyil», повода нет вовсе —
+        // возврат получал бы отказ по правам. `ownerSetsStatus` повода не
+        // знает и пускает владельца при любом. Письмо у обоих имён одно
+        // («Tədbir qüvvədədir»): ветвь в `planUpdatePushes` общая.
+        'ownerFirm',
+        alsoIds: invitationsFollowing(event.id, myEvents),
       );
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('Xəta: $e')));
@@ -3257,49 +3257,77 @@ class _PersonalEventDetailScreenState
         _ => 'səbəb bilinmir',
       };
 
+  /// «Ləğv et» — ВЫБОР ИЗ ДВУХ, решение владельца 12.09.
+  ///
+  /// **Нажатий столько же, сколько было:** здесь и раньше стояло
+  /// подтверждение, и выбор встал на его место. Третьего пункта нет — снятие
+  /// вопроса делается отдельным нажатием там же, где и прежде, кнопкой
+  /// возврата внизу карточки.
+  ///
+  /// **ПЕРЕГОВОРОВ ЗДЕСЬ НЕТ, и это проверено об главный принцип** (`plan.md`,
+  /// 13.08): приложение не спрашивает ничьего согласия и никого не ждёт —
+  /// решает один человек, владелец вечера, а приложение помнит итог.
+  ///
+  /// **Выбранное получают ВСЕ одной записью** — родитель и приглашения
+  /// (`invitationsFollowing`), с одним и тем же именем поступка. Значит и
+  /// письмо у состава и у приглашённых одно и то же: своё, про свой документ.
   Future<void> _cancelOwnEvent(
     PersonalEvent event,
+    List<PersonalEvent> myEvents,
     FirestoreService service,
   ) async {
-    final ok = await showDialog<bool>(
+    // «Под вопросом» предлагается только из «в силе»: на вечере, который уже
+    // под вопросом, этот ход не меняет ничего, и письмо о нём было бы
+    // рассказом о несостоявшемся поступке (тот же довод, что на сервере).
+    final canDoubt = event.status == kStatusAgreed;
+    final choice = await showDialog<String>(
       context: context,
       builder: (d) => AlertDialog(
         backgroundColor: kBg2,
         title: const Text(
-          'Tədbiri ləğv etmək?',
+          'Tədbirlə nə etmək?',
           style: TextStyle(color: kText, fontSize: 17),
         ),
         content: const Text(
-          'Tədbir ləğv olunacaq və heyət bundan xəbər tutacaq.',
+          'Heyət və çağırılanlar bundan xəbər tutacaq.',
           style: TextStyle(color: kTextSecondary, fontSize: 14),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(d, false),
+            onPressed: () => Navigator.pop(d),
             child: const Text('İmtina', style: TextStyle(color: kMuted)),
           ),
+          if (canDoubt)
+            TextButton(
+              onPressed: () => Navigator.pop(d, 'doubt'),
+              child: const Text(
+                'Şübhə altına al',
+                style: TextStyle(color: kGold),
+              ),
+            ),
           TextButton(
-            onPressed: () => Navigator.pop(d, true),
+            onPressed: () => Navigator.pop(d, 'cancel'),
             child: const Text('Ləğv et', style: TextStyle(color: kRed)),
           ),
         ],
       ),
     );
-    if (ok != true || !mounted) return;
+    if (choice == null || !mounted) return;
+    final doubt = choice == 'doubt';
     final messenger = ScaffoldMessenger.of(context);
     try {
       await service.setEventStatus(
         event.id,
         widget.currentUid,
-        kStatusCancelled,
+        doubt ? kStatusUnsettled : kStatusCancelled,
         // Поступок называется своим именем: сервер берёт отсюда автора и
-        // повод для уведомления, и «ownerCancelled» — единственный, который
-        // теперь бывает.
-        'ownerCancelled',
+        // повод для уведомления.
+        doubt ? 'ownerDoubt' : 'ownerCancelled',
+        alsoIds: invitationsFollowing(event.id, myEvents),
       );
     } catch (e) {
       messenger.showSnackBar(
-        SnackBar(content: Text('Ləğv edilmədi: $e')),
+        SnackBar(content: Text('Alınmadı: $e')),
       );
     }
   }
@@ -3444,12 +3472,19 @@ class _PersonalEventDetailScreenState
                       ),
                     ],
 
-                    // 2а. СОСТОЯНИЕ ПРИГЛАШЕНИЯ — ВЫШЕ ПОСТУПКА (решение
-                    // владельца 11.09, вечер): состояние решает, что делать,
-                    // поступок под ним — подпись. Красная здесь только она.
-                    if (invitationStateLabel(event) case final String label) ...[
+                    // 2а. СОСТОЯНИЕ ВЕЧЕРА — ВЫШЕ ПОСТУПКА (решение владельца
+                    // 11.09, вечер): состояние решает, что делать, поступок
+                    // под ним — подпись.
+                    //
+                    // ВИДЯТ ВСЕ, включая владельца, и отдельного условия по
+                    // роли здесь нет: состояние — свойство вечера, а не того,
+                    // кто смотрит. Кнопки ответа решаются ниже, своим правилом.
+                    if (eventStateLabel(event) case final String label) ...[
                       const SizedBox(height: 8),
-                      _InvitationStateLine(label),
+                      _EventStateLine(
+                        label,
+                        cancelled: event.status == kStatusCancelled,
+                      ),
                     ],
 
                     // 3. ЧТО СЛУЧИЛОСЬ ПОСЛЕДНИМ — одна строка (28.08).
@@ -3756,32 +3791,16 @@ class _PersonalEventDetailScreenState
                                 note: _lineupNoteOf(r),
                                 onTap: () =>
                                     _openUserProfile(context, allUsers, r.uid),
-                                // ВОЗВРАТ РЕБЁНКА В СИЛУ — ТОЛЬКО У
-                                // СОГЛАСИВШИХСЯ (N220, решение владельца
-                                // 11.09).
+                                // ЗДЕСЬ БЫЛ АРГУМЕНТ `onRestore` — плитка
+                                // «Qaytar» на строке позванного (N220, 11.09),
+                                // с доводом «возвращать можно НЕ ВСЕХ, значит
+                                // действие на раздел несло бы переключатель».
                                 //
-                                // Условие здесь НЕ ПИШЕТСЯ: готовый ответ даёт
-                                // `offersLineupRestore`, тот же приём и тот же
-                                // довод, что у крестика ниже (I32 — разметку
-                                // тестом не прогнать).
-                                //
-                                // **Кнопка в строке, а не одно действие на
-                                // раздел**, и довод не в удобстве: возвращать
-                                // можно НЕ ВСЕХ, значит действие на раздел
-                                // обязано было бы объяснять, кого берёт, а
-                                // кого нет, — то есть нести переключатель
-                                // (I58). Плюс отмена и возврат несимметричны:
-                                // отменяли ВЕЧЕР, одним нажатием на одном
-                                // документе, а возвращают ЛЮДЕЙ, по документу
-                                // на человека.
-                                onRestore: offersLineupRestore(r) &&
-                                        r.eventId != null
-                                    ? () => _restoreEvent(
-                                          r.eventId!,
-                                          r.unsettledReason,
-                                          firestoreService,
-                                        )
-                                    : null,
+                                // СНЯТ 12.09: возвращать теперь можно только
+                                // ВСЕХ разом, и довод отпал вместе с
+                                // разделением. Отмена и возврат стали
+                                // симметричны — оба одним нажатием на всём
+                                // вечере, родителе и приглашениях.
                                 // ДВЕРЬ ТОЛЬКО ТУДА, ГДЕ ЕЙ ЕСТЬ ЧТО ОТКРЫТЬ.
                                 onOpenChat: r.kind == LineupRowKind.notInvited &&
                                         r.reason == kNotInvitedOpenRound
@@ -3884,22 +3903,21 @@ class _PersonalEventDetailScreenState
                     // на `margin-top:auto` и без рамки с подписью «Cavabınız».
                     // Здесь возвращается ТОЛЬКО вызов: у починки поломки одна
                     // переменная, иначе не отличить, что именно её вылечило.
-                    // ПРИГЛАШЕНИЕ ПОД ВОПРОСОМ — ВМЕСТО БЛОКА СТРОКА ОЖИДАНИЯ
-                    // (решение владельца 11.09, вечер). Условие даёт
-                    // `invitationInDoubt`, а не разметка: тот же вопрос решает
-                    // подвал экрана приглашения (N49, I32). Вернулось в силу —
-                    // правило отпускает, и блок «Cavabınız» возвращается.
-                    if (!isOwner && event.answerFor(currentUid) != null) ...[
+                    // ЗАКРЫТ ДЛЯ ОТВЕТА — БЛОКА НЕТ ВОВСЕ (решение владельца
+                    // 12.09). Под вопросом и у отменённого спрашивать не о
+                    // чем; условие даёт `answersClosed`, а не разметка: тот же
+                    // вопрос решает подвал экрана приглашения (N49, I32).
+                    // Вернулся в силу — правило отпускает, блок возвращается.
+                    if (!isOwner &&
+                        event.answerFor(currentUid) != null &&
+                        !answersClosed(event)) ...[
                       const SizedBox(height: 20),
-                      if (invitationInDoubt(event))
-                        const _AwaitingCallerLine()
-                      else
-                        _MyAnswerCard(
-                          event: event,
-                          currentUid: currentUid,
-                          myEvents: [...personalEvents, ...eventsAsParticipant],
-                          firestoreService: firestoreService,
-                        ),
+                      _MyAnswerCard(
+                        event: event,
+                        currentUid: currentUid,
+                        myEvents: [...personalEvents, ...eventsAsParticipant],
+                        firestoreService: firestoreService,
+                      ),
                     ],
 
                     // 5. СТРОКА ДОГОВОРЁННОСТИ СНЯТА ЦЕЛИКОМ, вместе с
@@ -3993,6 +4011,7 @@ class _PersonalEventDetailScreenState
                             tone: _CardButtonTone.plain,
                             onTap: () => _cancelOwnEvent(
                               event,
+                              personalEvents,
                               firestoreService,
                             ),
                           ),
@@ -4019,19 +4038,17 @@ class _PersonalEventDetailScreenState
                       if (showsRestore(
                         isOwner: isOwner,
                         status: event.status,
-                        unsettledReason: event.unsettledReason,
                       )) ...[
                         const SizedBox(height: 11),
                         _CardButton(
-                          // Слова берутся правилом. Пустой строки тут быть не
-                          // может: `showsRestore` и `restoreLabel` согласованы
-                          // вердиктом — у каждого повода, где показываем, есть
-                          // надпись.
-                          label: restoreLabel(event.unsettledReason) ?? '',
+                          // Слова берутся правилом, и оно отдаёт их всегда:
+                          // у вечера под вопросом без повода — «Yenə də davam
+                          // edirik», у ушедшего участника — свои.
+                          label: restoreLabel(event.unsettledReason),
                           tone: _CardButtonTone.gold,
                           onTap: () => _restoreEvent(
-                            event.id,
-                            event.unsettledReason,
+                            event,
+                            personalEvents,
                             firestoreService,
                           ),
                         ),
@@ -4264,13 +4281,18 @@ class _InvitationScreen extends ConsumerWidget {
                 ),
               ],
 
-              // СОСТОЯНИЕ И ПОСТУПОК — у приглашения под вопросом (N221;
-              // решение владельца 11.09, вечер). До сегодня экран состояния
-              // не видел вовсе. Порядок тот же, что в карточке вечера:
-              // состояние выше и красным, поступок под ним серым.
-              if (invitationStateLabel(event) case final String label) ...[
+              // СОСТОЯНИЕ И ПОСТУПОК — у приглашения под вопросом либо
+              // отменённого (N221; решение владельца 11.09, расширено 12.09).
+              // До 11.09 экран состояния не видел вовсе. Порядок тот же, что
+              // в карточке вечера: состояние выше, поступок под ним серым.
+              if (eventStateLabel(event) case final String label) ...[
                 const SizedBox(height: 14),
-                Center(child: _InvitationStateLine(label)),
+                Center(
+                  child: _EventStateLine(
+                    label,
+                    cancelled: event.status == kStatusCancelled,
+                  ),
+                ),
                 if (_deedFor(event, currentUid, users)
                     case final EventDeed deed) ...[
                   const SizedBox(height: 4),
@@ -4337,11 +4359,9 @@ class _InvitationScreen extends ConsumerWidget {
               // Подвал на `margin-top: auto` из макета — распоркой.
               const Spacer(),
 
-              // Под вопросом отвечать не на что — строка ожидания вместо
-              // кнопок, то же правило, что в карточке вечера.
-              if (invitationInDoubt(event))
-                const _AwaitingCallerLine()
-              else
+              // Закрыт для ответа — кнопок нет ни одной, и вместо них ничего:
+              // состояние сказано строкой выше. То же правило, что в карточке.
+              if (!answersClosed(event))
                 _MyAnswerCard(
                   event: event,
                   currentUid: currentUid,
@@ -4496,25 +4516,10 @@ String? _lineupAnswerOf(LineupRow r) => switch (r.kind) {
 /// **Незнакомая причина называется незнакомой** (I14): повод, которого мы ещё
 /// не завели, обязан быть заметен, а не подменяться правдоподобным.
 String _lineupNoteOf(LineupRow r) => switch (r.kind) {
-      // ПОД ВОПРОСОМ ИЗ-ЗА ИСЧЕЗНУВШЕЙ РАБОТЫ — СКАЗАТЬ, ЧТО ДЕЛАТЬ (N220).
-      //
-      // **Отсутствие кнопки обязано быть названо словом.** Иначе строка без
-      // кнопки рядом со строкой с кнопкой читается как поломка — ровно N210:
-      // у объявленной пропажи нет отличительного признака, и на экране она
-      // выглядит как забытая.
-      //
-      // **ОДНА ПОДПИСЬ НА ДВА СЛУЧАЯ, И ЭТО НЕ СЛИЯНИЕ ДВУХ НЕЗНАНИЙ.**
-      // Отказавшийся и молчащий — состояния РАЗНЫЕ, и они уже различены
-      // словом ответа («bacarmır» против «cavab gözlənilir»), которое стоит
-      // строкой выше. Подпись же отвечает на другой вопрос — «что теперь
-      // делать зовущему», — и ответ у обоих один: позвать заново. Развести
-      // подписи значило бы сказать дважды то, что уже сказано (I47:
-      // различать там, где решается «норма или поломка», и не там, где
-      // решается «что показать»).
-      LineupRowKind.invited when r.status == kStatusUnsettled &&
-              r.unsettledReason == kReasonWorkCancelled &&
-              r.answer != kAnswerGoing =>
-        'yenidən çağırmaq lazımdır',
+      // ЗДЕСЬ БЫЛА ПОДПИСЬ «yenidən çağırmaq lazımdır» — объяснение, почему
+      // у этой строки нет плитки «Qaytar» (N220). Снята 12.09 вместе с самой
+      // плиткой: объяснять нечего, возврата по одному человеку больше нет ни
+      // у кого, и строка без кнопки поломкой не читается.
       LineupRowKind.invited => '',
       LineupRowKind.withdrawn => 'dəvət geri götürüldü',
       LineupRowKind.notInvited => switch (r.reason) {
@@ -4539,7 +4544,6 @@ class _PartyMemberRow extends StatelessWidget {
     this.onRemove,
     this.note,
     this.onOpenChat,
-    this.onRestore,
   });
 
   final String name;
@@ -4579,18 +4583,10 @@ class _PartyMemberRow extends StatelessWidget {
   /// из состава сразу**, спросив подтверждение.
   final VoidCallback? onRemove;
 
-  /// ВЕРНУТЬ ЭТОГО ПОЗВАННОГО В СИЛУ. `null` — не предлагать (N220).
-  ///
-  /// **Решает НЕ эта строка, а `offersLineupRestore`** — тот же приём и тот
-  /// же довод, что у крестика выше: условие можно прогнать тестом, разметку
-  /// нельзя (I32). Сюда приходит готовый ответ.
-  ///
-  /// **Отсутствие кнопки не читается как поломка, потому что рядом стоит
-  /// подпись** (`note`): у тех, кому возврат не предлагается, написано
-  /// «yenidən çağırmaq lazımdır». Две половины одного решения, и разводить их
-  /// по разным заходам нельзя — иначе один заход покажет строку без кнопки и
-  /// без объяснения (N210).
-  final VoidCallback? onRestore;
+  // ЗДЕСЬ БЫЛА ПЛИТКА «Qaytar» — возврат ЭТОГО позванного в силу (N220,
+  // 11.09). Снята 12.09 решением владельца: «никаких плиток возврата по
+  // одному человеку». Возвращает тот, кто ставил под вопрос, и возвращает
+  // весь вечер разом — родителя и всех приглашённых одной записью.
 
   @override
   Widget build(BuildContext context) {
@@ -4771,11 +4767,6 @@ class _PartyMemberRow extends StatelessWidget {
             //
             // Слово «Qaytar» («верни») названо действием, как соседняя «Aç»:
             // обе говорят, ЧТО произойдёт, а не куда ведут.
-            if (onRestore != null)
-              TextButton(
-                onPressed: onRestore,
-                child: const Text('Qaytar', style: TextStyle(color: kGold)),
-              ),
             if (onRemove != null)
               GestureDetector(
                 onTap: onRemove,
