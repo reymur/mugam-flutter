@@ -80,8 +80,9 @@ const Map<String, String> _coverage = {
   'edited': '$_elsewhere ветвь fieldsChanged → pushEdited',
   'memberLeft': '$_elsewhere пишет СЕРВЕР (markEventUnsettled) и там же '
       'шлёт pushUnsettled',
-  'workCancelled': '$_elsewhere пишет СЕРВЕР '
-      '(unsettleChildrenOnParentCancel) и там же шлёт pushUnsettled',
+  'workCancelled': '$_elsewhere писателя НЕТ с 12.09 — '
+      'unsettleChildrenOnParentCancel снят; имя живёт в данных прода, '
+      'карточка его читает, ветви не нужно',
 
   // --- ВЕТВЬ ЕСТЬ И ЖИВОЙ ПИСАТЕЛЬ ТОЖЕ: кнопку можно назвать пальцем -----
   //
