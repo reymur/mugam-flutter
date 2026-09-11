@@ -2283,6 +2283,65 @@ enum _AnswerCardForm {
   footer,
 }
 
+/// Строка «что случилось» глазами СМОТРЯЩЕГО. **Единственный вызов правила в
+/// файле, и сторож N180 это считает** (`source_invariants_test.dart`): экран
+/// приглашения стал вторым читателем 11.09, и позови он правило сам — лицо
+/// глагола решалось бы в двух местах, а подмену `viewerUid` в одном из них не
+/// поймал бы никто.
+EventDeed? _deedFor(PersonalEvent event, String currentUid, List<User> users) =>
+    eventDeedLine(
+      lastActionType: event.lastActionType,
+      lastActionBy: event.lastActionBy,
+      viewerUid: currentUid,
+      actorName:
+          users.where((u) => u.id == event.lastActionBy).firstOrNull?.name ??
+              '',
+    );
+
+/// Цвет строки поступка. Одно место на два экрана — карточку вечера и экран
+/// приглашения, — иначе тон разойдётся в первой правке.
+Color _deedColor(DeedTone tone) => switch (tone) {
+      DeedTone.memberGone => kAnswerCantText,
+      DeedTone.plain => kMuted,
+    };
+
+/// СТРОКА СОСТОЯНИЯ ПРИГЛАШЕНИЯ — единственная красная (решение владельца
+/// 11.09: красный должен значить одно). Цвет — `kWarnTitle`, тот же, что у
+/// плашки занятого дня: предупреждение, читаемое на чёрном (I41).
+class _InvitationStateLine extends StatelessWidget {
+  const _InvitationStateLine(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Text(
+        label,
+        style: const TextStyle(fontSize: 15, color: kWarnTitle),
+      );
+}
+
+/// ВМЕСТО ОТВЕТА — ОЖИДАНИЕ. Одна на два места, потому что задача одна:
+/// сказать, что отвечать сейчас не на что и чьё это решение (I58: сведено по
+/// задаче). Не красная — красный отдан состоянию строкой выше.
+class _AwaitingCallerLine extends StatelessWidget {
+  const _AwaitingCallerLine();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: kBg3,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: kBorder),
+        ),
+        child: const Text(
+          kAwaitingCallerText,
+          style: TextStyle(fontSize: 14, color: kTextSecondary),
+        ),
+      );
+}
+
 class _MyAnswerCard extends StatefulWidget {
   const _MyAnswerCard({
     required this.event,
@@ -2431,15 +2490,10 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
   @override
   Widget build(BuildContext context) {
     final mine = widget.event.answerFor(widget.currentUid);
-    // ЧТО ЧЕЛОВЕК МОЖЕТ ОТВЕТИТЬ СЕЙЧАС — ПРАВИЛОМ, А НЕ УСЛОВИЕМ ЗДЕСЬ
-    // (N221, N222). Обе раскладки читают один и тот же ответ: карточка вечера
-    // и подвал экрана приглашения обязаны показывать одни кнопки в одних
-    // случаях, иначе разойдутся в первой правке (N49).
-    final offer = answerOfferFor(
-      status: widget.event.status,
-      unsettledReason: widget.event.unsettledReason,
-      myAnswer: mine,
-    );
+    // МОЖНО ЛИ ОТВЕЧАТЬ, решает НЕ ЭТОТ ВИДЖЕТ, а оба вызывающих — по
+    // `invitationInDoubt`: под вопросом он не рисуется вовсе, вместо него
+    // `_AwaitingCallerLine`. Здесь стояло `answerOfferFor` с урезанием кнопок
+    // изнутри; снято 11.09 вечером вместе с «только отказом».
 
     // ПОДВАЛЬНАЯ ФОРМА — экран `DƏVƏT`. Ни рамки, ни подписи «Cavabınız»:
     // там ответ не соседствует ни с чем, и называть его отдельно значит
@@ -2448,37 +2502,6 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
     // Плашка занятого дня остаётся — она предупреждение, а не украшение, и
     // теряться от смены раскладки не должна.
     if (widget.form == _AnswerCardForm.footer) {
-      // РАБОТЫ НЕТ — ОТВЕЧАТЬ НЕ НА ЧТО, И ЭКРАН ГОВОРИТ ЭТО СЛОВАМИ (N221).
-      //
-      // **Кнопок не остаётся ни одной, и это не половина решения.** У
-      // молчавшего отказа НЕ БЫЛО: оставь ему «Bacarmıram» — в данных
-      // появилась бы запись отказа, которого он не давал, а «Gəlirəm» было бы
-      // согласием на работу, которой нет.
-      //
-      // **Строка обязательна, иначе экран нем** (N210): человек видит
-      // приглашение без кнопок и не знает, оно умерло или висит. Сказано и
-      // что случилось, и ЧЬЁ теперь решение — иначе он ждёт действия от себя.
-      //
-      // Плашка занятого дня здесь снимается вместе с кнопками: она
-      // предупреждение перед выбором, а выбора больше нет.
-      if (offer == AnswerOffer.none) {
-        return Container(
-          padding: const EdgeInsets.all(14),
-          // ПАЛИТРА ПРЕДУПРЕЖДЕНИЯ ВЗЯТА ГОТОВОЙ, А НЕ ПОДОБРАНА (I41).
-          // Заливка и рамка — альфой по чёрному (так и задумано), текст —
-          // ЯВНЫМ светлым тоном: альфа на чёрном не осветляет, и красным по
-          // чёрному строка не читалась бы.
-          decoration: BoxDecoration(
-            color: kWarnBg,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: kWarnBorder),
-          ),
-          child: Text(
-            kWorkGoneWaitingText,
-            style: const TextStyle(fontSize: 14, color: kWarnTitle),
-          ),
-        );
-      }
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2501,15 +2524,13 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
           // **Немой оказалась не кнопка, а состояние, у которого не было
           // показа** — и заметно это стало только на том ответе, который
           // экрана не меняет.
-          if (offer == AnswerOffer.both) ...[
-            _answerButton(
-              label: 'Gəlirəm',
-              selected: mine == kAnswerGoing,
-              onTap: _saving ? null : _sayGoing,
-              big: true,
-            ),
-            const SizedBox(height: 11),
-          ],
+          _answerButton(
+            label: 'Gəlirəm',
+            selected: mine == kAnswerGoing,
+            onTap: _saving ? null : _sayGoing,
+            big: true,
+          ),
+          const SizedBox(height: 11),
           _answerButton(
             label: 'Bacarmıram',
             selected: mine == kAnswerCant,
@@ -2554,23 +2575,16 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
             _dayNoticeBox(),
           ],
           const SizedBox(height: 10),
-          // СОГЛАСИЕ ВСЛЕПУЮ НЕ ПРЕДЛАГАЕМ (N222): при `onlyDecline` работы
-          // больше нет, и «Gəlirəm» подтверждал бы участие в том, чего не
-          // существует. Отказ остаётся — он ОСВОБОЖДАЕТ день, который человек
-          // до сих пор держит занятым, и это единственное, что ему сейчас
-          // нужно. Разбор — `AnswerOffer.onlyDecline`.
           Row(
             children: [
-              if (offer == AnswerOffer.both) ...[
-                Expanded(
-                  child: _answerButton(
-                    label: 'Gəlirəm',
-                    selected: mine == kAnswerGoing,
-                    onTap: _saving ? null : _sayGoing,
-                  ),
+              Expanded(
+                child: _answerButton(
+                  label: 'Gəlirəm',
+                  selected: mine == kAnswerGoing,
+                  onTap: _saving ? null : _sayGoing,
                 ),
-                const SizedBox(width: 8),
-              ],
+              ),
+              const SizedBox(width: 8),
               Expanded(
                 child: _answerButton(
                   // Слово из макета (`mugam-6-kart.html`), а не своё:
@@ -3430,6 +3444,14 @@ class _PersonalEventDetailScreenState
                       ),
                     ],
 
+                    // 2а. СОСТОЯНИЕ ПРИГЛАШЕНИЯ — ВЫШЕ ПОСТУПКА (решение
+                    // владельца 11.09, вечер): состояние решает, что делать,
+                    // поступок под ним — подпись. Красная здесь только она.
+                    if (invitationStateLabel(event) case final String label) ...[
+                      const SizedBox(height: 8),
+                      _InvitationStateLine(label),
+                    ],
+
                     // 3. ЧТО СЛУЧИЛОСЬ ПОСЛЕДНИМ — одна строка (28.08).
                     //
                     // ПОВОД НАЗВАН ВЛАДЕЛЬЦЕМ: человек нажимает на push и
@@ -3466,15 +3488,7 @@ class _PersonalEventDetailScreenState
                     // кнопка, и вид обязан это говорить (N174: у нажимаемого
                     // две половины — адресат и вид). Поставь мы крестик и
                     // слева — читатель не понял бы, какой из них нажимается.
-                    if (eventDeedLine(
-                          lastActionType: event.lastActionType,
-                          lastActionBy: event.lastActionBy,
-                          viewerUid: currentUid,
-                          actorName:
-                              _findUser(allUsers, event.lastActionBy ?? '')
-                                      ?.name ??
-                                  '',
-                        )
+                    if (_deedFor(event, currentUid, allUsers)
                         case final EventDeed deed) ...[
                       Builder(
                         builder: (context) {
@@ -3494,17 +3508,7 @@ class _PersonalEventDetailScreenState
                             return const SizedBox.shrink();
                           }
                           final gone = deed.tone == DeedTone.memberGone;
-                          // ТРИ ТОНА, А НЕ ДВА (N222, 11.09). Третий —
-                          // «работы не стало»: он ПРЕДУПРЕЖДАЮЩИЙ и берёт
-                          // готовую палитру `kWarn*`, а не кирпичную пару
-                          // ухода. Слить их значило бы сказать «человека не
-                          // стало» о работе — ровно то, от чего довод у
-                          // `DeedTone.memberGone` и защищает.
-                          final tone = switch (deed.tone) {
-                            DeedTone.memberGone => kAnswerCantText,
-                            DeedTone.workGone => kWarnTitle,
-                            DeedTone.plain => kMuted,
-                          };
+                          final tone = _deedColor(deed.tone);
                           return Padding(
                             padding: const EdgeInsets.only(top: 8),
                             child: Row(
@@ -3880,32 +3884,22 @@ class _PersonalEventDetailScreenState
                     // на `margin-top:auto` и без рамки с подписью «Cavabınız».
                     // Здесь возвращается ТОЛЬКО вызов: у починки поломки одна
                     // переменная, иначе не отличить, что именно её вылечило.
-                    // N222, 11.09: РАБОТЫ НЕТ — СПРАШИВАТЬ НЕ О ЧЕМ.
-                    //
-                    // Условие даёт `answerOfferFor`, а не разметка: тот же
-                    // вопрос решает подвал экрана приглашения, и два места с
-                    // одним решением разошлись бы в первой правке (N49, I32).
-                    //
-                    // `AnswerOffer.none` сюда не доходит: у неответившего роль
-                    // `invited`, и дверь ведёт его на экран приглашения, а не
-                    // на эту карточку. Ветвь всё равно перечислена целиком —
-                    // сужение, отвечающее только на «свой» случай, молча
-                    // отвечает и на соседний (I34).
-                    if (!isOwner &&
-                        event.answerFor(currentUid) != null &&
-                        answerOfferFor(
-                              status: event.status,
-                              unsettledReason: event.unsettledReason,
-                              myAnswer: event.answerFor(currentUid),
-                            ) !=
-                            AnswerOffer.none) ...[
+                    // ПРИГЛАШЕНИЕ ПОД ВОПРОСОМ — ВМЕСТО БЛОКА СТРОКА ОЖИДАНИЯ
+                    // (решение владельца 11.09, вечер). Условие даёт
+                    // `invitationInDoubt`, а не разметка: тот же вопрос решает
+                    // подвал экрана приглашения (N49, I32). Вернулось в силу —
+                    // правило отпускает, и блок «Cavabınız» возвращается.
+                    if (!isOwner && event.answerFor(currentUid) != null) ...[
                       const SizedBox(height: 20),
-                      _MyAnswerCard(
-                        event: event,
-                        currentUid: currentUid,
-                        myEvents: [...personalEvents, ...eventsAsParticipant],
-                        firestoreService: firestoreService,
-                      ),
+                      if (invitationInDoubt(event))
+                        const _AwaitingCallerLine()
+                      else
+                        _MyAnswerCard(
+                          event: event,
+                          currentUid: currentUid,
+                          myEvents: [...personalEvents, ...eventsAsParticipant],
+                          firestoreService: firestoreService,
+                        ),
                     ],
 
                     // 5. СТРОКА ДОГОВОРЁННОСТИ СНЯТА ЦЕЛИКОМ, вместе с
@@ -4270,6 +4264,28 @@ class _InvitationScreen extends ConsumerWidget {
                 ),
               ],
 
+              // СОСТОЯНИЕ И ПОСТУПОК — у приглашения под вопросом (N221;
+              // решение владельца 11.09, вечер). До сегодня экран состояния
+              // не видел вовсе. Порядок тот же, что в карточке вечера:
+              // состояние выше и красным, поступок под ним серым.
+              if (invitationStateLabel(event) case final String label) ...[
+                const SizedBox(height: 14),
+                Center(child: _InvitationStateLine(label)),
+                if (_deedFor(event, currentUid, users)
+                    case final EventDeed deed) ...[
+                  const SizedBox(height: 4),
+                  Center(
+                    child: Text(
+                      deed.text,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: _deedColor(deed.tone),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+
               const SizedBox(height: 22),
               const Text(
                 'SƏSLİ QEYDLƏR',
@@ -4321,13 +4337,18 @@ class _InvitationScreen extends ConsumerWidget {
               // Подвал на `margin-top: auto` из макета — распоркой.
               const Spacer(),
 
-              _MyAnswerCard(
-                event: event,
-                currentUid: currentUid,
-                myEvents: [...own, ...asParticipant],
-                firestoreService: ref.watch(firestoreServiceProvider),
-                form: _AnswerCardForm.footer,
-              ),
+              // Под вопросом отвечать не на что — строка ожидания вместо
+              // кнопок, то же правило, что в карточке вечера.
+              if (invitationInDoubt(event))
+                const _AwaitingCallerLine()
+              else
+                _MyAnswerCard(
+                  event: event,
+                  currentUid: currentUid,
+                  myEvents: [...own, ...asParticipant],
+                  firestoreService: ref.watch(firestoreServiceProvider),
+                  form: _AnswerCardForm.footer,
+                ),
             ],
           ),
         ),

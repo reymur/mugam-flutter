@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/agreements/event_answers.dart';
+import 'package:mugam_flutter/core/agreements/event_deed_line.dart';
 import 'package:mugam_flutter/core/agreements/event_status_view.dart';
 import 'package:mugam_flutter/firebase/models.dart';
 
@@ -360,84 +361,123 @@ void main() {
   });
 
   // -------------------------------------------------------------------------
-  // КАКИЕ ОТВЕТЫ ПРЕДЛОЖИТЬ — N221 и N222, 11.09
+  // ПРИГЛАШЕНИЕ ПОД ВОПРОСОМ — N221, N222; решение владельца 11.09, вечер
   // -------------------------------------------------------------------------
-  // ОДНО ПРАВИЛО НА ДВА ЭКРАНА: карточка вечера и подвал экрана приглашения
-  // обязаны показывать одни кнопки в одних случаях. Вердикты стоят на
-  // правиле, а не на разметке, — её тестом не прогнать (I32).
-  group('какие ответы предложить (N221, N222)', () {
-    AnswerOffer offer(String status, String? reason, String? mine) =>
-        answerOfferFor(
-          status: status,
-          unsettledReason: reason,
-          myAnswer: mine,
-        );
+  // ВХОД — ДОКУМЕНТ, А НЕ ПОЛЯ ПО ОТДЕЛЬНОСТИ (I55): вердикты идут через
+  // `PersonalEvent.fromFirestore`, тем путём, которым вечер приходит в прод.
+  // Прежние подавали правилу `status` и повод руками — ровно так N223
+  // проглядела, что нужного сочетания у живого вызывающего не бывает.
+  group('приглашение под вопросом (N221, N222)', () {
+    PersonalEvent doc(Map<String, dynamic> fields) =>
+        PersonalEvent.fromFirestore('child', {
+          'ownerUid': 'caller',
+          'musicians': ['me'],
+          'isAgree': false,
+          'answers': {'me': kAnswerGoing},
+          ...fields,
+        });
 
-    test('вечер в силе — оба ответа, кто бы что ни ответил', () {
-      for (final mine in [kAnswerGoing, kAnswerCant, kAnswerWaiting, null]) {
-        expect(offer(kStatusAgreed, null, mine), AnswerOffer.both,
-            reason: 'обычная жизнь изменилась для ответа $mine');
+    const parent = {'parentEventId': 'parent'};
+
+    test('в силе — строки состояния нет, ответ спрашивается', () {
+      final e = doc({...parent, 'status': kStatusAgreed});
+      expect(invitationStateLabel(e), isNull);
+      expect(invitationInDoubt(e), isFalse);
+    });
+
+    test('работу отменили — «Şübhə altında», ответа не спрашивают', () {
+      final e = doc({
+        ...parent,
+        'status': kStatusUnsettled,
+        'unsettledReason': kReasonWorkCancelled,
+      });
+      expect(invitationStateLabel(e), 'Şübhə altında');
+      expect(invitationInDoubt(e), isTrue);
+    });
+
+    test('ПОВОД ДРУГОЙ — СОСТОЯНИЕ ТО ЖЕ: строка есть при любом поводе', () {
+      for (final reason in <String?>[null, kReasonMemberLeft, 'незнакомый']) {
+        final e = doc({
+          ...parent,
+          'status': kStatusUnsettled,
+          'unsettledReason': ?reason,
+        });
+        expect(invitationStateLabel(e), 'Şübhə altında', reason: '$reason');
+        expect(invitationInDoubt(e), isTrue, reason: '$reason');
       }
     });
 
-    test('РАБОТЫ НЕТ, а человек согласился — остаётся ТОЛЬКО отказ', () {
-      // Кнопка, которая остаётся, — та, что ОСВОБОЖДАЕТ человека: он держит
-      // день занятым под работу, которой больше нет.
-      expect(
-        offer(kStatusUnsettled, kReasonWorkCancelled, kAnswerGoing),
-        AnswerOffer.onlyDecline,
-      );
-    });
-
-    test('РАБОТЫ НЕТ, а человек молчал — не предлагается НИЧЕГО', () {
-      // Слова владельца 11.09: «у молчащего отказа не было, вернуть его
-      // значит вернуть вопрос». Оставь ему «Bacarmıram» — в данных появилась
-      // бы запись отказа, которого он не давал.
-      expect(
-        offer(kStatusUnsettled, kReasonWorkCancelled, kAnswerWaiting),
-        AnswerOffer.none,
-      );
-    });
-
-    test('РАБОТЫ НЕТ, а человек уже отказался — тоже ничего', () {
-      expect(
-        offer(kStatusUnsettled, kReasonWorkCancelled, kAnswerCant),
-        AnswerOffer.none,
-      );
-    });
-
-    test('УШЁЛ УЧАСТНИК — поведение ПРЕЖНЕЕ, оба ответа', () {
-      // Сужение сделано под один повод, и у соседнего ничего не меняется.
-      // Это I34 проверкой, а не словами: спрошено, что получает тот, кого
-      // условие не поймало.
-      for (final mine in [kAnswerGoing, kAnswerCant, kAnswerWaiting]) {
-        expect(offer(kStatusUnsettled, kReasonMemberLeft, mine),
-            AnswerOffer.both);
+    test('ОТВЕТ ПРИГЛАШЁННОГО НЕ РЕШАЕТ: кнопок нет ни у кого', () {
+      // Здесь стояло «у согласившегося остаётся только отказ» — снято тем же
+      // решением: вопрос теперь у зовущего.
+      for (final mine in [kAnswerGoing, kAnswerWaiting, kAnswerCant]) {
+        final e = doc({
+          ...parent,
+          'status': kStatusUnsettled,
+          'unsettledReason': kReasonWorkCancelled,
+          'answers': {'me': mine},
+        });
+        expect(invitationInDoubt(e), isTrue, reason: mine);
       }
     });
 
-    test('ПОВОД НЕИЗВЕСТЕН — оба ответа, а не молчание', () {
-      // Повода нет у 121 документа прода из 121 (замер 07.09). Сузься
-      // правило по `status` вместо повода — все они разом лишились бы кнопок.
-      expect(offer(kStatusUnsettled, null, kAnswerGoing), AnswerOffer.both);
+    test('ОБЫЧНЫЙ ВЕЧЕР под вопросом — прежнее: строки нет, ответ есть', () {
+      // I34: тот, кого условие не поймало. Повода нет у 121 документа прода
+      // из 121 (замер 07.09, до появления приглашений) — сузься правило по
+      // одному `status`, они разом лишились бы кнопок.
+      for (final reason in <String?>[null, kReasonMemberLeft]) {
+        final e = doc({
+          'status': kStatusUnsettled,
+          'unsettledReason': ?reason,
+        });
+        expect(invitationStateLabel(e), isNull, reason: '$reason');
+        expect(invitationInDoubt(e), isFalse, reason: '$reason');
+      }
     });
 
-    test('КАНАРЕЙКА: правило даёт ТРИ разных ответа, а не один', () {
-      final all = {
-        offer(kStatusAgreed, null, kAnswerGoing),
-        offer(kStatusUnsettled, kReasonWorkCancelled, kAnswerGoing),
-        offer(kStatusUnsettled, kReasonWorkCancelled, kAnswerWaiting),
-      };
-      expect(all.length, 3,
-          reason: 'правило схлопнулось: разные случаи дают один ответ');
+    test('ПЕРЕХОД ТУДА: в силе → под вопрос — строка есть, блока нет', () {
+      final before = doc({...parent, 'status': kStatusAgreed});
+      // Так пишет сервер (`unsettledAfterWorkCancelled`).
+      final after = doc({
+        ...parent,
+        'status': kStatusUnsettled,
+        'unsettledReason': kReasonWorkCancelled,
+        'lastActionType': kDeedWorkCancelled,
+      });
+      expect([invitationInDoubt(before), invitationInDoubt(after)],
+          [false, true]);
+      expect([invitationStateLabel(before), invitationStateLabel(after)],
+          [null, 'Şübhə altında']);
     });
 
-    test('строка для того, кому отвечать нечего, НЕ ПУСТА', () {
-      // Экран без кнопок и без слов нем: человек не знает, приглашение умерло
-      // или висит (N210). Проверяется и то, что сказано ЧЬЁ решение.
-      expect(kWorkGoneWaitingText, isNotEmpty);
-      expect(kWorkGoneWaitingText.contains('Çağıran'), isTrue,
+    test('ПЕРЕХОД ОБРАТНО: «Qaytar» — строка уходит, блок возвращается', () {
+      // ДОКУМЕНТ ТАКОЙ, КАКИМ ЕГО ОСТАВЛЯЕТ ВОЗВРАТ, а не чистый:
+      // `restoresEvent` меняет только `status` и `lastAction*`, повод
+      // `workCancelled` остаётся лежать. Правило по поводу держало бы
+      // вернувшееся приглашение под вопросом — этот вердикт сторожит ключ.
+      final before = doc({
+        ...parent,
+        'status': kStatusUnsettled,
+        'unsettledReason': kReasonWorkCancelled,
+      });
+      final after = doc({
+        ...parent,
+        'status': kStatusAgreed,
+        'unsettledReason': kReasonWorkCancelled,
+        'lastActionType': kDeedRestored,
+      });
+      expect([invitationInDoubt(before), invitationInDoubt(after)],
+          [true, false]);
+      expect([invitationStateLabel(before), invitationStateLabel(after)],
+          ['Şübhə altında', null]);
+    });
+
+    test('строка ожидания: чьё решение сказано, а повода в ней нет', () {
+      expect(kAwaitingCallerText.contains('Çağıran'), isTrue,
           reason: 'не сказано, чьё теперь решение');
+      // Повод бывает разный; строка, утверждающая отмену работы, соврала бы
+      // у приглашения под вопросом по другой причине.
+      expect(kAwaitingCallerText.contains('ləğv'), isFalse);
     });
   });
 }
