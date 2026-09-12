@@ -3257,6 +3257,109 @@ class _PersonalEventDetailScreenState
         _ => 'səbəb bilinmir',
       };
 
+  /// «Gələ bilmirəm» — ВЫХОД УЧАСТНИКА ИЗ ВЕЧЕРА (работа 3 плана, 13.08).
+  ///
+  /// **ПОРЯДОК ДВУХ ЗАПИСЕЙ — СПЕРВА ВЫХОД, ПОТОМ ПРИЧИНА, и это решение.**
+  /// Выход — сам поступок: он меняет данные, убирает вечер из календаря
+  /// ушедшего и поднимает у владельца «İştirakçı ayrıldı». Причина — слова
+  /// при нём. Сорвись отправка сообщения, человек всё равно вышел, и об
+  /// ошибке ему сказано; сделай мы наоборот — причина ушла бы о выходе,
+  /// которого не случилось.
+  ///
+  /// **ПРИЧИНА НЕОБЯЗАТЕЛЬНА И НИЧЕГО НЕ ВЫДУМЫВАЕТ.** Пусто — уходит только
+  /// выход, без сообщения. Текст отправляется КАК НАПИСАН: приписать к нему
+  /// название вечера значило бы сказать за человека то, чего он не писал, а
+  /// вечер владелец и так узнаёт из письма сервера.
+  ///
+  /// **ТРЕТЬЕЙ ДОРОГИ В ЧАТ НЕ ЗАВЕДЕНО** (N90, N117): берётся тот же
+  /// `resolveDirectChatId`, которым карточка уже ходит в переписку, и тот же
+  /// `sendMessage`, которым шлют текст ещё пятеро.
+  Future<void> _leaveEvent(
+    PersonalEvent event,
+    FirestoreService service,
+  ) async {
+    var reason = '';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (d) => AlertDialog(
+        backgroundColor: kBg2,
+        title: const Text(
+          'Gələ bilmirəm',
+          style: TextStyle(color: kText, fontSize: 17),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Təşkilatçı xəbər tutacaq.',
+              style: TextStyle(color: kTextSecondary, fontSize: 14),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              autofocus: true,
+              maxLines: 3,
+              minLines: 1,
+              style: const TextStyle(color: kText, fontSize: 15),
+              decoration: const InputDecoration(
+                hintText: 'Səbəb — istəyə bağlı',
+                hintStyle: TextStyle(color: kMuted, fontSize: 14),
+                enabledBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: kBorder),
+                ),
+                focusedBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: kGold),
+                ),
+              ),
+              onChanged: (v) => reason = v,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(d, false),
+            child: const Text('Geri', style: TextStyle(color: kMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(d, true),
+            child: const Text(
+              'Gələ bilmirəm',
+              style: TextStyle(color: kRed),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    try {
+      // Ход тот самый, что живёт с 29.08: ответ человека `answers[uid] =
+      // 'left'`. Человек ОСТАЁТСЯ в составе с пометкой «İşdən çıxdı» —
+      // владелец обязан видеть, КТО ушёл (N121).
+      await service.leavePersonalEvent(event.id, widget.currentUid);
+      final text = reason.trim();
+      if (text.isNotEmpty) {
+        final chatId = await resolveDirectChatId(
+          ref,
+          myUid: widget.currentUid,
+          otherUid: event.ownerUid,
+        );
+        await service.sendMessage(
+          chatId: chatId,
+          senderId: widget.currentUid,
+          text: text,
+        );
+      }
+      if (!mounted) return;
+      // Смотреть на карточку вечера, из которого только что вышел, незачем:
+      // ответа там больше не спрашивают, а в календаре его уже нет.
+      navigator.maybePop();
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Alınmadı: $e')));
+    }
+  }
+
   /// «Ləğv et» — ВЫБОР ИЗ ДВУХ, решение владельца 12.09.
   ///
   /// **Нажатий столько же, сколько было:** здесь и раньше стояло
@@ -3917,6 +4020,29 @@ class _PersonalEventDetailScreenState
                         currentUid: currentUid,
                         myEvents: [...personalEvents, ...eventsAsParticipant],
                         firestoreService: firestoreService,
+                      ),
+                    ],
+
+                    // ВЫХОД ИЗ ВЕЧЕРА — «Gələ bilmirəm» (работа 3 плана,
+                    // 13.08; дверь заведена 12.09).
+                    //
+                    // **ЭТО ТА САМАЯ ПРОПАВШАЯ ДВЕРЬ (N106).** Ход в проде с
+                    // 29.08, правила пускают его с 12.08, письмо владельцу
+                    // шлёт сервер — не было только кнопки, и уйти мог лишь
+                    // тот, кто занят на ту же минуту.
+                    //
+                    // Условие даёт `offersEventExit`, а не разметка: три
+                    // условия можно прогнать тестом, разметку нельзя (I32).
+                    if (offersEventExit(
+                      isOwner: isOwner,
+                      myAnswer: event.answerFor(currentUid),
+                      status: event.status,
+                    )) ...[
+                      const SizedBox(height: 12),
+                      _CardButton(
+                        label: 'Gələ bilmirəm',
+                        tone: _CardButtonTone.plain,
+                        onTap: () => _leaveEvent(event, firestoreService),
                       ),
                     ],
 

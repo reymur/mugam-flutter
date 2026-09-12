@@ -156,6 +156,82 @@ void main() {
     });
   });
 
+  // ВЫХОД УЧАСТНИКА — «Gələ bilmirəm» (работа 3 плана, написана 12.09)
+  // -------------------------------------------------------------------------
+  // Ход живёт с 29.08 и до сегодня не имел двери: уйти можно было только через
+  // разрешение конфликта в форме своего вечера (N106). Правила его пускают с
+  // 12.08, сервер шлёт «İştirakçı ayrıldı» — не хватало кнопки.
+  group('выход участника из вечера (N106, работа 3)', () {
+    test('позванному, который ответил, — предлагается', () {
+      for (final a in [kAnswerGoing, kAnswerWaiting, kAnswerCant]) {
+        expect(
+          offersEventExit(isOwner: false, myAnswer: a, status: kStatusAgreed),
+          isTrue,
+          reason: 'ответ $a: сказать «не смогу» должно быть чем',
+        );
+      }
+    });
+
+    test('ВЫШЕДШЕМУ больше не предлагается', () {
+      // Второй уход ничего не меняет: ключ уже `left`, письмо владельцу уже
+      // ушло. Кнопка предлагала бы поступок, которого не произойдёт.
+      expect(
+        offersEventExit(
+          isOwner: false,
+          myAnswer: kAnswerLeft,
+          status: kStatusAgreed,
+        ),
+        isFalse,
+      );
+    });
+
+    test('ВЛАДЕЛЬЦУ не предлагается', () {
+      // Он вечер создал — уходить ему неоткуда (N112). Его ход — отмена.
+      expect(
+        offersEventExit(
+          isOwner: true,
+          myAnswer: kAnswerGoing,
+          status: kStatusAgreed,
+        ),
+        isFalse,
+      );
+    });
+
+    test('У ОТМЕНЁННОГО вечера выхода нет', () {
+      expect(
+        offersEventExit(
+          isOwner: false,
+          myAnswer: kAnswerGoing,
+          status: kStatusCancelled,
+        ),
+        isFalse,
+      );
+    });
+
+    test('ПОД ВОПРОСОМ выход ОСТАЁТСЯ — вечер живой', () {
+      // I34, спрошенное вслух: что получает тот, кого условие не поймало.
+      // Под вопросом человек в вечере числится, и сказать «не смогу» ему есть
+      // о чём — в отличие от отменённого.
+      expect(
+        offersEventExit(
+          isOwner: false,
+          myAnswer: kAnswerGoing,
+          status: kStatusUnsettled,
+        ),
+        isTrue,
+      );
+    });
+
+    test('НЕ УЧАСТНИКУ не предлагается: ответа нет вовсе', () {
+      // `answerFor` отдаёт `null` тому, кого в составе нет. Кнопка у него
+      // писала бы ответ за человека, которого не спрашивали.
+      expect(
+        offersEventExit(isOwner: false, myAnswer: null, status: kStatusAgreed),
+        isFalse,
+      );
+    });
+  });
+
   group('надпись выхода наверх', () {
     // ГЛАВНЫЙ ВЕРДИКТ ГРУППЫ: показ и надпись не могут разойтись.
     //

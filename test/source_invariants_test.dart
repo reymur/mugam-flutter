@@ -992,14 +992,69 @@ void main() {
       form = readCode(_eventForm);
     });
 
-    test('вызов leavePersonalEvent из формы не потерян', () {
+    // ДВЕРЕЙ СТАЛО ДВЕ — 12.09, и счёт пришлось переписать на ПОИМЁННЫЙ.
+    //
+    // **Здесь стояло `length == 1`**, и это было верно, пока выход жил только
+    // в форме: «уйти» означало «освободить занятую минуту», и тому, кто не
+    // занят, уходить было нечем (N106). 12.09 заведена вторая дверь — кнопка
+    // «Gələ bilmirəm» на карточке участника, тот же серверный ход.
+    //
+    // **ПОДНЯТЬ ЧИСЛО ДО ДВУХ БЫЛО БЫ ОСЛАБЛЕНИЕМ, А НЕ ПРАВКОЙ.** Счёт «два»
+    // зелен и тогда, когда обе двери ведут из одного места, и тогда, когда
+    // форма свой вызов потеряла, а карточка завела второй. Сторож заводился
+    // ради того, чтобы пропажа вызова НЕ прошла молча, — значит проверять
+    // надо каждую дверь по её методу.
+    String sliceOf(String start, String end) {
+      final from = form.indexOf(start);
+      expect(from, isNot(-1), reason: '$start исчез вовсе — сторож замолчал бы');
+      final to = form.indexOf(end, from);
+      expect(to, isNot(-1), reason: 'граница куска ($end) потеряна');
+      return form.substring(from, to);
+    }
+
+    test('дверь ФОРМЫ: «Təqvimimdən sil» зовёт leavePersonalEvent', () {
+      final body = sliceOf(
+        'Future<void> _replaceEvent(',
+        'Future<bool> _confirmLeaveForeign(',
+      );
       expect(
-        'leavePersonalEvent('.allMatches(form).length,
-        1,
+        body.contains('leavePersonalEvent('),
+        isTrue,
         reason: 'Ветка «Təqvimimdən sil» обязана звать leavePersonalEvent: '
             'без него человек остаётся в чужом мероприятии, а владелец не '
             'получает «İştirakçı ayrıldı» — единственное уведомление, '
             'которое этот ход теперь порождает.',
+      );
+    });
+
+    test('дверь КАРТОЧКИ: «Gələ bilmirəm» зовёт leavePersonalEvent', () {
+      final body = sliceOf(
+        'Future<void> _leaveEvent(',
+        'Future<void> _cancelOwnEvent(',
+      );
+      expect(
+        body.contains('leavePersonalEvent('),
+        isTrue,
+        reason: 'Кнопка «Gələ bilmirəm» обязана звать тот же ход, что и форма. '
+            'Напиши она запись сама — у выхода стало бы два разных писателя, '
+            'и сервер узнавал бы об уходе через раз (N49).',
+      );
+      // ПРИЧИНА — ТЕМ ЖЕ ПУТЁМ, ЧТО У ВСЕХ: третьей дороги в чат не заводить
+      // (N90, N117). Проверяется наличием общего входа, а не текстом письма.
+      expect(
+        body.contains('resolveDirectChatId('),
+        isTrue,
+        reason: 'причина ушла мимо общего входа в переписку',
+      );
+    });
+
+    test('дверей ровно две, и обе названы', () {
+      expect(
+        'leavePersonalEvent('.allMatches(form).length,
+        2,
+        reason: 'Появилась третья точка выхода либо пропала одна из двух. '
+            'Число здесь — не цель, а канарейка к двум вердиктам выше: они '
+            'смотрят каждый в свой метод и о третьей двери не узнают.',
       );
     });
 
