@@ -4780,9 +4780,22 @@ class _PartyMemberRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // ИМЯ ВЫШЕДШЕГО — ТОНОМ УХОДА, как в согласованном макете
+                  // (`docs/design/mugam-11-heyet-cixis.html`, `.name.left`).
+                  //
+                  // Тон не новый: берётся `word`, то есть ровно то, чем уже
+                  // покрашены кольцо и слово «İşdən çıxdı» у этой строки.
+                  // Второго цвета ухода не заводится.
+                  //
+                  // ТОЛЬКО У ВЫШЕДШЕГО, не у «bacarmır», хотя `word` у них
+                  // общий: «не приду в этот раз» остаётся человеком состава
+                  // с обычным именем, «меня здесь больше нет» — нет (I47).
                   Text(
                     name,
-                    style: const TextStyle(fontSize: 16, color: kText),
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: answer == kAnswerLeft ? word : kText,
+                    ),
                   ),
                   if (label.isNotEmpty)
                     Padding(
