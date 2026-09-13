@@ -1170,6 +1170,43 @@ service cloud.firestore {
           && resource.data.ownerUid != request.auth.uid;
       }
 
+      // ВЫХОД С ПРИЧИНОЙ — решение владельца 13.09: причина хранится В САМОМ
+      // ВЕЧЕРЕ, `leaveNotes.<uid>`, и показывается только владельцу.
+      //
+      // Ход — `answersForSelf` с одним добавленным ключом, и только при уходе:
+      // ответ `left` и своя причина ОДНОЙ записью. Отдельного хода «оставить
+      // причину, не выходя» нет — причина говорится про уход.
+      //
+      // **ОГРАНИЧЕНИЕ, СКАЗАННОЕ ПРЯМО:** это правило пишет, а не прячет.
+      // Документ вечера читает весь состав (`isParty`), и Firestore отдаёт его
+      // целиком — причину увидит любой из состава, обойдя экран. «Только
+      // владельцу» держится на показе (`offersLeaveNote` на клиенте).
+      // Безопасно, пока состав — позванные владельцем люди.
+      //
+      // I54: `leaveNotes` не читает сервер — ни при решении, кого известить
+      // (`diffEvents` сравнивает дату, место, заметки, тип и состав), ни при
+      // переносе в приглашения. Рассказом о поступке поле не является.
+      //
+      // Форма причины прибита: карта только из `text`, `voiceUrl`,
+      // `voiceWaveform` — иначе в «причину» уезжало бы что угодно.
+      function leavesWithNote() {
+        let notesAfter = request.resource.data.get('leaveNotes', {});
+        let notesBefore = resource.data.get('leaveNotes', {});
+        let note = notesAfter.get(request.auth.uid, null);
+        return changedKeys().hasOnly(['answers', 'leaveNotes'])
+          && request.resource.data.answers
+               .diff(resource.data.get('answers', {}))
+               .affectedKeys().hasOnly([request.auth.uid])
+          && request.resource.data.answers.get(request.auth.uid, null) == 'left'
+          && notesAfter.diff(notesBefore).affectedKeys().hasOnly([request.auth.uid])
+          && note is map
+          && note.keys().hasOnly(['text', 'voiceUrl', 'voiceWaveform'])
+          && (!('text' in note) || note.text is string)
+          && (!('voiceUrl' in note) || note.voiceUrl is string)
+          && (!('voiceWaveform' in note) || note.voiceWaveform is list)
+          && resource.data.ownerUid != request.auth.uid;
+      }
+
       // СОСТОЯНИЕ ВЕЧЕРА СТАВИТ ВЛАДЕЛЕЦ — плашка на карточке (решение
       // автора 12.08). До этого хода `status` клиент писать почти не мог:
       // `cancelled` через согласие и `agreed` через возврат из «под вопроса»,
@@ -1429,7 +1466,7 @@ service cloud.firestore {
           || (isParty() && (
                requestsCancel() || confirmsCancel()
                || withdrawsCancelRequest() || declinesCancelRequest()
-               || restoresEvent() || answersForSelf()
+               || restoresEvent() || answersForSelf() || leavesWithNote()
                || ownerSetsStatus() || ownerCancelsOwnEvent()
                || ownerRestoresOwnEvent()
              ))

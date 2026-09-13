@@ -122,6 +122,38 @@ service firebase.storage {
     // read; mugam-v2's UI only shows the upload button to admins, and this
     // now re-enforces that server-side too, so a non-admin member can't
     // bypass the UI restriction via a direct API call.
+    // ГОЛОС ПРИЧИНЫ ВЫХОДА — решение владельца 13.09.
+    //
+    // СВОЯ ПАПКА, А НЕ ПАПКА ЧАТА, с доводом владельца: голосовое в чате —
+    // сообщение переписки, у него свои правила и своё удаление; причина —
+    // часть вечера. Одна корзина на две разные вещи однажды унесёт причину
+    // вместе с чатом, а круги читателей у чата и у вечера совпадают сегодня
+    // случайно.
+    //
+    // Один файл на человека в вечере: `{uid}` — сам загрузивший.
+    //
+    // ЧИТАЮТ владелец и состав — тот же круг, что у поля `leaveNotes` на
+    // документе вечера. Защита «только владельцу» держится на ПОКАЗЕ, как и у
+    // текста; сверх того ссылка с ключом открывает файл мимо этих правил у
+    // любого, у кого она есть, а лежит она в поле, которое читает состав.
+    //
+    // Серверный триггер проверки загрузок (`onChatMediaUploaded`) смотрит
+    // только `chats/` и эту папку не трогает.
+    match /event_leave_notes/{eventId}/{uid} {
+      function leaveEvent() {
+        return firestore.get(/databases/(default)/documents/personalEvents/$(eventId)).data;
+      }
+      allow read: if isSignedIn() && (
+        request.auth.uid == leaveEvent().ownerUid ||
+        request.auth.uid in leaveEvent().get('musicians', [])
+      );
+      allow write: if isSignedIn() &&
+        request.auth.uid == uid &&
+        request.auth.uid in leaveEvent().get('musicians', []) &&
+        request.resource.metadata.uploaderUid == request.auth.uid &&
+        request.resource.contentType.matches('audio/.*') &&
+        request.resource.size <= maxUploadSizeBytes(request.auth.uid);
+    }
     match /groups/{chatId}/{allPaths=**} {
       allow read: if isChatMember(chatId);
       allow write: if isGroupAdmin(chatId);

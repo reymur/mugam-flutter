@@ -18,8 +18,12 @@ import '../../../core/theme/colors.dart';
 import '../../../core/agreements/day_buckets.dart';
 import '../../../core/agreements/event_lookup.dart';
 import '../../../core/agreements/day_role.dart';
+import '../../../core/agreements/leave_note.dart';
 import '../../../core/agreements/left_member_actions.dart';
 import '../../../core/agreements/lineup.dart';
+import '../../../core/audio/voice_recording_session.dart';
+import '../../../core/audio/voice_temp_files.dart';
+import '../widgets/leave_event_sheet.dart';
 import '../../../core/agreements/lineup_children.dart';
 import '../../../core/agreements/lineup_rows.dart';
 import '../../../core/agreements/month_marks.dart';
@@ -35,6 +39,7 @@ import '../../../core/presence/presence_service.dart';
 import '../../../shared/widgets/event_conflict_banner.dart';
 import '../../../shared/widgets/event_conflict_dialog.dart';
 import '../../../shared/widgets/event_notes_picker.dart';
+import '../../../shared/widgets/voice_player.dart';
 import '../../../shared/widgets/wheel_date_time_picker.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../job_offer/screens/pick_people_sheet.dart';
@@ -2778,6 +2783,10 @@ class _PersonalEventDetailScreenState
     extends ConsumerState<_PersonalEventDetailScreen> {
   final _flash = _RemoteChangeFlash();
 
+  /// Чьи причины выхода сейчас раскрыты знаком «?» (13.09). Помнит карточка,
+  /// а не строка: строка состава получает «раскрыто» данными и только рисует.
+  final Set<String> _openLeaveNotes = {};
+
   // Отметка «смотрю в эту карточку» — тот же механизм присутствия, что у
   // чата, но своим полем (`activeEventId`). Пока карточка открыта, сервер
   // не шлёт уведомлений об ЭТОМ мероприятии: человек и так видит правку
@@ -3259,6 +3268,19 @@ class _PersonalEventDetailScreenState
 
   /// «Gələ bilmirəm» — ВЫХОД УЧАСТНИКА ИЗ ВЕЧЕРА (работа 3 плана, 13.08).
   ///
+  /// **ПЕРЕДЕЛАНО 13.09 РЕШЕНИЕМ ВЛАДЕЛЬЦА — ПРИЧИНА В САМОМ ВЕЧЕРЕ.** Разбор
+  /// ниже про «две записи» и «причину сообщением в чат» ОТМЕНЁН и оставлен
+  /// как был, чтобы было видно, что и чем отменено. Стало:
+  ///
+  /// - лист выхода — поле или голос, необязательно (`LeaveEventSheet`);
+  /// - голос грузится ПЕРВЫМ, в папку вечера (`uploadLeaveNoteVoice`): в вечер
+  ///   уходит ссылка на уже лежащий файл, и не загрузился голос — не уходит и
+  ///   выход, человек узнаёт об этом словами;
+  /// - выход и причина — ОДНА запись (`leaveEventUpdate`); в чат не уходит
+  ///   ничего, чат для хранения причины не нужен.
+  ///
+  /// --- отменённый разбор 12.09 ---
+  ///
   /// **ПОРЯДОК ДВУХ ЗАПИСЕЙ — СПЕРВА ВЫХОД, ПОТОМ ПРИЧИНА, и это решение.**
   /// Выход — сам поступок: он меняет данные, убирает вечер из календаря
   /// ушедшего и поднимает у владельца «İştirakçı ayrıldı». Причина — слова
@@ -3278,85 +3300,57 @@ class _PersonalEventDetailScreenState
     PersonalEvent event,
     FirestoreService service,
   ) async {
-    var reason = '';
-    final ok = await showDialog<bool>(
+    // Сеанс записи общий, лист только просит; куда денется файл — решает эта
+    // функция (I58), как у чата и у предложения работы.
+    final session = VoiceRecordingSession();
+    final result = await showModalBottomSheet<LeaveSheetResult>(
       context: context,
-      builder: (d) => AlertDialog(
-        backgroundColor: kBg2,
-        title: const Text(
-          'Gələ bilmirəm',
-          style: TextStyle(color: kText, fontSize: 17),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Təşkilatçı xəbər tutacaq.',
-              style: TextStyle(color: kTextSecondary, fontSize: 14),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              autofocus: true,
-              maxLines: 3,
-              minLines: 1,
-              style: const TextStyle(color: kText, fontSize: 15),
-              decoration: const InputDecoration(
-                hintText: 'Səbəb — istəyə bağlı',
-                hintStyle: TextStyle(color: kMuted, fontSize: 14),
-                enabledBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: kBorder),
-                ),
-                focusedBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: kGold),
-                ),
-              ),
-              onChanged: (v) => reason = v,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(d, false),
-            child: const Text('Geri', style: TextStyle(color: kMuted)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(d, true),
-            child: const Text(
-              'Gələ bilmirəm',
-              style: TextStyle(color: kRed),
-            ),
-          ),
-        ],
-      ),
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      // Тап мимо листа не закрывает: в листе ввод, и промах по полю стоил бы
+      // написанного и сказанного. Одно правило на все листы с вводом (N28).
+      isDismissible: false,
+      builder: (_) => LeaveEventSheet(recorder: session),
     );
-    if (ok != true || !mounted) return;
+    session.dispose();
+    if (result == null || !mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     final navigator = Navigator.of(context);
+    final voice = result.voice;
     try {
+      // Голос грузится ПЕРВЫМ: в вечер уходит ссылка на уже лежащий файл. Не
+      // загрузился — не уходит и выход, и человек узнаёт об этом словами, а не
+      // выходит молча без того, что сказал.
+      final voiceUrl = voice == null
+          ? null
+          : await service.uploadLeaveNoteVoice(
+              eventId: event.id,
+              uid: widget.currentUid,
+              filePath: voice.filePath,
+            );
       // Ход тот самый, что живёт с 29.08: ответ человека `answers[uid] =
-      // 'left'`. Человек ОСТАЁТСЯ в составе с пометкой «İşdən çıxdı» —
-      // владелец обязан видеть, КТО ушёл (N121).
-      await service.leavePersonalEvent(event.id, widget.currentUid);
-      final text = reason.trim();
-      if (text.isNotEmpty) {
-        final chatId = await resolveDirectChatId(
-          ref,
-          myUid: widget.currentUid,
-          otherUid: event.ownerUid,
-        );
-        await service.sendMessage(
-          chatId: chatId,
-          senderId: widget.currentUid,
-          text: text,
-        );
-      }
+      // 'left'` — и рядом причина, ОДНОЙ записью (13.09). Человек ОСТАЁТСЯ в
+      // составе с пометкой «İşdən çıxdı» — владелец обязан видеть, КТО ушёл
+      // (N121). Пустая причина ключа не заводит (`leaveEventUpdate`).
+      await service.leavePersonalEvent(
+        event.id,
+        widget.currentUid,
+        note: LeaveNote(
+          text: result.text,
+          voiceUrl: voiceUrl,
+          voiceWaveform: voice?.waveform ?? const [],
+        ),
+      );
       if (!mounted) return;
       // Смотреть на карточку вечера, из которого только что вышел, незачем:
       // ответа там больше не спрашивают, а в календаре его уже нет.
       navigator.maybePop();
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('Alınmadı: $e')));
+    } finally {
+      // Временный файл записи не нужен ни при удаче (запись уже в хранилище),
+      // ни при отказе (лист закрыт, сказанное не вернуть) — N129.
+      if (voice != null) deleteVoiceTempFiles([voice.filePath]);
     }
   }
 
@@ -3774,6 +3768,23 @@ class _PersonalEventDetailScreenState
                         // когда-нибудь окажется правка. Сторож по исходникам
                         // считает читателей и краснеет на втором.
                         final answer = event.answerFor(uid);
+                        // ПРИЧИНА ЧИТАЕТСЯ ОДИН РАЗ НА СТРОКУ — по тому же
+                        // доводу, что ответ: её спрашивают правило показа и
+                        // сама строка, и два чтения могли бы разойтись.
+                        final leaveNote = event.leaveNoteFor(uid);
+                        // «?» И ПРИЧИНА — ТОЛЬКО ВЛАДЕЛЬЦУ (решение 13.09).
+                        // Решает правило целиком, как у крестика ниже; строке
+                        // достаётся готовая причина либо `null`. Остальной
+                        // состав видит красное имя и «İşdən çıxdı» без знака.
+                        final shownLeaveNote = offersLeaveNote(
+                          viewerUid: currentUid,
+                          memberUid: uid,
+                          ownerUid: event.ownerUid,
+                          answer: answer,
+                          note: leaveNote,
+                        )
+                            ? leaveNote
+                            : null;
                         return _PartyMemberRow(
                           // ПОИСК ИМЕНИ НЕ ВЫНЕСЕН В ПЕРЕМЕННУЮ НАРОЧНО, хотя
                           // ниже он повторяется. Сторож N53 читает выражение
@@ -3814,6 +3825,33 @@ class _PersonalEventDetailScreenState
                                     firestoreService,
                                   )
                               : null,
+                          // ПРИЧИНА ВЫХОДА У ВЛАДЕЛЬЦА — 13.09.
+                          //
+                          // ЭТА «?» — НЕ ТА, ЧТО СНЯТА 13.08 (о ней ниже). Та
+                          // открывала окошко из двух ходов; эта только
+                          // раскрывает причину на месте, по согласованному
+                          // макету `mugam-11-heyet-cixis.html`. Ходов над
+                          // человеком у неё нет — ход один, крестик выше.
+                          leaveNote: shownLeaveNote,
+                          leaveNoteOpen: _openLeaveNotes.contains(uid),
+                          onToggleLeaveNote: shownLeaveNote == null
+                              ? null
+                              : () => setState(() {
+                                    if (!_openLeaveNotes.remove(uid)) {
+                                      _openLeaveNotes.add(uid);
+                                    }
+                                  }),
+                          // Значок переписки рядом с причиной — просто переход
+                          // поговорить, если хозяин захочет уточнить. Причина
+                          // в чате НЕ хранится (решение 13.09), чат только дверь.
+                          onOpenLeaverChat: shownLeaveNote == null
+                              ? null
+                              : () => openDirectChat(
+                                    context,
+                                    ref,
+                                    myUid: currentUid,
+                                    otherUid: uid,
+                                  ),
                           // ЗДЕСЬ СТОЯЛА КНОПКА «?», СНЯТАЯ 13.08, И ЕЁ
                           // ВОЗВРАЩАТЬ НЕ СТАЛИ — на её место встал крестик,
                           // и это разные ходы, а не переименование.
@@ -4670,6 +4708,10 @@ class _PartyMemberRow extends StatelessWidget {
     this.onRemove,
     this.note,
     this.onOpenChat,
+    this.leaveNote,
+    this.leaveNoteOpen = false,
+    this.onToggleLeaveNote,
+    this.onOpenLeaverChat,
   });
 
   final String name;
@@ -4708,6 +4750,21 @@ class _PartyMemberRow extends StatelessWidget {
   /// самое: «?» открывала окошко из двух ходов, крестик **удаляет вышедшего
   /// из состава сразу**, спросив подтверждение.
   final VoidCallback? onRemove;
+
+  /// Причина выхода — знак «?» после «İşdən çıxdı» и раскрытие на месте
+  /// (решение владельца 13.09, макет 12.09).
+  ///
+  /// Приходит УЖЕ РЕШЁННОЙ правилом `offersLeaveNote`
+  /// (`core/agreements/leave_note.dart`) — только владельцу. `null` — знака
+  /// нет. Строка не решает, кому показывать причину, она показывает (I32).
+  final LeaveNote? leaveNote;
+
+  /// Раскрыта ли причина. Данные, а не состояние строки: помнит карточка.
+  final bool leaveNoteOpen;
+  final VoidCallback? onToggleLeaveNote;
+
+  /// Значок переписки рядом с раскрытой причиной. `null` — значка нет.
+  final VoidCallback? onOpenLeaverChat;
 
   // ЗДЕСЬ БЫЛА ПЛИТКА «Qaytar» — возврат ЭТОГО позванного в силу (N220,
   // 11.09). Снята 12.09 решением владельца: «никаких плиток возврата по
@@ -4852,7 +4909,100 @@ class _PartyMemberRow extends StatelessWidget {
                             label,
                             style: TextStyle(fontSize: 13, color: word),
                           ),
+                          // ЗНАК «?» — ТОЛЬКО У ВЫШЕДШЕГО С ПРИЧИНОЙ И ТОЛЬКО
+                          // У ВЛАДЕЛЬЦА (13.09). Обведённая буква, как в
+                          // макете; раскрытая — залитая. Со значком вопроса у
+                          // ждущего ответа (выше) на одной строке не
+                          // встречается никогда: причина бывает только у
+                          // вышедшего, так что два «?» разом (N174) не будет.
+                          if (leaveNote != null) ...[
+                            const SizedBox(width: 6),
+                            GestureDetector(
+                              onTap: onToggleLeaveNote,
+                              behavior: HitTestBehavior.opaque,
+                              child: Padding(
+                                padding: const EdgeInsets.all(4),
+                                child: Container(
+                                  width: 22,
+                                  height: 22,
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: leaveNoteOpen ? kGold : null,
+                                    border: Border.all(
+                                      color: leaveNoteOpen ? kGold : kBorder,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    '?',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: leaveNoteOpen ? kOnGold : kGold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
+                      ),
+                    ),
+                  // РАСКРЫТАЯ ПРИЧИНА ВЫХОДА — на месте, целиком, со значком
+                  // переписки справа (макет 12.09: «?» раскрывает на месте,
+                  // длинная причина целиком, переписка — второй ход по
+                  // желанию). Голос — общим проигрывателем, тем же, что в чате.
+                  if (leaveNote != null && leaveNoteOpen)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+                        decoration: BoxDecoration(
+                          color: kCard,
+                          border: Border.all(color: kBg3),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (leaveNote!.text.isNotEmpty)
+                                    Text(
+                                      leaveNote!.text,
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        color: kTextSecondary,
+                                      ),
+                                    ),
+                                  if (leaveNote!.voiceUrl != null) ...[
+                                    if (leaveNote!.text.isNotEmpty)
+                                      const SizedBox(height: 8),
+                                    VoicePlayer(
+                                      audioURL: leaveNote!.voiceUrl,
+                                      waveform: leaveNote!.voiceWaveform,
+                                      accentColor: kGold,
+                                      labelColor: kText,
+                                      playedColor: kGold,
+                                      dotColor: kGold,
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            if (onOpenLeaverChat != null)
+                              IconButton(
+                                onPressed: onOpenLeaverChat,
+                                icon: const Icon(
+                                  Icons.chat_bubble_outline,
+                                  size: 22,
+                                  color: kGold,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   // ПРИЧИНА — ТРЕТЬЕЙ СТРОКОЙ И ТИШЕ СЛОВА ОТВЕТА.
@@ -5200,6 +5350,10 @@ Future<void> _writeEventEdit(
       ownerUid: event.ownerUid,
       // Состав ДО правки (N114).
       previousParticipants: event.participantUids,
+      // Причины выхода едут за составом так же, как ответы: крестик убирает
+      // человека, и его слова уходят вместе с ним (решение 13.09). Вход
+      // для писателя — единственный вызов, держит сторож по исходникам.
+      previousLeaveNotes: event.leaveNotesForRewrite(),
     ),
   );
 }

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../core/agreements/event_answers.dart';
+import '../core/agreements/leave_note.dart';
 import '../core/agreements/lineup.dart';
 import '../core/models/activity_type.dart';
 
@@ -1322,6 +1323,25 @@ class PersonalEvent {
   /// `core/agreements/event_answers.dart`, одно на клиент, сервер и перепись.
   final bool _answersWrittenByOwner;
 
+  /// ПРИЧИНЫ ВЫХОДА — uid → текст и/или голос (решение владельца 13.09).
+  ///
+  /// **Закрыто так же, как карта ответов:** читатель показа берёт причину
+  /// через [leaveNoteFor], а решает, показывать ли её, правило
+  /// `offersLeaveNote` (`core/agreements/leave_note.dart`) — только владельцу.
+  /// Сама карта при этом НЕ секрет: документ читает весь состав, и защита
+  /// держится на показе. Разбор ограничения — в шапке `leave_note.dart`.
+  ///
+  /// `null` — поля в документе нет; `{}` — поле есть, причин нет. Разные
+  /// ответы, и правка состава их различает (I47).
+  final Map<String, LeaveNote>? _leaveNotes;
+
+  /// Причина выхода этого человека, `null` — её нет.
+  LeaveNote? leaveNoteFor(String uid) => _leaveNotes?[uid];
+
+  /// Карта причин — **только для того, кто её ПЕРЕЗАПИСЫВАЕТ** (крестик
+  /// удаления через правку состава), тот же приём, что [answersForRewrite].
+  Map<String, LeaveNote>? leaveNotesForRewrite() => _leaveNotes;
+
   /// СЫРАЯ КАРТА — **только для того, кто её ПЕРЕЗАПИСЫВАЕТ**, и ни для кого
   /// больше (шаг 4).
   ///
@@ -1431,6 +1451,7 @@ class PersonalEvent {
     this.lineup = const [],
     this._answers,
     this._answersWrittenByOwner = false,
+    this._leaveNotes,
   });
 
   factory PersonalEvent.fromFirestore(String id, Map<String, dynamic> data) {
@@ -1498,6 +1519,9 @@ class PersonalEvent {
       // 73 документов без карты: ошибись оно в другую сторону, и все они
       // разом стали бы неспрошенными.
       answersWrittenByOwner: data['answersWrittenByOwner'] == true,
+      // Причины выхода. Разбор защитный — в самом правиле (I49): чужой тип
+      // читается как «поля нет», календарь из-за него не падает.
+      leaveNotes: leaveNotesFromFirestore(data[kLeaveNotesField]),
     );
   }
 }

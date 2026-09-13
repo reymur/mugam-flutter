@@ -10,6 +10,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/agreements/event_answers.dart';
+import '../core/agreements/leave_note.dart';
 import '../core/agreements/lineup.dart';
 import '../core/chat/chat_departure.dart';
 import '../core/chat/chat_existence.dart';
@@ -2121,24 +2122,67 @@ class FirestoreService {
     return seq;
   }
 
+  /// Загрузка голосовой записи — ОДНА на оба адреса: голосовое в чате и голос
+  /// причины выхода (13.09).
+  ///
+  /// **Вынесена, а не скопирована** — решение владельца «второго загрузчика
+  /// не заводи». До 13.09 это было тело `uploadChatAudio`; адреса у двух
+  /// записей разные (папка чата и папка вечера), а сам ход один: положить
+  /// файл с метками, дождаться задачи, взять ссылку.
+  Future<String> _uploadVoiceFile(
+    Reference ref,
+    String filePath,
+    SettableMetadata metadata,
+  ) async {
+    await ref.putFile(File(filePath), metadata);
+    return await ref.getDownloadURL();
+  }
+
   Future<String> uploadChatAudio({
     required String chatId,
     required String filePath,
     required String senderId,
     required String fileName,
-  }) async {
+  }) {
     final ref = FirebaseStorage.instance
         .ref()
         .child('chats')
         .child(chatId)
         .child(fileName);
-    await ref.putFile(
-      File(filePath),
+    return _uploadVoiceFile(
+      ref,
+      filePath,
       SettableMetadata(
         customMetadata: {'uploaderUid': senderId, 'chatId': chatId},
       ),
     );
-    return await ref.getDownloadURL();
+  }
+
+  /// Голос причины выхода — в СВОЮ папку вечера, не в папку чата.
+  ///
+  /// Довод владельца 13.09: голосовое в чате — сообщение переписки, у него
+  /// свои правила и своё удаление; причина — часть вечера. Путь —
+  /// [leaveNoteVoicePath]. Серверный триггер проверки загрузок смотрит только
+  /// `chats/` и эту папку не трогает.
+  ///
+  /// **Тип назван явно** (`audio/mp4`): у файла в хранилище нет расширения,
+  /// и без типа проигрыватель по ссылке мог бы не узнать формат.
+  ///
+  /// **До выкладки `storage.rules` загрузка сюда будет отклонена** — папки
+  /// нет в правилах, а всё неназванное там закрыто.
+  Future<String> uploadLeaveNoteVoice({
+    required String eventId,
+    required String uid,
+    required String filePath,
+  }) {
+    return _uploadVoiceFile(
+      FirebaseStorage.instance.ref(leaveNoteVoicePath(eventId: eventId, uid: uid)),
+      filePath,
+      SettableMetadata(
+        contentType: 'audio/mp4',
+        customMetadata: {'uploaderUid': uid, 'eventId': eventId},
+      ),
+    );
   }
 
   // Returns the message's assigned seq — see sendMessage's own doc comment.
@@ -3928,7 +3972,10 @@ class FirestoreService {
   /// **3.** Показ вышедшему решается в одном месте — `buildDayBuckets`,
   /// разбор там.
   ///
-  /// --- ПОЧЕМУ ЧЕРЕЗ [setEventAnswer], А НЕ СВОЕЙ ЗАПИСЬЮ ---
+  /// --- ~~ПОЧЕМУ ЧЕРЕЗ [setEventAnswer], А НЕ СВОЕЙ ЗАПИСЬЮ~~ — ВЕРНО ДО 13.09 ---
+  ///
+  /// Разбор ниже оставлен как был: он объясняет, почему уход — это ответ.
+  /// Переменилось одно — см. «С ПРИЧИНОЙ» в конце.
   ///
   /// **Потому что это буквально одно действие, а не два похожих** (I58:
   /// сводить по задаче). Замысел новой схемы, записанный у самой константы:
@@ -3944,8 +3991,30 @@ class FirestoreService {
   /// потерян»), и он ловит потерю ровно этого хода. Свернув имя в
   /// `setEventAnswer(…, kAnswerLeft)` у вызывающего, мы сделали бы уход
   /// неотличимым от ответа в поиске по исходникам.
-  Future<void> leavePersonalEvent(String eventId, String uid) =>
-      setEventAnswer(eventId, uid, kAnswerLeft);
+  ///
+  /// --- С ПРИЧИНОЙ — 13.09, решение владельца ---
+  ///
+  /// **Уход стал ответом И причиной одной записью**, и `setEventAnswer`
+  /// причину не донёс бы. Уход по-прежнему ответ — ключ `answers.<uid>` в
+  /// `left`, сервер ждёт именно его перехода, — но рядом ложится
+  /// `leaveNotes.<uid>`, если человек что-то написал или сказал. Форма записи
+  /// живёт в чистом правиле [leaveEventUpdate] и стережётся его тестом.
+  ///
+  /// **Одной записью, а не двумя:** сорвись вторая — человек вышел бы без
+  /// причины, которую написал; сорвись первая — причина лежала бы о выходе,
+  /// которого не было.
+  ///
+  /// [note] необязательна: `null` или пустая — уходит только ответ.
+  Future<void> leavePersonalEvent(
+    String eventId,
+    String uid, {
+    LeaveNote? note,
+  }) =>
+      _db
+          .collection('personalEvents')
+          .doc(eventId)
+          .update(leaveEventUpdate(uid: uid, note: note))
+          .timeout(_writeTimeout);
 
   /// СОСТОЯНИЕ ВЕЧЕРА СТАВИТ ВЛАДЕЛЕЦ — плашка-кнопка на карточке (12.08).
   ///

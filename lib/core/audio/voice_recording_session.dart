@@ -70,7 +70,22 @@ class VoiceRecording {
   final List<int> waveform;
 }
 
-class VoiceRecordingSession {
+/// Узкий вход в запись — ровно три хода, которыми пользуется показ (13.09).
+///
+/// Заведён ради одного: общий показ записи (`VoiceHoldController`,
+/// `lib/shared/widgets/voice_hold_recorder.dart`) должен проверяться тестом
+/// без плагинов — без микрофона, временной папки и звука старта. Подделка
+/// реализует этот интерфейс; прод отдаёт настоящий [VoiceRecordingSession].
+///
+/// Назначения записи здесь нет, как и в самом сеансе: запись уходит тому,
+/// кто её попросил (I58).
+abstract interface class VoiceRecorder {
+  Future<VoiceStartOutcome> start({void Function()? onArmed});
+  Future<VoiceRecording?> stopAndFinish();
+  Future<void> cancel();
+}
+
+class VoiceRecordingSession implements VoiceRecorder {
   VoiceRecordingSession({AudioRecorder? recorder})
     : _recorder = recorder ?? AudioRecorder();
 
@@ -122,6 +137,7 @@ class VoiceRecordingSession {
   /// получено, и ДО стартового звука и отложенного настоящего старта —
   /// в этой точке зовущий поднимает свой показ, чтобы отклик на нажатие
   /// остался мгновенным.
+  @override
   Future<VoiceStartOutcome> start({void Function()? onArmed}) async {
     if (_busy || _disposed) return VoiceStartOutcome.busy;
     _busy = true;
@@ -186,6 +202,7 @@ class VoiceRecordingSession {
   ///
   /// Зовётся ПОСЛЕ того, как зовущий уже опустил свой показ: всё, что ждёт
   /// native-запись, идёт фоном и мгновенности отклика не задерживает.
+  @override
   Future<VoiceRecording?> stopAndFinish() async {
     _active = false;
     try {
@@ -225,6 +242,7 @@ class VoiceRecordingSession {
   }
 
   /// Закрывает сеанс без записи — смахивание в сторону.
+  @override
   Future<void> cancel() async {
     _active = false;
     try {

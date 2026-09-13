@@ -19,12 +19,10 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:pasteboard/pasteboard.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:share_plus/share_plus.dart';
-import '../../../core/audio/audio_session_gate.dart';
 import '../../../core/audio/voice_recording_session.dart';
 import '../../../core/media/image_compressor.dart';
 import '../../../core/native_sound_effect.dart';
@@ -40,6 +38,8 @@ import '../../../core/presence/presence_service.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
+import '../../../shared/widgets/voice_hold_recorder.dart';
+import '../../../shared/widgets/voice_player.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../agreements/screens/agreements_screen.dart' show agreementsTabRequestProvider;
 import '../../../core/chat/job_offer_round.dart';
@@ -49,6 +49,7 @@ import '../../../core/job_offer/job_offer.dart';
 import '../../../core/job_offer/job_offer_repository.dart';
 import '../../job_offer/screens/job_offer_sheet.dart';
 import '../../job_offer/widgets/offer_feed_row.dart';
+import '../widgets/chat_voice_record_button.dart';
 import 'about_contact_screen.dart';
 import 'chat_attachment_viewer_screen.dart';
 import 'custom_camera_backup/camera_capture_screen.dart';
@@ -100,8 +101,9 @@ class ChatScreen extends ConsumerStatefulWidget {
 // голоса они отношения не имеют, и трогать их этой работой значит
 // смешивать две правки в одном заходе.
 
-class _ChatScreenState extends ConsumerState<ChatScreen>
-    with SingleTickerProviderStateMixin {
+// СМЕСЬ ТИКЕРА СНЯТА 13.09: единственным тикером состояния была пульсация
+// записи голоса, и она уехала в общую полосу записи (`VoiceRecordingStrip`).
+class _ChatScreenState extends ConsumerState<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final FocusNode _messageFocusNode = FocusNode();
   bool _composerHadFocusBeforeMenu = false;
@@ -116,17 +118,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _uploadingVideo = false;
   final ImagePicker _picker = ImagePicker();
   // Сам сеанс записи (разрешение, отложенный старт, громкость, остановка,
-  // отбрасывание случайного тычка) живёт в `VoiceRecordingSession` — общий
-  // на три места, из которых чат первое. Экрану остаётся ПОКАЗ и
-  // НАЗНАЧЕНИЕ: `_isRecording` и подпись со временем — показ, отправка
-  // сообщением — назначение. Ни того ни другого в сеансе нет намеренно.
+  // отбрасывание случайного тычка) живёт в `VoiceRecordingSession`.
+  //
+  // ПОКАЗ ЗАПИСИ — ОБЩИЙ С ЛИСТОМ ВЫХОДА (13.09, вариант Б, шаг 3): удержание,
+  // время, смахивание, замок — `VoiceHoldController`
+  // (`lib/shared/widgets/voice_hold_recorder.dart`). Экрану осталось только
+  // НАЗНАЧЕНИЕ — отправка сообщением (`_sendRecordedVoice`).
   final VoiceRecordingSession _voiceSession = VoiceRecordingSession();
-  bool _isRecording = false;
+  late final VoiceHoldController _voiceHold = VoiceHoldController(
+    recorder: _voiceSession,
+    onRecorded: _sendRecordedVoice,
+    onNoPermission: _sayNoMicPermission,
+    onError: (e, st) => FirebaseCrashlytics.instance.recordError(
+      e,
+      st,
+      reason: 'chat_screen: voice recording stop failed',
+    ),
+  );
   bool _uploadingAudio = false;
   bool _hasText = false;
-  final Stopwatch _recordingStopwatch = Stopwatch();
-  Timer? _recordingTimer;
-  String _recordingDuration = '0:00';
   // isActuallyOnline's staleness threshold is ~2 minutes (see User model /
   // docs/presence-system.md); the header's otherUser comes from a live
   // Firestore listener (currentUserProvider) that only rebuilds when the
@@ -135,21 +145,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   // DateTime.now(). Same 20s interval and reasoning as
   // about_contact_screen.dart's _presenceRefreshTimer.
   Timer? _presenceRefreshTimer;
-  bool _isLocked = false;
-  double _dragX = 0.0;
-  double _dragY = 0.0;
-  static const double _cancelThreshold = -80.0;
-  static const double _lockThreshold = -60.0;
-  // Raw pointer position at press-down for the record button (see the
-  // Listener below) — needed to compute drag deltas manually since raw
-  // PointerMoveEvents report absolute position, not an offset-from-origin
-  // like LongPressMoveUpdateDetails used to.
-  Offset? _recordPointerStart;
   // Uniform on all four corners for every bubble type (text/image/audio/
   // video) and both senders — WhatsApp's current bubbles have no tail.
   static const double _kBubbleRadius = 12.0;
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
   Message? _replyingTo;
   String? _highlightedMessageId;
   Timer? _highlightTimer;
@@ -286,13 +284,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       }
     });
     _itemPositionsListener.itemPositions.addListener(_onItemPositionsChanged);
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 600),
-    );
-    _pulseAnimation = Tween<double>(begin: 0.3, end: 1.0).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
+    // Показ записи перерисовывает строку ввода: идёт ли запись, замок,
+    // смещение пальца, время.
+    _voiceHold.addListener(_onVoiceHoldChanged);
     _initBeepPlayer();
     final currentUid = FirebaseAuth.instance.currentUser?.uid;
     if (currentUid != null && currentUid.isNotEmpty) {
@@ -391,11 +385,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     _itemPositionsListener.itemPositions.removeListener(
       _onItemPositionsChanged,
     );
+    _voiceHold.removeListener(_onVoiceHoldChanged);
+    _voiceHold.dispose();
     _voiceSession.dispose();
-    _recordingTimer?.cancel();
     _presenceRefreshTimer?.cancel();
     _typingThrottleTimer?.cancel();
-    _pulseController.dispose();
     _highlightTimer?.cancel();
     for (final timer in _purgeTimers.values) {
       timer.cancel();
@@ -2895,85 +2889,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
-  // Порог случайного тычка, отложенный старт, настройки записи и разбор
-  // громкости уехали в `VoiceRecordingSession` (13.08, работа 2). Здесь
-  // остался ТОЛЬКО показ: пульсация, подпись со временем, отклик пальцу.
-  Future<void> _startRecording() async {
-    // Fires before anything else, including the permission check below —
-    // a tactile response the instant the finger presses down reinforces
-    // the immediate visual feedback, same idea as WhatsApp's own haptic tap
-    // on record start.
-    unawaited(HapticFeedback.mediumImpact());
-    final outcome = await _voiceSession.start(
-      // Зовётся сразу после разрешения и ДО стартового звука — ровно та
-      // точка, где показ обязан подняться мгновенно. Настоящий захват
-      // отложен на длину звука и ничего здесь не ждёт.
-      onArmed: () {
-        if (!mounted) return;
-        setState(() => _isRecording = true);
-        _pulseController.repeat(reverse: true);
-        _recordingStopwatch.reset();
-        _recordingStopwatch.start();
-        _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-          if (mounted) {
-            final s = _recordingStopwatch.elapsed.inSeconds;
-            setState(
-              () => _recordingDuration =
-                  '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}',
-            );
-          }
-        });
-      },
+  // ЗАПИСЬ ГОЛОСА — ОБЩАЯ С ЛИСТОМ ВЫХОДА (13.09, решение владельца, вариант
+  // Б, шаг 3). Удержание, время, смахивание-отмена, замок и отказ микрофона
+  // уехали в `VoiceHoldController` (`lib/shared/widgets/voice_hold_recorder.dart`).
+  // До 13.09 они жили здесь пятью ходами (`_startRecording`,
+  // `_stopAndSendRecording`, `_finishStoppingRecorder`, `_cancelRecording`,
+  // `_lockRecording`) и второй раз — в листе выхода. Здесь остался только
+  // ХВОСТ чата: что сделать с готовой записью.
+  void _onVoiceHoldChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _sayNoMicPermission() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Mikrofon icazəsi verilmədi'),
+        backgroundColor: kRedChat,
+      ),
     );
-    if (outcome == VoiceStartOutcome.noPermission && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Mikrofon icazəsi verilmədi'),
-          backgroundColor: kRedChat,
-        ),
-      );
-    }
   }
 
-  // Instant, synchronous UI response to release — matches WhatsApp/
-  // Telegram's touch-up feel. Everything that has to wait on the native
-  // recorder lifecycle (it may not have actually started yet — see
-  // _recordStartBeepGuard — and stopping it takes a moment too) runs as a
-  // background continuation (_finishStoppingRecorder) instead of gating
-  // this visual transition, which is what previously made the button
-  // appear to freeze for up to ~1s on a quick tap. _recorderSessionBusy
-  // (cleared at the end of that continuation) is what now protects against
-  // a rapid re-tap starting a second session before this one's teardown
-  // has actually finished — _isRecording flipping instantly here no longer
-  // does that job on its own.
-  Future<void> _stopAndSendRecording() async {
-    // Lighter than the start haptic — a distinct "released" feel, fired
-    // before anything else for the same instant-response reason.
-    unawaited(HapticFeedback.lightImpact());
-    if (!_isRecording) return;
-    setState(() {
-      _dragX = 0.0;
-      _dragY = 0.0;
-      _isLocked = false;
-      _isRecording = false;
-      _recordingDuration = '0:00';
-    });
-    _pulseController.stop();
-    _pulseController.reset();
-    _recordingStopwatch.stop();
-    _recordingTimer?.cancel();
-    unawaited(_finishStoppingRecorder());
-  }
-
-  // НАЗНАЧЕНИЕ — и только оно. Сеанс записи сюда не заглядывает: он
-  // отдаёт файл с волной либо `null` (случайный тычок, пустая запись), а
-  // что с ними делать — дело этого экрана. У карточки предложения работы и
-  // у «Gələ bilmirəm» на этом месте будет свой хвост, и склеивать их
-  // переключателем нельзя (I58).
-  Future<void> _finishStoppingRecorder() async {
+  // НАЗНАЧЕНИЕ — и только оно. Общая запись сюда не заглядывает: она отдаёт
+  // файл с волной (случайный тычок и пустую запись отбрасывает сама), а что
+  // с ними делать — дело этого экрана. У листа выхода на этом месте свой
+  // хвост, и склеивать их переключателем нельзя (I58).
+  Future<void> _sendRecordedVoice(VoiceRecording recording) async {
     try {
-      final recording = await _voiceSession.stopAndFinish();
-      if (recording == null) return;
       if (mounted) setState(() => _uploadingAudio = true);
       final path = recording.filePath;
       final waveform = recording.waveform;
@@ -3020,36 +2962,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       FirebaseCrashlytics.instance.recordError(
         e,
         st,
-        reason: 'chat_screen: _finishStoppingRecorder failed',
+        reason: 'chat_screen: _sendRecordedVoice failed',
       );
     }
-  }
-
-  // Same instant-UI/background-continuation split as _stopAndSendRecording
-  // above, for the swipe-to-cancel gesture — it has the exact same
-  // native-recorder-lifecycle wait, so it froze the same way before this.
-  Future<void> _cancelRecording() async {
-    if (!_isRecording) return;
-    setState(() {
-      _isRecording = false;
-      _isLocked = false;
-      _dragX = 0.0;
-      _dragY = 0.0;
-      _recordingDuration = '0:00';
-    });
-    _pulseController.stop();
-    _pulseController.reset();
-    _recordingStopwatch.stop();
-    _recordingTimer?.cancel();
-    unawaited(_voiceSession.cancel());
-  }
-
-  void _lockRecording() {
-    setState(() {
-      _isLocked = true;
-      _dragX = 0.0;
-      _dragY = 0.0;
-    });
   }
 
   // Quiet inline "Forwarded" marker, shown above the reply-to quote (if
@@ -5079,7 +4994,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   // Left button — attach (hidden during recording) or cancel (locked mode)
-                  if (!_isRecording)
+                  if (!_voiceHold.isRecording)
                     IconButton(
                       icon: (_uploadingImage || _uploadingVideo)
                           ? const SizedBox(
@@ -5104,9 +5019,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                                   : null,
                             ),
                     )
-                  else if (_isLocked)
+                  else if (_voiceHold.isLocked)
                     GestureDetector(
-                      onTap: _cancelRecording,
+                      onTap: _voiceHold.cancel,
                       child: Container(
                         width: 44,
                         height: 44,
@@ -5131,62 +5046,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
                   // Center — text field (normal) or recording indicator (recording)
                   Expanded(
-                    child: _isRecording
-                        ? Container(
-                            height: 44,
-                            decoration: BoxDecoration(
-                              color: kBg3,
-                              borderRadius: BorderRadius.circular(24),
-                            ),
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Row(
-                              children: [
-                                AnimatedBuilder(
-                                  animation: _pulseAnimation,
-                                  builder: (_, _) => Opacity(
-                                    opacity: _pulseAnimation.value,
-                                    child: const Icon(
-                                      Icons.circle,
-                                      color: kRed,
-                                      size: 10,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _recordingDuration,
-                                  style: const TextStyle(
-                                    color: kRed,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const Spacer(),
-                                if (!_isLocked)
-                                  Opacity(
-                                    opacity:
-                                        (1.0 + _dragX / _cancelThreshold.abs())
-                                            .clamp(0.0, 1.0),
-                                    child: Row(
-                                      children: [
-                                        const Icon(
-                                          Icons.chevron_left,
-                                          color: kMuted,
-                                          size: 16,
-                                        ),
-                                        const Text(
-                                          'Sürüşdür',
-                                          style: TextStyle(
-                                            color: kMuted,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          )
+                    child: _voiceHold.isRecording
+                        ? VoiceRecordingStrip(controller: _voiceHold)
                         : TextField(
                             controller: _messageController,
                             focusNode: _messageFocusNode,
@@ -5216,7 +5077,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   // Camera — same slot/visibility as the mic button, matching
                   // WhatsApp's camera-next-to-mic layout. "Kamera" stays in
                   // the attach sheet too (WhatsApp keeps it in both places).
-                  if (!_hasText && !_isRecording)
+                  if (!_hasText && !_voiceHold.isRecording)
                     IconButton(
                       icon: const Icon(Icons.camera_alt, color: kGold),
                       onPressed: (_uploadingImage || _uploadingVideo)
@@ -5227,7 +5088,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                   const SizedBox(width: 4),
 
                   // Right button — send (has text or locked recording) or mic (empty/recording)
-                  if (_hasText && !_isRecording)
+                  if (_hasText && !_voiceHold.isRecording)
                     GestureDetector(
                       onTap: _sendMessage,
                       child: Container(
@@ -5253,161 +5114,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                               ),
                       ),
                     )
-                  else if (_isLocked)
-                    GestureDetector(
-                      onTap: _stopAndSendRecording,
-                      child: Container(
-                        width: 44,
-                        height: 44,
-                        decoration: const BoxDecoration(
-                          color: kGold,
-                          shape: BoxShape.circle,
-                        ),
-                        child: _uploadingAudio
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: kOnGold,
-                                ),
-                              )
-                            : const Icon(
-                                Icons.send,
-                                color: kOnGold,
-                                size: 20,
-                              ),
-                      ),
-                    )
                   else
-                    // Mic button with lock icon above (Stack)
-                    Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        Listener(
-                          behavior: HitTestBehavior.opaque,
-                          // Raw pointer events, not a GestureDetector/
-                          // LongPressGestureRecognizer — any gesture
-                          // recognizer (even with a short duration) still
-                          // has to go through gesture-arena resolution
-                          // before firing, which is itself a perceptible
-                          // delay on top of whatever duration is configured
-                          // (confirmed on-device: shortening the recognizer's
-                          // duration to 120ms still felt laggy). Listener
-                          // fires directly on the hardware touch-down/up
-                          // with no recognition/arena step at all, matching
-                          // WhatsApp's true-instant response — and there's
-                          // no competing gesture to disambiguate against
-                          // here anyway, since this button only ever does
-                          // one thing on press and one thing on release.
-                          onPointerDown: (event) {
-                            _recordPointerStart = event.position;
-                            _startRecording();
-                          },
-                          onPointerMove: (event) {
-                            if (!_isRecording ||
-                                _isLocked ||
-                                _recordPointerStart == null) {
-                              return;
-                            }
-                            final delta = event.position - _recordPointerStart!;
-                            setState(() {
-                              _dragX = delta.dx;
-                              _dragY = delta.dy;
-                            });
-                            if (_dragX < _cancelThreshold) {
-                              _cancelRecording();
-                            } else if (_dragY < _lockThreshold) {
-                              _lockRecording();
-                            }
-                          },
-                          onPointerUp: (event) {
-                            if (_isLocked) return;
-                            if (_isRecording) _stopAndSendRecording();
-                          },
-                          onPointerCancel: (event) {
-                            if (_isLocked) return;
-                            if (_isRecording) _cancelRecording();
-                          },
-                          child: Container(
-                            // Bigger than the visual circle, per Apple/Material
-                            // minimum-touch-target guidance — same pattern as
-                            // the voice-message seek bar's dot (visual stays
-                            // small, the tappable region around it is
-                            // generous). Kept modest (not larger) since the
-                            // camera button sits only 4px away.
-                            width: 52,
-                            height: 52,
-                            alignment: Alignment.center,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 100),
-                              curve: Curves.easeOut,
-                              width: 44,
-                              height: 44,
-                              decoration: BoxDecoration(
-                                color: _isRecording ? kRed : kBg3,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: _isRecording ? kRed : kBorder,
-                                ),
-                              ),
-                              child: _uploadingAudio
-                                  ? const SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: kGold,
-                                      ),
-                                    )
-                                  : Icon(
-                                      Icons.mic,
-                                      color: _isRecording
-                                          ? Colors.white
-                                          : kGold,
-                                      size: 22,
-                                    ),
-                            ),
-                          ),
-                        ),
-                        // Lock icon above mic button — only shown during unlocked recording
-                        if (_isRecording && !_isLocked)
-                          Positioned(
-                            top: -48,
-                            left: 0,
-                            right: 0,
-                            child: Opacity(
-                              opacity: (1.0 + _dragY / _lockThreshold.abs())
-                                  .clamp(0.0, 1.0),
-                              child: Column(
-                                children: [
-                                  Container(
-                                    width: 36,
-                                    height: 36,
-                                    decoration: BoxDecoration(
-                                      color: kBg3,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(color: kBorder),
-                                    ),
-                                    child: const Icon(
-                                      Icons.lock_outline,
-                                      color: kMuted,
-                                      size: 18,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  const Text(
-                                    'Kilid',
-                                    style: TextStyle(
-                                      color: kMuted,
-                                      fontSize: 9,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                      ],
+                    // Микрофон и «отправить» при замке — общая запись с
+                    // хвостом чата (13.09, вариант Б): `ChatVoiceRecordButton`.
+                    ChatVoiceRecordButton(
+                      controller: _voiceHold,
+                      uploading: _uploadingAudio,
                     ),
                 ],
               ),
@@ -5567,7 +5279,19 @@ class _SwipeableMessageBubbleState extends State<_SwipeableMessageBubble>
   }
 }
 
-class _VoiceMessagePlayer extends StatefulWidget {
+// ГОЛОСОВОЕ В ЧАТЕ — ОБЁРТКА НАД ОБЩИМ ПРОИГРЫВАТЕЛЕМ (13.09).
+//
+// Воспроизведение вынесено в `VoicePlayer` (`lib/shared/widgets/voice_player.dart`)
+// решением владельца «проигрывание общим виджетом»: тем же проигрывателем
+// звучит голос причины выхода на карточке вечера. Здесь осталось только то,
+// что про переписку: цвета «прочитано / прослушано», толщина волны, аватар
+// отправителя и строка времени с галочками. Считаются они ровно так, как до
+// выноса, и уходят в проигрыватель данными.
+class _VoiceMessagePlayer extends StatelessWidget {
+  // +30% over the previous 44, per feedback that the avatar read too
+  // small next to the play button/waveform.
+  static const double _avatarSize = 57;
+
   final String? audioURL;
   final String? localFilePath;
   final bool isMe;
@@ -5607,189 +5331,9 @@ class _VoiceMessagePlayer extends StatefulWidget {
   });
 
   @override
-  State<_VoiceMessagePlayer> createState() => _VoiceMessagePlayerState();
-}
-
-// Ensures only one voice message plays at a time app-wide, mirroring
-// WhatsApp: starting a new one pauses whatever was previously playing,
-// regardless of which chat it's in. A plain singleton rather than Riverpod
-// state — this coordinates transient in-memory playback, not app data, and
-// only ever has at most one interested reader (the currently active
-// player) at a time.
-class VoiceMessageCoordinator {
-  VoiceMessageCoordinator._();
-  static final instance = VoiceMessageCoordinator._();
-
-  _VoiceMessagePlayerState? _active;
-
-  void _starting(_VoiceMessagePlayerState player) {
-    if (_active != null && _active != player) {
-      _active!._pauseFromCoordinator();
-    }
-    _active = player;
-  }
-
-  void _stopped(_VoiceMessagePlayerState player) {
-    if (_active == player) _active = null;
-  }
-
-  // Pauses whatever voice message is currently playing, without a new one
-  // taking its place — called when opening VideoPlayerScreen, so the
-  // video's own AVPlayer/AVAudioSession doesn't activate while a voice
-  // message's just_audio session is still active. Two audio sessions
-  // fighting over the shared iOS AVAudioSession was the suspected cause
-  // of a real, watchdog-confirmed main-thread hang (SpringBoard's
-  // "scene-update" watchdog fired after 5s) reproduced by scrubbing the
-  // video progress bar right after opening a video message.
-  void pauseActive() {
-    _active?._pauseFromCoordinator();
-  }
-}
-
-class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
-  // +30% over the previous 44, per feedback that the avatar read too
-  // small next to the play button/waveform.
-  static const double _avatarSize = 57;
-  late final AudioPlayer _player;
-  bool _isPlaying = false;
-  Duration _position = Duration.zero;
-  Duration _duration = Duration.zero;
-  bool _listenedFired = false;
-  // Set right before the coordinator pauses this player to hand off to a
-  // different message. Suppresses the deactivateAudioSession() call below
-  // for that one transition — the incoming player is about to activate the
-  // shared session again immediately, and racing our own deactivate against
-  // its activate was silencing audio while still visually "playing" (same
-  // race as the loop/alternation bug, triggered here by fast play-switching
-  // between messages instead of natural completion).
-  bool _pausedByCoordinator = false;
-  // Set once this player has reached natural completion at least once.
-  // iOS just_audio has a known quirk (confirmed on-device, matching a
-  // documented package issue) where resuming playback after completion
-  // reports a fully normal playing state but produces no actual audio —
-  // manually dragging the seek bar during that silent playback reliably
-  // restores sound immediately. Used to gate a one-time replicated "nudge"
-  // seek right after play() on any attempt following a completion, without
-  // touching the always-worked-fine first playback.
-  bool _hasCompletedAtLeastOnce = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _player = AudioPlayer();
-    _player.positionStream.listen((pos) {
-      if (mounted) setState(() => _position = pos);
-    });
-    _player.durationStream.listen((dur) {
-      if (mounted && dur != null) setState(() => _duration = dur);
-    });
-    _player.playerStateStream.listen((state) {
-      if (mounted) {
-        // just_audio's audio_session integration handles responding to
-        // interruptions (calls, etc.) but never sends the explicit "I'm
-        // done" signal that lets iOS un-duck other apps on pause — same
-        // gap already fixed for recording and video playback elsewhere in
-        // this file/video_message_widgets.dart. Catch the true->false
-        // edge here before overwriting _isPlaying below.
-        final wasPlaying = _isPlaying;
-        setState(() => _isPlaying = state.playing);
-        if (wasPlaying && !state.playing) {
-          if (_pausedByCoordinator) {
-            _pausedByCoordinator = false;
-          } else {
-            unawaited(deactivateAudioSession());
-          }
-        }
-        if (state.playing && !_listenedFired) {
-          _listenedFired = true;
-          widget.onListened?.call();
-        }
-        if (state.processingState == ProcessingState.completed) {
-          // just_audio doesn't clear its own `playing` flag on completion —
-          // only pause()/stop() do. Without an explicit pause() here,
-          // seeking back to zero while `playing` is still true makes the
-          // player resume from the new position, i.e. loop forever instead
-          // of stopping.
-          unawaited(_player.pause());
-          _player.seek(Duration.zero);
-          _hasCompletedAtLeastOnce = true;
-          setState(() => _isPlaying = false);
-        }
-      }
-    });
-    final localPath = widget.localFilePath;
-    if (localPath != null) {
-      _player.setFilePath(localPath);
-    } else if (widget.audioURL != null) {
-      _player.setUrl(widget.audioURL!);
-    }
-  }
-
-  void _pauseFromCoordinator() {
-    if (mounted) {
-      _pausedByCoordinator = true;
-      _player.pause();
-    }
-  }
-
-  @override
-  void dispose() {
-    if (_isPlaying) unawaited(deactivateAudioSession());
-    VoiceMessageCoordinator.instance._stopped(this);
-    _player.dispose();
-    super.dispose();
-  }
-
-  String _fmt(Duration d) {
-    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '$m:$s';
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final labelColor = widget.isMe ? kOnGold : kText;
-    final accentColor = widget.isMe ? kOnGold : kGold;
-    final total = _duration.inMilliseconds > 0
-        ? _duration.inMilliseconds.toDouble()
-        : 1.0;
-    final current = _position.inMilliseconds.toDouble().clamp(0.0, total);
-    final playedFraction = (current / total).clamp(0.0, 1.0);
-
-    final playButton = GestureDetector(
-      onTap: () async {
-        if (_isPlaying) {
-          await _player.pause();
-        } else {
-          VoiceMessageCoordinator.instance._starting(this);
-          await activateAudioSession();
-          if (_hasCompletedAtLeastOnce) {
-            // Replicates the manual seek-bar drag that reliably restored
-            // sound during a silent replay on-device — a known just_audio/
-            // iOS quirk where resuming playback after a natural completion
-            // reports a fully normal playing state but produces no actual
-            // audio until any seek happens. Done here, before play() and
-            // while still paused, rather than shortly after starting
-            // playback (an earlier version of this fix did that, but
-            // skipped/lost whatever content played during the delay before
-            // the nudge landed). Forward-then-back-to-zero forces a genuine
-            // position change — seeking to the same position it's already
-            // at can be a no-op that doesn't trigger the same fix.
-            await _player.seek(const Duration(milliseconds: 50));
-            await _player.seek(Duration.zero);
-            if (!mounted) return;
-          }
-          // just_audio's play() Future only resolves at the NEXT stop/
-          // pause/completion, not when playback actually starts.
-          unawaited(_player.play());
-        }
-      },
-      child: Icon(
-        _isPlaying ? Icons.pause : Icons.play_arrow,
-        color: accentColor,
-        size: 32,
-      ),
-    );
+    final labelColor = isMe ? kOnGold : kText;
+    final accentColor = isMe ? kOnGold : kGold;
 
     // Sender-only listened-status coloring — same three states as
     // WhatsApp's own read receipts, layered on top of (not replacing) the
@@ -5802,304 +5346,56 @@ class _VoiceMessagePlayerState extends State<_VoiceMessagePlayer> {
     // today's plain accent look untouched.
     Color dotColor = kReadBlue;
     Color playedColor = accentColor;
-    if (widget.showListenedStatus) {
-      if (!widget.isRead) {
+    if (showListenedStatus) {
+      if (!isRead) {
         dotColor = kUnreadGray;
         playedColor = kUnreadGray;
-      } else if (!widget.listenedByOther) {
+      } else if (!listenedByOther) {
         dotColor = kReadBlue;
         playedColor = kMuted;
       } else {
         dotColor = kReadBlue;
         playedColor = kListenedBlue;
       }
-    } else if (!widget.isMe) {
+    } else if (!isMe) {
       // Recipient-side status for an incoming message: bold saturated
       // blue (same kListenedBlue as the sender-side "listened" state)
       // while I haven't played it yet — attention-grabbing, "new" — then
       // dark gray once I have, same listenedBy array as showListenedStatus
       // above, just checked against currentUid (listenedByMe) instead of
       // otherUid.
-      dotColor = widget.listenedByMe ? kUnreadGray : kListenedBlue;
-      playedColor = widget.listenedByMe ? kUnreadGray : kListenedBlue;
+      dotColor = listenedByMe ? kUnreadGray : kListenedBlue;
+      playedColor = listenedByMe ? kUnreadGray : kListenedBlue;
     }
     // Widens the wave's bars — same "listened" signal as the color above,
     // just inverted for the incoming case: sender-side thick means the
     // recipient already listened (settled), incoming-side thick means I
     // HAVEN'T yet (still demanding attention) and reverts to normal width
     // once I have.
-    final isThickWave = widget.showListenedStatus
-        ? (widget.isRead && widget.listenedByOther)
-        : (!widget.isMe && !widget.listenedByMe);
+    final isThickWave = showListenedStatus
+        ? (isRead && listenedByOther)
+        : (!isMe && !listenedByMe);
 
-    final wave = Expanded(
-      child: _WaveformSeekBar(
-        levels: widget.waveform,
-        playedFraction: playedFraction,
-        playedColor: playedColor,
-        dotColor: dotColor,
-        thick: isThickWave,
-        onSeek: (fraction) =>
-            _player.seek(Duration(milliseconds: (fraction * total).round())),
-      ),
-    );
-
-    final avatar = _VoiceSenderAvatar(
-      senderId: widget.senderId,
-      size: _avatarSize,
-    );
+    final avatar = _VoiceSenderAvatar(senderId: senderId, size: _avatarSize);
 
     // Avatar sits toward the middle of the screen in both cases — right of
     // the wave for an incoming (left-aligned) bubble, left of it for an
     // outgoing (right-aligned) one — matching the reference screenshots.
-    final row = widget.isMe
-        ? [avatar, const SizedBox(width: 8), playButton, const SizedBox(width: 6), wave]
-        : [playButton, const SizedBox(width: 6), wave, const SizedBox(width: 8), avatar];
-
-    // Position label always sits under the play button specifically, not
-    // just at the row's leading edge — when isMe puts the avatar first,
-    // it needs a leading indent matching the avatar's width + spacing to
-    // land in the same place it already does for the !isMe case (where
-    // the play button already is the leading element).
-    final positionIndent = widget.isMe ? _avatarSize + 8 : 0.0;
-
-    return SizedBox(
-      width: 230,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(crossAxisAlignment: CrossAxisAlignment.center, children: row),
-          const SizedBox(height: 2),
-          Row(
-            children: [
-              Padding(
-                padding: EdgeInsets.only(left: positionIndent),
-                child: Text(
-                  _fmt(_position),
-                  style: TextStyle(
-                    color: labelColor.withAlpha(150),
-                    fontSize: 10,
-                  ),
-                ),
-              ),
-              const Spacer(),
-              // Mirrors positionIndent above: !isMe's avatar sits flush at
-              // the row's right edge (see `row` above), so without this
-              // the time+checkmark ends up right underneath it with no
-              // gap. isMe doesn't need this — its avatar is at the left,
-              // nowhere near this right-aligned element.
-              Padding(
-                padding: EdgeInsets.only(
-                  right: widget.isMe ? 0 : _avatarSize + 8,
-                ),
-                child: widget.timeCheckmarkRow,
-              ),
-            ],
-          ),
-          if (widget.caption.trim().isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              widget.caption,
-              style: TextStyle(color: labelColor, fontSize: 14),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-// Static bars + draggable position dot, replacing the old continuous
-// Slider — matches WhatsApp's segmented-waveform look. levels is the
-// 0-100 normalized amplitude captured during recording (see
-// _downsampleWaveform); null (message sent before that field existed)
-// falls back to a flat, honest "no data" bar pattern rather than
-// pretending to show a real waveform.
-class _WaveformSeekBar extends StatefulWidget {
-  final List<int>? levels;
-  final double playedFraction;
-  final Color playedColor;
-  final Color dotColor;
-  // Widens every bar (played and unplayed alike) once the recipient has
-  // listened — independent of the played/unplayed color split below, which
-  // stays keyed off playedFraction regardless of this flag.
-  final bool thick;
-  final ValueChanged<double> onSeek;
-
-  const _WaveformSeekBar({
-    required this.levels,
-    required this.playedFraction,
-    required this.playedColor,
-    required this.dotColor,
-    required this.thick,
-    required this.onSeek,
-  });
-
-  @override
-  State<_WaveformSeekBar> createState() => _WaveformSeekBarState();
-}
-
-class _WaveformSeekBarState extends State<_WaveformSeekBar> {
-  static const double _barAreaHeight = 22;
-  static const double _minBarHeight = 3;
-  static const double _dotVisualSize = 14;
-  // Bigger than the visual dot, per Apple/Material minimum-touch-target
-  // guidance — the drawn circle stays small so it doesn't dominate the
-  // waveform, but the draggable hit region around it is generous.
-  static const double _dotHitSize = 44;
-
-  // Absolute bar-local x of the dot while a drag on it is in progress —
-  // set on drag start and accumulated by delta.dx on each update (rather
-  // than derived from widget.playedFraction, which only updates once the
-  // async player.seek()'s position-stream round trip lands, too slow to
-  // track a fast finger movement 1:1). Stays set after the finger lifts,
-  // too — cleared below once the real position stream catches up, rather
-  // than immediately on release, so the dot doesn't snap back to the
-  // stale pre-seek position and then jump forward again once the seek
-  // resolves. Null when not mid-drag and not waiting on a catch-up.
-  double? _dragX;
-
-  @override
-  Widget build(BuildContext context) {
-    final bars = widget.levels ?? List.filled(28, 35);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        void seekAtX(double dx) {
-          widget.onSeek((dx / constraints.maxWidth).clamp(0.0, 1.0));
-        }
-
-        if (_dragX != null &&
-            (widget.playedFraction * constraints.maxWidth - _dragX!).abs() <
-                3) {
-          _dragX = null;
-        }
-        final dotCenterX =
-            _dragX ?? widget.playedFraction * constraints.maxWidth;
-        // Same visual-vs-real split as the dot above, applied to the
-        // played/unplayed bar coloring too — without this the bars' fill
-        // boundary was still driven straight off widget.playedFraction (the
-        // real, stream-lagged position), so the wave's own color edge kept
-        // jumping/lagging behind the finger even after the dot itself
-        // started following it immediately.
-        final visualFraction = dotCenterX / constraints.maxWidth;
-        return Stack(
-          clipBehavior: Clip.none,
-          alignment: Alignment.centerLeft,
-          children: [
-            // Tap/drag anywhere on the bar seeks there — this is the
-            // OUTER detector; the dot below gets its own nested one so
-            // grabbing the dot specifically is a Flutter gesture-arena
-            // child, which takes priority over both this bar detector and
-            // the ancestor bubble's long-press/swipe-to-reply detectors,
-            // isolating a dot-drag from triggering either of those.
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapDown: (d) {
-                // A tap has no separate "end" event, so commit the real
-                // seek right away — this is a single discrete action, not
-                // a per-frame stream of them, so there's no jank risk here.
-                setState(() => _dragX = d.localPosition.dx);
-                seekAtX(d.localPosition.dx);
-              },
-              onHorizontalDragUpdate: (d) {
-                // Visual only during the drag itself — move the dot/wave
-                // immediately, in step with the touch. The real seek() is
-                // deliberately NOT called per-frame here: firing it dozens
-                // of times a second was hammering the native audio engine
-                // via the platform channel, which was the actual source of
-                // the stutter/hesitation, not the visual state update
-                // itself. It fires once, on release, in onHorizontalDragEnd
-                // below — matching WhatsApp's own scrub behavior (silent
-                // while dragging, seeks once on release).
-                setState(() => _dragX = d.localPosition.dx);
-              },
-              onHorizontalDragEnd: (_) {
-                if (_dragX != null) seekAtX(_dragX!);
-              },
-              onHorizontalDragCancel: () {
-                if (_dragX != null) seekAtX(_dragX!);
-              },
-              child: SizedBox(
-                height: _barAreaHeight,
-                width: double.infinity,
-                child: Row(
-                  children: [
-                    for (var i = 0; i < bars.length; i++)
-                      Expanded(
-                        child: Padding(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: widget.thick ? 0.5 : 1,
-                          ),
-                          child: Container(
-                            height:
-                                _minBarHeight +
-                                (bars[i].clamp(0, 100) / 100) *
-                                    (_barAreaHeight - _minBarHeight),
-                            decoration: BoxDecoration(
-                              // 150 rather than the previous 70 — at
-                              // position 0 (not yet playing), every bar is
-                              // "unplayed" and was rendering the whole
-                              // wave at low alpha, making it barely
-                              // visible before playback starts.
-                              color: (i / bars.length) <= visualFraction
-                                  ? widget.playedColor
-                                  : widget.playedColor.withAlpha(150),
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            Positioned(
-              left: (dotCenterX - _dotHitSize / 2).clamp(
-                -_dotHitSize / 2,
-                constraints.maxWidth - _dotHitSize / 2,
-              ),
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onHorizontalDragStart: (_) =>
-                    setState(() => _dragX = dotCenterX),
-                onHorizontalDragUpdate: (d) {
-                  // Visual only, same reasoning as the outer detector above
-                  // — no per-frame seek() call, just the local dot/wave
-                  // position, to keep dragging jank-free.
-                  final next = (_dragX ?? dotCenterX) + d.delta.dx;
-                  setState(() => _dragX = next);
-                },
-                // Deliberately NOT clearing _dragX here — see the field's
-                // doc comment. It's released once widget.playedFraction
-                // (driven by the player's position stream) catches up to
-                // wherever the finger let go, in the build method above.
-                // The real seek() fires exactly once here, on release.
-                onHorizontalDragEnd: (_) {
-                  if (_dragX != null) seekAtX(_dragX!);
-                },
-                onHorizontalDragCancel: () {
-                  if (_dragX != null) seekAtX(_dragX!);
-                },
-                child: SizedBox(
-                  width: _dotHitSize,
-                  height: _dotHitSize,
-                  child: Center(
-                    child: Container(
-                      width: _dotVisualSize,
-                      height: _dotVisualSize,
-                      decoration: BoxDecoration(
-                        color: widget.dotColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+    return VoicePlayer(
+      audioURL: audioURL,
+      localFilePath: localFilePath,
+      waveform: waveform,
+      accentColor: accentColor,
+      labelColor: labelColor,
+      playedColor: playedColor,
+      dotColor: dotColor,
+      thickWave: isThickWave,
+      leading: isMe ? avatar : null,
+      trailing: isMe ? null : avatar,
+      sideExtent: _avatarSize + 8,
+      footerTrailing: timeCheckmarkRow,
+      caption: caption,
+      onListened: onListened,
     );
   }
 }

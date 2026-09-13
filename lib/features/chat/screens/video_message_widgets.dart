@@ -16,7 +16,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
-import 'chat_screen.dart';
+import '../../../shared/widgets/voice_player.dart';
 import 'forward_sheet.dart';
 import 'media_thumbnail_cache.dart';
 
