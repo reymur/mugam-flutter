@@ -36,12 +36,40 @@ service firebase.storage {
     // object ever reaches Storage, rather than uploading it first and
     // deleting it after (which onChatMediaUploaded's onFinalize trigger
     // would otherwise have to do, wasting the transfer and leaving a
-    // window where the oversized file briefly exists). .get() with a
-    // default covers both a user doc with no maxUploadSizeMb field yet
-    // (pre-existing users) and, defensively, one somehow missing entirely.
+    // window where the oversized file briefly exists).
+    //
+    // УМОЛЧАНИЕ ПРИ ОТСУТСТВУЮЩЕМ ДОКУМЕНТЕ ПРОФИЛЯ — 14.09, решение
+    // владельца («б» с условием, а не голое «без профиля»).
+    //
+    // ЗДЕСЬ СТОЯЛА НЕПРАВДА, И СНЯТА ОНА ЗАМЕРОМ, А НЕ ЧТЕНИЕМ. Прежний
+    // комментарий обещал, что `.get()` с умолчанием прикрывает и документ,
+    // пропавший целиком («and, defensively, one somehow missing entirely»).
+    // Не прикрывает: `.get(поле, умолчание)` — метод КАРТЫ и спасает от
+    // пропавшего ПОЛЯ, а у пропавшего ДОКУМЕНТА `firestore.get()` отдаёт
+    // `null`, и `.data` на нём рушит всё вычисление правила. Прогон 14.09
+    // 04:19 +04: `storage.rules line [43], column [14]. Null value error`.
+    // Это ровно I31: обещание защиты читается как проверенная защита.
+    //
+    // ЧИСЛО НЕ НОВОЕ — ЭТО УСЛОВИЕ РЕШЕНИЯ. 100 есть тот самый предел,
+    // который получают сегодня ВСЕ учётки с профилем: перепись прода 14.09
+    // 04:34 +04 — **100 МБ у 12 из 12, разных действующих значений одно**
+    // (у 3 поле стоит явно и равно 100, у 9 поля нет и работает умолчание
+    // строкой ниже). То же число записано ещё дважды на клиенте:
+    // `MaxUploadSizeMbNotifier.defaultMb` и `User.maxUploadSizeMb`.
+    //
+    // ПРЕДЕЛ НЕ СНИМАЕТСЯ, А ПОДСТАВЛЯЕТСЯ: без профиля человек получает те
+    // же 100 МБ, а не бесконечность. Снять его значило бы закрыть отказ
+    // дырой — и отказ бы исчез, и проверять стало бы нечего.
+    //
+    // ЧЕГО ЭТО НЕ ЛОВИТ: документ профиля, который ЕСТЬ, но держит в
+    // `maxUploadSizeMb` чужой тип (строку вместо числа) — умножение на нём
+    // даст ошибку и тот же глухой отказ. Сегодня у поля один писатель и он
+    // пишет int (`upload_limit_settings.dart:32-35`); появится второй —
+    // проверять тип здесь (I49).
     function maxUploadSizeBytes(uid) {
-      return firestore.get(/databases/(default)/documents/users/$(uid))
-        .data.get('maxUploadSizeMb', 100) * 1024 * 1024;
+      let profile = firestore.get(/databases/(default)/documents/users/$(uid));
+      return (profile == null ? 100 : profile.data.get('maxUploadSizeMb', 100))
+        * 1024 * 1024;
     }
 
     // avatars/{uid}.jpg — mugam-flutter's uploadAvatar() writes exactly
@@ -118,10 +146,6 @@ service firebase.storage {
         request.resource.size <= maxUploadSizeBytes(request.auth.uid);
     }
 
-    // groups/{chatId}/avatar.jpg — mugam-v2's group photo. Any member can
-    // read; mugam-v2's UI only shows the upload button to admins, and this
-    // now re-enforces that server-side too, so a non-admin member can't
-    // bypass the UI restriction via a direct API call.
     // ГОЛОС ПРИЧИНЫ ВЫХОДА — решение владельца 13.09.
     //
     // СВОЯ ПАПКА, А НЕ ПАПКА ЧАТА, с доводом владельца: голосовое в чате —
@@ -154,6 +178,17 @@ service firebase.storage {
         request.resource.contentType.matches('audio/.*') &&
         request.resource.size <= maxUploadSizeBytes(request.auth.uid);
     }
+
+    // groups/{chatId}/avatar.jpg — mugam-v2's group photo. Any member can
+    // read; mugam-v2's UI only shows the upload button to admins, and this
+    // now re-enforces that server-side too, so a non-admin member can't
+    // bypass the UI restriction via a direct API call.
+    //
+    // 14.09: КОММЕНТАРИЙ ВЕРНУЛСЯ К СВОЕМУ ПРАВИЛУ. Блок 13.09 про голос
+    // причины выхода вклинился между этим текстом и `match /groups/…`, и
+    // четыре строки стали читаться как шапка чужого правила. Это I42 на
+    // самом опасном расстоянии — не вплотную и не в другом файле, а через
+    // экран прокрутки, где расхождение не видно ничем.
     match /groups/{chatId}/{allPaths=**} {
       allow read: if isChatMember(chatId);
       allow write: if isGroupAdmin(chatId);
