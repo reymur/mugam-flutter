@@ -123,8 +123,66 @@ class VoicePlayer extends StatefulWidget {
   State<VoicePlayer> createState() => _VoicePlayerState();
 }
 
+/// ЧТО ИМЕННО ВИДЖЕТ ЗОВЁТ У ПЛЕЕРА — девять членов, и больше ничего.
+///
+/// **Шов заведён 15.09 ради сторожа, а не ради красоты (N235, I67).** Поломку
+/// «источник, пришедший после первого кадра, до плеера не доходит» нельзя
+/// прогнать, пока плеер нельзя подменить: настоящий `AudioPlayer` в тесте
+/// упирается в отсутствующий канал платформы, и проверка молчит вместо того,
+/// чтобы краснеть.
+///
+/// Список закрыт нарочно: расширится он — станет видно в этом файле, а не
+/// расползётся по виджету.
+abstract class VoiceAudioBackend {
+  Stream<Duration> get positionStream;
+  Stream<Duration?> get durationStream;
+  Stream<PlayerState> get playerStateStream;
+  Future<void> setFilePath(String path);
+  Future<void> setUrl(String url);
+  Future<void> play();
+  Future<void> pause();
+  Future<void> seek(Duration position);
+  Future<void> dispose();
+}
+
+/// Настоящий плеер за тем же швом. Тонкая обёртка: ни одного решения, только
+/// переадресация.
+class _JustAudioBackend implements VoiceAudioBackend {
+  _JustAudioBackend() : _player = AudioPlayer();
+
+  final AudioPlayer _player;
+
+  @override
+  Stream<Duration> get positionStream => _player.positionStream;
+  @override
+  Stream<Duration?> get durationStream => _player.durationStream;
+  @override
+  Stream<PlayerState> get playerStateStream => _player.playerStateStream;
+  @override
+  Future<void> setFilePath(String path) => _player.setFilePath(path);
+  @override
+  Future<void> setUrl(String url) => _player.setUrl(url);
+  @override
+  Future<void> play() => _player.play();
+  @override
+  Future<void> pause() => _player.pause();
+  @override
+  Future<void> seek(Duration position) => _player.seek(position);
+  @override
+  Future<void> dispose() => _player.dispose();
+}
+
+/// Подмена плеера ДЛЯ ТЕСТОВ. В проде поле некому заполнить, поэтому
+/// производственный путь не меняется ни на строку: `null` — создаётся
+/// настоящий `AudioPlayer`, как и до 15.09.
+///
+/// Тест обязан вернуть поле в `null` за собой (`addTearDown`), иначе подмена
+/// протечёт в соседний набор.
+@visibleForTesting
+VoiceAudioBackend Function()? voiceAudioBackendOverride;
+
 class _VoicePlayerState extends State<VoicePlayer> {
-  late final AudioPlayer _player;
+  late final VoiceAudioBackend _player;
   bool _isPlaying = false;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -146,11 +204,15 @@ class _VoicePlayerState extends State<VoicePlayer> {
   // seek right after play() on any attempt following a completion, without
   // touching the always-worked-fine first playback.
   bool _hasCompletedAtLeastOnce = false;
+  // Поставлен ли источник хоть раз. Держит узость условия в
+  // `_setSourceOnce` ниже: принять поздний источник можно, переставить
+  // уже работающий — нельзя.
+  bool _sourceSet = false;
 
   @override
   void initState() {
     super.initState();
-    _player = AudioPlayer();
+    _player = (voiceAudioBackendOverride ?? _JustAudioBackend.new)();
     _player.positionStream.listen((pos) {
       if (mounted) setState(() => _position = pos);
     });
@@ -191,13 +253,54 @@ class _VoicePlayerState extends State<VoicePlayer> {
         }
       }
     });
+    _setSourceOnce();
+  }
+
+  /// ПОЗДНИЙ ИСТОЧНИК ПРИНИМАЕТСЯ — заведено 15.09 по N235.
+  ///
+  /// **Поломка, которую это лечит, замерена на трубке:** у причины выхода путь
+  /// к файлу приходит БУДУЩИМ (`FutureProvider`), к первому кадру его нет, а
+  /// `initState` второй раз не позовут — первое раскрытие «?» не играло
+  /// НИКОГДА, даже после трёх секунд ожидания (замер владельца 15.09, версия
+  /// «гонка нажатия» им же опровергнута).
+  ///
+  /// **УСЛОВИЕ УЗКОЕ НАРОЧНО: только когда своего источника не было ни разу.
+  /// Не «менять при любой смене» — и это защита ЧАТА, а не осторожность.**
+  /// В чате источник МЕНЯЕТСЯ на живом плеере: своё голосовое играет с
+  /// `localFilePath`, после подтверждения сообщение переходит на `audioURL`, а
+  /// файл с диска удаляется (`withConfirmedSeq`, `deletePendingFile`).
+  /// Сейчас оно играет сквозь этот переход, потому что файл уже загружен в
+  /// плеер (`preload = true`); переставь источник — и звук оборвётся посреди
+  /// воспроизведения. Сторож на это стоит:
+  /// `test/voice_player_late_source_test.dart`, «смена источника на живом
+  /// плеере не трогает уже поставленный».
+  ///
+  /// Пустой случай в чате недостижим по построению: пузырь голосового
+  /// строится только когда есть `audioURL` либо `localFilePath`
+  /// (`chat_screen.dart`), так что ветвь ниже там не срабатывает вовсе.
+  ///
+  /// Кнопку отдельно чинить не нужно: нажатие без источника делает
+  /// `playing = true` вхолостую, а при поздней постановке источника
+  /// `just_audio` сам отправляет запрос на воспроизведение
+  /// (`_setPlatformActive`, `if (playing) _sendPlayRequest(...)`).
+  @override
+  void didUpdateWidget(VoicePlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _setSourceOnce();
+  }
+
+  void _setSourceOnce() {
+    if (_sourceSet) return;
     final localPath = widget.localFilePath;
     if (localPath != null) {
+      _sourceSet = true;
       _player.setFilePath(localPath);
     } else if (widget.audioURL != null) {
+      _sourceSet = true;
       _player.setUrl(widget.audioURL!);
     }
   }
+
 
   void _pauseFromCoordinator() {
     if (mounted) {

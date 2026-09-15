@@ -2170,6 +2170,23 @@ class FirestoreService {
   ///
   /// **До выкладки `storage.rules` загрузка сюда будет отклонена** — папки
   /// нет в правилах, а всё неназванное там закрыто.
+  /// Скачивает причину выхода НА ДИСК, правами вошедшего (N232, шаг 2).
+  ///
+  /// `writeToFile` идёт через SDK, то есть **под учёткой человека и по
+  /// правилам хранилища** — в отличие от `voiceUrl`, которая открывается по
+  /// токену мимо правил. Ссылка при показе больше не участвует; адрес
+  /// строится из `eventId` и `uid`.
+  ///
+  /// Единственное место, откуда причина попадает на диск; политика «уже
+  /// скачано — не качаем» живёт отдельно, в `LeaveNoteVoiceStore`, чтобы её
+  /// можно было прогнать без Firebase.
+  Future<void> downloadLeaveNoteVoice({
+    required String storagePath,
+    required File dest,
+  }) async {
+    await FirebaseStorage.instance.ref(storagePath).writeToFile(dest);
+  }
+
   Future<String> uploadLeaveNoteVoice({
     required String eventId,
     required String uid,

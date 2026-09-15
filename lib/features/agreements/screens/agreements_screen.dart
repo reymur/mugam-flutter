@@ -24,6 +24,7 @@ import '../../../core/agreements/lineup.dart';
 import '../../../core/audio/voice_recording_session.dart';
 import '../../../core/audio/voice_temp_files.dart';
 import '../widgets/leave_event_sheet.dart';
+import '../widgets/leave_note_voice_player.dart';
 import '../../../core/agreements/lineup_children.dart';
 import '../../../core/agreements/lineup_rows.dart';
 import '../../../core/agreements/month_marks.dart';
@@ -39,7 +40,6 @@ import '../../../core/presence/presence_service.dart';
 import '../../../shared/widgets/event_conflict_banner.dart';
 import '../../../shared/widgets/event_conflict_dialog.dart';
 import '../../../shared/widgets/event_notes_picker.dart';
-import '../../../shared/widgets/voice_player.dart';
 import '../../../shared/widgets/wheel_date_time_picker.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../job_offer/screens/pick_people_sheet.dart';
@@ -3833,6 +3833,19 @@ class _PersonalEventDetailScreenState
                           // макету `mugam-11-heyet-cixis.html`. Ходов над
                           // человеком у неё нет — ход один, крестик выше.
                           leaveNote: shownLeaveNote,
+                          // ГОЛОС — С ДИСКА, А НЕ ПО ССЫЛКЕ (N232, шаг 2).
+                          //
+                          // `voiceUrl` здесь остался ПРИЗНАКОМ «голос есть» —
+                          // его пишут и старые сборки, — а дорогой к байтам
+                          // быть перестал: адрес строится из `event.id` и
+                          // `uid`, и файл читается правами вошедшего.
+                          leaveNoteVoice: shownLeaveNote?.voiceUrl == null
+                              ? null
+                              : LeaveNoteVoicePlayer(
+                                  eventId: event.id,
+                                  uid: uid,
+                                  waveform: shownLeaveNote!.voiceWaveform,
+                                ),
                           leaveNoteOpen: _openLeaveNotes.contains(uid),
                           onToggleLeaveNote: shownLeaveNote == null
                               ? null
@@ -4712,6 +4725,7 @@ class _PartyMemberRow extends StatelessWidget {
     this.leaveNoteOpen = false,
     this.onToggleLeaveNote,
     this.onOpenLeaverChat,
+    this.leaveNoteVoice,
   });
 
   final String name;
@@ -4762,6 +4776,17 @@ class _PartyMemberRow extends StatelessWidget {
   /// Раскрыта ли причина. Данные, а не состояние строки: помнит карточка.
   final bool leaveNoteOpen;
   final VoidCallback? onToggleLeaveNote;
+
+  /// Готовый проигрыватель голоса причины. `null` — голоса нет.
+  ///
+  /// **ПРИХОДИТ ГОТОВЫМ ВИДЖЕТОМ, как и `note` приходит готовыми словами, и
+  /// по той же причине** (I32, I58): строка показывает, а не решает. Раньше
+  /// здесь стоял `VoicePlayer(audioURL: leaveNote.voiceUrl)` — то есть строка
+  /// знала, что голос берётся по ссылке из документа. С шага 2 (N232) он
+  /// берётся с диска, скачанным по правам, и адрес складывается из `eventId`
+  /// и `uid`; знать об этом строке незачем, и держать её в курсе — значит
+  /// заводить второе место, где живёт дорога к файлу.
+  final Widget? leaveNoteVoice;
 
   /// Значок переписки рядом с раскрытой причиной. `null` — значка нет.
   final VoidCallback? onOpenLeaverChat;
@@ -4977,17 +5002,10 @@ class _PartyMemberRow extends StatelessWidget {
                                         color: kTextSecondary,
                                       ),
                                     ),
-                                  if (leaveNote!.voiceUrl != null) ...[
+                                  if (leaveNoteVoice != null) ...[
                                     if (leaveNote!.text.isNotEmpty)
                                       const SizedBox(height: 8),
-                                    VoicePlayer(
-                                      audioURL: leaveNote!.voiceUrl,
-                                      waveform: leaveNote!.voiceWaveform,
-                                      accentColor: kGold,
-                                      labelColor: kText,
-                                      playedColor: kGold,
-                                      dotColor: kGold,
-                                    ),
+                                    leaveNoteVoice!,
                                   ],
                                 ],
                               ),
