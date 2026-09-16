@@ -6904,29 +6904,15 @@ class _ParticipantPickerDialogState
                                       ? () =>
                                             showFullImage(context, m.photoURL!)
                                       : null,
-                                  child: Container(
-                                    width: avatarBoxSize,
-                                    height: avatarBoxSize,
-                                    decoration: BoxDecoration(
-                                      color: kBg3,
-                                      shape: BoxShape.circle,
-                                      image: m.photoURL != null
-                                          ? DecorationImage(
-                                              image: NetworkImage(m.photoURL!),
-                                              fit: BoxFit.cover,
-                                            )
-                                          : null,
-                                    ),
-                                    child: m.photoURL == null
-                                        ? Center(
-                                            child: Text(
-                                              m.emoji,
-                                              style: const TextStyle(
-                                                fontSize: 18,
-                                              ),
-                                            ),
-                                          )
-                                        : null,
+                                  // Свёрнуто 16.09. Ободка не было —
+                                  // `ringWidth: 0`.
+                                  child: AvatarRing(
+                                    photoURL: m.photoURL,
+                                    fallbackEmoji: m.emoji,
+                                    hasUnviewed: false,
+                                    size: avatarBoxSize,
+                                    ringWidth: 0,
+                                    fallbackFontSize: 18,
                                   ),
                                 ),
                               Positioned(

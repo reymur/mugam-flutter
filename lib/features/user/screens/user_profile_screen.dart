@@ -149,28 +149,17 @@ class UserProfileScreen extends ConsumerWidget {
                     onTap: liveUser.photoURL != null
                         ? () => showFullImage(context, liveUser.photoURL!)
                         : null,
-                    child: Container(
-                      width: avatarBoxSize,
-                      height: avatarBoxSize,
-                      decoration: BoxDecoration(
-                        color: kBg3,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: user.goldRing ? kGold : kBorder,
-                          width: 3,
-                        ),
-                        image: liveUser.photoURL != null
-                            ? DecorationImage(
-                                image: NetworkImage(liveUser.photoURL!),
-                                fit: BoxFit.cover,
-                              )
-                            : null,
-                      ),
-                      child: liveUser.photoURL == null
-                          ? Center(
-                              child: Text(user.emoji, style: const TextStyle(fontSize: 48)),
-                            )
-                          : null,
+                    // Свёрнуто 16.09. Ободок толщиной 3 и золото у
+                    // `goldRing` — признак человека, а не украшение:
+                    // потеряй его правка, пропало бы сведение, а не вид.
+                    child: AvatarRing(
+                      photoURL: liveUser.photoURL,
+                      fallbackEmoji: user.emoji,
+                      hasUnviewed: false,
+                      size: avatarBoxSize,
+                      ringColor: user.goldRing ? kGold : kBorder,
+                      ringWidth: 3,
+                      fallbackFontSize: 48,
                     ),
                   ),
                 Positioned(

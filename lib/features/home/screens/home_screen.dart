@@ -275,31 +275,21 @@ class _MusicianCard extends ConsumerWidget {
                             onTap: musician.photoURL != null
                                 ? () => showFullImage(context, musician.photoURL!)
                                 : null,
-                            child: Container(
-                              width: avatarBoxSize,
-                              height: avatarBoxSize,
-                              decoration: BoxDecoration(
-                                color: kBg3,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: musician.goldRing ? kGold : kBorder,
-                                  width: 2,
-                                ),
-                                image: musician.photoURL != null
-                                    ? DecorationImage(
-                                        image: NetworkImage(musician.photoURL!),
-                                        fit: BoxFit.cover,
-                                      )
-                                    : null,
-                              ),
-                              child: musician.photoURL == null
-                                  ? Center(
-                                      child: Text(
-                                        musician.emoji,
-                                        style: const TextStyle(fontSize: 24),
-                                      ),
-                                    )
-                                  : null,
+                            // Свёрнуто 16.09. Цвет ободка здесь про
+                            // ОТМЕЧЕННОГО человека (`goldRing`), а не про
+                            // статус — потому и передаётся цветом, а не
+                            // флагом `hasUnviewed`: у соседней ветви выше
+                            // тот же кружок означает непросмотренный статус,
+                            // и путать их нельзя.
+                            child: AvatarRing(
+                              photoURL: musician.photoURL,
+                              fallbackEmoji: musician.emoji,
+                              hasUnviewed: false,
+                              size: avatarBoxSize,
+                              ringColor:
+                                  musician.goldRing ? kGold : kBorder,
+                              ringWidth: 2,
+                              fallbackFontSize: 24,
                             ),
                           ),
                         Positioned(

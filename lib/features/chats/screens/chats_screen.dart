@@ -823,27 +823,16 @@ class _ChatListItem extends ConsumerWidget {
                           onTap: other?.photoURL != null
                               ? () => showFullImage(context, other!.photoURL!)
                               : null,
-                          child: Container(
-                            width: avatarBoxSize,
-                            height: avatarBoxSize,
-                            decoration: BoxDecoration(
-                              color: kBg3,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: kBorder, width: 1.5),
-                              image: other?.photoURL != null
-                                  ? DecorationImage(
-                                      image: NetworkImage(other!.photoURL!),
-                                      fit: BoxFit.cover,
-                                    )
-                                  : null,
-                            ),
-                            alignment: Alignment.center,
-                            child: other?.photoURL == null
-                                ? Text(
-                                    displayEmoji,
-                                    style: const TextStyle(fontSize: 24),
-                                  )
-                                : null,
+                          // Свёрнуто 16.09; вид сохранён — kBorder 1.5,
+                          // эмодзи 24.
+                          child: AvatarRing(
+                            photoURL: other?.photoURL,
+                            fallbackEmoji: displayEmoji,
+                            hasUnviewed: false,
+                            size: avatarBoxSize,
+                            ringColor: kBorder,
+                            ringWidth: 1.5,
+                            fallbackFontSize: 24,
                           ),
                         ),
                       if (!chat.isGroup)

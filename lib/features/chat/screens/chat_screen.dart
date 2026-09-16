@@ -4550,33 +4550,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       onTap: otherUser?.photoURL != null
                           ? () => showFullImage(context, otherUser!.photoURL!)
                           : null,
-                      child: Container(
-                        width: headerAvatarSize * 1.2,
-                        height: headerAvatarSize * 1.2,
-                        decoration: BoxDecoration(
-                          color: kBg3,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: kBorder, width: 1.5),
-                          // This small AppBar avatar never actually wired
-                          // up the photo — only ever showed the emoji
-                          // fallback below, even when otherUser.photoURL
-                          // was set. Same DecorationImage pattern
-                          // chats_screen.dart's own list-row avatar already
-                          // uses correctly.
-                          image: otherUser?.photoURL != null
-                              ? DecorationImage(
-                                  image: NetworkImage(otherUser!.photoURL!),
-                                  fit: BoxFit.cover,
-                                )
-                              : null,
-                        ),
-                        alignment: Alignment.center,
-                        child: otherUser?.photoURL == null
-                            ? Text(
-                                otherUser?.emoji ?? '🎵',
-                                style: const TextStyle(fontSize: 16),
-                              )
-                            : null,
+                      // Свёрнуто 16.09; вид сохранён — kBorder толщиной 1.5,
+                      // эмодзи 16. Прежний комментарий здесь рассказывал, что
+                      // этот кружок когда-то не показывал фото вовсе и был
+                      // починен по образцу chats_screen; теперь образец не
+                      // копируется, а зовётся.
+                      child: AvatarRing(
+                        photoURL: otherUser?.photoURL,
+                        fallbackEmoji: otherUser?.emoji ?? '🎵',
+                        hasUnviewed: false,
+                        size: headerAvatarSize * 1.2,
+                        ringColor: kBorder,
+                        ringWidth: 1.5,
+                        fallbackFontSize: 16,
                       ),
                     ),
             );
@@ -5420,27 +5406,14 @@ class _VoiceSenderAvatar extends ConsumerWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              color: kBg3,
-              shape: BoxShape.circle,
-              image: photoURL != null
-                  ? DecorationImage(
-                      image: NetworkImage(photoURL),
-                      fit: BoxFit.cover,
-                    )
-                  : null,
-            ),
-            child: photoURL == null
-                ? Center(
-                    child: Text(
-                      user?.emoji ?? '🎵',
-                      style: const TextStyle(fontSize: 22),
-                    ),
-                  )
-                : null,
+          // Свёрнуто 16.09. Ободка у этой ветви не было — `ringWidth: 0`.
+          AvatarRing(
+            photoURL: photoURL,
+            fallbackEmoji: user?.emoji ?? '🎵',
+            hasUnviewed: false,
+            size: size,
+            ringWidth: 0,
+            fallbackFontSize: 22,
           ),
           Positioned(
             right: -2,

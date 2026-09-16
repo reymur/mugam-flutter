@@ -211,15 +211,18 @@ class _RequestTile extends ConsumerWidget {
                       onTap: user?.photoURL != null
                           ? () => showFullImage(context, user!.photoURL!)
                           : null,
-                      child: CircleAvatar(
-                        radius: avatarBoxSize / 2,
-                        backgroundColor: kBg3,
-                        backgroundImage: user?.photoURL != null
-                            ? NetworkImage(user!.photoURL!)
-                            : null,
-                        child: user?.photoURL == null
-                            ? Text(user?.emoji ?? '🎵', style: const TextStyle(fontSize: 20))
-                            : null,
+                      // Свёрнуто 16.09. Эта ветвь была устроена ИНАЧЕ прочих
+                      // — `CircleAvatar` с `backgroundImage` вместо
+                      // `Container` с `DecorationImage`, — но показывала то
+                      // же самое и тем же способом добиралась до байтов.
+                      // Ободка у неё не было вовсе: `ringWidth: 0`.
+                      child: AvatarRing(
+                        photoURL: user?.photoURL,
+                        fallbackEmoji: user?.emoji ?? '🎵',
+                        hasUnviewed: false,
+                        size: avatarBoxSize,
+                        ringWidth: 0,
+                        fallbackFontSize: 20,
                       ),
                     ),
                   Positioned(

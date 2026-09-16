@@ -15,12 +15,50 @@ class AvatarRing extends StatelessWidget {
   final bool hasUnviewed;
   final double size;
 
+  /// ЦВЕТ ОБОДКА, КОГДА ОН НЕ ПРО СТАТУС (свёртка 16.09).
+  ///
+  /// **Дан — рисуется он, и `hasUnviewed` НЕ СПРАШИВАЕТСЯ вовсе.** Это
+  /// записано здесь нарочно: два способа задать одно и то же — известная
+  /// беда (I47), и следующий, увидев, что флаг иногда не действует, должен
+  /// найти причину рядом, а не искать её.
+  ///
+  /// **Почему это всё-таки не два написания одного, а два разных дела.**
+  /// `hasUnviewed` — факт О ДАННЫХ: есть непросмотренный статус. `ringColor`
+  /// — выбор ПОКАЗА: обычная рамка, золотая у отмеченного человека, красная
+  /// у ошибки. До свёртки эти «другие» рамки жили рукописными копиями в
+  /// двенадцати экранах, и ободок там значил не статус.
+  final Color? ringColor;
+
+  /// Толщина ободка. Умолчание 2.5 — то, что было прибито в виджете и с чем
+  /// живут шестнадцать мест, звавших его до свёртки: у них ничего не
+  /// меняется. **Ноль означает «ободка нет»** — так свёрнуты пять ветвей,
+  /// у которых рамки не было вовсе.
+  final double ringWidth;
+
+  /// Размер запасного эмодзи. Умолчание — `size * 0.45`, как было.
+  ///
+  /// **Понадобился при свёртке 16.09 и назван третьим параметром нарочно.**
+  /// В рукописных ветвях размер эмодзи прибит числом на каждом экране: 13,
+  /// 16, 18, 20, 22, 24, 38, 48, 64. Доли при этом разные — 0.38 у
+  /// `about_contact`, 0.40 у `group_info`, 0.44 у `profile`, — и подогнать
+  /// их все под 0.45 значило бы **молча изменить вид** там, где владелец
+  /// этого не просил.
+  ///
+  /// **Виджет копит параметры, и это признак, а не удобство.** Принято
+  /// здесь потому, что все три — `ringColor`, `ringWidth`, `fallbackFontSize`
+  /// — про ПОКАЗ одной и той же вещи, а не про разные дела (I58). Стань их
+  /// больше либо появись среди них поведение — виджет надо будет делить.
+  final double? fallbackFontSize;
+
   const AvatarRing({
     super.key,
     required this.photoURL,
     this.fallbackEmoji,
     required this.hasUnviewed,
     this.size = 64,
+    this.ringColor,
+    this.ringWidth = 2.5,
+    this.fallbackFontSize,
   });
 
   @override
@@ -32,15 +70,22 @@ class AvatarRing extends StatelessWidget {
     // chats_screen.dart's chat-list avatar), so reusing it here would make
     // "viewed" read as no ring at all instead of a distinct, deliberately
     // muted state.
-    final ringColor = hasUnviewed ? kGold : kMuted;
+    // Явно заданный цвет сильнее флага статуса — разбор у самого поля.
+    final color = ringColor ?? (hasUnviewed ? kGold : kMuted);
 
     return Container(
       width: size,
       height: size,
-      padding: const EdgeInsets.all(2.5),
+      // Отступ равен толщине: ободок рисуется рамкой, а отступ отодвигает от
+      // него картинку. Разойдись они — рамка налезет на фото либо повиснет в
+      // пустоте. Ноль даёт кружок без ободка и без отступа, то есть ровно то,
+      // что было у пяти ветвей без рамки.
+      padding: EdgeInsets.all(ringWidth),
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: ringColor, width: 2.5),
+        border: ringWidth > 0
+            ? Border.all(color: color, width: ringWidth)
+            : null,
       ),
       child: Container(
         clipBehavior: Clip.antiAlias,
@@ -63,7 +108,7 @@ class AvatarRing extends StatelessWidget {
                 // widget (unlike those two) is reused at variable sizes.
                 child: Text(
                   fallbackEmoji!,
-                  style: TextStyle(fontSize: size * 0.45),
+                  style: TextStyle(fontSize: fallbackFontSize ?? size * 0.45),
                 ),
               )
             // Last resort only, when the caller has neither a photo nor an

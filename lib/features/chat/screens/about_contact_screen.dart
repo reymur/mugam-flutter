@@ -177,26 +177,22 @@ class _ContactAvatar extends ConsumerWidget {
   final User user;
   const _ContactAvatar({required this.user});
 
+  // СВЁРНУТО В ОБЩИЙ ВИДЖЕТ 16.09. Здесь стоял рукописный кружок —
+  // `Container` + `DecorationImage` + `NetworkImage`, — один из пятнадцати
+  // таких по двенадцати экранам, при том что общий `AvatarRing` в этом же
+  // файле уже звался соседней ветвью. Вид сохранён точно: ободок `kBorder`
+  // толщиной 1 и эмодзи 64 переданы параметрами, а не подогнаны под
+  // умолчания виджета (2.5 и `size * 0.45` дали бы кружок толще и знак
+  // крупнее).
   Widget _plainAvatar() {
-    return Container(
-      width: 140 * 1.2,
-      height: 140 * 1.2,
-      decoration: BoxDecoration(
-        color: kBg3,
-        shape: BoxShape.circle,
-        border: Border.all(color: kBorder, width: 1),
-        image: user.photoURL != null
-            ? DecorationImage(
-                image: NetworkImage(user.photoURL!),
-                fit: BoxFit.cover,
-              )
-            : null,
-      ),
-      child: user.photoURL == null
-          ? Center(
-              child: Text(user.emoji, style: const TextStyle(fontSize: 64)),
-            )
-          : null,
+    return AvatarRing(
+      photoURL: user.photoURL,
+      fallbackEmoji: user.emoji,
+      hasUnviewed: false,
+      size: 140 * 1.2,
+      ringColor: kBorder,
+      ringWidth: 1,
+      fallbackFontSize: 64,
     );
   }
 

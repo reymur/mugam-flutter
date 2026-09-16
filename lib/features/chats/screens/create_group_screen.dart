@@ -485,26 +485,17 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                                 onTap: u.photoURL != null
                                     ? () => showFullImage(context, u.photoURL!)
                                     : null,
-                                child: Container(
-                                  width: avatarBoxSize,
-                                  height: avatarBoxSize,
-                                  decoration: BoxDecoration(
-                                    color: kBg3,
-                                    shape: BoxShape.circle,
-                                    border: selected
-                                        ? Border.all(color: kGold, width: 2)
-                                        : null,
-                                    image: u.photoURL != null
-                                        ? DecorationImage(
-                                            image: NetworkImage(u.photoURL!),
-                                            fit: BoxFit.cover,
-                                          )
-                                        : null,
-                                  ),
-                                  alignment: Alignment.center,
-                                  child: u.photoURL == null
-                                      ? Text(u.emoji, style: const TextStyle(fontSize: 20))
-                                      : null,
+                                // Свёрнуто 16.09. Ободок условный — золотой
+                                // только у выбранного; условие переехало в
+                                // толщину, ноль означает «ободка нет».
+                                child: AvatarRing(
+                                  photoURL: u.photoURL,
+                                  fallbackEmoji: u.emoji,
+                                  hasUnviewed: false,
+                                  size: avatarBoxSize,
+                                  ringColor: kGold,
+                                  ringWidth: selected ? 2 : 0,
+                                  fallbackFontSize: 20,
                                 ),
                               ),
                             Positioned(

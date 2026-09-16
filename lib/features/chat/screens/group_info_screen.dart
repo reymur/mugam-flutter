@@ -415,28 +415,16 @@ class _GroupInfoScreenState extends ConsumerState<GroupInfoScreen> {
                     : null,
                 child: Column(
                   children: [
-                    Container(
-                      width: 120,
-                      height: 120,
-                      decoration: BoxDecoration(
-                        color: kBg3,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: kBorder, width: 1),
-                        image: photoURL != null
-                            ? DecorationImage(
-                                image: NetworkImage(photoURL),
-                                fit: BoxFit.cover,
-                              )
-                            : null,
-                      ),
-                      child: photoURL == null
-                          ? Center(
-                              child: Text(
-                                emoji,
-                                style: const TextStyle(fontSize: 48),
-                              ),
-                            )
-                          : null,
+                    // Свёрнуто в общий виджет 16.09; вид сохранён точно —
+                    // ободок kBorder толщиной 1, эмодзи 48.
+                    AvatarRing(
+                      photoURL: photoURL,
+                      fallbackEmoji: emoji,
+                      hasUnviewed: false,
+                      size: 120,
+                      ringColor: kBorder,
+                      ringWidth: 1,
+                      fallbackFontSize: 48,
                     ),
                     const SizedBox(height: 12),
                     Text(
@@ -626,23 +614,16 @@ class _ParticipantTile extends ConsumerWidget {
                 onTap: user?.photoURL != null
                     ? () => showFullImage(context, user!.photoURL!)
                     : null,
-                child: Container(
-                  width: avatarBoxSize,
-                  height: avatarBoxSize,
-                  decoration: BoxDecoration(
-                    color: kBg3,
-                    shape: BoxShape.circle,
-                    image: user?.photoURL != null
-                        ? DecorationImage(
-                            image: NetworkImage(user!.photoURL!),
-                            fit: BoxFit.cover,
-                          )
-                        : null,
-                  ),
-                  alignment: Alignment.center,
-                  child: user?.photoURL == null
-                      ? Text(emoji, style: const TextStyle(fontSize: 18))
-                      : null,
+                // Свёрнуто 16.09. Ободка у этой ветви НЕ БЫЛО — отсюда
+                // `ringWidth: 0`: умолчание 2.5 пририсовало бы рамку там,
+                // где её отродясь не было.
+                child: AvatarRing(
+                  photoURL: user?.photoURL,
+                  fallbackEmoji: emoji,
+                  hasUnviewed: false,
+                  size: avatarBoxSize,
+                  ringWidth: 0,
+                  fallbackFontSize: 18,
                 ),
               ),
             Positioned(
@@ -1271,29 +1252,18 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
                                   onTap: u.photoURL != null
                                       ? () => showFullImage(context, u.photoURL!)
                                       : null,
-                                  child: Container(
-                                    width: avatarBoxSize,
-                                    height: avatarBoxSize,
-                                    decoration: BoxDecoration(
-                                      color: kBg3,
-                                      shape: BoxShape.circle,
-                                      border: selected
-                                          ? Border.all(color: kGold, width: 2)
-                                          : null,
-                                      image: u.photoURL != null
-                                          ? DecorationImage(
-                                              image: NetworkImage(u.photoURL!),
-                                              fit: BoxFit.cover,
-                                            )
-                                          : null,
-                                    ),
-                                    alignment: Alignment.center,
-                                    child: u.photoURL == null
-                                        ? Text(
-                                            u.emoji,
-                                            style: const TextStyle(fontSize: 18),
-                                          )
-                                        : null,
+                                  // Свёрнуто 16.09. Ободок здесь УСЛОВНЫЙ —
+                                  // золотой только у выбранного, — и условие
+                                  // переехало в толщину: ноль означает «нет
+                                  // ободка», ровно как было у `border: null`.
+                                  child: AvatarRing(
+                                    photoURL: u.photoURL,
+                                    fallbackEmoji: u.emoji,
+                                    hasUnviewed: false,
+                                    size: avatarBoxSize,
+                                    ringColor: kGold,
+                                    ringWidth: selected ? 2 : 0,
+                                    fallbackFontSize: 18,
                                   ),
                                 ),
                               Positioned(

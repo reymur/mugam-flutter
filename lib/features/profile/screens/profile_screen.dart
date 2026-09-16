@@ -6,6 +6,7 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../core/time/az_date_format.dart';
+import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import 'edit_profile_screen.dart';
 import 'profile_settings_screen.dart';
@@ -227,27 +228,16 @@ class _ProfileHeader extends ConsumerWidget {
                       margin: const EdgeInsets.only(bottom: 12),
                       child: Stack(
                         children: [
-                          Container(
-                            width: 86,
-                            height: 86,
-                            decoration: BoxDecoration(
-                              color: kBg3,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: kGold, width: 3),
-                              image: user.photoURL != null
-                                  ? DecorationImage(
-                                      image: NetworkImage(user.photoURL!),
-                                      fit: BoxFit.cover,
-                                    )
-                                  : null,
-                            ),
-                            alignment: Alignment.center,
-                            child: user.photoURL == null
-                                ? Text(
-                                    user.emoji,
-                                    style: const TextStyle(fontSize: 38),
-                                  )
-                                : null,
+                          // Свёрнуто 16.09; вид сохранён — золотой ободок
+                          // толщиной 3, эмодзи 38 на кружке 86.
+                          AvatarRing(
+                            photoURL: user.photoURL,
+                            fallbackEmoji: user.emoji,
+                            hasUnviewed: false,
+                            size: 86,
+                            ringColor: kGold,
+                            ringWidth: 3,
+                            fallbackFontSize: 38,
                           ),
                           if (user.verified)
                             Positioned(
