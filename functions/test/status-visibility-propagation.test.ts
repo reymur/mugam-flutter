@@ -46,7 +46,25 @@ test("unfriending B removes B from A's active 'contacts'-mode status.visibleToUi
     privacyList: [],
   });
 
-  await waitFor(async () => (await getVisibleToUids(statusRef)).includes(B));
+  // ЖДЁМ ТО САМОЕ СОСТОЯНИЕ, КОТОРОЕ ПОТОМ УТВЕРЖДАЕМ (16.09).
+  //
+  // Здесь стояло `includes(B)`, а утверждалось ниже ещё и наличие A — то
+  // есть ожидание НЕ ПИНИЛО того, что проверяется. Состав пишут ДВА
+  // обработчика: `onStatusCreated` кладёт `[владелец, ...друзья]`, а
+  // `onFriendRequestUpdated` делает `arrayUnion(B)` по активным статусам,
+  // и `arrayUnion` на ещё не существующем поле создаёт `["B"]` — БЕЗ
+  // владельца. Условие `includes(B)` истинно и для `[A,B]`, и для `["B"]`,
+  // значит его мог выполнить не тот писатель, которого ждали.
+  //
+  // ПРАВКА ОБОСНОВАНА ЧТЕНИЕМ КОДА, А НЕ ВОСПРОИЗВЕДЁННЫМ ОТКАЗОМ. Этот
+  // вердикт падал 16.09 трижды из восемнадцати полных прогонов, но
+  // воспроизвести отказ не удалось: двадцать прогонов этого набора в
+  // одиночку и тридцать в парах с соседями дали ноль красных. **N77 этой
+  // правкой НЕ закрывается**, и утверждать, что она лечит красноту, нельзя.
+  await waitFor(async () => {
+    const vis = await getVisibleToUids(statusRef);
+    return vis.includes(A) && vis.includes(B);
+  });
   const afterCreate = await getVisibleToUids(statusRef);
   expect(afterCreate).toContain(A);
   expect(afterCreate).toContain(B);
@@ -55,7 +73,11 @@ test("unfriending B removes B from A's active 'contacts'-mode status.visibleToUi
   // loss and must propagate into A's still-active status.
   await requestRef.delete();
 
-  await waitFor(async () => !(await getVisibleToUids(statusRef)).includes(B));
+  // То же сужение и здесь: ждём ОБА условия, а не одно из двух.
+  await waitFor(async () => {
+    const vis = await getVisibleToUids(statusRef);
+    return !vis.includes(B) && vis.includes(A);
+  });
 
   const afterRemoval = await getVisibleToUids(statusRef);
   expect(afterRemoval).not.toContain(B);
@@ -83,7 +105,12 @@ test("A's friend request to B being accepted adds B to A's already-active 'conta
     privacyList: [],
   });
 
-  await waitFor(async () => (await getVisibleToUids(statusRef)).length > 0);
+  // Сужено 16.09 по тому же доводу, что в вердикте выше: ждать надо то,
+  // что утверждается. `length > 0` истинно и для `["B"]`, и для `[A]`.
+  await waitFor(async () => {
+    const vis = await getVisibleToUids(statusRef);
+    return vis.includes(A) && !vis.includes(B);
+  });
   const beforeFriends = await getVisibleToUids(statusRef);
   expect(beforeFriends).toContain(A);
   expect(beforeFriends).not.toContain(B);
@@ -93,7 +120,10 @@ test("A's friend request to B being accepted adds B to A's already-active 'conta
   await requestRef.set({ fromUid: A, toUid: B, status: "pending" });
   await requestRef.update({ status: "accepted" });
 
-  await waitFor(async () => (await getVisibleToUids(statusRef)).includes(B));
+  await waitFor(async () => {
+    const vis = await getVisibleToUids(statusRef);
+    return vis.includes(A) && vis.includes(B);
+  });
 
   const afterAccept = await getVisibleToUids(statusRef);
   expect(afterAccept).toContain(A);

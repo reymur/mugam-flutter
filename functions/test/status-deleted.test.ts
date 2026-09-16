@@ -162,9 +162,18 @@ test("onStatusDeleted removes only the deleted status's id from activeStatusIds,
 
   await statusRef.delete();
 
+  // ЖДЁМ ОБА УСЛОВИЯ (16.09). Здесь ждалось только исчезновение своего id,
+  // а утверждалась ниже ещё и целость ЧУЖОГО — то есть ожидание не пинило
+  // того, что проверяется. Что чужой id уцелеет, следует из того, что
+  // `onStatusDeleted` правит поле через `FieldValue.arrayRemove(statusId)`
+  // (`functions/src/index.ts`), но следование — не наблюдение, и ждать
+  // надо наблюдаемое.
+  //
+  // ПРАВКА ОБОСНОВАНА ЧТЕНИЕМ КОДА, А НЕ ВОСПРОИЗВЕДЁННЫМ ОТКАЗОМ: этот
+  // вердикт 16.09 не падал ни разу. **N77 ею не закрывается.**
   await waitFor(async () => {
-    const snap = await userRef.get();
-    return !((snap.data()?.activeStatusIds ?? []) as string[]).includes(statusRef.id);
+    const ids = ((await userRef.get()).data()?.activeStatusIds ?? []) as string[];
+    return !ids.includes(statusRef.id) && ids.includes(unrelatedId);
   });
 
   const afterSnap = await userRef.get();

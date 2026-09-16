@@ -12,6 +12,41 @@ beforeEach(async () => {
 // без lastMessageTime, а запрос списка чатов в mugam-flutter сортирует по
 // этому полю — документ без поля Firestore из выдачи исключает, то есть
 // чат исчез бы из списка целиком, а не встал не туда.
+/// ШУМНЫЙ СОСЕД ВМЕСТО ДВУХ СЕКУНД ПО ЧАСАМ (16.09).
+///
+/// **Чем плох был таймер.** «Подождали две секунды, поле не изменилось»
+/// зелено и когда триггер верно промолчал, и когда он не запускался вовсе —
+/// эмулятор не поднялся, функция не развернулась, очередь встала. Вывод при
+/// поломке совпадает с выводом на исправном, то есть проверка не говорит
+/// ничего (I14).
+///
+/// **Чем лучше сосед.** Заводится второй чат — заведомо ШУМНЫЙ, без
+/// `lastMessageTime`, — и ждём, пока триггер допишет поле ЕМУ. Дождались —
+/// значит машина триггеров жива и дошла до записи, сделанной ПОЗЖЕ той,
+/// которую проверяем.
+///
+/// **ЧЕГО ЭТОТ ПРИЁМ НЕ ДАЁТ, И ЭТО НАДО ЗНАТЬ: он доказывает приход
+/// СОСЕДА, а не молчание молчуна.** Порядок между разными документами
+/// очередью не гарантирован, и под нагрузкой он инвертируется. Полной
+/// местной починки у отрицания нет — нужна отметка «обработчик отработал и
+/// решил не трогать», а `onChatCreated` при наличии поля выходит первой же
+/// строкой и не пишет НИЧЕГО. Это долг **N239**, и эти два вердикта в нём
+/// числятся.
+///
+/// **ПРАВКА ОБОСНОВАНА ЧТЕНИЕМ КОДА, А НЕ ВОСПРОИЗВЕДЁННЫМ ОТКАЗОМ:** эти
+/// два вердикта 16.09 не падали ни разу. **N77 ею не закрывается.**
+async function settleByNoisyNeighbour(): Promise<void> {
+  const noisy = db().collection("chats").doc();
+  await noisy.set({
+    members: ["A", "B"],
+    createdAt: new Date("2026-06-01T10:00:00Z"),
+  });
+  await waitFor(async () => {
+    const snap = await noisy.get();
+    return snap.data()?.lastMessageTime !== undefined;
+  });
+}
+
 test("чат, созданный без lastMessageTime (форма mugam-v2), получает его из lastMessageAt", async () => {
   const chatRef = db().collection("chats").doc();
   const lastMessageAt = new Date("2026-07-01T10:00:00Z");
@@ -61,8 +96,7 @@ test("существующее lastMessageTime не переписывается
     lastMessageTime,
   });
 
-  // Дать триггеру время сработать, если бы он собирался.
-  await new Promise((resolve) => setTimeout(resolve, 2000));
+  await settleByNoisyNeighbour();
 
   const data = (await chatRef.get()).data()!;
   expect(data.lastMessageTime.toDate()).toEqual(lastMessageTime);
@@ -81,7 +115,7 @@ test("явный null не считается отсутствием поля", 
     lastMessageTime: null,
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 2000));
+  await settleByNoisyNeighbour();
 
   const data = (await chatRef.get()).data()!;
   expect(data.lastMessageTime).toBeNull();
