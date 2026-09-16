@@ -2187,19 +2187,39 @@ class FirestoreService {
     await FirebaseStorage.instance.ref(storagePath).writeToFile(dest);
   }
 
-  Future<String> uploadLeaveNoteVoice({
+  /// **НИЧЕГО НЕ ВОЗВРАЩАЕТ, И ЭТО САМА ПОЧИНКА N236, А НЕ УБОРКА ПОДПИСИ.**
+  ///
+  /// Здесь стояло `_uploadVoiceFile`, а тот кончается `getDownloadURL()` — и
+  /// **`getDownloadURL()` И ЕСТЬ ВЫДАЧА ТОКЕНА**: по полученной ссылке файл
+  /// отдаётся кому угодно и без входа. То есть каждая новая причина голосом
+  /// чеканила новую общедоступную ссылку, и отзыв уже выданных (N232, шаг 3)
+  /// убирал прошлое, не трогая источник.
+  ///
+  /// Теперь загрузка кончается загрузкой. Адрес показу не нужен: он выводится
+  /// из `eventId` и `uid` (`leaveNoteVoicePath`), а скачивает показ SDK-ом, по
+  /// правам (`downloadLeaveNoteVoice` выше).
+  ///
+  /// **Сам файл кладётся ровно как прежде** — тот же путь, тот же тип,
+  /// те же метаданные: менялось только то, что уходит в документ вечера.
+  ///
+  /// `_uploadVoiceFile` НЕ зовётся здесь нарочно, и это сторожится
+  /// (`test/source_invariants_test.dart`): он общий с голосовыми чата, где
+  /// ссылка нужна по-настоящему, и вернуть его сюда значило бы вернуть
+  /// чеканку.
+  Future<void> uploadLeaveNoteVoice({
     required String eventId,
     required String uid,
     required String filePath,
-  }) {
-    return _uploadVoiceFile(
-      FirebaseStorage.instance.ref(leaveNoteVoicePath(eventId: eventId, uid: uid)),
-      filePath,
-      SettableMetadata(
-        contentType: 'audio/mp4',
-        customMetadata: {'uploaderUid': uid, 'eventId': eventId},
-      ),
-    );
+  }) async {
+    await FirebaseStorage.instance
+        .ref(leaveNoteVoicePath(eventId: eventId, uid: uid))
+        .putFile(
+          File(filePath),
+          SettableMetadata(
+            contentType: 'audio/mp4',
+            customMetadata: {'uploaderUid': uid, 'eventId': eventId},
+          ),
+        );
   }
 
   // Returns the message's assigned seq — see sendMessage's own doc comment.

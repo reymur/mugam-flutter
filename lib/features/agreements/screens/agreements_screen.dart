@@ -3318,16 +3318,21 @@ class _PersonalEventDetailScreenState
     final navigator = Navigator.of(context);
     final voice = result.voice;
     try {
-      // Голос грузится ПЕРВЫМ: в вечер уходит ссылка на уже лежащий файл. Не
+      // Голос грузится ПЕРВЫМ: в вечер уходит ПРИЗНАК, что файл уже лежит. Не
       // загрузился — не уходит и выход, и человек узнаёт об этом словами, а не
       // выходит молча без того, что сказал.
-      final voiceUrl = voice == null
-          ? null
-          : await service.uploadLeaveNoteVoice(
-              eventId: event.id,
-              uid: widget.currentUid,
-              filePath: voice.filePath,
-            );
+      //
+      // Ссылки здесь больше нет (N236, шаг 2): загрузка ничего не возвращает,
+      // а адрес показу выводится из `eventId` и `uid`. Порядок «сперва файл,
+      // потом запись» от этого не меняется — он и был про то, чтобы признак
+      // не обогнал байты.
+      if (voice != null) {
+        await service.uploadLeaveNoteVoice(
+          eventId: event.id,
+          uid: widget.currentUid,
+          filePath: voice.filePath,
+        );
+      }
       // Ход тот самый, что живёт с 29.08: ответ человека `answers[uid] =
       // 'left'` — и рядом причина, ОДНОЙ записью (13.09). Человек ОСТАЁТСЯ в
       // составе с пометкой «İşdən çıxdı» — владелец обязан видеть, КТО ушёл
@@ -3337,7 +3342,7 @@ class _PersonalEventDetailScreenState
         widget.currentUid,
         note: LeaveNote(
           text: result.text,
-          voiceUrl: voiceUrl,
+          hasVoice: voice != null,
           voiceWaveform: voice?.waveform ?? const [],
         ),
       );
@@ -3835,11 +3840,14 @@ class _PersonalEventDetailScreenState
                           leaveNote: shownLeaveNote,
                           // ГОЛОС — С ДИСКА, А НЕ ПО ССЫЛКЕ (N232, шаг 2).
                           //
-                          // `voiceUrl` здесь остался ПРИЗНАКОМ «голос есть» —
-                          // его пишут и старые сборки, — а дорогой к байтам
-                          // быть перестал: адрес строится из `event.id` и
-                          // `uid`, и файл читается правами вошедшего.
-                          leaveNoteVoice: shownLeaveNote?.voiceUrl == null
+                          // `hasVoice` — ПРИЗНАК «голос есть», и только он:
+                          // дорогой к байтам поле быть перестало ещё 15.09,
+                          // а ссылкой быть перестало 16.09 (N236, шаг 2).
+                          // Адрес строится из `event.id` и `uid`, файл
+                          // читается правами вошедшего. Старые записи с
+                          // `voiceUrl` сюда доходят тем же признаком:
+                          // `LeaveNote.fromMap` схлопывает обе формы в одну.
+                          leaveNoteVoice: shownLeaveNote?.hasVoice != true
                               ? null
                               : LeaveNoteVoicePlayer(
                                   eventId: event.id,

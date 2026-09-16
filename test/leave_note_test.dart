@@ -42,21 +42,21 @@ void main() {
     test('текст и голос вместе переживают запись и чтение', () {
       const note = LeaveNote(
         text: 'Toyum var o gün',
-        voiceUrl: 'https://example/voice',
+        hasVoice: true,
         voiceWaveform: [3, 50, 100],
       );
       final back = LeaveNote.fromMap(note.toMap());
       expect(back, isNotNull);
       expect(back!.text, 'Toyum var o gün');
-      expect(back.voiceUrl, 'https://example/voice');
+      expect(back.hasVoice, isTrue);
       expect(back.voiceWaveform, [3, 50, 100]);
     });
 
     test('только голос — без ключа текста; только текст — без ключей голоса',
         () {
       expect(
-        const LeaveNote(voiceUrl: 'u', voiceWaveform: [1]).toMap().keys.toSet(),
-        {'voiceUrl', 'voiceWaveform'},
+        const LeaveNote(hasVoice: true, voiceWaveform: [1]).toMap().keys.toSet(),
+        {'hasVoice', 'voiceWaveform'},
       );
       expect(const LeaveNote(text: 'söz').toMap().keys.toSet(), {'text'});
     });
@@ -68,7 +68,51 @@ void main() {
 
     test('чужой тип внутри причины читается как отсутствие, а не падение', () {
       expect(LeaveNote.fromMap({'text': 42, 'voiceUrl': 7}), isNull);
+      expect(LeaveNote.fromMap({'text': 42, 'hasVoice': 'да'}), isNull);
       expect(LeaveNote.fromMap('строка'), isNull);
+    });
+
+    // ПЕРЕХОДНЫЙ ПЕРИОД — N236, шаг 2 (16.09). В проде СЕМЬ причин лежат со
+    // старым ключом `voiceUrl` (замер 16.09), и читаться они обязаны.
+    test('СТАРАЯ форма с voiceUrl читается как «голос есть»', () {
+      final old = LeaveNote.fromMap({
+        'voiceUrl': 'https://firebasestorage.googleapis.com/v0/b/x?token=y',
+        'voiceWaveform': [3, 50],
+      });
+      expect(old, isNotNull);
+      expect(old!.hasVoice, isTrue, reason: 'семь причин в проде перестали бы '
+          'показываться: знак «?» у них исчез бы вовсе');
+      expect(old.voiceWaveform, [3, 50]);
+    });
+
+    test('ПУСТОЙ voiceUrl голосом не считается', () {
+      expect(LeaveNote.fromMap({'voiceUrl': ''}), isNull);
+    });
+
+    // ПРИЧИНА С ОБОИМИ КЛЮЧАМИ не должна случиться — наш клиент пишет только
+    // новый, — но правило прода их не запрещает, и ответ дан заранее: признак
+    // берётся ИЛИ. Противоречия быть не может, оба ключа утверждают наличие.
+    test('ОБА ключа разом — тоже «голос есть», разойтись им нечем', () {
+      final both = LeaveNote.fromMap({
+        'hasVoice': true,
+        'voiceUrl': 'https://example/v',
+      });
+      expect(both, isNotNull);
+      expect(both!.hasVoice, isTrue);
+    });
+
+    // ПЕРЕЗАПИСЬ СТАРОЙ ФОРМЫ НОВОЙ — бесплатная миграция, и она же то, чего
+    // боялись в N237: правка состава пересобирает причину через `toMap()`.
+    test('старая форма, прочитанная и записанная обратно, теряет ссылку и '
+        'сохраняет голос', () {
+      final back = LeaveNote.fromMap({
+        'text': 'söz',
+        'voiceUrl': 'https://example/v',
+        'voiceWaveform': [1, 2],
+      })!.toMap();
+      expect(back.keys.toSet(), {'text', 'hasVoice', 'voiceWaveform'});
+      expect(back['hasVoice'], isTrue);
+      expect(back.containsKey('voiceUrl'), isFalse);
     });
   });
 
@@ -177,7 +221,7 @@ void main() {
       final n = e.leaveNoteFor(_leaver);
       expect(n, isNotNull);
       expect(n!.text, 'Toyum var');
-      expect(n.voiceUrl, 'https://example/v');
+      expect(n.hasVoice, isTrue);
       expect(n.voiceWaveform, [10, 20]);
       expect(e.leaveNoteFor(_other), isNull);
     });
@@ -207,6 +251,34 @@ void main() {
         _other: {'text': 'qalıram'},
       });
       expect(leaveNotesForParticipants(const [_other], null), isNull);
+    });
+
+    // ЭТО ТА САМАЯ ДОРОГА, КОТОРОЙ БОЯЛИСЬ В N237 (16.09).
+    //
+    // Правка состава пересобирает КАЖДУЮ уцелевшую причину через `toMap()`, а
+    // не переносит её как есть. Значит именно здесь причина может молча
+    // исчезнуть: прочитал её `fromMap`, не понявший формы, — и `toMap()` не
+    // записал ничего. Два вердикта ниже стерегут обе формы на этой дороге.
+    test('правка состава НЕ теряет голос новой формы (N237)', () {
+      final kept = leaveNotesForParticipants(
+        const [_other],
+        {_other: const LeaveNote(hasVoice: true, voiceWaveform: [4, 5])},
+      );
+      expect(kept, {
+        _other: {'hasVoice': true, 'voiceWaveform': [4, 5]},
+      });
+    });
+
+    test('правка состава переводит СТАРУЮ форму в новую, а не теряет её', () {
+      final previous = leaveNotesFromFirestore({
+        _other: {'voiceUrl': 'https://example/v', 'voiceWaveform': [7]},
+      });
+      final kept = leaveNotesForParticipants(const [_other], previous);
+      expect(kept, {
+        _other: {'hasVoice': true, 'voiceWaveform': [7]},
+      },
+          reason: 'семь старых причин в проде пережили бы правку состава '
+              'только если обе формы читаются одним признаком');
     });
   });
 }

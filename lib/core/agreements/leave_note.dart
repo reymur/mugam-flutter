@@ -25,14 +25,31 @@ const String kLeaveNotesField = 'leaveNotes';
 class LeaveNote {
   const LeaveNote({
     this.text = '',
-    this.voiceUrl,
+    this.hasVoice = false,
     this.voiceWaveform = const [],
   });
 
   final String text;
 
-  /// Ссылка на запись в хранилище, `null` — голоса нет.
-  final String? voiceUrl;
+  /// ЕСТЬ ЛИ ГОЛОС — признак, а не дорога к нему (N236, шаг 2, 16.09).
+  ///
+  /// **Здесь стояло `String? voiceUrl` — ссылка, выданная
+  /// `getDownloadURL()`.** В такой ссылке лежит `firebaseStorageDownloadTokens`,
+  /// и по ней файл отдаётся **кому угодно и без входа** (замер 15.09:
+  /// анонимный запрос — 200, тот же путь без `token=` — 403). Показ ссылку с
+  /// 15.09 не читал уже ничем (N232, шаг 2), но клиент продолжал её чеканить
+  /// при каждой новой причине: отзыв токенов убирал прошлое, а источник
+  /// выдачи оставался.
+  ///
+  /// **Дорогу знать незачем: адрес в хранилище выводится из `eventId` и
+  /// `uid`** (`leaveNoteVoicePath`), то есть из того, что показу и так
+  /// известно. Поэтому поле отвечает ровно на один вопрос и отвечает
+  /// буквально.
+  ///
+  /// **Имя взято от того, как вещь зовётся в МОДЕЛИ, а не в базе (I45):**
+  /// в базе рядом ещё годы будет лежать ключ `voiceUrl` у старых записей, но
+  /// в коде «есть ли голос» — это `hasVoice`, и читается оно каждый день.
+  final bool hasVoice;
 
   /// Волна записи для показа. Без голоса смысла не имеет и не пишется.
   final List<int> voiceWaveform;
@@ -41,13 +58,19 @@ class LeaveNote {
   ///
   /// Пробелы словом не считаются: поле, в котором человек нажал пробел и
   /// передумал, причиной не является.
-  bool get isEmpty => text.trim().isEmpty && voiceUrl == null;
+  bool get isEmpty => text.trim().isEmpty && !hasVoice;
 
+  /// **`voiceUrl` НЕ ПИШЕТСЯ БОЛЬШЕ НИКОГДА, и это половина починки N236.**
+  /// Вторая половина — в `uploadLeaveNoteVoice`, где снят `getDownloadURL()`:
+  /// не пиши мы ссылку, но чекань её — токен всё равно выдавался бы.
+  ///
+  /// Правила прода пускают обе формы (набор `af22ba3c…`, выложен 16.09), и
+  /// это переходный период: старые сборки читают `voiceUrl`. Сузятся правила
+  /// шагом 3 — тогда ссылку не сможет вернуть уже ничья рука.
   Map<String, dynamic> toMap() => {
         if (text.trim().isNotEmpty) 'text': text.trim(),
-        if (voiceUrl != null) 'voiceUrl': voiceUrl,
-        if (voiceUrl != null && voiceWaveform.isNotEmpty)
-          'voiceWaveform': voiceWaveform,
+        if (hasVoice) 'hasVoice': true,
+        if (hasVoice && voiceWaveform.isNotEmpty) 'voiceWaveform': voiceWaveform,
       };
 
   /// Разбор ОДНОЙ причины. `null` — причины нет либо она пустая.
@@ -57,6 +80,17 @@ class LeaveNote {
   /// `fromFirestore` зовётся на каждый документ каждого потока. Чужой тип
   /// читается как отсутствие, и это законно ровно потому, что решается «что
   /// показать» (I47).
+  /// **ОБЕ ФОРМЫ ЧИТАЮТСЯ И СХЛОПЫВАЮТСЯ В ОДНО УТВЕРЖДЕНИЕ** (N236, шаг 2).
+  /// Новая — ключ `hasVoice`; старая — непустая строка в `voiceUrl`, и таких
+  /// в проде **семь причин** (замер 16.09). Обе означают ровно «голос есть»,
+  /// поэтому и превращаются в одно поле, а не в два.
+  ///
+  /// **ПРО ПРИЧИНУ С ОБОИМИ КЛЮЧАМИ — её не должно быть, но правило их не
+  /// запрещает, и ответ здесь дан заранее:** признак берётся ИЛИ, то есть
+  /// любой из двух ключей означает «да». **Противоречия между ними не
+  /// возникает по построению:** оба утверждают наличие и ни один не может
+  /// утверждать отсутствие — `hasVoice: false` правила отклоняют, а пустой
+  /// `voiceUrl` читается как отсутствие ключа. Разойтись нечему.
   static LeaveNote? fromMap(Object? raw) {
     if (raw is! Map) return null;
     final text = raw['text'];
@@ -64,7 +98,7 @@ class LeaveNote {
     final wave = raw['voiceWaveform'];
     final note = LeaveNote(
       text: text is String ? text : '',
-      voiceUrl: url is String && url.isNotEmpty ? url : null,
+      hasVoice: raw['hasVoice'] == true || (url is String && url.isNotEmpty),
       voiceWaveform: wave is List
           ? wave.whereType<num>().map((n) => n.toInt()).toList(growable: false)
           : const [],

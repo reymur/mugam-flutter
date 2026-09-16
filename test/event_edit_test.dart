@@ -254,12 +254,12 @@ void main() {
         previousParticipants: const ['a', 'b'],
         previousLeaveNotes: const {
           'a': LeaveNote(text: 'getdim'),
-          'b': LeaveNote(voiceUrl: 'https://example/v', voiceWaveform: [5]),
+          'b': LeaveNote(hasVoice: true, voiceWaveform: [5]),
         },
       );
       expect(data['leaveNotes'], {
         'b': {
-          'voiceUrl': 'https://example/v',
+          'hasVoice': true,
           'voiceWaveform': [5],
         },
       });
