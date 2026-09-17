@@ -288,4 +288,68 @@ describe("17.09: причина выхода — свой документ, чи
     const db = env.authenticatedContext(OTHER).firestore();
     await assertFails(deleteDoc(doc(db, notePath(OTHER))));
   });
+
+  // ------------------------------------------------------------------
+  // ВЫХОД ИЗ ОЖИДАНИЯ — предусловие к снятию «Bacarmıram» (17.09)
+  // ------------------------------------------------------------------
+  // ЗАЧЕМ ОТДЕЛЬНЫЙ ВЕРДИКТ, ЕСЛИ ВЫХОД УЖЕ ПРОВЕРЕН ВЫШЕ. Тот проверяет
+  // выход из `going`: посев кладёт `LEAVER: "going"`. Владелец снимает
+  // «Bacarmıram» и оставляет один способ отказаться — «Gələ bilmirəm», и
+  // нажимать его будет человек, которого ТОЛЬКО ЧТО ПОЗВАЛИ, то есть с
+  // ответом `waiting`. Это другой вход, и «там же правило» — рассуждение, а
+  // не замер.
+  //
+  // ПРОВЕРЯЕТСЯ ДО СНЯТИЯ НАРОЧНО (требование владельца): откажи правила —
+  // и работа пойдёт иначе, а узнать это надо раньше, чем у человека не
+  // останется ни одной кнопки отказа.
+  describe("выход с причиной ИЗ ОЖИДАНИЯ", () => {
+    async function seedWaiting() {
+      await env.withSecurityRulesDisabled(async (context) => {
+        await updateDoc(doc(context.firestore(), eventPath), {
+          [`answers.${LEAVER}`]: "waiting",
+        });
+      });
+    }
+
+    it("позванный, ещё не ответивший, выходит с причиной одной пачкой", async () => {
+      await seedWaiting();
+      const db = env.authenticatedContext(LEAVER).firestore();
+      const batch = writeBatch(db);
+      batch.update(doc(db, eventPath), { [`answers.${LEAVER}`]: "left" });
+      batch.set(doc(db, notePath(LEAVER)), { text: "Başqa iş çıxdı" });
+      await assertSucceeds(batch.commit());
+    });
+
+    it("он же выходит с причиной ГОЛОСОМ", async () => {
+      await seedWaiting();
+      const db = env.authenticatedContext(LEAVER).firestore();
+      const batch = writeBatch(db);
+      batch.update(doc(db, eventPath), { [`answers.${LEAVER}`]: "left" });
+      batch.set(doc(db, notePath(LEAVER)), {
+        hasVoice: true,
+        voiceWaveform: [1, 2, 3],
+      });
+      await assertSucceeds(batch.commit());
+    });
+
+    it("он же выходит БЕЗ причины", async () => {
+      // Причина необязательна — окно её предлагает, а не требует.
+      await seedWaiting();
+      const db = env.authenticatedContext(LEAVER).firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, eventPath), { [`answers.${LEAVER}`]: "left" }),
+      );
+    });
+
+    it("ЗАПРЕТ: из ожидания тоже нельзя оставить причину, НЕ выходя", async () => {
+      // Пара к трём разрешениям выше. Без неё «из ожидания можно» не
+      // отличить от «из ожидания можно всё».
+      await seedWaiting();
+      const db = env.authenticatedContext(LEAVER).firestore();
+      const batch = writeBatch(db);
+      batch.update(doc(db, eventPath), { [`answers.${LEAVER}`]: "going" });
+      batch.set(doc(db, notePath(LEAVER)), { text: "передумал" });
+      await assertFails(batch.commit());
+    });
+  });
 });

@@ -230,10 +230,10 @@ void main() {
         notes: '',
         musicians: const ['a', 'b', 'c'],
         actorUid: _actor,
-        previousAnswers: const {'a': 'cant', 'b': 'going'},
+        previousAnswers: const {'a': 'left', 'b': 'going'},
         previousParticipants: null,
       );
-      expect(data['answers'], {'a': 'cant', 'b': 'going', 'c': 'waiting'});
+      expect(data['answers'], {'a': 'left', 'b': 'going', 'c': 'waiting'});
     });
 
     test('крестик удаляет документ причины удалённого, оставшегося не трогает',

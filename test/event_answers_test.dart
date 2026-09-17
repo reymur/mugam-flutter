@@ -1,6 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/agreements/event_answers.dart';
 import 'package:mugam_flutter/firebase/models.dart';
+
+import 'support/source_text.dart';
 
 // ОТВЕТ УЧАСТНИКА — шаг 1 работы «договоры и мероприятия — одна сущность»
 // (`docs/plan.md`).
@@ -47,10 +51,10 @@ void main() {
       // Ответ принадлежит человеку, а не документу.
       final out = answersForParticipants(
         const ['a', 'b', 'c'],
-        previous: const {'a': 'cant', 'b': 'going'},
+        previous: const {'a': 'left', 'b': 'going'},
         previousParticipants: null,
       );
-      expect(out, {'a': 'cant', 'b': 'going', 'c': 'waiting'});
+      expect(out, {'a': 'left', 'b': 'going', 'c': 'waiting'});
     });
 
     test('ШАГ 4: незнакомый прежний ответ НЕ наследуется', () {
@@ -69,11 +73,11 @@ void main() {
       // сторону завышенного покрытия, и вот его причина.
       final out = answersForParticipants(
         const ['a', 'b'],
-        previous: const {'a': 'нечто', 'b': 'cant'},
+        previous: const {'a': 'нечто', 'b': 'left'},
         previousParticipants: null,
       );
       // Знакомый ответ рядом с мусором — так проверка различает случаи сама.
-      expect(out, {'a': 'waiting', 'b': 'cant'});
+      expect(out, {'a': 'waiting', 'b': 'left'});
     });
 
     test('N112: владелец в составе получает «идёт», а не «ждём»', () {
@@ -95,11 +99,11 @@ void main() {
       // дефект, от которого перенос и заводился.
       final out = answersForParticipants(
         const ['owner', 'guest'],
-        previous: const {'owner': 'cant'},
+        previous: const {'owner': 'left'},
         ownerUid: 'owner',
         previousParticipants: null,
       );
-      expect(out, {'owner': 'cant', 'guest': 'waiting'});
+      expect(out, {'owner': 'left', 'guest': 'waiting'});
     });
 
     test('N112: владельца не назвали — прежнее поведение, ждут все', () {
@@ -130,10 +134,10 @@ void main() {
       // «всем waiting» тоже прошло бы проверку выше.
       final out = answersForParticipants(
         const ['guest', 'other'],
-        previous: const {'guest': 'going', 'other': 'cant'},
+        previous: const {'guest': 'going', 'other': 'left'},
         previousParticipants: const ['guest', 'other'],
       );
-      expect(out, {'guest': 'going', 'other': 'cant'});
+      expect(out, {'guest': 'going', 'other': 'left'});
     });
 
     // N173 — ДВА НЕЗНАНИЯ ПОД ОДНИМ ОТВЕТОМ, И ЛЕЧЕНИЯ У НИХ ПРОТИВОПОЛОЖНЫЕ.
@@ -378,9 +382,9 @@ void main() {
     test('ответ из карты доходит как есть', () {
       final e = make(
         musicians: const ['a'],
-        answers: const {'a': 'cant'},
+        answers: const {'a': 'left'},
       );
-      expect(e.answerFor('a'), 'cant');
+      expect(e.answerFor('a'), 'left');
     });
 
     test('не в составе — null, даже если ключ в карте есть', () {
@@ -426,9 +430,9 @@ void main() {
         answerOf(
           uid: 'a',
           participantUids: const ['a'],
-          answers: const {'a': 'cant'},
+          answers: const {'a': 'left'},
         ),
-        'cant',
+        'left',
       );
     });
 
@@ -536,10 +540,10 @@ void main() {
           answerOf(
             uid: 'a',
             participantUids: const ['a', 'b'],
-            answers: const {'a': 'cant'},
+            answers: const {'a': 'left'},
             answersWrittenByOwner: mark,
           ),
-          'cant',
+          'left',
           reason: 'отметка $mark не должна менять прочтение своего ключа',
         );
       }
@@ -553,7 +557,7 @@ void main() {
         answerOf(
           uid: 'owner',
           participantUids: const ['owner', 'guest'],
-          answers: const {'guest': 'cant'},
+          answers: const {'guest': 'left'},
         ),
         'going',
       );
@@ -615,7 +619,7 @@ void main() {
   // Проверка утверждает НАЛИЧИЕ («такой ответ называется так»), значит она
   // сама себе канарейка и соседки не требует (I31): ослепни она — ярлыки
   // станут пустыми, и она покраснеет в тот же заход.
-  group('шаг 4 · показ состава различает ПЯТЬ ответов', () {
+  group('шаг 4 · показ состава различает ЧЕТЫРЕ ответа', () {
     // ЗАГОЛОВОК ГОВОРИЛ «четыре», А СОСТОЯНИЙ ПЯТЬ — поправлено 29.08 при
     // шаге 2 работы N121 (`AUDIT_TODO.md`). Это I39 в чистом виде: шапка
     // утверждает про весь набор, а проверялись четыре из пяти, и пятое —
@@ -623,11 +627,13 @@ void main() {
     // (`grep -c "kAnswerLeft" test/event_answers_test.dart` давало 0).
     // Пятое при этом не «новое»: константа заведена 12.08, ярлык написан
     // тогда же. Не хватало не кода, а доказательства.
-    test('у каждого ответа своё слово, и все пять РАЗНЫЕ', () {
+    test('у каждого ответа своё слово, и все ЧЕТЫРЕ разные', () {
+      // БЫЛО ПЯТЬ, СТАЛО ЧЕТЫРЕ — 17.09, вместе со снятием `cant`. Число в
+      // заголовке поправлено вместе с составом, а не оставлено как было
+      // (I39: шапка утверждает про весь список).
       final labels = <String>[
         participantAnswerLabel(kAnswerGoing),
         participantAnswerLabel(kAnswerWaiting),
-        participantAnswerLabel(kAnswerCant),
         participantAnswerLabel(kAnswerLeft),
         participantAnswerLabel(kAnswerNotAsked),
       ];
@@ -635,7 +641,7 @@ void main() {
       // Совпади любые два — экран слил бы два разных состояния в одно, и
       // счёт «их пять» этого бы не заметил.
       expect(labels.where((s) => s.isEmpty), isEmpty);
-      expect(labels.toSet().length, 5);
+      expect(labels.toSet().length, 4);
     });
 
     test('вышедший назван «İşdən çıxdı» — та самая пометка шага 2', () {
@@ -648,14 +654,13 @@ void main() {
       expect(participantAnswerLabel(kAnswerLeft), 'İşdən çıxdı');
     });
 
-    test('«вышел» и «не может» названы РАЗНО — это не один отказ', () {
-      // `cant` — «я не приду», человек в вечере, изменения ему идут.
-      // `left` — «меня в этом вечере больше нет», ему не идёт ничего
-      // (`recipientsOf`, шаг 1). Слить их на экране значило бы показать
-      // владельцу отказ там, где человек ушёл насовсем.
-      expect(participantAnswerLabel(kAnswerLeft),
-          isNot(participantAnswerLabel(kAnswerCant)));
-    });
+    // ЗДЕСЬ БЫЛ ВЕРДИКТ «„вышел“ и „не может“ названы РАЗНО — это не один
+    // отказ». Снят 17.09 вместе с ответом `cant`, и снят по той причине, что
+    // владелец назвал их ОДНИМ отказом: «Bacarmıram» и «Gələ bilmirəm» —
+    // дубликат одного действия. Различать стало нечего.
+    //
+    // Что вердикт охранял и куда это делось: он не давал слить два разных
+    // состояния на экране. Состояние осталось одно, и слить его не с чем.
 
     test('«не спрошен» и «ждём» названы РАЗНО — это I47 на экране', () {
       // Показать неспрошенного как ждущего значит соврать владельцу, что он
@@ -717,6 +722,118 @@ void main() {
       // который отдаёт один ярлык всем подряд.
       expect(participantAnswerLabel(afterLeave.answerFor('owner')),
           isNot('İşdən çıxdı'));
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // ОТВЕТА `cant` БОЛЬШЕ НЕ СУЩЕСТВУЕТ — решение владельца 17.09
+  // -------------------------------------------------------------------------
+  // ДОВОД ВЛАДЕЛЬЦА, ДОСЛОВНО: «Bacarmıram» и «Gələ bilmirəm» — дубликат
+  // одного и того же действия. Остаётся один способ отказаться — с причиной.
+  // «Bacarmıram» заменяется на «Gələ bilmirəm» ВЕЗДЕ, где она была: на экране
+  // приглашения обе раскладки и в окне конфликта.
+  //
+  // ЧТО ЭТИМ ЗАКРЫВАЕТСЯ, КРОМЕ ЛИШНЕЙ КНОПКИ. Два способа сказать «нет»
+  // различались не для человека, а для приложения: `cant` оставлял в составе
+  // без причины, `left` выводил с причиной. Человек выбирал между ними,
+  // не зная разницы, и половина отказов приходила немой — владелец видел
+  // «bacarmır» и не знал почему.
+  //
+  // УТВЕРЖДЕНИЕ ОТСУТСТВИЯ, ЗНАЧИТ У КАЖДОГО ВЕРДИКТА СВОЯ КАНАРЕЙКА (I31).
+  // Ослепни разбор — и «`cant` не найден» прочтётся как порядок. Канарейка
+  // ищет ТЕМ ЖЕ способом заведомо живой `left`.
+  //
+  // ЧЕГО ЗДЕСЬ НЕТ И ПОЧЕМУ (I50): вердикта на `firestore.rules`. Слово
+  // `'cant'` там ещё стоит — в списке допустимых значений, — и снимать его
+  // можно только ОТДЕЛЬНОЙ ВЫКЛАДКОЙ, ПОСЛЕ того как обе трубки перестанут
+  // его писать. Выложи раньше — и человек на старой сборке получит отказ по
+  // правам на кнопку, которая у него ещё есть. Тот же порядок уже оплачен на
+  // N121. Вердикт заведётся вместе с выкладкой.
+  group('ответа `cant` больше не существует', () {
+    test('КАНАРЕЙКА: разбор видит живой ответ `left`', () {
+      // Общая канарейка ко всей группе: три вердикта ниже утверждают
+      // ОТСУТСТВИЕ и зазеленели бы разом, ослепни чтение исходников.
+      expect(kEventAnswers, contains(kAnswerLeft));
+      expect(participantAnswerLabel(kAnswerLeft), isNotEmpty);
+      expect(readCode('lib/core/agreements/event_answers.dart'), contains("'left'"));
+    });
+
+    test('СЛОВАРЯ ОТВЕТОВ ТРИ, а не четыре', () {
+      // Набор читают все писатели карты: клиент, сервер и перепись. Останься
+      // здесь `cant` — правка состава перенесёт его как знакомый ответ, и
+      // человек вернётся «не могущим» после того, как способ так ответить
+      // сняли.
+      expect(
+        kEventAnswers,
+        {kAnswerGoing, kAnswerWaiting, kAnswerLeft},
+        reason: 'Набор ответов не три значения. Если вернулся `cant` — вместе '
+            'с ним вернулся второй способ сказать «нет», и он снова немой.',
+      );
+    });
+
+    test('у `cant` НЕТ СЛОВА на экране', () {
+      // Слово — последнее, что держит значение живым: пока оно есть, строка
+      // состава покажет «bacarmır» у семи старых записей прода как законное
+      // состояние, а не как след снятого хода.
+      expect(
+        participantAnswerLabel('cant'),
+        '',
+        reason: 'Незнакомому ответу `cant` снова подобрано слово. Значит он '
+            'показывается как живое состояние.',
+      );
+    });
+
+    test('ЛИТЕРАЛА `cant` НЕТ НИ В ОДНОМ ФАЙЛЕ `lib`', () {
+      // Считаются ЛИТЕРАЛЫ в кавычках, а не слово: про снятый ответ можно и
+      // нужно писать в комментариях — иначе следующий заведёт его заново, не
+      // найдя ни строчки о том, что его снимали (I12).
+      final offenders = <String>[];
+      for (final file in Directory('lib')
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.dart'))) {
+        final code = readCode(file.path);
+        if (code.contains("'cant'") || code.contains('"cant"')) {
+          offenders.add(file.path);
+        }
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason: 'Литерал `cant` вернулся в код: ${offenders.join(", ")}. '
+            'Способ ответить «не могу» без причины снят целиком.',
+      );
+    });
+
+    test('КНОПКИ «Bacarmıram» НЕТ НИ НА ОДНОМ ЭКРАНЕ', () {
+      // Три места, где она жила: экран приглашения (две раскладки) и окно
+      // конфликта. Заменена на «Gələ bilmirəm» — ту же кнопку с причиной.
+      final offenders = <String>[];
+      for (final file in Directory('lib')
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.dart'))) {
+        final code = readCode(file.path);
+        if (code.contains('Bacarmıram')) offenders.add(file.path);
+      }
+      expect(
+        offenders,
+        isEmpty,
+        reason: 'Кнопка «Bacarmıram» вернулась: ${offenders.join(", ")}. '
+            'Отказ идёт одной дорогой — «Gələ bilmirəm», с причиной.',
+      );
+      // КАНАРЕЙКА К ЭТОМУ ОТРИЦАНИЮ, и она же — половина решения владельца:
+      // кнопка не исчезла, а ПЕРЕИМЕНОВАНА. Ноль по обеим означал бы, что
+      // отказаться стало нечем.
+      final withExit = Directory('lib')
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.dart'))
+          .where((f) => readCode(f.path).contains('Gələ bilmirəm'))
+          .length;
+      expect(withExit, greaterThanOrEqualTo(2),
+          reason: 'канарейка: «Gələ bilmirəm» найдена меньше чем в двух '
+              'файлах — значит отказ снят вместе с дубликатом, а не заменён');
     });
   });
 }

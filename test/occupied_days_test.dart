@@ -91,7 +91,8 @@ void main() {
             event(
               'e1',
               musicians: const [other, me],
-              answers: const {other: kAnswerGoing, me: kAnswerCant},
+              // Был `cant`; ответ снят 17.09, и день не занимает теперь выход.
+              answers: const {other: kAnswerGoing, me: kAnswerLeft},
             ),
           ],
         ),

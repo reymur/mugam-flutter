@@ -11,6 +11,7 @@ import {
   getDoc,
   setDoc,
   updateDoc,
+  deleteDoc,
   deleteField,
   serverTimestamp,
 } from "firebase/firestore";
@@ -412,6 +413,89 @@ describe("шаг 4: участник отвечает за себя, и толь
           musicians: [OWNER, STRANGER, GUEST],
           [`answers.${GUEST}`]: "waiting",
         }),
+      );
+    });
+  });
+
+  // ------------------------------------------------------------------
+  // ЗОВ ВЫШЕДШЕГО — решение владельца 17.09
+  // ------------------------------------------------------------------
+  // ПОВОД, СЛОВАМИ ВЛАДЕЛЬЦА: Рафаэль видит вышедшего и жмёт «позвать» — это
+  // естественное действие. Приложение молчит, ошибки нет, объяснения нет. Он
+  // думает, что позвал, а человек ничего не получил, и узнают об этом на
+  // свадьбе. Что надо сперва удалить, а потом звать, нигде не сказано и само
+  // по себе странно: зачем удалять того, кого зовёшь.
+  //
+  // ЧТО ЭТИ ВЕРДИКТЫ ПРОВЕРЯЮТ И ЧЕГО НЕ ПРОВЕРЯЮТ. Они про ПРАВА, и только:
+  // пропускают ли выложенные правила переход `left → waiting`, сделанный
+  // владельцем, и уносит ли он причину той же рукой. Они НЕ говорят, что зов
+  // это делает — кода ещё нет. Прогнаны ДО кода нарочно: если правила
+  // откажут, работа пойдёт иначе, и узнать это надо раньше, а не после.
+  //
+  // НАБОР ПРАВИЛ — ТОТ ЖЕ ТЕКСТ, ЧТО В ПРОДЕ: `git hash-object firestore.rules`
+  // → `7c8cbbaf…`, совпадает с выложенным (замер 17.09, живой набор
+  // `759f4a64…` побайтно равен файлу).
+  describe("зов вышедшего: владелец возвращает его в ожидание", () => {
+    it("ВЛАДЕЛЕЦ ПЕРЕВОДИТ left → waiting", async () => {
+      // ГЛАВНЫЙ ВЕРДИКТ. Ветвь владельца в `allow update` перечисления ключей
+      // не имеет; запрещены ей только имена отмены и повод состояния. Значит
+      // перезапись карты ответов ему открыта — та же дорога, какой идёт
+      // обычная правка состава.
+      await seed(env, { [GUEST]: "left", [OTHER]: "going" });
+      const db = env.authenticatedContext(OWNER).firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, `personalEvents/${EVENT}`), {
+          [`answers.${GUEST}`]: "waiting",
+          answersWrittenByOwner: true,
+          lastActionBy: OWNER,
+          lastActionType: "edited",
+          lastActionAt: serverTimestamp(),
+        }),
+      );
+    });
+
+    it("ВЛАДЕЛЕЦ УНОСИТ ПРИЧИНУ ВЫХОДА того, кого зовёт заново", async () => {
+      // Устаревшая причина под заново позванным — ложь на экране: человек
+      // сказал «не могу» про прошлый раз, а висит она под новым вопросом.
+      // Правило `allow delete` в подколлекции даёт это ровно владельцу вечера.
+      await seed(env, { [GUEST]: "left" });
+      await env.withSecurityRulesDisabled(async (context) => {
+        await setDoc(
+          doc(context.firestore(), `personalEvents/${EVENT}/leaveNotes/${GUEST}`),
+          { text: "не могу в этот раз", hasVoice: true },
+        );
+      });
+      const db = env.authenticatedContext(OWNER).firestore();
+      await assertSucceeds(
+        deleteDoc(doc(db, `personalEvents/${EVENT}/leaveNotes/${GUEST}`)),
+      );
+    });
+
+    it("ЗАПРЕТ: участник не возвращает в ожидание ЧУЖОЙ выход", async () => {
+      // Пара к первому вердикту. Без неё «владельцу можно» не отличить от
+      // «можно всем», и вердикт выше не значил бы ничего.
+      await seed(env, { [GUEST]: "left", [OTHER]: "going" });
+      const db = env.authenticatedContext(OTHER).firestore();
+      await assertFails(
+        updateDoc(doc(db, `personalEvents/${EVENT}`), {
+          [`answers.${GUEST}`]: "waiting",
+        }),
+      );
+    });
+
+    it("ЗАПРЕТ: участник не уносит ЧУЖУЮ причину выхода", async () => {
+      // Пара ко второму. Причину стирает владелец — крестиком либо зовом;
+      // сосед по составу к ней не подходит вовсе.
+      await seed(env, { [GUEST]: "left", [OTHER]: "going" });
+      await env.withSecurityRulesDisabled(async (context) => {
+        await setDoc(
+          doc(context.firestore(), `personalEvents/${EVENT}/leaveNotes/${GUEST}`),
+          { text: "не могу", hasVoice: true },
+        );
+      });
+      const db = env.authenticatedContext(OTHER).firestore();
+      await assertFails(
+        deleteDoc(doc(db, `personalEvents/${EVENT}/leaveNotes/${GUEST}`)),
       );
     });
   });

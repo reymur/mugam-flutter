@@ -51,7 +51,12 @@ void main() {
       expect(dayRoleOf(e, 'guest'), isNot(DayRole.occupied));
     });
 
-    test('ОТКАЗАЛСЯ — свой ответ, а не «пусто»', () {
+    // ЗДЕСЬ БЫЛ ВЕРДИКТ «ОТКАЗАЛСЯ — свой ответ, а не пусто» (N126, 12.08):
+    // отказ давал роль `declined` — день свободен, но след остаётся. Снят
+    // 17.09 вместе с ответом `cant`: способ отказаться, не выходя, убран
+    // решением владельца. Состояние дня у отказавшегося теперь стережёт
+    // соседний вердикт — про `left`, и там след НЕ остаётся (решение 29.08).
+    test('~~ОТКАЗАЛСЯ — свой ответ, а не «пусто»~~ — снят 17.09', () {
       // Вторая половина N126, и она хуже первой: отказ выглядел согласием.
       // Человек уже совершил поступок, и приложение показывало обратное.
       //
@@ -61,13 +66,12 @@ void main() {
       // вопрос, и я его разобрал».
       final e = make(
         musicians: const ['owner', 'guest'],
-        answers: const {'owner': kAnswerGoing, 'guest': kAnswerCant},
+        answers: const {'owner': kAnswerGoing, 'guest': kAnswerLeft},
       );
-      expect(dayRoleOf(e, 'guest'), DayRole.declined);
+      // ЧТО ОТ ВЕРДИКТА ОСТАЛОСЬ ВЕРНЫМ: отказ день НЕ занимает. Это держится
+      // и для выхода, и проверяется здесь тем же вызовом.
       expect(dayRoleOf(e, 'guest'), isNot(DayRole.occupied),
           reason: 'отказ день не занимает');
-      expect(dayRoleOf(e, 'guest'), isNot(DayRole.free),
-          reason: 'отказ отличим от пустого дня');
     });
 
     test('вышел — СВОЯ роль, а не «свободен»', () {
@@ -85,8 +89,12 @@ void main() {
           reason: 'вышедший отличим от того, кого не звали');
       expect(dayRoleOf(e, 'guest'), isNot(DayRole.occupied),
           reason: 'выход освобождает день — ради этого ход и есть');
-      expect(dayRoleOf(e, 'guest'), isNot(DayRole.declined),
-          reason: 'вышедший ничего не отклонял: приглашение он принял');
+      // ЗДЕСЬ СТОЯЛО `isNot(DayRole.declined)` — «вышедший ничего не
+      // отклонял: приглашение он принял». Роль `declined` снята 17.09 вместе
+      // с ответом `cant`, и отличать выход стало не от чего: отказ и выход —
+      // одно.
+      expect(dayRoleOf(e, 'guest'), isNot(DayRole.invited),
+          reason: 'вышедший — не приглашённый: вопрос ему уже не задают');
     });
   });
 
@@ -103,7 +111,9 @@ void main() {
         answers: const {
           'owner': kAnswerGoing,
           'guest': kAnswerLeft,
-          'other': kAnswerCant,
+          // Был `cant`; после снятия ответа взят `going` — этому вердикту
+          // важно лишь, что третий человек НЕ вышел.
+          'other': kAnswerGoing,
         },
       );
       expect(showsInCalendarOf(e, 'guest'), isFalse,
@@ -122,6 +132,10 @@ void main() {
               'пустой экран прочитался бы как хорошая новость (I14)');
     });
 
+    // ВЕРДИКТ ПЕРЕПИСАН 17.09: он сравнивал отказавшегося (`cant`) с вышедшим,
+    // а отказа без выхода больше нет. Вопрос он проверяет тот же — что
+    // «показывать ли» и «строкой или карточкой» решаются порознь, — только
+    // вторым берётся ждущий ответа.
     test('это ДРУГОЙ вопрос, чем «показать строкой или карточкой»', () {
       // Отказавшийся отвечает «показывать, и строкой»; вышедший — «не
       // показывать вовсе». Слейся эти два правила, отказавшийся потерял бы
@@ -132,7 +146,7 @@ void main() {
         answers: const {
           'owner': kAnswerGoing,
           'guest': kAnswerLeft,
-          'other': kAnswerCant,
+          'other': kAnswerWaiting,
         },
       );
       expect(showsAsInvitation(e, 'other'), isTrue);
@@ -149,13 +163,16 @@ void main() {
         answers: const {'owner': kAnswerGoing, 'guest': kAnswerLeft},
       );
       expect(hasHandledInvitationOn([e], 'guest', const {}), isFalse);
-      // Соседка: у отказавшегося след ЕСТЬ, тем же вызовом. Без неё «следа
-      // нет» подтвердилось бы и разбором, который следа не видит вовсе.
-      final otkaz = make(
+      // СОСЕДКА ПЕРЕПИСАНА 17.09. Была: «у отказавшегося след ЕСТЬ» — она
+      // держалась на ответе `cant`, которого больше нет. Её работа остаётся
+      // нужной: без неё «следа нет» подтвердилось бы и разбором, который
+      // следа не видит вовсе. Берётся единственный оставшийся случай следа —
+      // просмотренное приглашение без ответа.
+      final smotrel = make(
         musicians: const ['owner', 'guest'],
-        answers: const {'owner': kAnswerGoing, 'guest': kAnswerCant},
+        answers: const {'owner': kAnswerGoing, 'guest': kAnswerWaiting},
       );
-      expect(hasHandledInvitationOn([otkaz], 'guest', const {}), isTrue);
+      expect(hasHandledInvitationOn([smotrel], 'guest', {smotrel.id}), isTrue);
     });
   });
 
@@ -226,12 +243,17 @@ void main() {
       expect(showsAsInvitation(withAnswer(kAnswerWaiting), 'guest'), isTrue);
     });
 
-    test('ОТКАЗАЛСЯ — ВСЁ РАВНО строкой приглашения', () {
+    test('ВЫШЕДШИЙ строки приглашения НЕ видит (было: отказался — видит)', () {
       // Тот самый случай с трубки: строка «Rafael səni çağırır» пропадала
       // сразу после «Bacarmıram», и день показывался обычной карточкой
       // вечера — то есть человеку записывали чужую работу как свою, при том
       // что он от неё отказался.
-      expect(showsAsInvitation(withAnswer(kAnswerCant), 'guest'), isTrue);
+      // ЗДЕСЬ БЫЛ ВЕРДИКТ «ОТКАЗАЛСЯ — ВСЁ РАВНО строкой приглашения»: строка
+      // «Rafael səni çağırır» не должна была пропадать после «Bacarmıram»,
+      // чтобы человек мог передумать. Снят 17.09 вместе с ответом `cant`:
+      // отказ стал выходом, и вышедший строки приглашения не видит вовсе —
+      // он ушёл из дела, а не разобрал вопрос.
+      expect(showsAsInvitation(withAnswer(kAnswerLeft), 'guest'), isFalse);
     });
 
     test('СОГЛАСИЛСЯ — карточкой вечера, а не строкой', () {
@@ -286,7 +308,8 @@ void main() {
       // Ответить, не увидев, нельзя — значит отвеченное разобрано по самому
       // факту ответа, и ждать формальной отметки о просмотре незачем.
       final day = [
-        inv('a', kAnswerCant),
+        // Был `cant`; отвеченным теперь считается согласие либо выход.
+        inv('a', kAnswerLeft),
         inv('b', kAnswerGoing),
         inv('c', kAnswerWaiting),
       ];
@@ -335,12 +358,9 @@ void main() {
           'answersWrittenByOwner': true,
         });
 
-    test('отказ — след есть', () {
-      expect(
-        hasHandledInvitationOn([inv('a', kAnswerCant)], 'guest', const {}),
-        isTrue,
-      );
-    });
+    // ЗДЕСЬ БЫЛ ВЕРДИКТ «отказ — след есть». Снят 17.09 вместе с ответом
+    // `cant`: отказ стал выходом, а у вышедшего следа НЕ остаётся (решение
+    // 29.08, разбор у `DayRole.left`). Единственный случай следа — ниже.
 
     test('просмотрено, но не отвечено — след есть', () {
       expect(
@@ -379,27 +399,24 @@ void main() {
       // `DayRole.values.length` дешевле любого сторожа по тексту.
       final e = make(
         musicians: const [
-          'owner', 'going', 'waiting', 'cant', 'left', 'notasked',
+          'owner', 'going', 'waiting', 'left', 'notasked',
         ],
         answers: const {
           'owner': kAnswerGoing,
           'going': kAnswerGoing,
           'waiting': kAnswerWaiting,
-          'cant': kAnswerCant,
           'left': kAnswerLeft,
         },
       );
       final seen = {
         dayRoleOf(e, 'going'),
         dayRoleOf(e, 'waiting'),
-        dayRoleOf(e, 'cant'),
         dayRoleOf(e, 'left'),
         dayRoleOf(e, 'notasked'),
       };
       expect(seen, {
         DayRole.occupied,
         DayRole.invited,
-        DayRole.declined,
         DayRole.left,
         DayRole.free,
       });

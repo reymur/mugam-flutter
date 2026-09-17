@@ -152,7 +152,8 @@ void main() {
     });
 
     test('у не вышедшего и без причины знака нет', () {
-      for (final a in [kAnswerGoing, kAnswerWaiting, kAnswerCant, null]) {
+      // `kAnswerCant` снят 17.09 вместе с ответом.
+      for (final a in [kAnswerGoing, kAnswerWaiting, null]) {
         expect(
           offersLeaveNote(
             viewerUid: _owner,

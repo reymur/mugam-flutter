@@ -72,7 +72,10 @@ class AnswerConflictDialog extends StatelessWidget {
         TextButton(
           onPressed: () =>
               Navigator.pop(context, AnswerConflictChoice.cannotGo),
-          child: const Text('Bacarmıram', style: TextStyle(color: kMuted)),
+          // ОДНО СЛОВО НА ВЕСЬ ОТКАЗ (17.09). Здесь стояло «Bacarmıram» —
+          // второй способ сказать «нет», без причины. Он снят: отказ идёт
+          // одной дорогой, и называется она везде одинаково.
+          child: const Text('Gələ bilmirəm', style: TextStyle(color: kMuted)),
         ),
         // «Всё равно иду» — главный ответ окна, и он СОЗИДАТЕЛЬНЫЙ: человек
         // подтверждает то, ради чего сюда пришёл. В N39 главной кнопкой было

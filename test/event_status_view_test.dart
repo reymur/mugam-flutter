@@ -163,7 +163,8 @@ void main() {
   // 12.08, сервер шлёт «İştirakçı ayrıldı» — не хватало кнопки.
   group('выход участника из вечера (N106, работа 3)', () {
     test('позванному, который ответил, — предлагается', () {
-      for (final a in [kAnswerGoing, kAnswerWaiting, kAnswerCant]) {
+      // `kAnswerCant` из перечня снят 17.09 вместе с самим ответом.
+      for (final a in [kAnswerGoing, kAnswerWaiting]) {
         expect(
           offersEventExit(isOwner: false, myAnswer: a, status: kStatusAgreed),
           isTrue,
@@ -450,7 +451,7 @@ void main() {
       // Здесь стояло «у согласившегося остаётся только отказ» — снято
       // решением владельца: под вопрос ставит хозяин, и ответ приглашённого
       // этого вопроса не снимает.
-      for (final mine in [kAnswerGoing, kAnswerWaiting, kAnswerCant]) {
+      for (final mine in [kAnswerGoing, kAnswerWaiting]) {
         final e = doc({
           ...parent,
           'status': kStatusUnsettled,

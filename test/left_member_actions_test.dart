@@ -15,7 +15,7 @@ import 'package:mugam_flutter/core/agreements/left_member_actions.dart';
 //     один тест;
 //   • снять `viewerUid != memberUid` — упадёт «на самом себе не
 //     показывается», один тест;
-//   • заменить `kAnswerLeft` на `kAnswerCant` — упадут «вышедшему
+//   • заменить `kAnswerLeft` на `kAnswerWaiting` — упадут «вышедшему
 //     показывается» и «у остальных четырёх ответов», два теста;
 //   • выбросить второе действие из списка — упадут «действий ровно два» и
 //     «удаление названо своим последствием», два теста.
@@ -87,7 +87,7 @@ void main() {
       for (final answer in [
         kAnswerGoing,
         kAnswerWaiting,
-        kAnswerCant,
+        // `kAnswerCant` снят из перечня 17.09 вместе с самим ответом.
         kAnswerNotAsked,
         null,
       ]) {

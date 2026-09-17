@@ -189,11 +189,13 @@ void main() {
       );
     });
 
-    test('отказавшийся участник НЕ занят', () {
+    test('ВЫШЕДШИЙ участник НЕ занят (было: отказавшийся)', () {
+      // Ответ `cant` снят 17.09 — отказ стал выходом. Вердикт про то же:
+      // сказавший «нет» время не занимает, и плашка конфликта о нём молчит.
       final cant = _foreign('x', '2026-08-08T19:00:00',
           owner: _other,
           musicians: [_other, _me],
-          answers: {_other: kAnswerGoing, _me: kAnswerCant});
+          answers: {_other: kAnswerGoing, _me: kAnswerLeft});
       expect(conflictEventsOnDay(at, [cant], currentUid: _me), isEmpty);
     });
 
@@ -216,7 +218,7 @@ void main() {
       final startedByGuest = _foreign('x', '2026-08-08T19:00:00',
           owner: _other,
           musicians: [_other, _me],
-          answers: {_other: kAnswerCant},
+          answers: {_other: kAnswerLeft},
           writtenByOwner: false);
       expect(
         conflictEventsOnDay(at, [startedByGuest], currentUid: _me).single.id,
