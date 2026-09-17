@@ -14,6 +14,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions";
 import { defineSecret, defineBoolean } from "firebase-functions/params";
 import { runOrphanSweepAndRecord } from "./orphanSweep";
+import { removeLeaveNoteVoices } from "./leaveNoteCleanup";
 import { isWatchingChatDecision, isWatchingEventDecision } from "./presence";
 import {
   isDeadTokenError,
@@ -29,6 +30,7 @@ import {
 import {
   EventPush,
   EventSnapshot,
+  diffEvents,
   leftViaAnswers,
   planUpdatePushes,
   pushAdded,
@@ -2667,6 +2669,20 @@ export const onPersonalEventUpdated = onDocumentUpdated(
     if (!before || !after) return;
     const b = toEventSnapshot(before);
     const a = toEventSnapshot(after);
+    // ГОЛОС УБРАННОГО ИЗ СОСТАВА УХОДИТ ВМЕСТЕ С НИМ — N244, 17.09.
+    //
+    // СТОИТ ДО ВСЕХ РАННИХ ВЫХОДОВ НИЖЕ (I34): «уведомлять некого» — ответ на
+    // вопрос о письме, а не о том, что осталось от человека в вечере. Вышедший
+    // с `left`, убранный крестиком, письма не получает по устройству, и именно
+    // у него голос есть — после выхода ниже по функции мы бы его не догнали.
+    //
+    // Убранные — по составу, `diffEvents` считает их так же, как для писем.
+    // Бакет — явно (случай 16.09: `bucket()` без имени указывает мимо).
+    await removeLeaveNoteVoices(
+      getStorage().bucket("mugam-club.firebasestorage.app"),
+      event.params.eventId,
+      diffEvents(b, a).removed,
+    );
     const actor = a.lastActionBy ?? a.ownerUid;
     const actorName = await displayName(actor);
     // ИМЯ ВЫШЕДШЕГО — ОТ UID ПЕРЕХОДА, А НЕ ОТ `lastActionBy` (N121, шаг 1).
