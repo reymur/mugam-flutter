@@ -32,6 +32,14 @@ class AppTab {
   });
 }
 
+/// ЗНАЧОК ПЕРЕПИСКИ — ОДИН НА ВСЁ ПРИЛОЖЕНИЕ (17.09, решение владельца).
+///
+/// Серый пузырь с тремя точками — так вкладка «MESAJ» выглядит с первого дня.
+/// Дверь в переписку в другом месте обязана выглядеть так же: иначе человек
+/// видит второй знак и гадает, то же ли это действие. Здесь стояло: у голосовой
+/// причины на карточке вечера — `Icons.chat_bubble_outline` золотом, чужой.
+const String kChatEmoji = '💬';
+
 /// Порядок панели. Менять состав — здесь, и больше нигде.
 ///
 /// ШЕСТЬ ВКЛАДОК вместо десяти (решение владельца 07.08). Пять экранов —
@@ -45,7 +53,7 @@ const List<AppTab> kAppTabs = [
   AppTab(id: 'agreements', emoji: '📅', label: 'KALENDAR', path: '/agreements'),
   AppTab(id: 'home', emoji: '🏠', label: 'KLUB', path: '/home'),
   AppTab(id: 'search', emoji: '🔍', label: 'AXTAR', path: '/search'),
-  AppTab(id: 'chats', emoji: '💬', label: 'MESAJ', path: '/chats'),
+  AppTab(id: 'chats', emoji: kChatEmoji, label: 'MESAJ', path: '/chats'),
   AppTab(id: 'profile', emoji: '👤', label: 'PROFİL', path: '/profile'),
   AppTab(id: 'soon', emoji: '✨', label: 'TEZLİKLƏ', path: '/soon'),
 ];

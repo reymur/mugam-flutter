@@ -1086,7 +1086,10 @@ void main() {
       // Ищется МЕСТО ПОДСТАНОВКИ (`leaveNoteVoice!`), а не имя: голое имя
       // стоит в объявлении поля того же класса и было бы истинно даже со
       // снятой разметкой (сторож, довольный объявлением, — I9).
-      expect(rowBody.contains('leaveNoteVoice!'), isTrue,
+      // 17.09: раскрытая причина вынесена в `LeaveNoteBlock`, строка отдаёт
+      // ему готовый проигрыватель параметром. Здесь стояло `leaveNoteVoice!` —
+      // подстановка в разметку самой строки.
+      expect(rowBody.contains('voice: leaveNoteVoice,'), isTrue,
           reason: 'канарейка: строка состава перестала СТАВИТЬ готовый '
               'проигрыватель причины — поле осталось, а показа нет');
       expect(rowBody.contains('voiceUrl'), isFalse,
@@ -1318,6 +1321,112 @@ void main() {
       }
       expect(callers, ['lib/firebase/firestore_service.dart'],
           reason: 'watchLeaveNotes зовут мимо провайдера: ${callers.join(", ")}');
+    });
+
+    // --- КАРТОЧКА ВЕЧЕРА: ЛИЦА, ЗНАЧОК ПЕРЕПИСКИ, ДВЕРЬ В ПРОФИЛЬ (17.09) ---
+    //
+    // Карточка — приватные классы `agreements_screen.dart`, виджет-теста у неё
+    // нет (N180). Сторожа ниже — текстовые, как соседние: они держат ПРОВОДКУ,
+    // а не то, что палец на трубке попадает куда надо. Попадание — проба
+    // владельца на трубке.
+    //
+    // Срез строки состава — от `class _PartyMemberRow` до следующего `class `.
+    // Утверждения о НАЛИЧИИ краснеют на ослепшем срезе сами (I31); каждый
+    // запрет стоит рядом с наличием в том же срезе — канарейкой.
+    //
+    // ЧТО УПАДЁТ ПРИ ПОРЧЕ (называется ДО порчи — I46; сверяется ПОИМЁННО):
+    //   1. значок у причины вернуть `Icons.chat_bubble_outline` —
+    //      «значок переписки у причины выхода — тот же 💬, что у вкладки». ОДИН.
+    //   2. `photoURL: photoURL,` в строке заменить на `photoURL: null,` —
+    //      «строка состава показывает лицо через AvatarRing, а не буквы». ОДИН.
+    //   3. `photoURL: m?.photoURL,` в фишке заменить на `photoURL: null,` —
+    //      «фишка выбранного участника показывает лицо». ОДИН.
+    //   4. обернуть всю строку снова в нажатие на профиль —
+    //      «профиль из строки состава — нажатием на фото, а не на всю строку».
+    //      ОДИН.
+    String partyRowSlice(String form) {
+      final start = form.indexOf('class _PartyMemberRow');
+      expect(start, isNot(-1), reason: '_PartyMemberRow исчез вовсе');
+      final end = form.indexOf('\nclass ', start + 1);
+      expect(end, isNot(-1), reason: 'после _PartyMemberRow нет класса — граница потеряна');
+      return form.substring(start, end);
+    }
+
+    test('значок переписки у причины выхода — тот же 💬, что у вкладки MESAJ (17.09)',
+        () {
+      final tabs = readCode('lib/navigation/app_tabs.dart');
+      expect(tabs.contains("const String kChatEmoji = '💬';"), isTrue,
+          reason: 'Значок переписки больше не объявлен одним именем.');
+      expect(tabs.contains("AppTab(id: 'chats', emoji: kChatEmoji,"), isTrue,
+          reason: 'Вкладка MESAJ берёт значок мимо kChatEmoji — двери разойдутся.');
+      // 17.09: раскрытая причина — `LeaveNoteBlock`. Строка отдаёт ему дверь,
+      // блок рисует её значком вкладки. Ищется МЕСТО ИСПОЛЬЗОВАНИЯ, а не
+      // упоминание имени (сторож над сторожами).
+      final row = partyRowSlice(readCode(_eventForm));
+      expect(row.contains('onOpenChat: onOpenLeaverChat,'), isTrue,
+          reason: 'Строка состава не отдаёт блоку причины дверь в переписку.');
+      const blockPath = 'lib/features/agreements/widgets/leave_note_block.dart';
+      final block = readCode(blockPath);
+      expect(
+          RegExp(r'onPressed: onOpenChat,[\s\S]{0,300}?icon: const Text\(\s*kChatEmoji,')
+              .hasMatch(block),
+          isTrue,
+          reason: 'У причины выхода значок переписки не тот, что у вкладки MESAJ.');
+      // Запрет — ОТСУТСТВИЕ (I31); канарейка — `kChatEmoji` найден тем же
+      // чтением того же файла строкой выше.
+      expect(block.contains('Icons.chat_bubble_outline'), isFalse,
+          reason: 'У причины снова чужой контурный значок переписки.');
+      expect(row.contains('Icons.chat_bubble_outline'), isFalse,
+          reason: 'В строке состава снова чужой контурный значок переписки.');
+    });
+
+    test('строка состава показывает лицо через AvatarRing, а не буквы (N242, 17.09)',
+        () {
+      final form = readCode(_eventForm);
+      final row = partyRowSlice(form);
+      expect(row.contains('AvatarRing('), isTrue,
+          reason: 'Кружок строки состава рисуется мимо AvatarRing.');
+      expect(row.contains('photoURL: photoURL,'), isTrue,
+          reason: 'Строка состава не отдаёт фото в AvatarRing — снова буквы.');
+      expect(row.contains('initialsOf(name'), isFalse,
+          reason: 'В строке состава снова буквы имени вместо лица.');
+      // Оба вызывающих подают фото — состав вечера и позванные.
+      expect('photoURL: _findUser(allUsers, uid)?.photoURL,'.allMatches(form).length, 1,
+          reason: 'Состав вечера не подаёт фото в строку.');
+      expect('photoURL: _findUser(allUsers, r.uid)?.photoURL,'.allMatches(form).length, 1,
+          reason: 'Позванные не подают фото в строку.');
+    });
+
+    test('фишка выбранного участника показывает лицо (N242, 17.09)', () {
+      final form = readCode(_eventForm);
+      final start = form.indexOf('children: _selectedParticipantUids.map((uid) {');
+      expect(start, isNot(-1), reason: 'фишки выбранных участников исчезли');
+      final end = form.indexOf('onTap: _openParticipantPicker,', start);
+      expect(end, isNot(-1), reason: 'сосед _openParticipantPicker исчез — граница потеряна');
+      final chips = form.substring(start, end);
+      expect(chips.contains('AvatarRing('), isTrue,
+          reason: 'Фишка выбранного рисует кружок мимо AvatarRing.');
+      expect(chips.contains('photoURL: m?.photoURL,'), isTrue,
+          reason: 'Фишка выбранного не показывает фото.');
+      expect(chips.contains(r"'${m?.emoji ?? '🎵'} ${m?.name ?? uid}'"), isFalse,
+          reason: 'Фишка снова рисует эмодзи строкой вместо лица.');
+    });
+
+    test('профиль из строки состава — нажатием на фото, а не на всю строку (17.09)',
+        () {
+      final row = partyRowSlice(readCode(_eventForm));
+      expect('onTap: onOpenProfile,'.allMatches(row).length, 1,
+          reason: 'Профиль открывается не из одного места строки.');
+      final tap = row.indexOf('onTap: onOpenProfile,');
+      expect(row.substring(tap, tap + 400).contains('AvatarRing('), isTrue,
+          reason: 'Нажатие на профиль висит не на фото.');
+      // Вся строка больше не нажимается: сборка возвращает отступ, а не
+      // обёртку нажатия. Запрет рядом с наличием в том же срезе (I31).
+      expect(row.contains('return Padding('), isTrue,
+          reason: 'канарейка: строка возвращает не Padding — срез ослеп или '
+              'разметка сменилась');
+      expect(row.contains('return GestureDetector('), isFalse,
+          reason: 'Вся строка снова нажимается — палец на причине уведёт в профиль.');
     });
 
     test('запись голоса удержанием объявлена в ОДНОМ файле, чат и лист её зовут '

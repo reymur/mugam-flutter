@@ -24,6 +24,7 @@ import '../../../core/agreements/lineup.dart';
 import '../../../core/audio/voice_recording_session.dart';
 import '../../../core/audio/voice_temp_files.dart';
 import '../widgets/leave_event_sheet.dart';
+import '../widgets/leave_note_block.dart';
 import '../widgets/leave_note_voice_player.dart';
 import '../../../core/agreements/lineup_children.dart';
 import '../../../core/agreements/lineup_rows.dart';
@@ -3822,8 +3823,11 @@ class _PersonalEventDetailScreenState
                           // даёт безличное «İştirakçı», а uid показал бы
                           // человеку машинный код вместо имени.
                           name: _findUser(allUsers, uid)?.name ?? uid,
+                          photoURL: _findUser(allUsers, uid)?.photoURL,
+                          emoji: _findUser(allUsers, uid)?.emoji,
                           answer: answer,
-                          onTap: () => _openUserProfile(context, allUsers, uid),
+                          onOpenProfile: () =>
+                              _openUserProfile(context, allUsers, uid),
                           // КРЕСТИК УДАЛЕНИЯ — решение владельца 29.08,
                           // первый живой вызов правила, лежавшего без дела
                           // с 13.08 (N179).
@@ -3961,6 +3965,8 @@ class _PersonalEventDetailScreenState
                                 // ему не подпись. Запасное имя уже подставлено
                                 // правилом, пустота значит «сведений нет».
                                 name: r.name.isEmpty ? 'Naməlum' : r.name,
+                                photoURL: _findUser(allUsers, r.uid)?.photoURL,
+                                emoji: _findUser(allUsers, r.uid)?.emoji,
                                 // СЛОВАРЬ ОБЩИЙ С СОСТАВОМ ВЕЧЕРА, а не свой:
                                 // «gəlir», «cavab gözlənilir», «bacarmır» уже
                                 // говорят про людей на этом же экране. Второй
@@ -3968,7 +3974,7 @@ class _PersonalEventDetailScreenState
                                 // учить два.
                                 answer: _lineupAnswerOf(r),
                                 note: _lineupNoteOf(r),
-                                onTap: () =>
+                                onOpenProfile: () =>
                                     _openUserProfile(context, allUsers, r.uid),
                                 // ЗДЕСЬ БЫЛ АРГУМЕНТ `onRestore` — плитка
                                 // «Qaytar» на строке позванного (N220, 11.09),
@@ -4741,8 +4747,10 @@ String _lineupNoteOf(LineupRow r) => switch (r.kind) {
 class _PartyMemberRow extends StatelessWidget {
   const _PartyMemberRow({
     required this.name,
+    required this.photoURL,
+    required this.emoji,
     required this.answer,
-    required this.onTap,
+    required this.onOpenProfile,
     this.onRemove,
     this.note,
     this.onOpenChat,
@@ -4754,8 +4762,24 @@ class _PartyMemberRow extends StatelessWidget {
   });
 
   final String name;
+
+  /// Фото профиля и эмодзи на случай, когда фото нет (N242, 17.09).
+  ///
+  /// Здесь стояли две буквы имени в кольце. Создатель вечера сличает состав
+  /// ПО ЛИЦУ — шесть лиц узнаются разом, шесть пар букв надо читать. Обязательны
+  /// оба, но значением могут быть `null`: человек без профиля — законный случай,
+  /// и тогда `AvatarRing` рисует свой запасной знак.
+  final String? photoURL;
+  final String? emoji;
+
   final String? answer;
-  final VoidCallback onTap;
+
+  /// Открыть профиль — ТОЛЬКО НАЖАТИЕМ НА ФОТО (17.09, решение владельца).
+  ///
+  /// Здесь нажималась вся строка: палец, метивший в причину выхода или в её
+  /// голос, попадал на имя и уводил в профиль. Имя и подписи больше не
+  /// нажимаются; у «?», голоса, двери в переписку и крестика — свои цели.
+  final VoidCallback onOpenProfile;
 
   /// Вторая строка под словом ответа — ПОЧЕМУ ответа нет.
   ///
@@ -4861,28 +4885,41 @@ class _PartyMemberRow extends StatelessWidget {
       _ => (kBorder, kTextSecondary),
     };
     final label = participantAnswerLabel(answer);
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Padding(
+    return Padding(
         padding: const EdgeInsets.only(bottom: 13),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 36,
-              height: 36,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: ring, width: 1.5),
-              ),
-              child: Text(
-                initialsOf(name, count: 2),
-                style: TextStyle(fontSize: 12, color: word),
+            // ФОТО — ЕДИНСТВЕННАЯ ДВЕРЬ В ПРОФИЛЬ (17.09).
+            //
+            // Цель нажатия 44×44 при рисунке 36: меньше 44 пунктов пальцем
+            // берётся плохо (Apple HIG), а кнопка, которую не нажать, — та же
+            // мёртвая кнопка (N147). Рисунок прижат к левому верхнему углу, и
+            // зазор до имени 6 вместо 14 — имя стоит там же, где стояло:
+            // 44 + 6 = 36 + 14. Цена — строка без подписи выросла до 44.
+            //
+            // Кольцо — прежнего цвета ответа (`ring`), толщина прежняя 1.5.
+            GestureDetector(
+              onTap: onOpenProfile,
+              behavior: HitTestBehavior.opaque,
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: AvatarRing(
+                    photoURL: photoURL,
+                    fallbackEmoji: emoji,
+                    hasUnviewed: false,
+                    size: 36,
+                    ringColor: ring,
+                    ringWidth: 1.5,
+                    fallbackFontSize: 16,
+                  ),
+                ),
               ),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: 6),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -5005,47 +5042,10 @@ class _PartyMemberRow extends StatelessWidget {
                   if (leaveNote != null && leaveNoteOpen)
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
-                      child: Container(
-                        padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
-                        decoration: BoxDecoration(
-                          color: kCard,
-                          border: Border.all(color: kBg3),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (leaveNote!.text.isNotEmpty)
-                                    Text(
-                                      leaveNote!.text,
-                                      style: const TextStyle(
-                                        fontSize: 14,
-                                        color: kTextSecondary,
-                                      ),
-                                    ),
-                                  if (leaveNoteVoice != null) ...[
-                                    if (leaveNote!.text.isNotEmpty)
-                                      const SizedBox(height: 8),
-                                    leaveNoteVoice!,
-                                  ],
-                                ],
-                              ),
-                            ),
-                            if (onOpenLeaverChat != null)
-                              IconButton(
-                                onPressed: onOpenLeaverChat,
-                                icon: const Icon(
-                                  Icons.chat_bubble_outline,
-                                  size: 22,
-                                  color: kGold,
-                                ),
-                              ),
-                          ],
-                        ),
+                      child: LeaveNoteBlock(
+                        text: leaveNote!.text,
+                        voice: leaveNoteVoice,
+                        onOpenChat: onOpenLeaverChat,
                       ),
                     ),
                   // ПРИЧИНА — ТРЕТЬЕЙ СТРОКОЙ И ТИШЕ СЛОВА ОТВЕТА.
@@ -5113,7 +5113,6 @@ class _PartyMemberRow extends StatelessWidget {
               ),
           ],
         ),
-      ),
     );
   }
 }
@@ -6432,12 +6431,30 @@ class _EventFormModalState extends State<_EventFormModal> {
                                               UserProfileScreen(user: m!),
                                         ),
                                       ),
-                                child: Text(
-                                  '${m?.emoji ?? '🎵'} ${m?.name ?? uid}',
-                                  style: const TextStyle(
-                                    color: kGold,
-                                    fontSize: 12,
-                                  ),
+                                // ФОТО ВМЕСТО ЭМОДЗИ ПЕРЕД ИМЕНЕМ (N242, 17.09).
+                                // Нажатие фишки не менялось: целиком фото и
+                                // имя ведут в профиль — причины выхода здесь
+                                // нет, промахнуться не во что.
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    AvatarRing(
+                                      photoURL: m?.photoURL,
+                                      fallbackEmoji: m?.emoji ?? '🎵',
+                                      hasUnviewed: false,
+                                      size: 20,
+                                      ringWidth: 0,
+                                      fallbackFontSize: 12,
+                                    ),
+                                    const SizedBox(width: 5),
+                                    Text(
+                                      m?.name ?? uid,
+                                      style: const TextStyle(
+                                        color: kGold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                               const SizedBox(width: 6),
