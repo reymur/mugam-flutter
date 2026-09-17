@@ -31,15 +31,16 @@ const _actor = 'actor-uid';
 
 void main() {
   group('N40 · арифметика полей', () {
-    test('переписываемых ровно 11', () {
+    test('переписываемых ровно 10', () {
       // Стояло 9, верно до 09.09. Десятым внесён `lastActionAt` — не новое
       // поле, а старая дыра: набор объявляет себя полным перечнем ключей
       // документа, а отметки времени поступка в нём не было ни дня, при
       // десяти писателях и живом читателе (N209).
       //
-      // 10 → 11 (13.09): `leaveNotes`, причины выхода. Правка ведёт их за
-      // составом, как ответы: крестик убирает человека вместе с его словами.
-      expect(kEventEditWrites.length, 11);
+      // 10 → 11 (13.09): `leaveNotes`, причины выхода полем документа.
+      // 11 → 10 (17.09): причины ушли в свою подколлекцию, полем документа
+      // их больше нет — крестик удаляет документ причины той же пачкой.
+      expect(kEventEditWrites.length, 10);
     });
 
     test('сохраняемых ровно 16', () {
@@ -47,8 +48,9 @@ void main() {
       // `unsettledReason` — повод состояния, который правка НЕ трогает.
       // Стало 16 с 09.09: работа 7, шаг 5 добавила `parentEventId` и
       // `lineup`, и правка не трогает ни того, ни другого.
-      // Сложение вслух (I13): 11 переписываемых + 16 сохраняемых = 27
-      // ключей документа (стояло 10 + 16 = 26, до `leaveNotes` 13.09).
+      // Сложение вслух (I13): 10 переписываемых + 16 сохраняемых = 26
+      // ключей документа (стояло 11 + 16 = 27 с 13.09 по 17.09, с полем
+      // `leaveNotes`).
       expect(kEventEditPreserves.length, 16);
     });
 
@@ -56,13 +58,14 @@ void main() {
       expect(kEventEditWrites.intersection(kEventEditPreserves), isEmpty);
     });
 
-    test('объединение — ровно 27 ключей документа, без лишних и без дыр', () {
+    test('объединение — ровно 26 ключей документа, без лишних и без дыр', () {
       // 23 → 26 (09.09): `lastActionAt` (старая дыра, N209), плюс
       // `parentEventId` и `lineup` от работы 7, шага 5. 26 → 27 (13.09):
-      // `leaveNotes`, причины выхода.
+      // `leaveNotes`, причины выхода. 27 → 26 (17.09): причины ушли из
+      // документа в подколлекцию `leaveNotes/{uid}`.
       final union = {...kEventEditWrites, ...kEventEditPreserves};
-      expect(union.length, 27);
-      expect(kEventDocKeys.length, 27);
+      expect(union.length, 26);
+      expect(kEventDocKeys.length, 26);
       expect(union, kEventDocKeys);
     });
 
@@ -97,9 +100,8 @@ void main() {
         // шапке самого набора.
         'lastActionAt',
         'lastActionType',
-        // ПРИЧИНЫ ВЫХОДА — 13.09. Переписываются по новому составу, как
-        // `answers`: удалённый крестиком не оставляет слов в документе.
-        'leaveNotes',
+        // ЗДЕСЬ СТОЯЛО `leaveNotes` (13.09–17.09). Причины — свои документы
+        // подколлекции, в ключах документа вечера их нет.
       });
     });
 
@@ -146,10 +148,9 @@ void main() {
           musicians: const ['a', 'b'],
           actorUid: _actor,
           previousParticipants: null,
-          previousLeaveNotes: null,
         );
 
-    test('пишет ровно десять из одиннадцати, и одиннадцатый назван поимённо',
+    test('пишет ровно девять из десяти, и десятый назван поимённо',
         () {
       // РАСХОЖДЕНИЕ НАЗВАНО, А НЕ ОБОЙДЕНО (N209, 09.09). До сегодня набор
       // был и половиной каноничного счёта, и точной подписью возврата, и оба
@@ -170,7 +171,7 @@ void main() {
             'все переписываемые ключи, кроме отметки времени, которую '
             'ставит писатель.',
       );
-      expect(data.length, 10);
+      expect(data.length, 9);
       // КАНАРЕЙКА К ВЫЧИТАНИЮ (I31): пропади `lastActionAt` из набора —
       // вычитание стало бы пустым, вердикт выше остался бы зелёным, и
       // расхождение исчезло бы из виду вместе с полем.
@@ -207,7 +208,6 @@ void main() {
         musicians: const ['b', 'c'],
         actorUid: _actor,
         previousParticipants: null,
-        previousLeaveNotes: null,
       );
       final answers = data['answers'] as Map<String, String>;
       expect(answers.keys.toSet(), {'b', 'c'});
@@ -232,37 +232,44 @@ void main() {
         actorUid: _actor,
         previousAnswers: const {'a': 'cant', 'b': 'going'},
         previousParticipants: null,
-        previousLeaveNotes: null,
       );
       expect(data['answers'], {'a': 'cant', 'b': 'going', 'c': 'waiting'});
     });
 
-    test('крестик уносит причину удалённого, а причину оставшегося не трогает',
+    test('крестик удаляет документ причины удалённого, оставшегося не трогает',
         () {
       // Крестик — это правка состава без вышедшего (`_removeLeftMember`).
-      // Ответ удалённого уходит по `answersForParticipants`; причина обязана
-      // уйти ТОЙ ЖЕ записью, иначе в документе остались бы слова человека,
-      // которого в вечере больше нет (решение 13.09).
+      // Ответ удалённого уходит по `answersForParticipants`; причина — своим
+      // документом, удаляемым ТОЙ ЖЕ пачкой (`updatePersonalEvent`,
+      // `leaveNotesToDelete`). Список удаляемых собирает `removedLeaveNoteUids`
+      // из того же прежнего и нового состава, что и правка.
+      const previous = ['a', 'b'];
+      const next = ['b'];
       final data = eventEditUpdate(
         date: '2026-08-09T19:00:00.000',
         type: 'Toy',
         location: '',
         notes: '',
-        musicians: const ['b'],
+        musicians: next,
         actorUid: _actor,
         previousAnswers: const {'a': 'left', 'b': 'left'},
-        previousParticipants: const ['a', 'b'],
-        previousLeaveNotes: const {
-          'a': LeaveNote(text: 'getdim'),
-          'b': LeaveNote(hasVoice: true, voiceWaveform: [5]),
-        },
+        previousParticipants: previous,
       );
-      expect(data['leaveNotes'], {
-        'b': {
-          'hasVoice': true,
-          'voiceWaveform': [5],
-        },
-      });
+      expect(
+        removedLeaveNoteUids(
+          previousParticipants: previous,
+          participants: next,
+        ),
+        ['a'],
+        reason: 'удаляется причина убранного и только его',
+      );
+      // Сама карта правки причин больше не несёт — ни ключом, ни полем.
+      expect(data.keys.where((k) => k.startsWith('leaveNotes')), isEmpty,
+          reason: 'правка снова пишет причины полем документа вечера — '
+              'участник достанет чужую причину, обойдя экран');
+      // Канарейка: ответ убранного ушёл тем же разбором, то есть правка
+      // собрана по тем же составам, что и список удаляемых.
+      expect((data['answers'] as Map).containsKey('a'), isFalse);
     });
 
     test('ни одного сохраняемого ключа в записи нет', () {
@@ -306,7 +313,6 @@ void main() {
         musicians: source,
         actorUid: _actor,
         previousParticipants: null,
-        previousLeaveNotes: null,
       );
       source.add('b');
       expect(data['musicians'], ['a']);

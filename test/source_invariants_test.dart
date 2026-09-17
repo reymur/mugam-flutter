@@ -193,43 +193,73 @@ void main() {
       );
     });
 
-    test('leaveNotesForRewrite зовётся ровно в одном месте — у правки (13.09)',
-        () {
-      // Двойной смысл одного счёта, и оба нужны.
+    test('причины пишут только пачка выхода и правка состава', () {
+      // С 17.09 причина выхода — свой документ `leaveNotes/{uid}` при вечере.
+      // Здесь стоял вердикт «leaveNotesForRewrite зовётся ровно в одном месте»
+      // — сырая карта причин в модели; карты больше нет, и сторож переехал на
+      // то, что её заменило: обращение к подколлекции.
       //
-      // 1. ПРОВОДКА. Крестик удаления — правка состава без вышедшего, и
-      //    причина обязана уйти тем же ходом. Параметр `previousLeaveNotes`
-      //    обязателен, но компилятор пропустит и `null` — тогда причина
-      //    удалённого молча осталась бы в документе. Вызова нет — счёт 0.
-      // 2. ЧИТАТЕЛЬ МИМО ПРАВИЛА. Показывать причину решает `offersLeaveNote`
-      //    (только владельцу); второй вызов сырого входа — это чтение мимо
-      //    него. Счёт 2.
+      // Обращений к подколлекции во всём `lib` — РОВНО ТРИ, и все в сервисе:
+      // запись выхода (`batch.set`), крестик в правке состава (`batch.delete`)
+      // и поток владельца (`watchLeaveNotes`). Состав, а не количество (I13):
+      // запись и удаление названы поимённо. Четвёртое обращение — это писатель
+      // мимо пачки или читатель мимо правила «только владелец».
       //
-      // Утверждение о НАЛИЧИИ ровно одного, значит ослепший разбор даёт 0 и
-      // краснеет (I31).
+      // Утверждение о НАЛИЧИИ, значит ослепший обход даёт 0 и краснеет (I31).
       //
-      // ЧЕГО НЕ ЛОВИТ: что вызов стоит именно в `_writeEventEdit`, а не в
-      // соседней функции того же файла; и читателя в файле вне списка ниже.
-      final all = <String>[];
-      for (final path in const [
-        'lib/features/agreements/screens/agreements_screen.dart',
-        'lib/firebase/firestore_service.dart',
-        'lib/features/day/screens/day_screen.dart',
-      ]) {
-        final lines = readCode(path).split('\n');
+      // ЧЕГО НЕ ЛОВИТ: обращение по строковому пути (`'personalEvents/…/
+      // leaveNotes'`) — его ловит соседний запрет на строку `'leaveNotes` ниже;
+      // и что пачки действительно проходят правила (`functions/test`).
+      const svcPath = 'lib/firebase/firestore_service.dart';
+      final uses = <String>[];
+      final literals = <String>[];
+      for (final f in Directory('lib').listSync(recursive: true)) {
+        if (f is! File || !f.path.endsWith('.dart')) continue;
+        final lines = readCodeLines(f.path);
         for (var i = 0; i < lines.length; i++) {
-          if (lines[i].contains('leaveNotesForRewrite(')) {
-            all.add('$path:${i + 1}');
+          if (lines[i].contains('.collection(kLeaveNotesCollection)')) {
+            uses.add('${f.path}:${i + 1}');
+          }
+          if (lines[i].contains("'leaveNotes")) {
+            literals.add('${f.path}: ${lines[i].trim()}');
           }
         }
       }
+      expect(uses.map((u) => u.split(':').first).toList(),
+          [svcPath, svcPath, svcPath],
+          reason: 'К подколлекции причин обращаются не ровно три раза и не '
+              'только из сервиса. Места: ${uses.join(", ")}');
+      final svc = readCode(svcPath);
       expect(
-        all.length,
-        1,
-        reason: 'Сырая карта причин берётся не в одном месте: 0 — правка '
-            'перестала вести причины за составом, 2 и больше — причину '
-            'читают мимо offersLeaveNote. Места: ${all.join(", ")}',
-      );
+          'batch.set(eventRef.collection(kLeaveNotesCollection)'
+              .allMatches(svc)
+              .length,
+          1,
+          reason: 'Причина пишется не пачкой выхода.');
+      expect(
+          'batch.delete(eventRef.collection(kLeaveNotesCollection)'
+              .allMatches(svc)
+              .length,
+          1,
+          reason: 'Причина убранного удаляется не пачкой правки состава.');
+      // Запрет строки — утверждение ОТСУТСТВИЯ (I31). Канарейка к нему — тот
+      // же обход находит объявление имени подколлекции, и только его.
+      // Место названо строкой кода, а не номером: `readCodeLines` снимает
+      // комментарии, и номер в нём не совпадает с номером в файле.
+      expect(literals, [
+        "lib/core/agreements/leave_note.dart: const String "
+            "kLeaveNotesCollection = 'leaveNotes';",
+      ],
+          reason: 'Имя подколлекции или поле `leaveNotes` написано строкой '
+              'мимо kLeaveNotesCollection. Места: ${literals.join(", ")}');
+
+      // Крестик: список удаляемых собирается ровно в одном месте — у правки.
+      final form = readCode(_eventForm);
+      expect('removedLeaveNoteUids('.allMatches(form).length, 1,
+          reason: 'Причины убранных собираются не в одном месте — либо '
+              'крестик перестал их удалять, либо удаляет мимо правки.');
+      expect(form.contains('leaveNotesToDelete: removedLeaveNoteUids('), isTrue,
+          reason: 'Правка состава не передаёт причины убранных в пачку.');
     });
 
     test('_explicitlyRemoved пополняется ровно в одном месте', () {
@@ -916,13 +946,16 @@ void main() {
       // одним ключом. Теперь это ответ и причина ОДНОЙ записью, и
       // `setEventAnswer` причину не донёс бы. Значение `left` и ключ причины
       // стерегутся тестом чистого правила (`leave_note_test.dart`, «выход с
-      // причиной — одна запись, два ключа»); здесь — что писатель зовёт
-      // именно это правило и ПЕРЕДАЁТ причину, а не теряет её по дороге.
-      expect(body.contains('leaveEventUpdate(uid: uid, note: note)'), isTrue,
+      // причиной — пачка из двух»); здесь — что писатель зовёт именно это
+      // правило и ПЕРЕДАЁТ причину, а не теряет её по дороге.
+      //
+      // ПЕРЕПИСАНО 17.09: правило зовётся `leaveEventWrites` и отдаёт две
+      // записи — ответ в вечер и причину своим документом, одной пачкой.
+      expect(body.contains('leaveEventWrites(uid: uid, note: note)'), isTrue,
           reason: 'Уход перестал идти общим правилом записи выхода либо '
               'потерял причину по дороге. Форма записи — ответ left и '
-              'причина одним update — живёт в leaveEventUpdate '
-              '(core/agreements/leave_note.dart).');
+              'причина своим документом одной пачкой — живёт в '
+              'leaveEventWrites (core/agreements/leave_note.dart).');
       expect(body.contains("'musicians':"), isFalse,
           reason: 'Уход снова трогает состав. По новой схеме человек в '
               'составе ОСТАЁТСЯ — на этом держатся и пометка «İşdən '
@@ -1124,7 +1157,8 @@ void main() {
               'вовсе — значит ноль выше означает «искать было негде»');
     });
 
-    test('выход несёт сказанное в запись вечера, а не в чат (13.09)', () {
+    test('выход несёт причину в подколлекцию вечера, а не в документ и не в чат',
+        () {
       // Проводка решения 13.09 от листа до записи: лист выхода → голос в
       // папку вечера → выход и причина одной записью. Каждое звено — своя
       // строка ниже, и выпадение любого звена молча оставляет владельца без
@@ -1183,6 +1217,26 @@ void main() {
           reason: 'Причина снова уходит сообщением в чат. Отменено 13.09: '
               'причина хранится в самом вечере и видна только владельцу.');
 
+      // С 17.09 — СВОИМ ДОКУМЕНТОМ, ОДНОЙ ПАЧКОЙ С ОТВЕТОМ. Здесь стояло
+      // «одной записью в документ вечера»: документ вечера читает весь
+      // состав, и причину доставал любой из него (firestore/security/
+      // rules-fields). Срез — сам ход сервиса, от него до соседа.
+      const svcPath = 'lib/firebase/firestore_service.dart';
+      final svc = readCode(svcPath);
+      final ls = svc.indexOf('Future<void> leavePersonalEvent(');
+      expect(ls, isNot(-1), reason: 'leavePersonalEvent исчез вовсе');
+      final le = svc.indexOf('Stream<Map<String, LeaveNote>> watchLeaveNotes(', ls);
+      expect(le, isNot(-1),
+          reason: 'сосед watchLeaveNotes исчез — границу куска взять неоткуда');
+      final leave = svc.substring(ls, le);
+      expect(leave.contains('leaveEventWrites('), isTrue,
+          reason: 'Выход собирает запись мимо чистого правила leaveEventWrites.');
+      expect(leave.contains('_db.batch()'), isTrue,
+          reason: 'Ответ и причина пишутся не одной пачкой — сорвись одно, '
+              'и человек выйдет без причины либо причина ляжет без выхода.');
+      expect(leave.contains('batch.commit()'), isTrue,
+          reason: 'канарейка: пачка собрана, но не отправлена');
+
       // ПЕРЕПИСАНО 13.09 (вариант Б, шаг 2): лист пишет голос ОБЩЕЙ записью
       // (`lib/shared/widgets/voice_hold_recorder.dart`), своего удержания у
       // него больше нет. Здесь стояло «лист зовёт `onPointerDown: (_) =>
@@ -1229,6 +1283,41 @@ void main() {
               'весь состав, а не только владелец.');
       expect(form.contains('VoicePlayer('), isTrue,
           reason: 'Голос причины на карточке играет не общим проигрывателем.');
+    });
+
+    test('причины вечера запрашивает только владелец', () {
+      // Сервер отдаёт подколлекцию причин запросом ТОЛЬКО владельцу вечера.
+      // Участник, пославший тот же запрос, получал бы `permission-denied` на
+      // каждое открытие вечера. Решает правило `requestsLeaveNotes`, и поток
+      // слушается только под ним.
+      //
+      // Утверждения о НАЛИЧИИ (I31): ослепший разбор даёт «не нашлось» и
+      // краснеет.
+      //
+      // ЧЕГО НЕ ЛОВИТ: что сервер на самом деле отказывает участнику — это
+      // `functions/test/leave-notes-rules.test.ts`; и верно ли само правило —
+      // `leave_note_test.dart`.
+      final form = readCode(_eventForm);
+      expect('requestsLeaveNotes('.allMatches(form).length, 1,
+          reason: 'Решение «запрашивать ли причины» принимается не в одном '
+              'месте карточки.');
+      expect('leaveNotesProvider('.allMatches(form).length, 1,
+          reason: 'Поток причин слушается не в одном месте карточки.');
+      final ask = form.indexOf('requestsLeaveNotes(');
+      final none = form.indexOf(': const <String, LeaveNote>{};', ask);
+      expect(none, isNot(-1),
+          reason: 'у решения нет ветви «не владелец» — граница куска потеряна');
+      expect(form.substring(ask, none).contains('leaveNotesProvider('), isTrue,
+          reason: 'Поток причин слушается не под правилом requestsLeaveNotes — '
+              'участник будет получать отказ сервера на каждом открытии.');
+      // Во всём lib поток причин зовут только провайдер и карточка.
+      final callers = <String>[];
+      for (final f in Directory('lib').listSync(recursive: true)) {
+        if (f is! File || !f.path.endsWith('.dart')) continue;
+        if (readCode(f.path).contains('watchLeaveNotes(')) callers.add(f.path);
+      }
+      expect(callers, ['lib/firebase/firestore_service.dart'],
+          reason: 'watchLeaveNotes зовут мимо провайдера: ${callers.join(", ")}');
     });
 
     test('запись голоса удержанием объявлена в ОДНОМ файле, чат и лист её зовут '

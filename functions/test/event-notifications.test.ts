@@ -1782,3 +1782,146 @@ describe("удаление вслед за уходом (N121, шаг 2)", () =>
       "старой дате, и заметить это было бы нечем (I13)",
   );
 }
+
+// N243 — ИМЯ ПОСТУПКА ОСТАЁТСЯ В ДОКУМЕНТЕ, А ПОСТУПОК — НЕТ (17.09).
+//
+// `planUpdatePushes` ветвится по `lastActionType`, а имя лежит в документе и
+// после поступка. Любая следующая запись — ответ участника, правка, серверный
+// `update` — приносит его снова. Обход 17.09: из восьми тел четыре не
+// проверяли, что поступок случился ЭТОЙ записью. Нашлось разбором стирания
+// поля `leaveNotes`: три вечера из девяти дали бы ложное «ləğv olundu».
+//
+// ТАБЛИЦА НА ВСЕ ВОСЕМЬ ИМЁН, а не на четыре починенных: класс, а не случай.
+// Каждая строка — два вердикта: запись без поступка молчит, запись с
+// поступком шлёт. Второй — канарейка к первому (I31): не будь его, молчание
+// снятой ветви читалось бы как верная проверка.
+//
+// ЧТО УПАДЁТ ПРИ ПОРЧЕ (называется ДО порчи — I46; сверяется ПОИМЁННО):
+//   1. снять условие перехода у `ownerCancelled` —
+//      «N243: ownerCancelled — запись без поступка молчит». ОДИН.
+//   2. снять у `cancelConfirmed` —
+//      «N243: cancelConfirmed — запись без поступка молчит». ОДИН.
+//   3. снять у `cancelWithdrawn` —
+//      «N243: cancelWithdrawn — запись без поступка молчит» и
+//      «N243: cancelWithdrawn — имя без снятой просьбы молчит». ДВА.
+//   4. снять у `cancelDeclined` —
+//      ТОЛЬКО «N243: cancelDeclined — имя без снятой просьбы молчит». ОДИН.
+//      «…запись без поступка молчит» у него ОСТАЁТСЯ ЗЕЛЁНЫМ: после отказа
+//      поле пустое, и без проверки молчание держится совпадением данных —
+//      ровно то, что записано в N243. Потому и нужна вторая строка.
+//
+// ЧЕГО НЕ ЛОВИТ: что `index.ts` зовёт `planUpdatePushes` на каждое
+// обновление (это разбор кода), и что прод шлёт письма (APNs).
+
+describe("N243: поступок случился этой записью, а не лежит в документе", () => {
+  type Row = {
+    name: string;
+    // Состояние ДО поступка и ПОСЛЕ — пара, на которой поступок совершён.
+    before: Partial<EventSnapshot>;
+    after: Partial<EventSnapshot>;
+  };
+  const rows: Row[] = [
+    {
+      name: "cancelRequested",
+      before: { status: "agreed", cancelRequestedBy: null, cancelRequestedAtMs: null },
+      after: {
+        status: "agreed", cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000,
+        lastActionBy: OWNER, lastActionType: "cancelRequested",
+      },
+    },
+    {
+      name: "cancelConfirmed",
+      before: { status: "agreed", cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 },
+      after: {
+        status: "cancelled", cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000,
+        cancelConfirmedBy: GUEST, lastActionBy: GUEST, lastActionType: "cancelConfirmed",
+      },
+    },
+    {
+      name: "cancelWithdrawn",
+      before: { status: "agreed", cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 },
+      after: {
+        status: "agreed", cancelRequestedBy: null, cancelRequestedAtMs: null,
+        lastActionBy: OWNER, lastActionType: "cancelWithdrawn",
+      },
+    },
+    {
+      name: "cancelDeclined",
+      before: { status: "agreed", cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000 },
+      after: {
+        status: "agreed", cancelRequestedBy: null, cancelRequestedAtMs: null,
+        lastActionBy: GUEST, lastActionType: "cancelDeclined",
+      },
+    },
+    {
+      name: "ownerCancelled",
+      before: { status: "agreed" },
+      after: { status: "cancelled", lastActionBy: OWNER, lastActionType: "ownerCancelled" },
+    },
+    {
+      name: "ownerDoubt",
+      before: { status: "agreed" },
+      after: { status: "unsettled", lastActionBy: OWNER, lastActionType: "ownerDoubt" },
+    },
+    {
+      name: "ownerFirm",
+      before: { status: "unsettled" },
+      after: { status: "agreed", lastActionBy: OWNER, lastActionType: "ownerFirm" },
+    },
+    {
+      name: "restored",
+      before: { status: "cancelled" },
+      after: { status: "agreed", lastActionBy: OWNER, lastActionType: "restored" },
+    },
+  ];
+
+  it("таблица покрывает все имена поступков из switch — поимённо", () => {
+    // Состав, а не количество (I13): имя, заведённое в `switch` без строки
+    // здесь, осталось бы без проверки класса молча.
+    const src = readFileSync(`${__dirname}/../src/eventNotifications.ts`, "utf8");
+    const start = src.indexOf("export function planUpdatePushes(");
+    const end = src.indexOf("default:", start);
+    assert.ok(start !== -1 && end !== -1, "срез planUpdatePushes не найден");
+    const cases = [...src.slice(start, end).matchAll(/case "(\w+)":/g)].map((m) => m[1]);
+    assert.deepEqual(new Set(cases), new Set(rows.map((r) => r.name)));
+    assert.equal(cases.length, 8, "канарейка: разбор нашёл не восемь имён");
+  });
+
+  for (const row of rows) {
+    it(`N243: ${row.name} — поступок с переходом шлёт`, () => {
+      const pushes = plan({
+        eventId: "e1",
+        before: ev(row.before),
+        after: ev(row.after),
+        actorName: "Rafael",
+      });
+      assert.ok(pushes.length > 0, `${row.name}: настоящий поступок не дал письма`);
+    });
+
+    it(`N243: ${row.name} — запись без поступка молчит`, () => {
+      // Документ уже в состоянии ПОСЛЕ поступка, и приходит ещё одна запись,
+      // ничего из этого не меняющая: before и after одинаковы.
+      const pushes = plan({
+        eventId: "e1",
+        before: ev(row.after),
+        after: ev(row.after),
+        actorName: "Rafael",
+      });
+      assert.equal(pushes.length, 0, `${row.name}: письмо о поступке, которого не было`);
+    });
+  }
+
+  for (const name of ["cancelWithdrawn", "cancelDeclined"] as const) {
+    it(`N243: ${name} — имя без снятой просьбы молчит`, () => {
+      // Имя поступка есть, а просьба в данных цела и до, и после: рассказ
+      // разошёлся с делом. У отказа без явной проверки молчание держалось
+      // только тем, что поле обычно пустое.
+      const state: Partial<EventSnapshot> = {
+        status: "agreed", cancelRequestedBy: OWNER, cancelRequestedAtMs: 1000,
+        lastActionBy: GUEST, lastActionType: name,
+      };
+      const pushes = plan({ eventId: "e1", before: ev(state), after: ev(state), actorName: "Rafael" });
+      assert.equal(pushes.length, 0, `${name}: письмо при несовершённом поступке`);
+    });
+  }
+});

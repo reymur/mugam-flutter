@@ -2817,11 +2817,57 @@ export const markEventUnsettled = onDocumentUpdated(
   },
 );
 
+// ЧТО ОСТАЁТСЯ ОТ УДАЛЁННОГО ВЕЧЕРА — причины выхода, документы и файлы
+// голоса (17.09).
+//
+// ДОКУМЕНТЫ: причины с 17.09 — подколлекция `leaveNotes/{uid}`, а документация
+// Firestore прямо: «Deleting a document does not delete its subcollections!»,
+// удалять — на сервере через `recursiveDelete`. Без этой строки перенос
+// причин завёл бы новый вид сирот.
+//
+// ФАЙЛЫ: `event_leave_notes/{eventId}/{uid}` сиротели при удалении вечера и
+// ДО переноса — уборщик сирот смотрит только `chats/` и `statuses/`
+// (`orphanSweep.ts`). Взято сюда решением владельца 17.09: тот же вопрос
+// («что остаётся от вечера») и тот же момент.
+//
+// ПРЕФИКС КОНЧАЕТСЯ КОСОЙ ЧЕРТОЙ, И ЭТО НЕСУЩЕЕ. У вечеров серии id —
+// продолжение id родителя (`abc` и `abc_2026-09-03`); префикс без черты
+// снёс бы файлы соседей. Держит вердикт в `functions/test`.
+//
+// ОТКАЗ НЕ ГЛОТАЕТСЯ МОЛЧА, НО И НЕ ОТМЕНЯЕТ УВЕДОМЛЕНИЙ: уборка и извещение —
+// разные дела (I58), и сбой одного не повод не делать другого. Ошибка идёт в
+// журнал с id вечера.
+async function removeLeaveNotesOfEvent(eventId: string): Promise<void> {
+  try {
+    await db.recursiveDelete(
+      db.collection("personalEvents").doc(eventId).collection("leaveNotes"),
+    );
+  } catch (e) {
+    logger.error("[event-deleted] причины выхода не удалены", { eventId, error: String(e) });
+  }
+  try {
+    // Имя бакета — явно, как у `onStatusDeleted` и `copyStatusMediaToChat`:
+    // `bucket()` без имени зависит от бакета по умолчанию, которого голый
+    // `initializeApp()` в этом файле не задаёт, и в тестовом проекте указывает
+    // мимо. Первый прогон 17.09 это и показал: документы ушли, файлы остались.
+    await getStorage()
+      .bucket("mugam-club.firebasestorage.app")
+      .deleteFiles({ prefix: `event_leave_notes/${eventId}/` });
+  } catch (e) {
+    logger.error("[event-deleted] файлы причин не удалены", { eventId, error: String(e) });
+  }
+}
+
 export const onPersonalEventDeleted = onDocumentDeleted(
   "personalEvents/{eventId}",
   async (event) => {
     const snap = event.data;
     if (!snap) return;
+    // УБОРКА СТОИТ ДО ОБОИХ РАННИХ ВЫХОДОВ НИЖЕ, и это не порядок ради
+    // порядка (I34): «некого известить» и «удалён ради замены» — ответы на
+    // вопрос об уведомлении, а не о том, что осталось от вечера. Поставь её
+    // после — и вечер без состава или заменённый вечер оставлял бы сирот.
+    await removeLeaveNotesOfEvent(event.params.eventId);
     const gone = toEventSnapshot(snap.data());
     // Удалять может только владелец (firestore.rules), поэтому автор
     // выводится, а не берётся из `lastActionBy`: удаление документа не

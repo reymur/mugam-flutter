@@ -1170,78 +1170,14 @@ service cloud.firestore {
           && resource.data.ownerUid != request.auth.uid;
       }
 
-      // ВЫХОД С ПРИЧИНОЙ — решение владельца 13.09: причина хранится В САМОМ
-      // ВЕЧЕРЕ, `leaveNotes.<uid>`, и показывается только владельцу.
+      // ЗДЕСЬ СТОЯЛ ХОД `leavesWithNote()` (13.09–17.09): причина выхода
+      // писалась полем `leaveNotes.<uid>` в документ вечера вместе с ответом
+      // `left`. Снят 17.09 вместе с полем — причина стала своим документом
+      // `leaveNotes/{uid}` (правило — в конце этого `match`). Ответ `left`
+      // без причины по-прежнему пускает `answersForSelf()`.
       //
-      // Ход — `answersForSelf` с одним добавленным ключом, и только при уходе:
-      // ответ `left` и своя причина ОДНОЙ записью. Отдельного хода «оставить
-      // причину, не выходя» нет — причина говорится про уход.
-      //
-      // **ОГРАНИЧЕНИЕ, СКАЗАННОЕ ПРЯМО:** это правило пишет, а не прячет.
-      // Документ вечера читает весь состав (`isParty`), и Firestore отдаёт его
-      // целиком — причину увидит любой из состава, обойдя экран. «Только
-      // владельцу» держится на показе (`offersLeaveNote` на клиенте).
-      // Безопасно, пока состав — позванные владельцем люди.
-      //
-      // I54: `leaveNotes` не читает сервер — ни при решении, кого известить
-      // (`diffEvents` сравнивает дату, место, заметки, тип и состав), ни при
-      // переносе в приглашения. Рассказом о поступке поле не является.
-      //
-      // Форма причины прибита: карта только из `text`, `voiceUrl`,
-      // `voiceWaveform`, `hasVoice` — иначе в «причину» уезжало бы что угодно.
-      //
-      // `hasVoice` ДОБАВЛЕН 16.09 — ШАГ 1 ПОЧИНКИ N236, И ЭТО ПЕРЕХОДНЫЙ
-      // ПЕРИОД, А НЕ ОКОНЧАТЕЛЬНАЯ ФОРМА.
-      //
-      // Зачем. `voiceUrl` — это ссылка, выданная `getDownloadURL()`, а та
-      // выдаёт вместе с ней токен, по которому файл отдаётся кому угодно и
-      // без входа. Показ ссылку с 15.09 не читает (N232, шаг 2), но клиент
-      // продолжает её чеканить при КАЖДОЙ новой причине голосом — то есть
-      // отзыв токенов убирает прошлое, а источник выдачи остаётся. Признак
-      // «голос есть» дороги к байтам знать не обязан: адрес выводится из
-      // `eventId` и `uid`. Поэтому вместо ссылки — голое `true`.
-      //
-      // ПУСКАЮТСЯ ОБЕ ФОРМЫ НАРОЧНО: старая сборка пишет `voiceUrl`, новая
-      // пишет `hasVoice`, и правило обязано пустить обеих, пока старые
-      // сборки живы. `voiceUrl` уходит из списка ШАГОМ 3 — и вот тогда
-      // вернуть ссылку не сможет уже ничья рука, а не только наша.
-      //
-      // ПОЧЕМУ `== true`, А НЕ `is bool`. `hasVoice: false` значило бы ровно
-      // то же, что отсутствие ключа, — а два написания одного смысла
-      // разъезжаются молча (I47): один читатель проверит наличие ключа,
-      // другой значение. Ключ заведён под один вопрос и отвечает на него
-      // одним способом.
-      //
-      // ЧЕГО ЗДЕСЬ НЕТ НАРОЧНО: запрета писать оба ключа разом. На этом шаге
-      // он был бы второй переменной, а шагом 3 придёт сам собой вместе с
-      // удалением `voiceUrl`. Наш клиент обоих писать не будет: писать оба
-      // означало бы по-прежнему чеканить токен, то есть не чинить N236.
-      //
-      // ГРАНИЦА, СКАЗАННАЯ ПРЯМО: форма связывает ТОЛЬКО ВЫШЕДШЕГО. У
-      // владельца своя ветвь `allow update` — без списка ключей вовсе, — и
-      // `leavesWithNote()` к ней не применяется. Правка состава,
-      // переписывающая `leaveNotes` (`leaveNotesForParticipants` на
-      // клиенте), идёт именно там, и никакое правило её формы не проверяет.
-      // Отсюда N237: старая сборка, правящая состав, потеряет причину в
-      // новой форме молча, и правилом это не лечится.
-      function leavesWithNote() {
-        let notesAfter = request.resource.data.get('leaveNotes', {});
-        let notesBefore = resource.data.get('leaveNotes', {});
-        let note = notesAfter.get(request.auth.uid, null);
-        return changedKeys().hasOnly(['answers', 'leaveNotes'])
-          && request.resource.data.answers
-               .diff(resource.data.get('answers', {}))
-               .affectedKeys().hasOnly([request.auth.uid])
-          && request.resource.data.answers.get(request.auth.uid, null) == 'left'
-          && notesAfter.diff(notesBefore).affectedKeys().hasOnly([request.auth.uid])
-          && note is map
-          && note.keys().hasOnly(['text', 'voiceUrl', 'voiceWaveform', 'hasVoice'])
-          && (!('text' in note) || note.text is string)
-          && (!('voiceUrl' in note) || note.voiceUrl is string)
-          && (!('voiceWaveform' in note) || note.voiceWaveform is list)
-          && (!('hasVoice' in note) || note.hasVoice == true)
-          && resource.data.ownerUid != request.auth.uid;
-      }
+      // Со снятием ушла и форма `voiceUrl` (N236, шаг 3): у нового документа
+      // такого ключа нет в списке, сужать было нечего.
 
       // СОСТОЯНИЕ ВЕЧЕРА СТАВИТ ВЛАДЕЛЕЦ — плашка на карточке (решение
       // автора 12.08). До этого хода `status` клиент писать почти не мог:
@@ -1502,12 +1438,70 @@ service cloud.firestore {
           || (isParty() && (
                requestsCancel() || confirmsCancel()
                || withdrawsCancelRequest() || declinesCancelRequest()
-               || restoresEvent() || answersForSelf() || leavesWithNote()
+               || restoresEvent() || answersForSelf()
                || ownerSetsStatus() || ownerCancelsOwnEvent()
                || ownerRestoresOwnEvent()
              ))
         );
       allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+
+      // ПРИЧИНА ВЫХОДА — СВОЙ ДОКУМЕНТ, id — uid автора (17.09).
+      //
+      // ПОЧЕМУ НЕ ПОЛЕ ВЕЧЕРА. До 17.09 причина лежала полем `leaveNotes.<uid>`,
+      // а документ вечера читает весь состав (`isParty`). Документация прямо:
+      // «It is impossible using security rules alone to prevent users from
+      // reading specific fields within a document» — и советует выносить
+      // закрытое в отдельный документ (firestore/security/rules-fields).
+      // «Только владельцу» держалось на экране; любой из состава доставал
+      // причину, обойдя его.
+      //
+      // ЧИТАЮТ ДВОЕ — АВТОР И ВЛАДЕЛЕЦ ВЕЧЕРА. Тот же круг, что у файла голоса
+      // (`storage.rules`, `event_leave_notes/{eventId}/{uid}`), и путь тот же.
+      // `== uid` стоит первым: без `get()` и переживает удалённый вечер.
+      // Запрос всей подколлекции проходит ТОЛЬКО у владельца — его ветвь не
+      // зависит от `uid`, и сервер может доказать её для любого документа.
+      //
+      // ПИШЕТ ТОЛЬКО САМ ВЫШЕДШИЙ, и лишь если ПОСЛЕ ПАЧКИ его ответ — `left`.
+      // `getAfter`, а не `get`, — несущая часть: выход и причина идут одной
+      // пачкой, и до её применения ответ ещё прежний. С `get` законный выход
+      // с причиной отклонялся бы; без условия вовсе причину можно было бы
+      // оставить, не выходя. Уже вышедший может заменить свою причину позже —
+      // ответ `left` после пачки у него и без пачки.
+      //
+      // УДАЛЯЕТ ТОЛЬКО ВЛАДЕЛЕЦ — крестиком, вместе с человеком (правка
+      // состава той же пачкой). Автор своей причины не удаляет: решение
+      // владельца 17.09 — «приложение помнит, но не судит; человек сказал,
+      // почему не может, стирать это задним числом незачем».
+      //
+      // Удаление вечера подколлекцию не удаляет (документация: «Deleting a
+      // document does not delete its subcollections!») — уносит сервер,
+      // `onPersonalEventDeleted`.
+      //
+      // I54: сервер причин не читает — ни при решении, кого известить, ни при
+      // переносе в приглашения. Рассказом о поступке документ не является.
+      match /leaveNotes/{uid} {
+        function leaveEvent() {
+          return get(/databases/$(database)/documents/personalEvents/$(eventId)).data;
+        }
+        function leaveEventAfter() {
+          return getAfter(/databases/$(database)/documents/personalEvents/$(eventId)).data;
+        }
+        allow read: if isSignedIn() && (
+          request.auth.uid == uid
+          || request.auth.uid == leaveEvent().ownerUid
+        );
+        allow create, update: if isSignedIn()
+          && request.auth.uid == uid
+          && leaveEventAfter().ownerUid != request.auth.uid
+          && request.auth.uid in leaveEventAfter().get('musicians', [])
+          && leaveEventAfter().get('answers', {}).get(request.auth.uid, null) == 'left'
+          && request.resource.data.keys().hasOnly(['text', 'hasVoice', 'voiceWaveform'])
+          && (!('text' in request.resource.data) || request.resource.data.text is string)
+          && (!('hasVoice' in request.resource.data) || request.resource.data.hasVoice == true)
+          && (!('voiceWaveform' in request.resource.data)
+                || request.resource.data.voiceWaveform is list);
+        allow delete: if isSignedIn() && request.auth.uid == leaveEvent().ownerUid;
+      }
     }
 
     // ---------------------------------------------------------------

@@ -3912,15 +3912,27 @@ class FirestoreService {
   /// строки, которой нет. Единственный сегодняшний вызывающий поступок
   /// несёт всегда (`agreements_screen.dart`), но правило написано по
   /// смыслу, а не по сегодняшнему составу вызывающих.
-  Future<void> updatePersonalEvent(String eventId, Map<String, dynamic> data) {
+  ///
+  /// **[leaveNotesToDelete] — причины убранных из состава (17.09).** Причины
+  /// живут своими документами `leaveNotes/{uid}`, и убранный крестиком
+  /// уносит свою ТОЙ ЖЕ ПАЧКОЙ, что и правка состава: сорвись одно без
+  /// другого — либо человек убран, а слова его остались, либо слова стёрты у
+  /// того, кто ещё в составе. Обязателен по доводу N173: умолчание молча
+  /// оставляло бы причину удалённого. Список собирает `removedLeaveNoteUids`.
+  Future<void> updatePersonalEvent(
+    String eventId,
+    Map<String, dynamic> data, {
+    required List<String> leaveNotesToDelete,
+  }) {
     final payload = data.containsKey('lastActionType')
         ? {...data, 'lastActionAt': FieldValue.serverTimestamp()}
         : data;
-    return _db
-        .collection('personalEvents')
-        .doc(eventId)
-        .update(payload)
-        .timeout(_writeTimeout);
+    final eventRef = _db.collection('personalEvents').doc(eventId);
+    final batch = _db.batch()..update(eventRef, payload);
+    for (final uid in leaveNotesToDelete) {
+      batch.delete(eventRef.collection(kLeaveNotesCollection).doc(uid));
+    }
+    return batch.commit().timeout(_writeTimeout);
   }
 
   /// Есть ли уже договор, созданный из этого чата.
@@ -4044,29 +4056,52 @@ class FirestoreService {
   /// `setEventAnswer(…, kAnswerLeft)` у вызывающего, мы сделали бы уход
   /// неотличимым от ответа в поиске по исходникам.
   ///
-  /// --- С ПРИЧИНОЙ — 13.09, решение владельца ---
+  /// --- С ПРИЧИНОЙ — 13.09, решение владельца; СВОИМ ДОКУМЕНТОМ с 17.09 ---
   ///
-  /// **Уход стал ответом И причиной одной записью**, и `setEventAnswer`
+  /// **Уход стал ответом И причиной одной пачкой**, и `setEventAnswer`
   /// причину не донёс бы. Уход по-прежнему ответ — ключ `answers.<uid>` в
-  /// `left`, сервер ждёт именно его перехода, — но рядом ложится
-  /// `leaveNotes.<uid>`, если человек что-то написал или сказал. Форма записи
-  /// живёт в чистом правиле [leaveEventUpdate] и стережётся его тестом.
+  /// `left`, сервер ждёт именно его перехода, — а причина ложится своим
+  /// документом `personalEvents/{id}/leaveNotes/{uid}`, если человек что-то
+  /// написал или сказал. Форма записи живёт в чистом правиле
+  /// [leaveEventWrites] и стережётся его тестом.
   ///
-  /// **Одной записью, а не двумя:** сорвись вторая — человек вышел бы без
-  /// причины, которую написал; сорвись первая — причина лежала бы о выходе,
-  /// которого не было.
+  /// **Одной пачкой, а не двумя записями:** сорвись вторая — человек вышел бы
+  /// без причины, которую написал; сорвись первая — причина лежала бы о
+  /// выходе, которого не было. Правило причины смотрит ответ ПОСЛЕ пачки
+  /// (`getAfter`), поэтому причину без выхода сервер не примет.
   ///
   /// [note] необязательна: `null` или пустая — уходит только ответ.
   Future<void> leavePersonalEvent(
     String eventId,
     String uid, {
     LeaveNote? note,
-  }) =>
-      _db
-          .collection('personalEvents')
-          .doc(eventId)
-          .update(leaveEventUpdate(uid: uid, note: note))
-          .timeout(_writeTimeout);
+  }) {
+    final writes = leaveEventWrites(uid: uid, note: note);
+    final eventRef = _db.collection('personalEvents').doc(eventId);
+    final batch = _db.batch()..update(eventRef, writes.eventUpdate);
+    final noteDoc = writes.note;
+    if (noteDoc != null) {
+      batch.set(eventRef.collection(kLeaveNotesCollection).doc(uid), noteDoc);
+    }
+    return batch.commit().timeout(_writeTimeout);
+  }
+
+  /// Причины выхода вечера — uid автора → причина. ТОЛЬКО ДЛЯ ВЛАДЕЛЬЦА.
+  ///
+  /// Запрос подколлекции сервер отдаёт владельцу вечера, и больше никому
+  /// (`firestore.rules`, `leaveNotes/{uid}`). Участнику тот же запрос вернул
+  /// бы `permission-denied`, поэтому решать, звать ли его, обязан вызывающий
+  /// по правилу `requestsLeaveNotes`.
+  Stream<Map<String, LeaveNote>> watchLeaveNotes(String eventId) => _db
+      .collection('personalEvents')
+      .doc(eventId)
+      .collection(kLeaveNotesCollection)
+      .snapshots()
+      .map(
+        (snap) => leaveNotesFromDocs(
+          snap.docs.map((d) => MapEntry(d.id, d.data())),
+        ),
+      );
 
   /// СОСТОЯНИЕ ВЕЧЕРА СТАВИТ ВЛАДЕЛЕЦ — плашка-кнопка на карточке (12.08).
   ///
@@ -4491,6 +4526,17 @@ final eventsAsParticipantProvider =
     StreamProvider.family<List<PersonalEvent>, String>(
       (ref, uid) =>
           ref.watch(firestoreServiceProvider).watchEventsAsParticipant(uid),
+    );
+
+/// Причины выхода вечера — только для владельца (`watchLeaveNotes`).
+///
+/// autoDispose: слушается, пока открыт вечер. Причины нужны строке состава
+/// на карточке и больше нигде; держать подписку после ухода с карточки —
+/// платить за чтения, которые никто не показывает.
+final leaveNotesProvider = StreamProvider.autoDispose
+    .family<Map<String, LeaveNote>, String>(
+      (ref, eventId) =>
+          ref.watch(firestoreServiceProvider).watchLeaveNotes(eventId),
     );
 
 final readAgreementIdsProvider = StreamProvider.family<List<String>, String>(

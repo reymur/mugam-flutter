@@ -6,39 +6,52 @@ import {
   assertSucceeds,
   RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, setDoc, updateDoc } from "firebase/firestore";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  writeBatch,
+} from "firebase/firestore";
 import { PROJECT_ID, FIRESTORE_EMULATOR_PORT } from "./helpers";
 
-// ВЫХОД С ПРИЧИНОЙ — ход `leavesWithNote()` в `firestore.rules` (13.09).
+// ПРИЧИНА ВЫХОДА — СВОЙ ДОКУМЕНТ `personalEvents/{id}/leaveNotes/{uid}` (17.09).
 //
-// Решение владельца: причина выхода хранится в самом вечере, `leaveNotes.<uid>`,
-// текстом и/или ссылкой на голос, и показывается только владельцу.
+// До 17.09 причина была полем `leaveNotes.<uid>` документа вечера, и этот
+// набор проверял ход `leavesWithNote()`. Главного он проверить не мог — ЧТЕНИЕ:
+// поле читал весь состав. Теперь чтение — первая половина файла.
 //
-// ПАРНО, как у соседнего набора ответов: у каждого `assertSucceeds` свои
-// `assertFails`, и запреты — главная половина файла. Набор, проверяющий одни
-// разрешения, не отличит работающее правило от пропускающего всё.
+// ПАРНО: у каждого `assertSucceeds` свои `assertFails`, и запреты — главная
+// половина. Набор из одних разрешений не отличит правило от пускающего всё.
 //
-// ЧТО УПАДЁТ ПРИ ПОРЧЕ (называется ДО порчи — I46):
-//   • снять `answers.get(uid) == 'left'` — «НЕЛЬЗЯ оставить причину, не
-//     выходя», один тест.
-//   • убрать `'hasVoice'` из `hasOnly` — «вышедший оставляет причину голосом
-//     НОВОЙ формой», один тест. Остальные двенадцать зелены.
-//   • заменить `note.hasVoice == true` на `note.hasVoice is bool` — «НЕЛЬЗЯ
-//     hasVoice: false», один тест. «НЕЛЬЗЯ hasVoice строкой» при этом
-//     ОСТАЁТСЯ зелёным, и в этом весь смысл его отдельного существования:
-//     порознь они отличают ослабленное условие от снятого вовсе.
-//   • убрать `'voiceUrl'` из `hasOnly` — «причина ГОЛОСОМ — ссылка и волна»
-//     и «старая форма с voiceUrl проходит», ДВА теста. Это не проверка шага
-//     1, а репетиция шага 3: так заранее видно, кто покраснеет, когда
-//     ссылку будут убирать по-настоящему.
+// ЧТО УПАДЁТ ПРИ ПОРЧЕ (называется ДО порчи — I46; сверяется ПОИМЁННО):
 //
-// СВЕРЯТЬ ИМЕНА, А НЕ ЧИСЛО (I13, I46): совпавшее количество ничего не
-// доказывает — упавшие три могут оказаться не теми тремя, что названы.
+//   1. СНЯТЬ условие `leaveEventAfter()...answers... == 'left'` целиком —
+//      «НЕЛЬЗЯ оставить причину, не выходя — ответ после пачки не left» и
+//      «НЕЛЬЗЯ причину отдельной записью, не выходя вовсе». ДВА теста.
+//      Остальные зелены: разрешения не зависят от снятого, прочие запреты
+//      держатся своими условиями.
 //
-// ЧЕГО НЕ ЛОВИТ — И НЕ МОЖЕТ: ЧТЕНИЕ. Правила Firestore отдают документ
-// целиком, поле не прячут; причину увидит любой из состава, обойдя экран.
-// Это ограничение решения, записанное прямо (`docs/handoff.md`), а не дыра
-// этого набора. «Только владельцу» держится на показе (`offersLeaveNote`).
+//   2. ЗАМЕНИТЬ `getAfter` НА `get` в `leaveEventAfter()` — «выход с причиной
+//      текстом — ответ left и документ причины одной пачкой» и «выход с
+//      причиной голосом — hasVoice и волна». ДВА теста: `get` видит ответ ДО
+//      пачки (`going`), и законный выход отклоняется. Запреты «не выходя»
+//      остаются зелёными — отказ им даёт и `get`. «Вышедший заменяет свою
+//      причину позже» тоже зелёный: у него `left` уже в базе. Пара порч 1 и 2
+//      и различает «условия нет» от «условие смотрит не туда».
+//
+//   3. В `allow read` ЗАМЕНИТЬ ветвь владельца на `request.auth.uid in
+//      leaveEvent().get('musicians', [])` — «участник того же вечера НЕ читает
+//      чужую причину» и «участник НЕ получает причины вечера запросом», плюс
+//      «владелец читает причину участника» и «владелец получает все причины
+//      вечера одним запросом». ЧЕТЫРЕ теста. Это сама дыра, которую перенос
+//      закрывает.
+//
+// ЧЕГО НЕ ЛОВИТ: дошла ли пачка с трубки (это проба), и удаляет ли сервер
+// подколлекцию при удалении вечера (`event-deleted-cleanup.test.ts`).
 
 const OWNER = "owner-uid";
 const LEAVER = "leaver-uid";
@@ -46,9 +59,13 @@ const OTHER = "other-uid";
 const STRANGER = "stranger-uid";
 const EVENT = "ev-leave-notes";
 
+const eventPath = `personalEvents/${EVENT}`;
+const notePath = (uid: string) => `${eventPath}/leaveNotes/${uid}`;
+
 async function seed(env: RulesTestEnvironment) {
   await env.withSecurityRulesDisabled(async (context) => {
-    await setDoc(doc(context.firestore(), `personalEvents/${EVENT}`), {
+    const db = context.firestore();
+    await setDoc(doc(db, eventPath), {
       ownerUid: OWNER,
       musicians: [LEAVER, OTHER],
       date: "2026-09-20T19:00:00.000",
@@ -57,12 +74,14 @@ async function seed(env: RulesTestEnvironment) {
       notes: "",
       isAgree: false,
       status: "agreed",
-      answers: { [LEAVER]: "going", [OTHER]: "going" },
+      answers: { [LEAVER]: "going", [OTHER]: "left" },
     });
+    // Причина уже вышедшего участника — предмет всех проверок чтения.
+    await setDoc(doc(db, notePath(OTHER)), { text: "Toyum var o gün" });
   });
 }
 
-describe("13.09: выход с причиной — ответ left и своя причина одной записью", () => {
+describe("17.09: причина выхода — свой документ, читают автор и владелец", () => {
   const rulesPath = path.resolve(__dirname, "../../firestore.rules");
   const realRules = fs.readFileSync(rulesPath, "utf8");
 
@@ -89,180 +108,184 @@ describe("13.09: выход с причиной — ответ left и своя 
   });
 
   // ------------------------------------------------------------------
-  // РАЗРЕШЕНО
+  // ЧТЕНИЕ
   // ------------------------------------------------------------------
 
-  it("вышедший оставляет причину ТЕКСТОМ одной записью с выходом", async () => {
-    const db = env.authenticatedContext(LEAVER).firestore();
-    await assertSucceeds(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
-        [`answers.${LEAVER}`]: "left",
-        [`leaveNotes.${LEAVER}`]: { text: "Toyum var o gün" },
-      }),
-    );
+  it("автор читает свою причину", async () => {
+    const db = env.authenticatedContext(OTHER).firestore();
+    await assertSucceeds(getDoc(doc(db, notePath(OTHER))));
   });
 
-  it("вышедший оставляет причину ГОЛОСОМ — ссылка и волна", async () => {
-    const db = env.authenticatedContext(LEAVER).firestore();
-    await assertSucceeds(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
-        [`answers.${LEAVER}`]: "left",
-        [`leaveNotes.${LEAVER}`]: {
-          voiceUrl: "https://example/voice",
-          voiceWaveform: [3, 50, 100],
-        },
-      }),
-    );
+  it("владелец вечера читает причину участника", async () => {
+    const db = env.authenticatedContext(OWNER).firestore();
+    await assertSucceeds(getDoc(doc(db, notePath(OTHER))));
   });
 
-  it("вышедший оставляет причину голосом НОВОЙ формой — hasVoice и волна", async () => {
-    // ШАГ 1 ПОЧИНКИ N236. Признак «голос есть» вместо ссылки с токеном:
-    // адрес в хранилище выводится из eventId и uid, дороги к байтам
-    // документ знать не обязан.
-    //
-    // ЭТОТ ТЕСТ И ЕСТЬ СТОРОЖ ФОРМЫ, о котором просил владелец: верни
-    // кто-нибудь voiceUrl обязательным (`&& 'voiceUrl' in note`), причина
-    // без ссылки перестанет проходить — и он покраснеет в тот же прогон.
-    // Утверждает он НАЛИЧИЕ разрешения, поэтому сам себе канарейка (I31):
-    // ослепни разбор, отвались эмулятор, исчезни правило — исход один,
-    // красный. Сторожу отсутствия понадобилась бы соседка, этому нет.
+  it("участник того же вечера НЕ читает чужую причину", async () => {
+    // САМА ДЫРА, ради которой перенос. До 17.09 это чтение проходило: поле
+    // лежало в документе вечера, а его читает весь состав.
     const db = env.authenticatedContext(LEAVER).firestore();
-    await assertSucceeds(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
-        [`answers.${LEAVER}`]: "left",
-        [`leaveNotes.${LEAVER}`]: {
-          hasVoice: true,
-          voiceWaveform: [3, 50, 100],
-        },
-      }),
-    );
+    await assertFails(getDoc(doc(db, notePath(OTHER))));
   });
 
-  it("старая форма с voiceUrl проходит по-прежнему — переходный период", async () => {
-    // Пока живы сборки, читающие voiceUrl как адрес, правило обязано
-    // пускать обе формы. Здесь текст и ссылка вместе — сочетание, которого
-    // нет у теста выше, чтобы падение различало форму, а не набор ключей.
-    //
-    // КАНАРЕЙКА К ШАГУ 3: убрать voiceUrl из hasOnly — покраснеет ровно
-    // этот тест и «причина ГОЛОСОМ — ссылка и волна», и никто больше.
-    // То есть шаг 3 заранее знает своих двоих поимённо.
-    const db = env.authenticatedContext(LEAVER).firestore();
-    await assertSucceeds(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
-        [`answers.${LEAVER}`]: "left",
-        [`leaveNotes.${LEAVER}`]: {
-          text: "Toyum var",
-          voiceUrl: "https://example/voice",
-          voiceWaveform: [3, 50, 100],
-        },
-      }),
-    );
+  it("посторонний НЕ читает причину", async () => {
+    const db = env.authenticatedContext(STRANGER).firestore();
+    await assertFails(getDoc(doc(db, notePath(OTHER))));
   });
 
-  it("выход БЕЗ причины проходит по-прежнему", async () => {
-    // Канарейка к новому ходу: причина необязательна, и выход без неё идёт
-    // старым `answersForSelf`. Сломай правка его — ушёл бы и молчаливый выход.
+  it("владелец получает все причины вечера одним запросом", async () => {
+    const db = env.authenticatedContext(OWNER).firestore();
+    const snap = await assertSucceeds(getDocs(collection(db, `${eventPath}/leaveNotes`)));
+    // Число названо, а не «что-то пришло»: запрос обязан вернуть именно
+    // посеянную причину, иначе успех доказывал бы пустую подколлекцию.
+    expect(snap.docs.map((d) => d.id)).toEqual([OTHER]);
+  });
+
+  it("участник НЕ получает причины вечера запросом", async () => {
     const db = env.authenticatedContext(LEAVER).firestore();
-    await assertSucceeds(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
-        [`answers.${LEAVER}`]: "left",
-      }),
-    );
+    await assertFails(getDocs(collection(db, `${eventPath}/leaveNotes`)));
   });
 
   // ------------------------------------------------------------------
-  // ЗАПРЕЩЕНО
+  // ЗАПИСЬ — РАЗРЕШЕНО
   // ------------------------------------------------------------------
 
-  it("НЕЛЬЗЯ оставить причину, не выходя", async () => {
-    // Причина говорится про уход. «Иду» с приписанной причиной — это слова
-    // об уходе, которого не было.
+  it("выход с причиной текстом — ответ left и документ причины одной пачкой", async () => {
     const db = env.authenticatedContext(LEAVER).firestore();
-    await assertFails(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
-        [`answers.${LEAVER}`]: "cant",
-        [`leaveNotes.${LEAVER}`]: { text: "səbəb" },
-      }),
-    );
+    const batch = writeBatch(db);
+    batch.update(doc(db, eventPath), { [`answers.${LEAVER}`]: "left" });
+    batch.set(doc(db, notePath(LEAVER)), { text: "Maşın xarab oldu" });
+    await assertSucceeds(batch.commit());
+  });
+
+  it("выход с причиной голосом — hasVoice и волна", async () => {
+    const db = env.authenticatedContext(LEAVER).firestore();
+    const batch = writeBatch(db);
+    batch.update(doc(db, eventPath), { [`answers.${LEAVER}`]: "left" });
+    batch.set(doc(db, notePath(LEAVER)), { hasVoice: true, voiceWaveform: [3, 50, 100] });
+    await assertSucceeds(batch.commit());
+  });
+
+  it("выход без причины проходит по-прежнему", async () => {
+    // Канарейка к снятию `leavesWithNote()`: выход без причины идёт старым
+    // `answersForSelf` и сломаться от переноса не должен.
+    const db = env.authenticatedContext(LEAVER).firestore();
+    await assertSucceeds(updateDoc(doc(db, eventPath), { [`answers.${LEAVER}`]: "left" }));
+  });
+
+  it("вышедший заменяет свою причину позже отдельной записью", async () => {
+    // У OTHER ответ `left` уже в базе — `getAfter` без пачки видит его же.
+    const db = env.authenticatedContext(OTHER).firestore();
+    await assertSucceeds(setDoc(doc(db, notePath(OTHER)), { text: "Başqa səbəb" }));
+  });
+
+  // ------------------------------------------------------------------
+  // ЗАПИСЬ — ЗАПРЕЩЕНО
+  // ------------------------------------------------------------------
+
+  it("НЕЛЬЗЯ оставить причину, не выходя — ответ после пачки не left", async () => {
+    // Причина говорится про уход. «Не могу» с приписанной причиной — слова об
+    // уходе, которого не было.
+    const db = env.authenticatedContext(LEAVER).firestore();
+    const batch = writeBatch(db);
+    batch.update(doc(db, eventPath), { [`answers.${LEAVER}`]: "cant" });
+    batch.set(doc(db, notePath(LEAVER)), { text: "səbəb" });
+    await assertFails(batch.commit());
+  });
+
+  it("НЕЛЬЗЯ причину отдельной записью, не выходя вовсе", async () => {
+    const db = env.authenticatedContext(LEAVER).firestore();
+    await assertFails(setDoc(doc(db, notePath(LEAVER)), { text: "səbəb" }));
   });
 
   it("НЕЛЬЗЯ оставить причину за другого", async () => {
+    // У OTHER ответ `left` — отказ обязан прийти от «документ не твой», а не
+    // от «человек не вышел».
     const db = env.authenticatedContext(LEAVER).firestore();
+    await assertFails(setDoc(doc(db, notePath(OTHER)), { text: "o da gəlmir" }));
+  });
+
+  it("НЕЛЬЗЯ лишнее поле в причине", async () => {
+    const db = env.authenticatedContext(OTHER).firestore();
     await assertFails(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
-        [`answers.${LEAVER}`]: "left",
-        [`leaveNotes.${OTHER}`]: { text: "o da gəlmir" },
-      }),
+      setDoc(doc(db, notePath(OTHER)), { text: "səbəb", lastActionType: "cancelled" }),
     );
   });
 
-  it("НЕЛЬЗЯ положить в причину лишнее поле", async () => {
-    const db = env.authenticatedContext(LEAVER).firestore();
+  it("НЕЛЬЗЯ voiceUrl в причине", async () => {
+    // N236, шаг 3 — явным вердиктом. Ссылка с токеном открывает файл без
+    // входа; вернуть её в данные не должна никакая рука.
+    const db = env.authenticatedContext(OTHER).firestore();
     await assertFails(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
-        [`answers.${LEAVER}`]: "left",
-        [`leaveNotes.${LEAVER}`]: { text: "səbəb", lastActionType: "cancelled" },
-      }),
+      setDoc(doc(db, notePath(OTHER)), { voiceUrl: "https://example/v?token=x" }),
     );
   });
 
-  it("НЕЛЬЗЯ причине быть не картой", async () => {
-    const db = env.authenticatedContext(LEAVER).firestore();
-    await assertFails(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
-        [`answers.${LEAVER}`]: "left",
-        [`leaveNotes.${LEAVER}`]: "просто строка",
-      }),
-    );
-  });
-
-  it("НЕЛЬЗЯ этим ходом тронуть другое поле вечера", async () => {
-    const db = env.authenticatedContext(LEAVER).firestore();
-    await assertFails(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
-        [`answers.${LEAVER}`]: "left",
-        [`leaveNotes.${LEAVER}`]: { text: "səbəb" },
-        date: "2026-09-21T19:00:00.000",
-      }),
-    );
-  });
-
-  it("НЕЛЬЗЯ оставить причину в вечере, где тебя нет в составе", async () => {
-    const db = env.authenticatedContext(STRANGER).firestore();
-    await assertFails(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
-        [`answers.${STRANGER}`]: "left",
-        [`leaveNotes.${STRANGER}`]: { text: "səbəb" },
-      }),
-    );
-  });
-
-  it("НЕЛЬЗЯ hasVoice: false — отсутствие голоса пишется отсутствием ключа", async () => {
-    // Прибито ЗНАЧЕНИЕ, а не тип. `false` значило бы ровно то же, что
-    // отсутствие ключа, и два написания одного смысла разъезжаются молча:
-    // один читатель проверит наличие ключа, другой значение (I47).
-    //
-    // ЛОВИТ ИМЕННО ЭТО: замени `== true` на `is bool` — правило начнёт
-    // пускать `false`, и покраснеет только этот тест.
-    const db = env.authenticatedContext(LEAVER).firestore();
-    await assertFails(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
-        [`answers.${LEAVER}`]: "left",
-        [`leaveNotes.${LEAVER}`]: { hasVoice: false },
-      }),
-    );
+  it("НЕЛЬЗЯ hasVoice: false", async () => {
+    // Прибито ЗНАЧЕНИЕ, а не тип: `false` значило бы то же, что отсутствие
+    // ключа, и два написания одного смысла разъезжаются молча (I47).
+    const db = env.authenticatedContext(OTHER).firestore();
+    await assertFails(setDoc(doc(db, notePath(OTHER)), { hasVoice: false }));
   });
 
   it("НЕЛЬЗЯ hasVoice строкой", async () => {
-    // Вторая сторона того же: `== true` отказывает и значению другого типа.
-    // Порознь с тестом выше они различают `is bool` (пустит false, но не
-    // строку) от снятого условия вовсе (пустит оба).
+    // Порознь с тестом выше различают `is bool` (пустит false, но не строку)
+    // от снятого условия (пустит оба).
+    const db = env.authenticatedContext(OTHER).firestore();
+    await assertFails(setDoc(doc(db, notePath(OTHER)), { hasVoice: "true" }));
+  });
+
+  it("НЕЛЬЗЯ причину в вечере, где тебя нет в составе", async () => {
+    const db = env.authenticatedContext(STRANGER).firestore();
+    await assertFails(setDoc(doc(db, notePath(STRANGER)), { text: "səbəb" }));
+  });
+
+  it("НЕЛЬЗЯ владельцу оставить причину в своём вечере", async () => {
+    // Владелец вечер создал, а не согласился (N112): уходить ему не из чего.
+    await env.withSecurityRulesDisabled(async (context) => {
+      await updateDoc(doc(context.firestore(), eventPath), {
+        musicians: [LEAVER, OTHER, OWNER],
+        [`answers.${OWNER}`]: "left",
+      });
+    });
+    const db = env.authenticatedContext(OWNER).firestore();
+    await assertFails(setDoc(doc(db, notePath(OWNER)), { text: "səbəb" }));
+  });
+
+  it("НЕЛЬЗЯ записать поле leaveNotes в документ вечера", async () => {
+    // Снятый ход `leavesWithNote()`: поле больше не пишется никем из
+    // участников, иначе дыра вернулась бы старой дорогой.
     const db = env.authenticatedContext(LEAVER).firestore();
     await assertFails(
-      updateDoc(doc(db, `personalEvents/${EVENT}`), {
+      updateDoc(doc(db, eventPath), {
         [`answers.${LEAVER}`]: "left",
-        [`leaveNotes.${LEAVER}`]: { hasVoice: "true" },
+        [`leaveNotes.${LEAVER}`]: { text: "səbəb" },
       }),
     );
+  });
+
+  // ------------------------------------------------------------------
+  // УДАЛЕНИЕ
+  // ------------------------------------------------------------------
+
+  it("владелец удаляет причину убранного из состава", async () => {
+    // Крестик: правка состава и удаление причины одной пачкой.
+    const db = env.authenticatedContext(OWNER).firestore();
+    const batch = writeBatch(db);
+    batch.update(doc(db, eventPath), { musicians: [LEAVER], answers: { [LEAVER]: "going" } });
+    batch.delete(doc(db, notePath(OTHER)));
+    await assertSucceeds(batch.commit());
+  });
+
+  it("НЕЛЬЗЯ участнику удалить чужую причину", async () => {
+    const db = env.authenticatedContext(LEAVER).firestore();
+    await assertFails(deleteDoc(doc(db, notePath(OTHER))));
+  });
+
+  it("НЕЛЬЗЯ автору удалить свою причину", async () => {
+    // Решение владельца 17.09: «приложение помнит, но не судит; человек
+    // сказал, почему не может, стирать это задним числом незачем».
+    const db = env.authenticatedContext(OTHER).firestore();
+    await assertFails(deleteDoc(doc(db, notePath(OTHER))));
   });
 });

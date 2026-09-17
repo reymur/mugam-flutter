@@ -3765,7 +3765,23 @@ class _PersonalEventDetailScreenState
                         ),
                       ),
                       const SizedBox(height: 12),
-                      ...event.participantUids.map((uid) {
+                      // ПРИЧИНЫ ВЫХОДА — СВОИМИ ДОКУМЕНТАМИ С 17.09, и
+                      // запрашивает их ТОЛЬКО ВЛАДЕЛЕЦ. Сервер отдаёт
+                      // подколлекцию одному ему; участник с тем же запросом
+                      // получал бы отказ на каждое открытие вечера. Решает
+                      // правило `requestsLeaveNotes`, а не сравнение здесь.
+                      ...(() {
+                        final leaveNotes = requestsLeaveNotes(
+                          viewerUid: currentUid,
+                          ownerUid: event.ownerUid,
+                        )
+                            ? ref
+                                    .watch(leaveNotesProvider(event.id))
+                                    .asData
+                                    ?.value ??
+                                const <String, LeaveNote>{}
+                            : const <String, LeaveNote>{};
+                        return event.participantUids.map((uid) {
                         // ОТВЕТ ЧИТАЕТСЯ ОДИН РАЗ НА СТРОКУ, и это не
                         // бережливость. Его спрашивают двое — показ и правило
                         // крестика, — и два отдельных чтения дали бы двум
@@ -3776,7 +3792,7 @@ class _PersonalEventDetailScreenState
                         // ПРИЧИНА ЧИТАЕТСЯ ОДИН РАЗ НА СТРОКУ — по тому же
                         // доводу, что ответ: её спрашивают правило показа и
                         // сама строка, и два чтения могли бы разойтись.
-                        final leaveNote = event.leaveNoteFor(uid);
+                        final leaveNote = leaveNotes[uid];
                         // «?» И ПРИЧИНА — ТОЛЬКО ВЛАДЕЛЬЦУ (решение 13.09).
                         // Решает правило целиком, как у крестика ниже; строке
                         // достаётся готовая причина либо `null`. Остальной
@@ -3892,7 +3908,8 @@ class _PersonalEventDetailScreenState
                           // сознательно». Разговор остался там же, где был, —
                           // в чате; окошко по-прежнему ни к чему.
                         );
-                      }),
+                        });
+                      })(),
                     ],
 
                     // 4а. КОГО Я ПОЗВАЛ — работа 7, шаг 5а, 09.09.
@@ -5376,10 +5393,13 @@ Future<void> _writeEventEdit(
       ownerUid: event.ownerUid,
       // Состав ДО правки (N114).
       previousParticipants: event.participantUids,
-      // Причины выхода едут за составом так же, как ответы: крестик убирает
-      // человека, и его слова уходят вместе с ним (решение 13.09). Вход
-      // для писателя — единственный вызов, держит сторож по исходникам.
-      previousLeaveNotes: event.leaveNotesForRewrite(),
+    ),
+    // Причины выхода — свои документы с 17.09: убранный из состава уносит
+    // свою той же пачкой, что и правка (решение 13.09 «слова уходят вместе
+    // с человеком»). Единственный вызов — держит сторож по исходникам.
+    leaveNotesToDelete: removedLeaveNoteUids(
+      previousParticipants: event.participantUids,
+      participants: musicians,
     ),
   );
 }

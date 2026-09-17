@@ -1237,7 +1237,16 @@ export function planUpdatePushes(input: PlanUpdateInput): EventPush[] {
   // Имя приходит из самой записи и подделке не поддаётся: правила дают
   // каждое имя только тому, кто вправе совершить именно этот поступок
   // (`firestore.rules` → `withdrawsCancelRequest`/`declinesCancelRequest`
-  // и `namesCancelDeed`). Поэтому здесь ему можно верить без проверок.
+  // и `namesCancelDeed`).
+  //
+  // ЗДЕСЬ СТОЯЛО «ПОЭТОМУ ЗДЕСЬ ЕМУ МОЖНО ВЕРИТЬ БЕЗ ПРОВЕРОК» — И ЭТО БЫЛО
+  // ВЕРНО ПРО ПОДДЕЛКУ И НЕВЕРНО ПРО ДАВНОСТЬ (N243, 17.09). Имя остаётся в
+  // документе после поступка, и ЛЮБАЯ следующая запись — ответ участника,
+  // правка, серверный `update` — приносит его снова, ничего не совершая.
+  // Поэтому КАЖДОЕ тело ниже требует перехода, который его поступок
+  // производит в данных: имя говорит, ЧТО за поступок, переход — что он
+  // случился ЭТОЙ записью. Без перехода — молчим: не произошло ничего.
+  // Обход 17.09 нашёл четыре тела без проверки из восьми.
   switch (after.lastActionType) {
     case "cancelRequested": {
       // Признак нового запроса — СДВИГ ОТМЕТКИ ВРЕМЕНИ, а не появление
@@ -1259,6 +1268,14 @@ export function planUpdatePushes(input: PlanUpdateInput): EventPush[] {
       // третий, ему нужны другие слова: «договор отменён», а не «ваш
       // запрос подтверждён». Пусть лучше он не получит ничего, чем
       // получит неправду.
+      //
+      // ПЕРЕХОД — В ОТМЕНУ (N243). Подтверждение `cancelRequestedBy` не
+      // очищает (`confirmsCancel()` его не трогает), значит без этого условия
+      // любая следующая запись в отменённый договор снова слала бы «ваш
+      // запрос подтверждён».
+      if (after.status !== "cancelled" || before.status === after.status) {
+        return out;
+      }
       const asked = before.cancelRequestedBy ?? null;
       if (asked && asked !== actor) {
         out.push(pushCancelConfirmed(asked, eventId, actorName, after));
@@ -1267,6 +1284,11 @@ export function planUpdatePushes(input: PlanUpdateInput): EventPush[] {
     }
     case "cancelWithdrawn": {
       // Второй стороне: это она сидела с вопросом, подтверждать ли.
+      //
+      // ПЕРЕХОД — ПРОСЬБА СНЯТА ЭТОЙ ЗАПИСЬЮ (N243): до неё была, после — нет.
+      // Здесь не проверялось ничего, и любая следующая запись в документ с
+      // этим именем снова слала «запрос отозван».
+      if (!before.cancelRequestedBy || after.cancelRequestedBy) return out;
       for (const uid of recipientsOf(after, actor)) {
         out.push(pushCancelWithdrawn(uid, eventId, actorName, after));
       }
@@ -1275,6 +1297,12 @@ export function planUpdatePushes(input: PlanUpdateInput): EventPush[] {
     case "cancelDeclined": {
       // Запросившему, и адресат берётся из `before`: в `after` поле уже
       // очищено — тем самым ходом, о котором и шлём.
+      //
+      // ПЕРЕХОД — ПРОСЬБА СНЯТА ЭТОЙ ЗАПИСЬЮ (N243). До 17.09 повторного
+      // письма здесь не было ПО СОВПАДЕНИЮ: отказ очищает поле, и следующая
+      // запись видела в `before` пустое. Совпадение данных — не проверка;
+      // условие то же, что у отзыва, и стоит оно явно.
+      if (!before.cancelRequestedBy || after.cancelRequestedBy) return out;
       const asked = before.cancelRequestedBy ?? null;
       if (asked && asked !== actor) {
         out.push(pushCancelDeclined(asked, eventId, actorName, after));
@@ -1309,6 +1337,18 @@ export function planUpdatePushes(input: PlanUpdateInput): EventPush[] {
     // теми же словами, что состав родителя. Двойника нет: у родителя и у
     // ребёнка адресаты разные (`recipientsOf` считает по одному документу).
     case "ownerCancelled": {
+      // ПЕРЕХОД — В ОТМЕНУ (N243, 17.09). Здесь не проверялось ничего, и
+      // любая следующая запись в отменённый вечер — ответ участника, правка,
+      // серверный `update` — снова слала составу «Tədbir ləğv olundu». Нашлось
+      // разбором стирания поля `leaveNotes`: три вечера из девяти дали бы
+      // ложное письмо; в проде таких документов 37 из 152 (замер 17.09).
+      //
+      // Что получает тот, кого условие не поймало (I34): ничего — отмены
+      // этой записью не было. Правило `ownerCancelsOwnEvent()` пускает
+      // «отменить уже отменённый»; письма о нём тоже не будет, и это верно.
+      if (after.status !== "cancelled" || before.status === after.status) {
+        return out;
+      }
       for (const uid of recipientsOf(after, actor)) {
         out.push(pushCancelled(uid, eventId, actorName, after));
       }
