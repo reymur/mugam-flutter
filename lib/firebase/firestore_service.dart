@@ -3871,29 +3871,67 @@ class FirestoreService {
   /// **Старые слоты `invited: true` в проде есть** (9 на 17.09): их читает
   /// `partyRows` и молча пропускает — они означают «звали, и ушло», а человек
   /// при этом либо в составе, либо убран из него.
+  /// **[recalled] — КТО УЖЕ В СОСТАВЕ, НО ЗОВЁТСЯ ЗАНОВО (17.09).** Вышедший
+  /// либо тот, кого не спрашивали. В состав его добавлять не надо — он там, —
+  /// а ответ обязан стать `waiting`, и старая причина выхода уносится ТОЙ ЖЕ
+  /// пачкой.
+  ///
+  /// **ПОЧЕМУ ОТВЕТ ПЕРЕЗАПИСЫВАЕТСЯ ЯВНО, А НЕ ЧЕРЕЗ `previousParticipants`.**
+  /// Соблазн был: исключи возвращённого из прежнего состава, и правило само
+  /// даст ему `waiting`. Но `previousParticipants` отвечает на вопрос «кто
+  /// БЫЛ в составе» — это факт, а не рычаг; подсунув туда неправду, мы
+  /// получили бы верный ответ из ложной посылки, и следующий читатель принял
+  /// бы посылку за истину (I45: имя говорит, чем вещь является).
+  ///
+  /// **ПРИЧИНА УНОСИТСЯ ЗДЕСЬ, А НЕ ОСТАВЛЯЕТСЯ ДО СЛУЧАЯ.** Висящая под
+  /// заново позванным старая причина — ложь на экране: человек сказал «не
+  /// могу» про ПРОШЛЫЙ раз, а стоит она под новым вопросом. Права на это
+  /// проверены замером на выложенных правилах: `allow delete` в подколлекции
+  /// даёт стирание ровно владельцу вечера.
+  ///
+  /// **ГОЛОС ЭТА ЗАПИСЬ НЕ УНОСИТ, И ЭТО СКАЗАНО ПРЯМО, ЧТОБЫ НЕ СОЙТИ ЗА
+  /// ГОТОВОЕ.** Файл `event_leave_notes/{eventId}/{uid}` убирает сервер, и
+  /// убирает по исчезновению человека из `musicians` (N244). При зове человек
+  /// из состава НЕ уходит — значит без серверной ветви на переход
+  /// `left → waiting` файл осиротеет. Ветвь идёт отдельной выкладкой.
   Future<void> callPeopleToEvent({
     required PersonalEvent event,
     required String callerUid,
     required List<String> added,
+    required List<String> recalled,
     required List<LineupSlot> slots,
   }) async {
     final musicians = [...event.participantUids, ...added];
-    await _db.collection('personalEvents').doc(event.id).update({
+    final answers = answersForParticipants(
+      musicians,
+      previous: event.answersForRewrite(),
+      ownerUid: event.ownerUid,
+      previousParticipants: event.participantUids,
+    );
+    // ЗАНОВО ПОЗВАННЫЕ — ПОСЛЕ ПРАВИЛА И ПОВЕРХ НЕГО. Правило переносит
+    // знакомый ответ тому, кто остался в составе, и для `left` это верно:
+    // без зова выход обязан пережить любую правку (N114). Зов — и есть тот
+    // случай, когда его отменяют, и отменяется он явно, одной строкой,
+    // которую видно.
+    for (final uid in recalled) {
+      if (uid.isEmpty) continue;
+      answers[uid] = kAnswerWaiting;
+    }
+    final eventRef = _db.collection('personalEvents').doc(event.id);
+    final batch = _db.batch();
+    for (final uid in recalled) {
+      if (uid.isEmpty) continue;
+      batch.delete(eventRef.collection(kLeaveNotesCollection).doc(uid));
+    }
+    batch.update(eventRef, {
       'musicians': musicians,
       // Правило одно на всех писателей карты (`event_answers.dart`), а не
       // строка здесь: иначе правка состава и зов разошлись бы в том, что
       // значит «состав», и разошлись бы молча.
-      'answers': answersForParticipants(
-        musicians,
-        previous: event.answersForRewrite(),
-        // Владелец ВЕЧЕРА, а не зовущий: кнопка стоит у владельца, но
-        // параметр отвечает на другой вопрос — кому не надо ждать ответа на
-        // собственном вечере (N112).
-        ownerUid: event.ownerUid,
-        // Состав ДО зова (N114, N173): ушедший, позванный заново, отвечает
-        // заново, а согласившийся согласие сохраняет.
-        previousParticipants: event.participantUids,
-      ),
+      // КАРТА СОБРАНА ВЫШЕ — вместе с перезаписью заново позванных. Строить
+      // её здесь значило бы завести второй вызов правила и потерять ту самую
+      // перезапись, ради которой шаг и делался.
+      'answers': answers,
       // Карта заполнена ЦЕЛИКОМ по составу: отсутствующий в ней человек не
       // «неизвестен», а не спрошен (N115).
       kAnswersWrittenByOwner: true,
@@ -3919,7 +3957,8 @@ class FirestoreService {
       // совпадать с `kEventEdited` из `core/agreements/event_edit.dart`.
       'lastActionType': 'edited',
       'lastActionAt': FieldValue.serverTimestamp(),
-    }).timeout(_writeTimeout);
+    });
+    await batch.commit().timeout(_writeTimeout);
   }
 
   /// Правка вечера владельцем. Карту собирает `eventEditUpdate` — чистое

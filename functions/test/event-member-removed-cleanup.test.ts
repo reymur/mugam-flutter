@@ -142,3 +142,70 @@ test("эмулятор хранилища отвечает на удаление
   }
   expect(code).toBe(404);
 });
+
+// ЗОВ ЗАНОВО — ВТОРАЯ ДОРОГА К ФАЙЛУ ГОЛОСА (17.09).
+//
+// ПЕРВАЯ ДОРОГА висит на `diff.removed`: человека убрали из состава. При зове
+// он из состава НЕ уходит — уходит только его старый ответ, — и первая дорога
+// его не видит. Без второй заново позванный носил бы голос прошлого раза:
+// документ причины уносит клиент той же пачкой, а файл остался бы сиротой, и
+// уборщик сирот его не подберёт (`orphanSweep.ts` смотрит только `chats/` и
+// `statuses/`).
+//
+// ТРИ ВЕРДИКТА НИЖЕ ПРОВЕРЯЮТ, ЧТО ДОРОГ ИМЕННО ДВЕ, а не одна широкая:
+// первый — что новая работает, второй — что старая жива, третий — что ни одна
+// не срабатывает на обычной правке.
+
+test("ЗОВ ЗАНОВО УНОСИТ ФАЙЛ ГОЛОСА", async () => {
+  const id = "ev-recall-a";
+  const ref = await seedEvent(id, [A], { [A]: "left" });
+  const fileA = await seedFile(`event_leave_notes/${id}/${A}`);
+  expect((await fileA.exists())[0]).toBe(true);
+
+  // Ровно то, что пишет `callPeopleToEvent`: состав НЕ меняется, ответ
+  // возвращается в ожидание.
+  await ref.update({
+    answers: { [A]: "waiting" },
+    lastActionBy: OWNER,
+    lastActionType: "edited",
+  });
+
+  await waitFor(async () => !(await fileA.exists())[0]);
+  expect((await fileA.exists())[0]).toBe(false);
+});
+
+test("КРЕСТИК ПО-ПРЕЖНЕМУ УНОСИТ — вторая дорога первую не сломала", async () => {
+  const id = "ev-recall-keeps-removal";
+  const ref = await seedEvent(id, [A, B], { [A]: "left", [B]: "going" });
+  const fileA = await seedFile(`event_leave_notes/${id}/${A}`);
+
+  await ref.update({
+    musicians: [B],
+    answers: { [B]: "going" },
+    lastActionBy: OWNER,
+    lastActionType: "edited",
+  });
+
+  await waitFor(async () => !(await fileA.exists())[0]);
+  expect((await fileA.exists())[0]).toBe(false);
+});
+
+test("ОБЫЧНАЯ ПРАВКА ВЕЧЕРА ФАЙЛА НЕ ТРОГАЕТ", async () => {
+  // КАНАРЕЙКА К ДВУМ ВЕРДИКТАМ ВЫШЕ (I31). Оба утверждают, что файл ИСЧЕЗ, и
+  // оба зазеленели бы разом, начни уборка сносить файлы на всякой записи.
+  // Здесь ни состав, ни ответы не меняются — файл обязан остаться.
+  const id = "ev-recall-untouched";
+  const ref = await seedEvent(id, [A], { [A]: "left" });
+  const fileA = await seedFile(`event_leave_notes/${id}/${A}`);
+
+  await ref.update({
+    location: "Yeni məkan",
+    lastActionBy: OWNER,
+    lastActionType: "edited",
+  });
+
+  // Ждём столько же, сколько ждут исчезновения соседи: иначе «файл на месте»
+  // означало бы всего лишь «мы посмотрели раньше, чем уборка дошла».
+  await waitFor(async () => (await ref.get()).data()?.location === "Yeni məkan");
+  expect((await fileA.exists())[0]).toBe(true);
+});

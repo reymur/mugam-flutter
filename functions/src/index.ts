@@ -39,6 +39,7 @@ import {
   pushReplaced,
   recipientsOf,
   remindableOf,
+  askedAgainViaAnswers,
   reminderKey,
   ReminderKind,
   pushUnsettled,
@@ -2682,6 +2683,30 @@ export const onPersonalEventUpdated = onDocumentUpdated(
       getStorage().bucket("mugam-club.firebasestorage.app"),
       event.params.eventId,
       diffEvents(b, a).removed,
+    );
+    // ВТОРАЯ ДОРОГА К ТОМУ ЖЕ ФАЙЛУ — ЗОВ ЗАНОВО (17.09).
+    //
+    // ПЕРВАЯ ВИСИТ НА `diff.removed`: человека убрали из состава. При зове он
+    // из состава НЕ уходит — уходит только его старый ответ, — и первая
+    // дорога его не видит. Без этой строки заново позванный носил бы причину
+    // прошлого раза: документ уносит клиент той же пачкой, а файл голоса
+    // остался бы сиротой, и уборщик сирот его не подберёт (`orphanSweep.ts`
+    // смотрит только `chats/` и `statuses/`).
+    //
+    // ОТДЕЛЬНЫМ ВЫЗОВОМ, А НЕ ОБЪЕДИНЁННЫМ СПИСКОМ, И ЭТО НЕ МНОГОСЛОВИЕ:
+    // дороги две, и проверяются они порознь. Слей их в один список — и порча,
+    // снимающая одну, уронила бы вердикты обеих, то есть перестала бы
+    // доказывать, что дорог две.
+    //
+    // ОДИН uid В ОБЕИХ ДОРОГАХ НЕВОЗМОЖЕН ПО УСТРОЙСТВУ: `answersForParticipants`
+    // пишет ключи только по составу, значит у убранного ключа в `after.answers`
+    // нет вовсе, и `waiting` там взяться неоткуда. А случись это от чужого
+    // писателя — второе удаление безвредно: `removeLeaveNoteVoices` глотает
+    // `404` и молчит.
+    await removeLeaveNoteVoices(
+      getStorage().bucket("mugam-club.firebasestorage.app"),
+      event.params.eventId,
+      askedAgainViaAnswers(b, a),
     );
     const actor = a.lastActionBy ?? a.ownerUid;
     const actorName = await displayName(actor);

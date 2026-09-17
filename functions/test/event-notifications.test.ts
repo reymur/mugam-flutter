@@ -10,6 +10,7 @@ import {
   eventWallClock,
   fmtEventWhen,
   leftViaAnswers,
+  askedAgainViaAnswers,
   planUpdatePushes,
   PlanUpdateInput,
   pushDeleted,
@@ -603,14 +604,36 @@ describe("участник вышел — НОВАЯ схема, переход 
     assert.equal(pushes.some((p) => p.title === "İştirakçı ayrıldı"), false);
   });
 
-  it("повторное приглашение ('waiting') уведомления НЕ даёт", () => {
-    assert.deepEqual(plan({
+  it("повторный зов НЕ даёт письма ОБ УХОДЕ — но даёт своё (17.09)", () => {
+    // ВЕРДИКТ ПЕРЕПИСАН, И ЭТО НЕ ПОДГОНКА. Здесь стояло
+    // `assert.deepEqual(plan(...), [])` — «повторное приглашение уведомления
+    // НЕ даёт», и на тот день это было верно: на переходе `left → waiting`
+    // молчали все, потому что такого хода в приложении не существовало.
+    //
+    // 17.09 владелец решил, что зов вышедшего работает, и тишина стала
+    // дефектом: Рафаэль дважды нажал «позвать», увидел «отправлено», а
+    // Теймуру не пришло ничего.
+    //
+    // ЧТО ОСТАЛОСЬ ВЕРНЫМ И РАДИ ЧЕГО ВЕРДИКТ ЖИВЁТ ДАЛЬШЕ: обратный ход не
+    // должен слать письмо ОБ УХОДЕ. Возвращение человека — не уход, и
+    // «İştirakçı ayrıldı» здесь было бы прямой неправдой. Это и есть предмет
+    // блока, в котором вердикт стоит; соседи проверяют то же и так же.
+    //
+    // ПРЕЖНЯЯ ФОРМА БЫЛА ШИРЕ СВОЕГО ИМЕНИ: она требовала молчания ВСЕХ
+    // писем, хотя блок про одно. Ширина и сделала её несовместимой с новым
+    // ходом — узкая пережила бы его без правки.
+    const pushes = plan({
       eventId: "e1",
       before: after,
       after: ev({ answers: { [OWNER]: "going", [GUEST]: "waiting" } }),
       actorName: "Rafael",
       leftNames: {},
-    }), []);
+    });
+    assert.equal(pushes.some((p) => p.title === "İştirakçı ayrıldı"), false);
+    // И ПОЛОЖИТЕЛЬНАЯ ПОЛОВИНА, без которой отрицание выше ничего не значит:
+    // письмо о зове уйти ОБЯЗАНО. Иначе «нет письма об уходе» выполнялось бы
+    // и полной тишиной — тем самым дефектом.
+    assert.equal(pushes.some((p) => p.title === "Tədbirə əlavə olundunuz"), true);
   });
 
   // КАНАРЕЙКА СНЯТА 30.08 ВМЕСТЕ СО СВОИМ ПРЕДМЕТОМ (N121, шаг 3).
@@ -1924,4 +1947,98 @@ describe("N243: поступок случился этой записью, а н
       assert.equal(pushes.length, 0, `${name}: письмо при несовершённом поступке`);
     });
   }
+});
+
+describe("зов вышедшего: переход в waiting (17.09)", () => {
+  // ПОВОД — ЖИВОЙ ДЕФЕКТ С ТРУБКИ. Владелец, не убирая вышедшего, нажал
+  // «Öz adamlarımı çağır» дважды: приложение показало «приглашение
+  // отправлено», а человеку не пришло ничего. Клиент починен отдельно; здесь
+  // серверная половина — письмо и уборка голоса.
+  //
+  // ПРИЗНАК — ПЕРЕХОД, А НЕ ИМЯ ПОСТУПКА. `lastActionType` у зова — `edited`,
+  // тот же, что у обычной правки вечера: по рассказу их не различить.
+  // Подделать переход в карте ответов нельзя, он и есть поступок (N243, I54).
+
+  describe("сам признак", () => {
+    it("ВЫШЕДШИЙ, КОТОРОГО ПОЗВАЛИ ЗАНОВО, НАЗВАН", () => {
+      const before = ev({ answers: { [OWNER]: "going", [GUEST]: "left" } });
+      const after = ev({ answers: { [OWNER]: "going", [GUEST]: "waiting" } });
+      assert.deepEqual(askedAgainViaAnswers(before, after), [GUEST]);
+    });
+
+    it("НЕСПРОШЕННЫЙ, КОТОРОГО СПРОСИЛИ, НАЗВАН", () => {
+      // Человек в составе, ключа в карте нет — его не спрашивали (N115).
+      // В данных это не то же, что выход, но ход один: вопрос поставлен.
+      const before = ev({ answers: { [OWNER]: "going" } });
+      const after = ev({ answers: { [OWNER]: "going", [GUEST]: "waiting" } });
+      assert.deepEqual(askedAgainViaAnswers(before, after), [GUEST]);
+    });
+
+    it("НОВЫЙ В СОСТАВЕ НЕ НАЗВАН — ему письмо уже шлёт diff.added", () => {
+      // САМОЕ ВАЖНОЕ УСЛОВИЕ ПРАВИЛА. У только что добавленного `before` тоже
+      // пуст, а `after` — `waiting`: два первых условия он проходит. Без
+      // проверки «был в составе до» каждый обычный зов слал бы новому
+      // человеку ДВА письма — отсюда и от `diff.added`.
+      const before = ev({ musicians: [OWNER], answers: { [OWNER]: "going" } });
+      const after = ev({
+        musicians: [OWNER, GUEST],
+        answers: { [OWNER]: "going", [GUEST]: "waiting" },
+      });
+      assert.deepEqual(askedAgainViaAnswers(before, after), []);
+    });
+
+    it("ТОТ, КТО И ТАК ЖДАЛ, НЕ НАЗВАН — это состояние, а не переход", () => {
+      // Без этого условия ветвь стреляла бы на КАЖДОЙ следующей записи в
+      // документ: ответ соседа, правка места, серверный `update`. Ровно тот
+      // класс, что дал четыре ложных письма из восьми тел (N243).
+      const before = ev({ answers: { [OWNER]: "going", [GUEST]: "waiting" } });
+      const after = ev({
+        answers: { [OWNER]: "going", [GUEST]: "waiting" },
+        location: "другое место",
+      });
+      assert.deepEqual(askedAgainViaAnswers(before, after), []);
+    });
+
+    it("СОГЛАСИВШИЙСЯ НЕ НАЗВАН", () => {
+      const before = ev({ answers: { [OWNER]: "going", [GUEST]: "waiting" } });
+      const after = ev({ answers: { [OWNER]: "going", [GUEST]: "going" } });
+      assert.deepEqual(askedAgainViaAnswers(before, after), []);
+    });
+
+    it("КАНАРЕЙКА: правило вообще кого-то находит", () => {
+      // Четыре вердикта выше ждут пустоты и зазеленели бы разом, начни
+      // правило возвращать пустой список на всё (I31).
+      const before = ev({ answers: { [OWNER]: "going", [GUEST]: "left" } });
+      const after = ev({ answers: { [OWNER]: "going", [GUEST]: "waiting" } });
+      assert.equal(askedAgainViaAnswers(before, after).length, 1);
+    });
+  });
+
+  it("planUpdatePushes шлёт заново позванному ОДНО письмо, а не два", () => {
+    // Одна запись зова может и добавить нового, и вернуть вышедшего. Оба
+    // обязаны получить по письму — и ровно по одному.
+    const before = ev({
+      musicians: [OWNER, GUEST],
+      answers: { [OWNER]: "going", [GUEST]: "left" },
+    });
+    const after = ev({
+      musicians: [OWNER, GUEST, OTHER],
+      answers: { [OWNER]: "going", [GUEST]: "waiting", [OTHER]: "waiting" },
+      lastActionBy: OWNER,
+      lastActionType: "edited",
+    });
+    const pushes = plan({ eventId: "e1", before, after, actorName: "Rafael" });
+    const toGuest = pushes.filter((p) => p.uid === GUEST);
+    const toOther = pushes.filter((p) => p.uid === OTHER);
+    assert.equal(toGuest.length, 1, "вернувшемуся — одно письмо");
+    assert.equal(toOther.length, 1, "новому — одно письмо");
+    assert.equal(toGuest[0].title, "Tədbirə əlavə olundunuz");
+  });
+
+  // ЧЕГО ЭТОТ НАБОР НЕ ПРОВЕРЯЕТ, СКАЗАНО ПРЯМО (I50): защиту от ПОВТОРНОЙ
+  // ДОСТАВКИ одного и того же события Cloud Functions. Она держится на
+  // `claimNotificationOnce`, и воспроизвести вторую доставку тестом нечем:
+  // эмулятор доставляет событие один раз, а подделка доставки проверяла бы
+  // подделку, а не службу. Порчу по ней я не ставил и за проверенную не
+  // выдаю — сторожа на неё нет.
 });

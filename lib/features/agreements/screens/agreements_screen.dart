@@ -15,6 +15,7 @@ import '../../../core/agreements/event_status_view.dart';
 import '../../../core/agreements/event_edit.dart';
 import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
+import '../../../core/agreements/call_targets.dart';
 import '../../../core/agreements/day_buckets.dart';
 import '../../../core/agreements/event_lookup.dart';
 import '../../../core/agreements/day_role.dart';
@@ -3156,14 +3157,30 @@ class _PersonalEventDetailScreenState
     // Здесь стоял `invitedUidsUnder(myEvents, event.id)` — обход чужих
     // документов в поисках детей. Приглашение живёт в составе, значит ответ
     // лежит в самом событии, которое экран уже держит.
-    final already = event.participantUids.toSet();
+    // КОГО ЗВАТЬ — РЕШАЕТ ПРАВИЛО, А НЕ ЭТА РАЗМЕТКА (17.09).
+    //
+    // Здесь стояло `final already = event.participantUids.toSet();` и ниже
+    // условие `if (!already.contains(uid))`. Оно было неверным — `musicians`
+    // после выхода значит «видит вечер», а не «участвует», — и не
+    // проверялось ничем: условие в разметке прогнать нечем (I32). Дефект
+    // дожил до трубки: «позвать» на вышедшем показывало «отправлено» и не
+    // отправляло ничего.
+    //
+    // Разбор — `core/agreements/call_targets.dart`, и он прогоняется без
+    // Firestore.
+    final targets = callTargets(event: event, picked: picked);
 
     final slots = <LineupSlot>[];
+    // ЗАНОВО ПОЗВАННЫЕ — ОТДЕЛЬНЫМ СПИСКОМ ОТ НОВЫХ. Новых надо добавить в
+    // состав, заново позванных — нет, они там уже есть; им меняется ОТВЕТ.
+    // Смешай их, и вышедший ушёл бы в `musicians` вторым разом.
+    final toRecall = <String>[];
     // Кого эта запись добавит в состав. Отдельно от [slots] нарочно: слоты —
     // это рассказ обо ВСЕХ отмеченных, включая тех, кому не ушло и кто уже
     // был; состав меняют только новые.
     final toAdd = <String>[];
-    for (final uid in picked) {
+    for (final target in targets) {
+      final uid = target.uid;
       // Имя — снимок НА МИГ СБОРА, и пересобирать его при чтении запрещено
       // (требование приёмки 3). Пустое значит «сведений нет»: человек
       // выбран из этого же списка, значит он в нём был, и врать вместо
@@ -3172,7 +3189,14 @@ class _PersonalEventDetailScreenState
       String? reason;
       // ПОВТОРНОЕ НАЖАТИЕ НЕ ПЛОДИТ ДВОЙНИКОВ. Он уже в составе — значит
       // позван, и слот честно говорит именно это, а не «не ушло».
-      if (!already.contains(uid)) {
+      // ЗАНОВО ПОЗВАННОМУ РАУНД НЕ ПРОВЕРЯЕТСЯ, и это не пропуск. Отказ по
+      // открытому раунду бережёт от того, чтобы позвать человека посреди
+      // чужого разговора про работу; но этот человек УЖЕ был в этом вечере —
+      // разговор про него состоялся, и он из него вышел. Спрашивать чат
+      // заново значило бы задать вопрос, на который уже ответили делом.
+      if (target.outcome == CallOutcome.askAgain) {
+        toRecall.add(uid);
+      } else if (target.outcome == CallOutcome.addToParty) {
         try {
           final chatId = await resolveDirectChatId(
             ref,
@@ -3214,6 +3238,7 @@ class _PersonalEventDetailScreenState
         event: event,
         callerUid: myUid,
         added: toAdd,
+        recalled: toRecall,
         // ВЕСЬ СПИСОК ОТПРАВКИ, И ОТБИРАТЬ ЗДЕСЬ НЕ НАДО: в документ уходят
         // только непозванные, и решает это сам писатель. Отбор пробовали
         // держать здесь — порча показала, что вердикт по исходникам такой
@@ -3228,9 +3253,16 @@ class _PersonalEventDetailScreenState
       // göndərildi» о том, чего не произошло (I14).
       //
       // Уже бывшие в составе остаются позванными: их эта запись не меняла.
+      // ОТКАЗ ЗАПИСИ ПОМЕЧАЕТ ТОЛЬКО ТЕХ, КОМУ ЧТО-ТО ШЛО. Кого правило
+      // назвало уже спрошенным, эта запись не меняла — значит и не могла
+      // ему навредить.
+      final sending = {
+        for (final t in targets)
+          if (t.outcome != CallOutcome.alreadyAsked) t.uid,
+      };
       slotsAfterWrite = [
         for (final s in slots)
-          already.contains(s.uid)
+          !sending.contains(s.uid)
               ? s
               : LineupSlot(
                   uid: s.uid,
@@ -3243,19 +3275,54 @@ class _PersonalEventDetailScreenState
 
     if (!mounted) return;
     final notSent = slotsAfterWrite.where((s) => !s.invited).toList();
-    if (notSent.isEmpty) {
+
+    // ПЛАШКА ГОВОРИТ ПРАВДУ — ПОЧИНКА 17.09, найдена глазами на трубке.
+    //
+    // ЧТО ОНА ДЕЛАЛА ДО. Считала ОТМЕЧЕННЫХ, а не отправленных: слот выходил
+    // «позванным», если `reason == null`, а `reason` оставался пустым и у
+    // того, кого пропустили как уже бывшего в составе. Владелец дважды нажал
+    // «позвать» на вышедшем, прочёл «Çağırış göndərildi» и был уверен, что
+    // позвал. Человеку не ушло ничего, и узнали бы об этом на свадьбе.
+    //
+    // ЧТО ОНА ДЕЛАЕТ ТЕПЕРЬ. Спрашивает правило `anythingToSend`: ушло ли
+    // хоть что-нибудь. Не ушло — не хвалимся. Число берётся из ТОГО ЖЕ
+    // разбора, а не из длины отмеченного списка.
+    //
+    // ТРЕТЬЕ СОСТОЯНИЕ НАЗВАНО ОТДЕЛЬНО, а не слито с отказом (I47): «все
+    // отмеченные и так в вечере» — не неудача и не успех, а «делать было
+    // нечего». Слей мы его с «не ушло никому», человек искал бы поломку там,
+    // где всё в порядке.
+    // СЧЁТ — ПО ТЕМ, КОМУ ДЕЙСТВИТЕЛЬНО УШЛО, а не «отмеченные минус
+    // неудачи». Уже спрошенный остаётся в слотах «позванным» — слот говорит
+    // про состояние человека, а не про эту отправку, — и в разности он
+    // молча прибавлял бы к числу единицу. Это та же ложь, что и плашка,
+    // только числом: «отправлено двоим» при одном отправленном.
+    final sendingUids = {
+      for (final t in targets)
+        if (t.outcome != CallOutcome.alreadyAsked) t.uid,
+    };
+    final sentCount = slotsAfterWrite
+        .where((s) => s.invited && sendingUids.contains(s.uid))
+        .length;
+    if (!anythingToSend(targets)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Çağırış göndərildi: ${slotsAfterWrite.length} nəfər'),
+        const SnackBar(
+          content: Text('Onlar artıq tədbirdədir'),
           behavior: SnackBarBehavior.floating,
         ),
       );
       return;
     }
-    await _showNotSentDialog(
-      sent: slotsAfterWrite.length - notSent.length,
-      notSent: notSent,
-    );
+    if (notSent.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Çağırış göndərildi: $sentCount nəfər'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    await _showNotSentDialog(sent: sentCount, notSent: notSent);
   }
 
   /// НЕУШЕДШИЕ — ПОИМЁННО, С ДВЕРЬЮ В ЧАТ.
