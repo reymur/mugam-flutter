@@ -6,52 +6,52 @@ import 'package:mugam_flutter/core/agreements/lineup_rows.dart';
 import 'package:mugam_flutter/firebase/models.dart';
 
 // СТРОКИ «КОГО Я ПОЗВАЛ» — работа 7, шаг 5а (`docs/plan.md`), 09.09.
+// ПЕРЕПИСАНЫ 17.09: приглашение живёт в составе вечера (закон о договоре).
 //
-// ПРОВЕРЯЕТСЯ ГЛАВНОЕ УТВЕРЖДЕНИЕ ПРАВИЛА: ни один источник в одиночку не
-// отвечает на все четыре вопроса строки, и каждый может пропасть отдельно.
-// Поэтому здесь не «работает ли сборка», а четыре случая расхождения
-// источников — ровно те, ради которых их два.
+// ЧТО ПРОВЕРЯЕТСЯ ТЕПЕРЬ. Прежде правило собирало строку из ДВУХ источников —
+// шаблона и детей-приглашений, — и вердикты были про их расхождение. Источник
+// один: сам вечер. Осталось различение, ради которого правило и существует, —
+// **три состояния человека в шаблоне**: позван, не позван с причиной, позван и
+// снят. Свести любые два значило бы пообещать ответ там, где вопроса нет (I47).
 //
 // СОБЫТИЕ СТРОИТСЯ ЧЕРЕЗ `fromFirestore`: карта ответов у модели закрыта, и
 // это тот же путь, которым документ приходит в проде (I55).
 
 void main() {
-  PersonalEvent child({
-    String id = 'c',
-    String parent = 'p',
-    String invitee = 'guest',
-    String answer = kAnswerWaiting,
+  PersonalEvent event({
+    String id = 'p',
+    List<String> musicians = const [],
+    Map<String, String> answers = const {},
     String status = 'agreed',
-    String? reason,
   }) =>
       PersonalEvent.fromFirestore(id, {
         'ownerUid': 'rafael',
-        'parentEventId': parent,
         'date': '2026-09-11T20:00:00',
-        'musicians': [invitee],
-        'answers': {invitee: answer},
+        'musicians': musicians,
+        'answers': answers,
         'answersWrittenByOwner': true,
         'status': status,
-        if (reason != null) 'unsettledReason': reason,
       });
 
   List<LineupRow> rowsOf({
     List<LineupSlot> lineup = const [],
-    List<PersonalEvent> children = const [],
+    List<String> musicians = const [],
+    Map<String, String> answers = const {},
+    String status = 'agreed',
     Map<String, String> names = const {},
   }) =>
       lineupRows(
         lineup: lineup,
-        children: children,
-        parentEventId: 'p',
+        event: event(musicians: musicians, answers: answers, status: status),
         nameOf: (uid) => names[uid],
       );
 
   group('три состояния, которые владелец обязан различать', () {
-    test('позван и молчит — ответ waiting из ЕГО документа', () {
+    test('позван и молчит — ответ waiting из состава вечера', () {
       final rows = rowsOf(
         lineup: const [LineupSlot(uid: 'guest', name: 'Səid', invited: true)],
-        children: [child(answer: kAnswerWaiting)],
+        musicians: const ['guest'],
+        answers: const {'guest': kAnswerWaiting},
         names: const {'guest': 'Səid Oruc'},
       );
       expect(rows.single.kind, LineupRowKind.invited);
@@ -61,14 +61,29 @@ void main() {
     test('позван и ответил — ответ доходит до строки', () {
       final rows = rowsOf(
         lineup: const [LineupSlot(uid: 'guest', name: 'Səid', invited: true)],
-        children: [child(answer: kAnswerGoing)],
+        musicians: const ['guest'],
+        answers: const {'guest': kAnswerGoing},
       );
       expect(rows.single.answer, kAnswerGoing);
       final no = rowsOf(
         lineup: const [LineupSlot(uid: 'guest', name: 'Səid', invited: true)],
-        children: [child(answer: kAnswerCant)],
+        musicians: const ['guest'],
+        answers: const {'guest': kAnswerCant},
       );
       expect(no.single.answer, kAnswerCant);
+    });
+
+    test('ВЫШЕДШИЙ ОСТАЁТСЯ ПОЗВАННЫМ, и ответ его виден', () {
+      // Он в составе — значит вопрос ему задавали и он на него ответил, пусть
+      // и самым сильным «нет». Прочитать это как «приглашение сняли» значило
+      // бы стереть его ход и приписать его владельцу.
+      final rows = rowsOf(
+        lineup: const [LineupSlot(uid: 'guest', name: 'Səid', invited: true)],
+        musicians: const ['guest'],
+        answers: const {'guest': kAnswerLeft},
+      );
+      expect(rows.single.kind, LineupRowKind.invited);
+      expect(rows.single.answer, kAnswerLeft);
     });
 
     test('НЕ ПОЗВАН — с причиной, и причина дошла', () {
@@ -87,12 +102,12 @@ void main() {
       // Ответа у него нет вовсе: вопрос не задан.
       expect(rows.single.answer, isNull);
     });
-  });
 
-  group('два состояния, которых в замысле не было', () {
-    test('ПОЗВАН, А РЕБЁНКА НЕТ — приглашение снято, а не «ждём ответа»', () {
+    test('ПОЗВАН, А В СОСТАВЕ НЕТ — приглашение снято, а не «ждём ответа»', () {
       // Прочитать это как ожидание значило бы пообещать ответ на вопрос,
-      // который сняли (I47, цена уже заплачена в N13).
+      // который сняли (I47, цена уже заплачена в N13). Прежде тем же ответом
+      // было отсутствие документа-ребёнка; теперь — отсутствие в составе, и
+      // это единственный способ снять приглашение.
       final rows = rowsOf(
         lineup: const [LineupSlot(uid: 'guest', name: 'Səid', invited: true)],
       );
@@ -100,25 +115,24 @@ void main() {
       expect(rows.single.answer, isNull);
       expect(rows.single.kind, isNot(LineupRowKind.invited));
     });
+  });
 
-    test('ОТМЕНЁННЫЙ ребёнок — тоже снятое приглашение', () {
+  group('отменённый вечер — приглашения не снимаются', () {
+    test('ПОЗВАННЫЙ ОСТАЁТСЯ ПОЗВАННЫМ, и ответ его виден', () {
+      // ЗДЕСЬ БЫЛО ОБРАТНОЕ, И СМЕНА НАМЕРЕННАЯ. Прежде отменённый РЕБЁНОК
+      // читался как снятое приглашение — потому что отменить его можно было
+      // по одному человеку. Отмены по одному человеку нет с 12.09: отменён
+      // вечер целиком, и состояние его сказано строкой выше, над этим списком.
+      // Прочитать состав отменённого вечера как «всех сняли» значило бы
+      // сказать про каждого то, чего владелец не делал.
       final rows = rowsOf(
         lineup: const [LineupSlot(uid: 'guest', name: 'Səid', invited: true)],
-        children: [child(status: 'cancelled', answer: kAnswerGoing)],
+        musicians: const ['guest'],
+        answers: const {'guest': kAnswerGoing},
+        status: kStatusCancelled,
       );
-      expect(rows.single.kind, LineupRowKind.withdrawn);
-      // И согласие с отменённого документа НЕ показывается: человек сказал
-      // «иду» на вечер, которого больше нет.
-      expect(rows.single.answer, isNull);
-    });
-
-    test('РЕБЁНОК ЕСТЬ, А ШАБЛОНА НЕТ — показывается позванным', () {
-      // Так выглядит незаписавшийся шаблон: дети созданы, `lineup` не
-      // дописан. Промолчать о них значило бы соврать сильнее, чем показать
-      // без порядка: приглашение у людей на руках.
-      final rows = rowsOf(children: [child(invitee: 'guest')]);
       expect(rows.single.kind, LineupRowKind.invited);
-      expect(rows.single.uid, 'guest');
+      expect(rows.single.answer, kAnswerGoing);
     });
   });
 
@@ -126,7 +140,8 @@ void main() {
     test('живое имя старше снимка', () {
       final rows = rowsOf(
         lineup: const [LineupSlot(uid: 'guest', name: 'старое', invited: true)],
-        children: [child()],
+        musicians: const ['guest'],
+        answers: const {'guest': kAnswerWaiting},
         names: const {'guest': 'Səid Oruc'},
       );
       expect(rows.single.name, 'Səid Oruc');
@@ -136,7 +151,8 @@ void main() {
       // Ровно то, ради чего запасное имя и заведено: шаблон переживает людей.
       final rows = rowsOf(
         lineup: const [LineupSlot(uid: 'guest', name: 'Səid', invited: true)],
-        children: [child()],
+        musicians: const ['guest'],
+        answers: const {'guest': kAnswerWaiting},
       );
       expect(rows.single.name, 'Səid');
     });
@@ -144,7 +160,8 @@ void main() {
     test('нет ни живого, ни снимка — пусто, а не выдуманное имя', () {
       final rows = rowsOf(
         lineup: const [LineupSlot(uid: 'guest', name: '', invited: true)],
-        children: [child()],
+        musicians: const ['guest'],
+        answers: const {'guest': kAnswerWaiting},
       );
       expect(rows.single.name, '');
     });
@@ -157,29 +174,34 @@ void main() {
           LineupSlot(uid: 'барабанщик', name: 'A', invited: true),
           LineupSlot(uid: 'гитарист', name: 'B', invited: true),
         ],
-        children: [
-          child(id: 'c2', invitee: 'гитарист'),
-          child(id: 'c1', invitee: 'барабанщик'),
-        ],
+        // Состав нарочно в ОБРАТНОМ порядке: строки берут порядок у шаблона,
+        // а не у `musicians`.
+        musicians: const ['гитарист', 'барабанщик'],
+        answers: const {
+          'гитарист': kAnswerGoing,
+          'барабанщик': kAnswerWaiting,
+        },
       );
       expect([for (final r in rows) r.uid], ['барабанщик', 'гитарист']);
     });
 
-    test('ребёнок вне шаблона дописывается В КОНЕЦ', () {
+    test('В СОСТАВЕ, НО НЕ В ШАБЛОНЕ — В ЭТОТ СПИСОК НЕ ПОПАДАЕТ', () {
+      // Так выглядит человек, вписанный руками через «+ Əlavə et». Раздел
+      // отвечает на вопрос «кого Я ПОЗВАЛ», а состав вечера показан выше своим
+      // списком; попади он сюда — стоял бы на экране дважды. Прежде того же
+      // добивалось устройство: у вписанного руками не заводилось ребёнка.
       final rows = rowsOf(
         lineup: const [LineupSlot(uid: 'guest', name: 'A', invited: true)],
-        children: [
-          child(id: 'c1', invitee: 'guest'),
-          child(id: 'c2', invitee: 'посторонний'),
-        ],
+        musicians: const ['guest', 'вписанный'],
+        answers: const {'guest': kAnswerWaiting, 'вписанный': kAnswerGoing},
       );
-      expect([for (final r in rows) r.uid], ['guest', 'посторонний']);
+      expect([for (final r in rows) r.uid], ['guest']);
     });
 
-    test('ДЕТИ ЧУЖОГО РОДИТЕЛЯ НЕ ПОПАДАЮТ ВОВСЕ', () {
-      final rows = rowsOf(
-        children: [child(id: 'c9', parent: 'другой', invitee: 'чужой')],
-      );
+    test('ЧУЖОЙ ВЕЧЕР СЮДА НЕ ПОПАДАЕТ ВОВСЕ', () {
+      // Прежде это значило «дети чужого родителя»; теперь правило чужих
+      // документов не читает вообще — спрашивать нечего.
+      final rows = rowsOf(musicians: const ['чужой']);
       expect(rows, isEmpty);
     });
 
@@ -189,14 +211,18 @@ void main() {
           LineupSlot(uid: 'guest', name: 'A', invited: true),
           LineupSlot(uid: 'guest', name: 'A', invited: false),
         ],
-        children: [child()],
+        musicians: const ['guest'],
+        answers: const {'guest': kAnswerWaiting},
       );
       expect(rows.length, 1);
       expect(rows.single.kind, LineupRowKind.invited);
     });
 
-    test('пусто и там и там — ни одной строки, и раздел не рисуется', () {
+    test('шаблона нет — ни одной строки, и раздел не рисуется', () {
       expect(rowsOf(), isEmpty);
+      // И состав без шаблона раздела не рисует тоже: он про зов, а не про
+      // состав.
+      expect(rowsOf(musicians: const ['кто-то']), isEmpty);
     });
   });
 
@@ -211,7 +237,32 @@ void main() {
   // На её место встало правило «кому передаётся выбранное состояние». Оно
   // отвечает на тот же вопрос, что плитка, только не по одному человеку: один
   // ход владельца ложится на родителя и на ВСЕ его приглашения разом.
+  // ГРУППА ЖИВЁТ ДО СВОЕГО ШАГА И НАЗНАЧЕНА К СНЯТИЮ ВМЕСТЕ С ПРАВИЛОМ.
+  // `invitationsFollowing` рассылает выбор владельца по документам-приглашениям;
+  // их больше не создают (17.09), но девять штук остаются в проде до общего
+  // стирания, и правило обязано с ними работать. Снимается шагом «рассылка
+  // состояния» — вместе с параметром `alsoIds` у `setEventStatus`.
+  //
+  // ПОСТРОИТЕЛЬ РЕБЁНКА ЖИВЁТ ЗДЕСЬ, А НЕ НАВЕРХУ, И ЭТО НЕ ПЕРЕЕЗД РАДИ
+  // ОПРЯТНОСТИ: наверху он был общим, и его общность была ровно тем, что
+  // связывало строки состава с чужими документами. Строкам он больше не нужен
+  // вовсе, а здесь нужен — значит и стоять ему здесь, и уйти отсюда вместе с
+  // группой.
   group('кому передаётся выбор владельца (12.09)', () {
+    PersonalEvent child({
+      String id = 'c',
+      String parent = 'p',
+      String invitee = 'guest',
+      String status = 'agreed',
+    }) =>
+        PersonalEvent.fromFirestore(id, {
+          'ownerUid': 'rafael',
+          'parentEventId': parent,
+          'date': '2026-09-11T20:00:00',
+          'musicians': [invitee],
+          'status': status,
+        });
+
     PersonalEvent parentDoc() => PersonalEvent.fromFirestore('p', {
           'ownerUid': 'rafael',
           'date': '2026-09-11T20:00:00',

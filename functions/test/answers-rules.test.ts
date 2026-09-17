@@ -6,7 +6,14 @@ import {
   assertSucceeds,
   RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, setDoc, updateDoc, deleteField } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteField,
+  serverTimestamp,
+} from "firebase/firestore";
 import { PROJECT_ID, FIRESTORE_EMULATOR_PORT } from "./helpers";
 
 // ПРАВИЛО «УЧАСТНИК ОТВЕЧАЕТ ЗА СЕБЯ» — шаг 4, пункт 1 (`docs/plan.md`).
@@ -251,5 +258,161 @@ describe("шаг 4: участник отвечает за себя, и толь
         [`answers.${GUEST}`]: "cant",
       }),
     );
+  });
+
+  // ------------------------------------------------------------------
+  // СТАНДАРТНЫЙ ПУТЬ ПРИГЛАШЕНИЯ — позванный становится участником ТОГО ЖЕ
+  // вечера (17.09, закон о договоре, шаг 1)
+  // ------------------------------------------------------------------
+  // ЗАЧЕМ ЭТИ ВЕРДИКТЫ СУЩЕСТВУЮТ. Шаг 1 выложен БЕЗ выкладки правил, и
+  // основанием тому было ЧТЕНИЕ правил, а не замер: ветвь владельца в
+  // `allow update` перечисления ключей не имеет, `namesCancelDeed()` запрещает
+  // четыре имени отмены, `edited` среди них нет. Чтение — не доказательство
+  // (закон переписывания, шаг 2), поэтому здесь оно заменено прогоном.
+  //
+  // НАБОР ПРАВИЛ БЕРЁТСЯ ИЗ ФАЙЛА `firestore.rules`, И ЭТО ТОТ ЖЕ ТЕКСТ, ЧТО
+  // ЖИВЁТ В ПРОДЕ. Проверено 17.09 живым снимком через Rules API: набор
+  // `759f4a64-…` против файла — **0 расходящихся строк при 1629**, канарейкой
+  // тот же `diff` против предыдущего набора `af22ba3c-…` — **145 строк**.
+  // Значит зелёный ниже означает «выкладка не нужна», а не «у нас локально
+  // сходится».
+  //
+  // ПАРНО, как и весь файл: у каждого разрешения — свой запрет. Проверка
+  // «владельцу можно» в одиночку не отличила бы работающее правило от
+  // правила, пропускающего всё.
+  describe("зов своих: позванный — участник того же вечера", () => {
+    // Ровно та карта, что пишет `FirestoreService.callPeopleToEvent`. Список
+    // ключей здесь — не украшение: правило судит по `changedKeys()`, и лишний
+    // ключ меняет вердикт, а недостающий делает прогон проверкой другого хода.
+    const callPayload = (extra: Record<string, unknown> = {}) => ({
+      musicians: [OWNER, GUEST, OTHER, STRANGER],
+      [`answers.${STRANGER}`]: "waiting",
+      answersWrittenByOwner: true,
+      lineup: [{ uid: STRANGER, name: "Səid", invited: true, reason: null }],
+      lastActionBy: OWNER,
+      lastActionType: "edited",
+      lastActionAt: serverTimestamp(),
+      ...extra,
+    });
+
+    it("ВЛАДЕЛЕЦ ЗОВЁТ: состав, ответы, шаблон и подпись — одной записью", async () => {
+      await seed(env, { [GUEST]: "waiting", [OTHER]: "waiting" });
+      const db = env.authenticatedContext(OWNER).firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, `personalEvents/${EVENT}`), callPayload()),
+      );
+    });
+
+    it("ПОЗВАННЫЙ ОТВЕЧАЕТ waiting→going НА ТОМ ЖЕ ВЕЧЕРЕ", async () => {
+      // ГЛАВНЫЙ ВЕРДИКТ ВСЕЙ РАБОТЫ. Прежде позванный отвечал в СВОЁМ
+      // документе, где владельцем был зовущий; теперь — в общем, где владелец
+      // тот же, а состав чужой. Правило `answersForSelf()` не менялось, и
+      // вопрос ровно один: пускает ли оно его здесь.
+      await seed(env, { [GUEST]: "waiting", [STRANGER]: "waiting" }, [
+        OWNER,
+        GUEST,
+        STRANGER,
+      ]);
+      const db = env.authenticatedContext(STRANGER).firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, `personalEvents/${EVENT}`), {
+          [`answers.${STRANGER}`]: "going",
+        }),
+      );
+    });
+
+    it("позванный отвечает «не могу» и «вышел» — тем же ходом", async () => {
+      // Уход из вечера — это ответ человека, а не поступок над документом
+      // (N121). У позванного он обязан работать так же, как у любого другого
+      // участника: иначе выйти из чужого вечера станет нечем.
+      await seed(env, { [STRANGER]: "waiting" }, [OWNER, STRANGER]);
+      const db = env.authenticatedContext(STRANGER).firestore();
+      await assertSucceeds(
+        updateDoc(doc(db, `personalEvents/${EVENT}`), {
+          [`answers.${STRANGER}`]: "cant",
+        }),
+      );
+      await assertSucceeds(
+        updateDoc(doc(db, `personalEvents/${EVENT}`), {
+          [`answers.${STRANGER}`]: "left",
+        }),
+      );
+    });
+
+    it("ПОЗВАННЫЙ ЧИТАЕТ ВЕЧЕР ЦЕЛИКОМ — он в составе, значит `isParty()`", async () => {
+      // Это и есть расширение видимости, названное владельцу до работы
+      // (решение 17.09): позванный видит состав, чужие ответы и шаблон.
+      // Вердикт стоит затем, чтобы расширение было ЗАПИСАНО прогоном, а не
+      // только словами: молчаливое согласие выглядит как согласие со
+      // стандартным (I69).
+      await seed(env, { [STRANGER]: "waiting" }, [OWNER, GUEST, STRANGER]);
+      const db = env.authenticatedContext(STRANGER).firestore();
+      await assertSucceeds(getDoc(doc(db, `personalEvents/${EVENT}`)));
+    });
+
+    // --- ЗАПРЕТЫ: у каждого разрешения выше свой ---
+
+    it("ЗАПРЕТ: непозванный посторонний вечер не читает", async () => {
+      // Канарейка к вердикту чтения выше: зелёный там — про состав, а не про
+      // то, что документ открыт всем подряд.
+      await seed(env, { [GUEST]: "waiting" }, [OWNER, GUEST]);
+      const db = env.authenticatedContext(STRANGER).firestore();
+      await assertFails(getDoc(doc(db, `personalEvents/${EVENT}`)));
+    });
+
+    it("ЗАПРЕТ: зов не может назваться именем отмены", async () => {
+      // `namesCancelDeed()` — единственное, что ветвь владельца запрещает по
+      // имени. Ошибись имя здесь — зов получал бы отказ по правам, и человек
+      // видел бы «не ушло никому» без объяснения.
+      await seed(env, { [GUEST]: "waiting" });
+      const db = env.authenticatedContext(OWNER).firestore();
+      await assertFails(
+        updateDoc(
+          doc(db, `personalEvents/${EVENT}`),
+          callPayload({ lastActionType: "cancelRequested" }),
+        ),
+      );
+    });
+
+    it("ЗАПРЕТ: зов не может тронуть повод состояния", async () => {
+      // `serverOwnsUnsettledReason()` запрещает поле клиенту ЦЕЛИКОМ, включая
+      // владельца: по нему `restoresEvent()` решает, открывать ли выход
+      // наверх.
+      await seed(env, { [GUEST]: "waiting" });
+      const db = env.authenticatedContext(OWNER).firestore();
+      await assertFails(
+        updateDoc(
+          doc(db, `personalEvents/${EVENT}`),
+          callPayload({ unsettledReason: "memberLeft" }),
+        ),
+      );
+    });
+
+    it("ЗАПРЕТ: зов не может подписаться чужим именем", async () => {
+      // `stampsSelf()`. Сервер берёт из `lastActionBy` автора уведомления и
+      // доверяет ему без проверки (I54) — подделай его, и «{Ad} sizi tədbirə
+      // əlavə etdi» назовёт не того человека.
+      await seed(env, { [GUEST]: "waiting" });
+      const db = env.authenticatedContext(OWNER).firestore();
+      await assertFails(
+        updateDoc(
+          doc(db, `personalEvents/${EVENT}`),
+          callPayload({ lastActionBy: OTHER }),
+        ),
+      );
+    });
+
+    it("ЗАПРЕТ: позванный не может позвать дальше — состав не его", async () => {
+      // Он участник, а не владелец: `answersForSelf()` пускает ровно
+      // `answers`, и `musicians` через него не пройдёт.
+      await seed(env, { [STRANGER]: "waiting" }, [OWNER, STRANGER]);
+      const db = env.authenticatedContext(STRANGER).firestore();
+      await assertFails(
+        updateDoc(doc(db, `personalEvents/${EVENT}`), {
+          musicians: [OWNER, STRANGER, GUEST],
+          [`answers.${GUEST}`]: "waiting",
+        }),
+      );
+    });
   });
 });
