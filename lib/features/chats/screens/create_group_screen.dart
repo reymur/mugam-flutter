@@ -7,11 +7,9 @@ import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
-import '../../../shared/widgets/avatar_ring.dart';
-import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../chat/screens/chat_screen.dart';
 import '../../search/screens/filter_sheet.dart';
-import '../../status/screens/status_viewer_screen.dart';
+import '../../status/widgets/status_ring.dart';
 import '../../../shared/widgets/online_dot.dart';
 
 // Group-creation screen — mirrors mugam-v2's CreateGroup.tsx + UserPicker.tsx
@@ -440,24 +438,8 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                     }
                     final u = filtered[index];
                     final selected = _selectedUids.contains(u.id);
-                    final hasActiveStatus = u.hasActiveStatus;
-                    final viewerUser = hasActiveStatus
-                        ? ref.watch(currentUserProvider(_currentUid)).value
-                        : null;
-                    final hasUnviewed = hasActiveStatus &&
-                        (viewerUser?.hasUnviewedStatusFrom(u) ?? false);
                     const avatarBaseSize = 46.0;
                     final avatarBoxSize = avatarBaseSize * 1.2;
-                    void openStatusViewer() => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => UserStatusViewerScreen(
-                              ownerUid: u.id,
-                              currentUid: _currentUid,
-                              initialUser: u,
-                            ),
-                          ),
-                        );
                     return ListTile(
                       onTap: () => _toggleUser(u),
                       leading: SizedBox(
@@ -466,39 +448,18 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
-                            if (hasActiveStatus)
-                              GestureDetector(
-                                onTap: openStatusViewer,
-                                onLongPress: () => showAvatarLongPressMenu(
-                                  context,
-                                  photoURL: u.photoURL,
-                                  onViewStatus: openStatusViewer,
-                                ),
-                                child: AvatarRing(
-                                  photoURL: u.photoURL,
-                                  fallbackEmoji: u.emoji,
-                                  hasUnviewed: hasUnviewed,
-                                  size: avatarBoxSize,
-                                ),
-                              )
-                            else
-                              GestureDetector(
-                                onTap: u.photoURL != null
-                                    ? () => showFullImage(context, u.photoURL!)
-                                    : null,
-                                // Свёрнуто 16.09. Ободок условный — золотой
-                                // только у выбранного; условие переехало в
-                                // толщину, ноль означает «ободка нет».
-                                child: AvatarRing(
-                                  photoURL: u.photoURL,
-                                  fallbackEmoji: u.emoji,
-                                  hasUnviewed: false,
-                                  size: avatarBoxSize,
-                                  ringColor: kGold,
-                                  ringWidth: selected ? 2 : 0,
-                                  fallbackFontSize: 20,
-                                ),
-                              ),
+                            // Свёрнуто 18.09. Ободок в ветви «истории нет»
+                            // условный — золотой только у выбранного; условие
+                            // живёт в толщине, ноль означает «ободка нет».
+                            StatusRing(
+                              user: u,
+                              currentUid: _currentUid,
+                              size: avatarBoxSize,
+                              fallbackEmoji: u.emoji,
+                              plainRingColor: kGold,
+                              plainRingWidth: selected ? 2 : 0,
+                              plainFallbackFontSize: 20,
+                            ),
                             Positioned(
                               bottom: 0,
                               right: 0,

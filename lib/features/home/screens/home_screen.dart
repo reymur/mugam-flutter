@@ -5,12 +5,10 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../core/models/activity_type.dart';
 import '../../../core/theme/colors.dart';
 import '../../../shared/widgets/topbar.dart';
-import '../../../shared/widgets/avatar_ring.dart';
-import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../../firebase/models.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../job_offer/job_offer_entry.dart';
-import '../../status/screens/status_viewer_screen.dart';
+import '../../status/widgets/status_ring.dart';
 import '../../user/screens/user_profile_screen.dart';
 import '../../../shared/widgets/online_dot.dart';
 
@@ -209,24 +207,8 @@ class _MusicianCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final hasActiveStatus = musician.hasActiveStatus;
-    final viewerUser = hasActiveStatus
-        ? ref.watch(currentUserProvider(currentUid)).value
-        : null;
-    final hasUnviewed =
-        hasActiveStatus && (viewerUser?.hasUnviewedStatusFrom(musician) ?? false);
     const avatarBaseSize = 58.0;
     final avatarBoxSize = avatarBaseSize * 1.2;
-    void openStatusViewer() => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => UserStatusViewerScreen(
-              ownerUid: musician.id,
-              currentUid: currentUid,
-              initialUser: musician,
-            ),
-          ),
-        );
     return GestureDetector(
       onTap: () => Navigator.push(
         context,
@@ -256,43 +238,22 @@ class _MusicianCard extends ConsumerWidget {
                     height: avatarBoxSize,
                     child: Stack(
                       children: [
-                        if (hasActiveStatus)
-                          GestureDetector(
-                            onTap: openStatusViewer,
-                            onLongPress: () => showAvatarLongPressMenu(
-                              context,
-                              photoURL: musician.photoURL,
-                              onViewStatus: openStatusViewer,
-                            ),
-                            child: AvatarRing(
-                              photoURL: musician.photoURL,
-                              fallbackEmoji: musician.emoji,
-                              hasUnviewed: hasUnviewed,
-                              size: avatarBoxSize,
-                            ),
-                          )
-                        else
-                          GestureDetector(
-                            onTap: musician.photoURL != null
-                                ? () => showFullImage(context, musician.photoURL!)
-                                : null,
-                            // Свёрнуто 16.09. Цвет ободка здесь про
-                            // ОТМЕЧЕННОГО человека (`goldRing`), а не про
-                            // статус — потому и передаётся цветом, а не
-                            // флагом `hasUnviewed`: у соседней ветви выше
-                            // тот же кружок означает непросмотренный статус,
-                            // и путать их нельзя.
-                            child: AvatarRing(
-                              photoURL: musician.photoURL,
-                              fallbackEmoji: musician.emoji,
-                              hasUnviewed: false,
-                              size: avatarBoxSize,
-                              ringColor:
-                                  musician.goldRing ? kGold : kBorder,
-                              ringWidth: 2,
-                              fallbackFontSize: 24,
-                            ),
-                          ),
+                        // Свёрнуто 18.09: развилка, оба нажатия и часы —
+                        // внутри `StatusRing`. Цвет ободка здесь про
+                        // ОТМЕЧЕННОГО человека (`goldRing`), а не про
+                        // историю, — потому и передаётся цветом ветви
+                        // «истории нет»: у той же рамки при живой истории
+                        // цвет означает непросмотренную, и путать их нельзя.
+                        StatusRing(
+                          user: musician,
+                          currentUid: currentUid,
+                          size: avatarBoxSize,
+                          fallbackEmoji: musician.emoji,
+                          plainRingColor:
+                              musician.goldRing ? kGold : kBorder,
+                          plainRingWidth: 2,
+                          plainFallbackFontSize: 24,
+                        ),
                         // СЛЕВА — и это единственное такое место из
                         // тринадцати. Расположение осталось у зовущего
                         // именно поэтому: затащи его внутрь кружка, ему

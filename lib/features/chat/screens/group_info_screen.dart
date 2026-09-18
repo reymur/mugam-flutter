@@ -11,9 +11,8 @@ import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../shared/widgets/avatar_ring.dart';
-import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../search/screens/filter_sheet.dart';
-import '../../status/screens/status_viewer_screen.dart';
+import '../../status/widgets/status_ring.dart';
 import '../../../shared/widgets/online_dot.dart';
 
 // Group Info screen — mirrors mugam-v2's GroupInfo.tsx (header photo/name/
@@ -566,27 +565,8 @@ class _ParticipantTile extends ConsumerWidget {
     final name = isMe ? 'Siz' : (user?.name ?? 'İstifadəçi');
     final emoji = user?.emoji ?? '👤';
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final hasActiveStatus = user?.hasActiveStatus == true;
-    final viewerUser = (hasActiveStatus && !isMe)
-        ? ref.watch(currentUserProvider(currentUid)).value
-        : null;
-    // Never gold on your own row — matches the app's established
-    // "unviewed doesn't apply to yourself" convention.
-    final hasUnviewed = hasActiveStatus &&
-        !isMe &&
-        (viewerUser?.hasUnviewedStatusFrom(user!) ?? false);
     const avatarBaseSize = 44.0;
     final avatarBoxSize = avatarBaseSize * 1.2;
-    void openStatusViewer() => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => UserStatusViewerScreen(
-              ownerUid: user!.id,
-              currentUid: currentUid,
-              initialUser: user,
-            ),
-          ),
-        );
 
     return ListTile(
       leading: SizedBox(
@@ -595,38 +575,22 @@ class _ParticipantTile extends ConsumerWidget {
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            if (hasActiveStatus)
-              GestureDetector(
-                onTap: openStatusViewer,
-                onLongPress: () => showAvatarLongPressMenu(
-                  context,
-                  photoURL: user?.photoURL,
-                  onViewStatus: openStatusViewer,
-                ),
-                child: AvatarRing(
-                  photoURL: user?.photoURL,
-                  fallbackEmoji: emoji,
-                  hasUnviewed: hasUnviewed,
-                  size: avatarBoxSize,
-                ),
-              )
-            else
-              GestureDetector(
-                onTap: user?.photoURL != null
-                    ? () => showFullImage(context, user!.photoURL!)
-                    : null,
-                // Свёрнуто 16.09. Ободка у этой ветви НЕ БЫЛО — отсюда
-                // `ringWidth: 0`: умолчание 2.5 пририсовало бы рамку там,
-                // где её отродясь не было.
-                child: AvatarRing(
-                  photoURL: user?.photoURL,
-                  fallbackEmoji: emoji,
-                  hasUnviewed: false,
-                  size: avatarBoxSize,
-                  ringWidth: 0,
-                  fallbackFontSize: 18,
-                ),
-              ),
+            // Свёрнуто 18.09. Правило «у себя ободок не золотой» стояло
+            // здесь флагом `!isMe` и было одним из ДВУХ соблюдённых из
+            // одиннадцати; теперь оно внутри виджета и выводится из данных,
+            // а флаг тут больше не нужен.
+            //
+            // Ободка у ветви «истории нет» НЕ БЫЛО — отсюда `plainRingWidth:
+            // 0`: умолчание 2.5 пририсовало бы рамку там, где её отродясь не
+            // было.
+            StatusRing(
+              user: user,
+              currentUid: currentUid,
+              size: avatarBoxSize,
+              fallbackEmoji: emoji,
+              plainRingWidth: 0,
+              plainFallbackFontSize: 18,
+            ),
             Positioned(
               bottom: 0,
               right: 0,
@@ -1199,24 +1163,8 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
                       }
                       final u = filtered[index];
                       final selected = _selectedUids.contains(u.id);
-                      final hasActiveStatus = u.hasActiveStatus;
-                      final viewerUser = hasActiveStatus
-                          ? ref.watch(currentUserProvider(widget.adminUid)).value
-                          : null;
-                      final hasUnviewed = hasActiveStatus &&
-                          (viewerUser?.hasUnviewedStatusFrom(u) ?? false);
                       const avatarBaseSize = 40.0;
                       final avatarBoxSize = avatarBaseSize * 1.2;
-                      void openStatusViewer() => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => UserStatusViewerScreen(
-                                ownerUid: u.id,
-                                currentUid: widget.adminUid,
-                                initialUser: u,
-                              ),
-                            ),
-                          );
                       return ListTile(
                         onTap: () => _toggleUser(u.id),
                         leading: SizedBox(
@@ -1225,40 +1173,20 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
                           child: Stack(
                             clipBehavior: Clip.none,
                             children: [
-                              if (hasActiveStatus)
-                                GestureDetector(
-                                  onTap: openStatusViewer,
-                                  onLongPress: () => showAvatarLongPressMenu(
-                                    context,
-                                    photoURL: u.photoURL,
-                                    onViewStatus: openStatusViewer,
-                                  ),
-                                  child: AvatarRing(
-                                    photoURL: u.photoURL,
-                                    fallbackEmoji: u.emoji,
-                                    hasUnviewed: hasUnviewed,
-                                    size: avatarBoxSize,
-                                  ),
-                                )
-                              else
-                                GestureDetector(
-                                  onTap: u.photoURL != null
-                                      ? () => showFullImage(context, u.photoURL!)
-                                      : null,
-                                  // Свёрнуто 16.09. Ободок здесь УСЛОВНЫЙ —
-                                  // золотой только у выбранного, — и условие
-                                  // переехало в толщину: ноль означает «нет
-                                  // ободка», ровно как было у `border: null`.
-                                  child: AvatarRing(
-                                    photoURL: u.photoURL,
-                                    fallbackEmoji: u.emoji,
-                                    hasUnviewed: false,
-                                    size: avatarBoxSize,
-                                    ringColor: kGold,
-                                    ringWidth: selected ? 2 : 0,
-                                    fallbackFontSize: 18,
-                                  ),
-                                ),
+                              // Свёрнуто 18.09. Ободок в ветви «истории нет»
+                              // здесь УСЛОВНЫЙ — золотой только у
+                              // выбранного, — и условие живёт в толщине:
+                              // ноль означает «нет ободка», ровно как было у
+                              // `border: null`.
+                              StatusRing(
+                                user: u,
+                                currentUid: widget.adminUid,
+                                size: avatarBoxSize,
+                                fallbackEmoji: u.emoji,
+                                plainRingColor: kGold,
+                                plainRingWidth: selected ? 2 : 0,
+                                plainFallbackFontSize: 18,
+                              ),
                               Positioned(
                                 bottom: 0,
                                 right: 0,

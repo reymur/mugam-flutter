@@ -4,9 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
-import '../../../shared/widgets/avatar_ring.dart';
-import '../../../shared/widgets/zoomable_image_viewer.dart';
-import '../../status/screens/status_viewer_screen.dart';
+import '../../status/widgets/status_ring.dart';
 import '../../user/screens/user_profile_screen.dart';
 import '../../../shared/widgets/online_dot.dart';
 
@@ -77,24 +75,8 @@ class _FriendTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(currentUserProvider(friendUid)).value;
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
-    final hasActiveStatus = user?.hasActiveStatus == true;
-    final viewerUser = hasActiveStatus
-        ? ref.watch(currentUserProvider(currentUid)).value
-        : null;
-    final hasUnviewed =
-        hasActiveStatus && (viewerUser?.hasUnviewedStatusFrom(user!) ?? false);
     const avatarBaseSize = 48.0;
     final avatarBoxSize = avatarBaseSize * 1.2;
-    void openStatusViewer() => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => UserStatusViewerScreen(
-              ownerUid: user!.id,
-              currentUid: currentUid,
-              initialUser: user,
-            ),
-          ),
-        );
 
     return GestureDetector(
       onTap: user == null
@@ -120,37 +102,17 @@ class _FriendTile extends ConsumerWidget {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  if (hasActiveStatus)
-                    GestureDetector(
-                      onTap: openStatusViewer,
-                      onLongPress: () => showAvatarLongPressMenu(
-                        context,
-                        photoURL: user?.photoURL,
-                        onViewStatus: openStatusViewer,
-                      ),
-                      child: AvatarRing(
-                        photoURL: user?.photoURL,
-                        fallbackEmoji: user?.emoji ?? '🎵',
-                        hasUnviewed: hasUnviewed,
-                        size: avatarBoxSize,
-                      ),
-                    )
-                  else
-                    GestureDetector(
-                      onTap: user?.photoURL != null
-                          ? () => showFullImage(context, user!.photoURL!)
-                          : null,
-                      // Свёрнуто 16.09; вид сохранён — kBorder 1.5, эмодзи 24.
-                      child: AvatarRing(
-                        photoURL: user?.photoURL,
-                        fallbackEmoji: user?.emoji ?? '🎵',
-                        hasUnviewed: false,
-                        size: avatarBoxSize,
-                        ringColor: kBorder,
-                        ringWidth: 1.5,
-                        fallbackFontSize: 24,
-                      ),
-                    ),
+                  // Свёрнуто 18.09; вид ветви «истории нет» сохранён —
+                  // kBorder 1.5, знак 24.
+                  StatusRing(
+                    user: user,
+                    currentUid: currentUid,
+                    size: avatarBoxSize,
+                    fallbackEmoji: user?.emoji ?? '🎵',
+                    plainRingColor: kBorder,
+                    plainRingWidth: 1.5,
+                    plainFallbackFontSize: 24,
+                  ),
                   Positioned(
                     bottom: 0,
                     right: 0,

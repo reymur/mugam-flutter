@@ -48,12 +48,11 @@ import '../../../shared/widgets/event_conflict_banner.dart';
 import '../../../shared/widgets/event_conflict_dialog.dart';
 import '../../../shared/widgets/event_notes_picker.dart';
 import '../../../shared/widgets/wheel_date_time_picker.dart';
-import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../job_offer/screens/pick_people_sheet.dart';
 import '../../job_offer/job_offer_entry.dart';
 import '../../../core/job_offer/offer_draft.dart';
 import '../../search/screens/filter_sheet.dart';
-import '../../status/screens/status_viewer_screen.dart';
+import '../../status/widgets/status_ring.dart';
 import '../../user/screens/user_profile_screen.dart';
 import '../../../shared/widgets/online_dot.dart';
 
@@ -7060,27 +7059,8 @@ class _ParticipantPickerDialogState
                       }
                       final m = filtered[i];
                       final sel = _selected.contains(m.id);
-                      final hasActiveStatus = m.hasActiveStatus;
-                      final viewerUser = hasActiveStatus
-                          ? ref
-                                .watch(currentUserProvider(widget.currentUid))
-                                .value
-                          : null;
-                      final hasUnviewed =
-                          hasActiveStatus &&
-                          (viewerUser?.hasUnviewedStatusFrom(m) ?? false);
                       const avatarBaseSize = 36.0;
                       final avatarBoxSize = avatarBaseSize * 1.2;
-                      void openStatusViewer() => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => UserStatusViewerScreen(
-                            ownerUid: m.id,
-                            currentUid: widget.currentUid,
-                            initialUser: m,
-                          ),
-                        ),
-                      );
                       return ListTile(
                         leading: SizedBox(
                           width: avatarBoxSize,
@@ -7088,48 +7068,23 @@ class _ParticipantPickerDialogState
                           child: Stack(
                             clipBehavior: Clip.none,
                             children: [
-                              if (hasActiveStatus)
-                                GestureDetector(
-                                  onTap: openStatusViewer,
-                                  onLongPress: () => showAvatarLongPressMenu(
-                                    context,
-                                    photoURL: m.photoURL,
-                                    onViewStatus: openStatusViewer,
-                                  ),
-                                  child: AvatarRing(
-                                    photoURL: m.photoURL,
-                                    fallbackEmoji: m.emoji,
-                                    hasUnviewed: hasUnviewed,
-                                    size: avatarBoxSize,
-                                  ),
-                                )
-                              else
-                                // Unified to a circle to match AvatarRing above
-                                // and every other avatar in the app — this
-                                // dialog's avatar was previously the one
-                                // outlier still using a rounded-square shape
-                                // (BorderRadius.circular(10)), which would have
-                                // made rows visibly change shape depending on
-                                // hasActiveStatus if left as-is. Everything
-                                // else in this dialog (search field, dialog
-                                // corners) keeps its own unrelated rounded-rect
-                                // styling untouched.
-                                GestureDetector(
-                                  onTap: m.photoURL != null
-                                      ? () =>
-                                            showFullImage(context, m.photoURL!)
-                                      : null,
-                                  // Свёрнуто 16.09. Ободка не было —
-                                  // `ringWidth: 0`.
-                                  child: AvatarRing(
-                                    photoURL: m.photoURL,
-                                    fallbackEmoji: m.emoji,
-                                    hasUnviewed: false,
-                                    size: avatarBoxSize,
-                                    ringWidth: 0,
-                                    fallbackFontSize: 18,
-                                  ),
-                                ),
+                              // Свёрнуто 18.09. Ободка в ветви «истории нет»
+                              // не было — `plainRingWidth: 0`.
+                              //
+                              // Портрет здесь круглый, как везде: до 16.09
+                              // этот список был единственным местом со
+                              // скруглённым квадратом, и строка меняла форму
+                              // в зависимости от того, есть ли у человека
+                              // история. Остальное в окне (поле поиска, углы
+                              // самого окна) своих скруглений не теряло.
+                              StatusRing(
+                                user: m,
+                                currentUid: widget.currentUid,
+                                size: avatarBoxSize,
+                                fallbackEmoji: m.emoji,
+                                plainRingWidth: 0,
+                                plainFallbackFontSize: 18,
+                              ),
                               Positioned(
                                 bottom: 0,
                                 right: 0,

@@ -8,10 +8,8 @@ import '../../../core/models/activity_type.dart';
 import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
-import '../../../shared/widgets/avatar_ring.dart';
-import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../job_offer/job_offer_entry.dart';
-import '../../status/screens/status_viewer_screen.dart';
+import '../../status/widgets/status_ring.dart';
 import '../../../shared/widgets/online_dot.dart';
 
 
@@ -95,28 +93,8 @@ class UserProfileScreen extends ConsumerWidget {
     final starsStr =
         List.filled(starCount, '★').join() + List.filled(5 - starCount, '☆').join();
 
-    final hasActiveStatus = liveUser.hasActiveStatus;
-    final viewerUser = hasActiveStatus
-        ? ref.watch(currentUserProvider(currentUid)).value
-        : null;
-    // Never gold on your own profile — matches the rest of the app's
-    // "unviewed doesn't apply to yourself" convention (see
-    // status_feed_bar.dart's _MyStatusItem, hasUnviewed: false always).
-    final hasUnviewed = hasActiveStatus &&
-        !isOwnProfile &&
-        (viewerUser?.hasUnviewedStatusFrom(liveUser) ?? false);
     const avatarBaseSize = 96.0;
     final avatarBoxSize = avatarBaseSize * 1.2;
-    void openStatusViewer() => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => UserStatusViewerScreen(
-              ownerUid: liveUser.id,
-              currentUid: currentUid,
-              initialUser: liveUser,
-            ),
-          ),
-        );
 
     return Container(
       color: kHeroBg,
@@ -130,39 +108,23 @@ class UserProfileScreen extends ConsumerWidget {
             height: avatarBoxSize,
             child: Stack(
               children: [
-                if (hasActiveStatus)
-                  GestureDetector(
-                    onTap: openStatusViewer,
-                    onLongPress: () => showAvatarLongPressMenu(
-                      context,
-                      photoURL: liveUser.photoURL,
-                      onViewStatus: openStatusViewer,
-                    ),
-                    child: AvatarRing(
-                      photoURL: liveUser.photoURL,
-                      fallbackEmoji: user.emoji,
-                      hasUnviewed: hasUnviewed,
-                      size: avatarBoxSize,
-                    ),
-                  )
-                else
-                  GestureDetector(
-                    onTap: liveUser.photoURL != null
-                        ? () => showFullImage(context, liveUser.photoURL!)
-                        : null,
-                    // Свёрнуто 16.09. Ободок толщиной 3 и золото у
-                    // `goldRing` — признак человека, а не украшение:
-                    // потеряй его правка, пропало бы сведение, а не вид.
-                    child: AvatarRing(
-                      photoURL: liveUser.photoURL,
-                      fallbackEmoji: user.emoji,
-                      hasUnviewed: false,
-                      size: avatarBoxSize,
-                      ringColor: user.goldRing ? kGold : kBorder,
-                      ringWidth: 3,
-                      fallbackFontSize: 48,
-                    ),
-                  ),
+                // Свёрнуто 18.09. Правило «у себя ободок не золотой» стояло
+                // здесь флагом `!isOwnProfile` и было одним из ДВУХ
+                // соблюдённых из одиннадцати; теперь оно внутри виджета и
+                // выводится из данных.
+                //
+                // Ободок ветви «истории нет» толщиной 3 и золото у `goldRing`
+                // — признак человека, а не украшение: потеряй его правка,
+                // пропало бы сведение, а не вид.
+                StatusRing(
+                  user: liveUser,
+                  currentUid: currentUid,
+                  size: avatarBoxSize,
+                  fallbackEmoji: user.emoji,
+                  plainRingColor: user.goldRing ? kGold : kBorder,
+                  plainRingWidth: 3,
+                  plainFallbackFontSize: 48,
+                ),
                 // КРУПНЕЕ ОСТАЛЬНЫХ НАРОЧНО: портрет здесь во весь блок, и
                 // кружок двенадцати точек на нём потерялся бы. Переносится
                 // параметрами, а не приводится к общему виду — условие

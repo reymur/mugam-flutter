@@ -14,11 +14,11 @@ import '../../../core/theme/colors.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
-import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../search/screens/filter_sheet.dart';
 import '../../settings/screens/app_settings_screen.dart';
 import '../../status/screens/create_status_screen.dart';
 import '../../status/screens/status_viewer_screen.dart';
+import '../../status/widgets/status_ring.dart';
 import '../widgets/status_feed_bar.dart';
 import 'create_group_screen.dart';
 import '../../../shared/widgets/online_dot.dart';
@@ -765,24 +765,8 @@ class _ChatListItem extends ConsumerWidget {
       currentUid: currentUid,
       senderName: senderName,
     );
-    final hasActiveStatus = !chat.isGroup && other?.hasActiveStatus == true;
-    final viewerUser = hasActiveStatus
-        ? ref.watch(currentUserProvider(currentUid)).value
-        : null;
-    final hasUnviewed =
-        hasActiveStatus && (viewerUser?.hasUnviewedStatusFrom(other!) ?? false);
     const avatarBaseSize = 48.0;
     final avatarBoxSize = avatarBaseSize * 1.2;
-    void openStatusViewer() => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => UserStatusViewerScreen(
-              ownerUid: other!.id,
-              currentUid: currentUid,
-              initialUser: other,
-            ),
-          ),
-        );
 
     return GestureDetector(
       onTap: onTap,
@@ -799,38 +783,23 @@ class _ChatListItem extends ConsumerWidget {
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      if (hasActiveStatus)
-                        GestureDetector(
-                          onTap: openStatusViewer,
-                          onLongPress: () => showAvatarLongPressMenu(
-                            context,
-                            photoURL: other?.photoURL,
-                            onViewStatus: openStatusViewer,
-                          ),
-                          child: AvatarRing(
-                            photoURL: other?.photoURL,
-                            fallbackEmoji: displayEmoji,
-                            hasUnviewed: hasUnviewed,
-                            size: avatarBoxSize,
-                          ),
-                        )
-                      else
-                        GestureDetector(
-                          onTap: other?.photoURL != null
-                              ? () => showFullImage(context, other!.photoURL!)
-                              : null,
-                          // Свёрнуто 16.09; вид сохранён — kBorder 1.5,
-                          // эмодзи 24.
-                          child: AvatarRing(
-                            photoURL: other?.photoURL,
-                            fallbackEmoji: displayEmoji,
-                            hasUnviewed: false,
-                            size: avatarBoxSize,
-                            ringColor: kBorder,
-                            ringWidth: 1.5,
-                            fallbackFontSize: 24,
-                          ),
-                        ),
+                      // Свёрнуто 18.09; вид ветви «истории нет» сохранён —
+                      // kBorder 1.5, знак 24.
+                      //
+                      // УСЛОВИЕ `!chat.isGroup` СНЯТО НЕ ПО НЕБРЕЖНОСТИ: у
+                      // группы `other` пуст по построению (разбор в начале
+                      // build), а пустой человек — это ветвь «истории нет».
+                      // То есть условие повторяло то, что и так следует из
+                      // данных.
+                      StatusRing(
+                        user: other,
+                        currentUid: currentUid,
+                        size: avatarBoxSize,
+                        fallbackEmoji: displayEmoji,
+                        plainRingColor: kBorder,
+                        plainRingWidth: 1.5,
+                        plainFallbackFontSize: 24,
+                      ),
                       if (!chat.isGroup)
                         Positioned(
                           bottom: 0,

@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mugam_flutter/core/theme/colors.dart';
+import 'package:mugam_flutter/core/time/stale_clock.dart';
 import 'package:mugam_flutter/firebase/models.dart';
 import 'package:mugam_flutter/shared/widgets/online_dot.dart';
 
@@ -74,7 +75,7 @@ void main() {
   // отписку, я ждал падения одиннадцати вердиктов из одиннадцати и получил
   // ПЯТЬ — остальные молчали ровно потому, что чужой мёртвый будильник
   // считался живым и не давал завести новый.
-  setUp(onlineDotResetForTest);
+  setUp(staleClockResetForTest);
 
   group('кружок онлайна: что он показывает', () {
     testWidgets('свежая отметка — зелёный', (tester) async {
@@ -141,58 +142,37 @@ void main() {
     });
   });
 
-  group('кружок онлайна: будильник один на всех', () {
+  group('кружок онлайна: сидит на общем будильнике', () {
+    // САМ БУДИЛЬНИК ПРОВЕРЯЕТСЯ НЕ ЗДЕСЬ — `test/stale_clock_test.dart`:
+    // ленивый запуск, снятие с уходом последнего, срок удара. Здесь — что
+    // кружок к нему ПОДКЛЮЧЁН, и подключён ровно одним слушателем на кружок.
     testWidgets('двадцать кружков — один будильник, двадцать слушателей',
         (tester) async {
-      // ГЛАВНЫЙ ВЕРДИКТ ЭТОГО ФАЙЛА. Без него «таймер внутри кружка» означало
+      // ГЛАВНЫЙ ВЕРДИКТ ЭТОЙ ГРУППЫ. Без него «часы внутри кружка» означало
       // бы двадцать таймеров на списке из двадцати строк.
       await _show(
         tester,
         Column(children: [for (var i = 0; i < 20; i++) OnlineDot(user: _u())]),
       );
       expect(find.byType(OnlineDot), findsNWidgets(20));
-      expect(onlineDotListenerCount, 20);
-      expect(onlineDotTimerCount, 1);
+      expect(staleClockListenerCount, 20);
+      expect(staleClockTimerCount, 1);
       // ЗАВЕДЁН ровно один, а не «сейчас числится один». Разница не
-      // придирка: заводи `add` будильник каждому кружку без оглядки, поле
-      // всё равно показывало бы единицу — оно одно, — а таймеров тикало бы
-      // двадцать. Проверять надо то, что делается, а не то, что записано.
-      expect(onlineDotTimersStarted, 1);
+      // придирка: заводи `addListener` будильник каждому кружку без оглядки,
+      // поле всё равно показывало бы единицу — оно одно, — а таймеров тикало
+      // бы двадцать. Проверять надо то, что делается, а не то, что записано.
+      expect(staleClockTimersStarted, 1);
     });
 
-    testWidgets('последний ушёл — будильник снят', (tester) async {
+    testWidgets('последний кружок ушёл — будильник снят', (tester) async {
+      // Отписки в коде кружка нет ни строчки: её делает `AnimatedBuilder`.
+      // Вердикт остался ровно поэтому — доказать надо, что её и правда никто
+      // не забыл, а не то, что она написана.
       await _show(tester, OnlineDot(user: _u()));
-      expect(onlineDotTimerCount, 1, reason: 'канарейка: было чему сниматься');
+      expect(staleClockTimerCount, 1, reason: 'канарейка: было чему сниматься');
       await _show(tester, const SizedBox());
-      expect(onlineDotListenerCount, 0);
-      expect(onlineDotTimerCount, 0);
-    });
-
-    testWidgets('удар приходит через двадцать секунд, а не раньше',
-        (tester) async {
-      // Пустой корень нужен до всего: `pump` без `pumpWidget` не проверка, а
-      // отказ — часы теста некому двигать, пока дерева нет.
-      await _show(tester, const SizedBox());
-      var beats = 0;
-      void count() => beats++;
-      onlineDotAddTestListener(count);
-
-      await tester.pump(const Duration(seconds: 19));
-      expect(beats, 0, reason: 'раньше срока бить не должен');
-      await tester.pump(const Duration(seconds: 2));
-      expect(beats, 1);
-      await tester.pump(const Duration(seconds: 20));
-      expect(beats, 2, reason: 'удар повторяется, а не случается однажды');
-
-      // Снимается ЗДЕСЬ, а не в `addTearDown`: проверка «не осталось живых
-      // таймеров» идёт РАНЬШЕ уборки, и оставленный слушатель уронил бы этот
-      // вердикт чужой причиной.
-      //
-      // ЗАОДНО ЭТО ЗАМЕР, А НЕ НЕУДОБСТВО: та же проверка уронит любой
-      // вердикт, в котором кружок ушёл с экрана, а отписаться забыл. Значит
-      // забытая отписка ловится не текстом сторожа, а самим прогоном.
-      onlineDotRemoveTestListener(count);
-      expect(onlineDotTimerCount, 0);
+      expect(staleClockListenerCount, 0);
+      expect(staleClockTimerCount, 0);
     });
 
     testWidgets('КРУЖОК ГАСНЕТ САМ, без нового документа', (tester) async {
@@ -359,8 +339,13 @@ void main() {
       expect(about.contains("Onlayn'"), isFalse);
       // Канарейка к двум утверждениям отсутствия выше: разбор обоих файлов
       // не пуст.
-      expect(chat.contains('AvatarRing('), isTrue);
-      expect(about.contains('AvatarRing('), isTrue);
+      //
+      // ОРИЕНТИР СМЕНИЛСЯ 18.09, и это не придирка к имени: канарейка стояла
+      // на `AvatarRing(`, а в `about_contact` ободок уехал в `StatusRing`, и
+      // разбор файла стал пустым. Пустая канарейка означает «сторож ослеп», и
+      // сторож честно покраснел — ровно то, ради чего она и стоит (I31).
+      expect(chat.contains('StatusRing('), isTrue);
+      expect(about.contains('StatusRing('), isTrue);
     });
 
     test('ДОЛЯ ЧИСЛОМ: тринадцать мест зовут кружок', () {

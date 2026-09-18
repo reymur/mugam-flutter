@@ -40,11 +40,11 @@ import '../../../firebase/models.dart';
 import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/voice_hold_recorder.dart';
 import '../../../shared/widgets/voice_player.dart';
-import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../agreements/screens/agreements_screen.dart' show agreementsTabRequestProvider;
 import '../../../core/chat/job_offer_round.dart';
 import '../../job_offer/job_offer_entry.dart';
 import '../../status/screens/status_viewer_screen.dart';
+import '../../status/widgets/status_ring.dart';
 import '../../../core/job_offer/job_offer.dart';
 import '../../../core/job_offer/job_offer_repository.dart';
 import '../../job_offer/screens/job_offer_sheet.dart';
@@ -138,18 +138,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   );
   bool _uploadingAudio = false;
   bool _hasText = false;
-  // ЗАВОДИЛСЯ РАДИ НАДПИСИ «Onlayn» В ШАПКЕ, ОСТАЛСЯ РАДИ ОБОДКА ИСТОРИИ —
-  // проверено 18.09, до того как снимать, и снят не был именно поэтому.
+  // ЭТОТ ТАЙМЕР ДЕРЖИТ ТРЕТЬЕ ДЕЛО, И ТОЛЬКО ЕГО. Имя у поля осталось от
+  // первых двух — так их и потеряли из виду; здесь сказано, что он делает
+  // НА САМОМ ДЕЛЕ.
   //
-  // Надписи больше нет: в шапке кружок, и он перерисовывает себя сам. Но на
-  // том же пустом `setState` висело второе дело, здесь не названное:
-  // `otherUser?.hasActiveStatus` ниже сравнивает срок годности истории с
-  // `DateTime.now()`. Сними таймер — истёкшая история осталась бы с ободком
-  // вокруг портрета, пока не изменится документ.
+  // Заводился он ради надписи «Onlayn» (снята 18.09) и держал заодно ободок
+  // истёкшей истории (уехал в `StatusRing` со своими часами, 18.09). Оба
+  // повода отпали, а таймер остался — из-за дела, которого не называл ни один
+  // комментарий:
   //
-  // Число то же, что у кружка (`onlineDotRefreshInterval`), и это не
-  // совпадение: оба признака устаревают по времени, и разойдись числа —
-  // устаревали бы по-разному на одном экране.
+  // В `build` ниже стоит починка ЗАЛИПШЕГО СЧЁТЧИКА НЕПРОЧИТАННЫХ — счётчик
+  // больше нуля, а экран открыт, значит пишем ноль, не чаще раза в пять
+  // секунд. Пустая перерисовка раз в двадцать секунд эту починку
+  // ПЕРЕСПРАШИВАЕТ. Без таймера повтор случится только когда придёт новый
+  // снимок из базы, а если запись не прошла — снимок и не придёт, и счётчик
+  // останется висеть.
+  //
+  // **Сделать этот повтор явным — отдельная работа со своим разбором; молча
+  // её не делать.** Пока она не сделана, таймер стоит, и стоит именно за
+  // этим.
+  //
+  // Двадцать секунд здесь СВОИ, а не общие: к `staleClockInterval` это число
+  // отношения больше не имеет — то, что от времени зависело, отсюда уехало.
   Timer? _presenceRefreshTimer;
   // Uniform on all four corners for every bubble type (text/image/audio/
   // video) and both senders — WhatsApp's current bubbles have no tail.
@@ -4510,12 +4520,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             // status text) still opens AboutContactScreen via the outer
             // GestureDetector below.
             const headerAvatarSize = 36.0;
-            final hasActiveStatus = otherUser?.hasActiveStatus == true;
-            final viewerUserForRing = hasActiveStatus
-                ? ref.watch(currentUserProvider(currentUid)).value
-                : null;
-            final hasUnviewed = hasActiveStatus &&
-                (viewerUserForRing?.hasUnviewedStatusFrom(otherUser!) ?? false);
             final headerAvatar = Padding(
               padding: const EdgeInsets.only(right: 10),
               // КРУЖОК «В СЕТИ» ВМЕСТО СНЯТОЙ НАДПИСИ (владелец, 18.09).
@@ -4525,58 +4529,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  hasActiveStatus
-                  ? GestureDetector(
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => UserStatusViewerScreen(
-                            ownerUid: otherUser!.id,
-                            currentUid: currentUid,
-                            initialUser: otherUser,
-                          ),
-                        ),
-                      ),
-                      onLongPress: () => showAvatarLongPressMenu(
-                        context,
-                        photoURL: otherUser?.photoURL,
-                        onViewStatus: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => UserStatusViewerScreen(
-                              ownerUid: otherUser!.id,
-                              currentUid: currentUid,
-                              initialUser: otherUser,
-                            ),
-                          ),
-                        ),
-                      ),
-                      child: AvatarRing(
-                        photoURL: otherUser?.photoURL,
-                        fallbackEmoji: otherUser?.emoji,
-                        hasUnviewed: hasUnviewed,
-                        size: headerAvatarSize * 1.2,
-                      ),
-                    )
-                  : GestureDetector(
-                      onTap: otherUser?.photoURL != null
-                          ? () => showFullImage(context, otherUser!.photoURL!)
-                          : null,
-                      // Свёрнуто 16.09; вид сохранён — kBorder толщиной 1.5,
-                      // эмодзи 16. Прежний комментарий здесь рассказывал, что
-                      // этот кружок когда-то не показывал фото вовсе и был
-                      // починен по образцу chats_screen; теперь образец не
-                      // копируется, а зовётся.
-                      child: AvatarRing(
-                        photoURL: otherUser?.photoURL,
-                        fallbackEmoji: otherUser?.emoji ?? '🎵',
-                        hasUnviewed: false,
-                        size: headerAvatarSize * 1.2,
-                        ringColor: kBorder,
-                        ringWidth: 1.5,
-                        fallbackFontSize: 16,
-                      ),
-                    ),
+                  // Свёрнуто 18.09; вид ветви «истории нет» сохранён — kBorder
+                  // толщиной 1.5, знак 16.
+                  //
+                  // ЗАПАСНОЙ ЗНАК ТЕПЕРЬ ОДИН НА ОБЕ ВЕТВИ, и это
+                  // единственное место из одиннадцати, где они расходились:
+                  // при живой истории здесь стояло `otherUser?.emoji`, а без
+                  // неё — `otherUser?.emoji ?? '🎵'`. Разница видна ровно
+                  // тогда, когда у человека нет ни фотографии, ни своего
+                  // знака: было бы серое лицо при живой истории и нота без
+                  // неё. Взята нота — тот же знак, что и у соседней ветви.
+                  StatusRing(
+                    user: otherUser,
+                    currentUid: currentUid,
+                    size: headerAvatarSize * 1.2,
+                    fallbackEmoji: otherUser?.emoji ?? '🎵',
+                    plainRingColor: kBorder,
+                    plainRingWidth: 1.5,
+                    plainFallbackFontSize: 16,
+                  ),
                   Positioned(
                     bottom: 0,
                     right: 0,
