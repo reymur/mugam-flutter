@@ -3301,28 +3301,125 @@ class _PersonalEventDetailScreenState
       for (final t in targets)
         if (t.outcome != CallOutcome.alreadyAsked) t.uid,
     };
-    final sentCount = slotsAfterWrite
+    final sent = slotsAfterWrite
         .where((s) => s.invited && sendingUids.contains(s.uid))
-        .length;
+        .toList();
+
+    // ИМЕНА, А НЕ ЧИСЛО — решение владельца 18.09. «Позвал одного» человеку
+    // ничего не говорит, «позвал Теймура» говорит всё. Имён показываем ВСЕ,
+    // сколько бы ни выбрали: обрезать список значило бы спрятать часть
+    // отправки, а это ровно та тишина, из-за которой плашку и чинили.
+    //
+    // ИМЯ ПОЛНОЕ, А ОБРЕЗАЕТ ЕГО ЭКРАН, А НЕ МЫ (решение владельца 18.09).
+    //
+    // ЗДЕСЬ СТОЯЛО СОКРАЩЕНИЕ «Teymur O.» — своё правило, резавшее фамилию до
+    // буквы. Снято: имена стоят друг под другом, и полное почти всегда
+    // влезает. А когда не влезает, точки ставит `TextOverflow.ellipsis` по
+    // НАСТОЯЩЕЙ ширине строки — «Teymur Oru…», — и это вернее любого нашего
+    // счёта по буквам: ширина знака зависит от шрифта и от самих букв.
+    //
+    // ИМЯ БЕРЁТСЯ ЖИВОЕ, а снимок из слота — запасным: человек мог
+    // переименоваться после того, как его отметили. Пустое значит «сведений
+    // нет», и вместо него стоит «Naməlum» — решение показа, а не правила.
+    String named(String uid, String snapshot) {
+      final live = _findUser(allUsers, uid)?.name ?? '';
+      final full = live.isNotEmpty ? live : snapshot;
+      return full.trim().isEmpty ? 'Naməlum' : full.trim();
+    }
+
     if (!anythingToSend(targets)) {
+      final already = [
+        for (final t in targets)
+          if (t.outcome == CallOutcome.alreadyAsked)
+            named(t.uid, _slotName(slots, t.uid)),
+      ];
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Onlar artıq tədbirdədir'),
-          behavior: SnackBarBehavior.floating,
+        _namesSnackBar(
+          head: already.length == 1
+              ? '${already.single} artıq tədbirdədir'
+              : 'Artıq tədbirdədirlər:',
+          names: already.length == 1 ? const [] : already,
         ),
       );
       return;
     }
     if (notSent.isEmpty) {
+      final names = [for (final s in sent) named(s.uid, s.name)];
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Çağırış göndərildi: $sentCount nəfər'),
-          behavior: SnackBarBehavior.floating,
+        _namesSnackBar(
+          head: names.length == 1
+              ? 'Çağırış göndərildi: ${names.single}'
+              : 'Çağırış göndərildi:',
+          names: names.length == 1 ? const [] : names,
         ),
       );
       return;
     }
-    await _showNotSentDialog(sent: sentCount, notSent: notSent);
+    await _showNotSentDialog(sent: sent.length, notSent: notSent);
+  }
+
+  /// Имя из шаблона по uid — запасное, на случай исчезнувшей учётки.
+  String _slotName(List<LineupSlot> slots, String uid) {
+    for (final s in slots) {
+      if (s.uid == uid) return s.name;
+    }
+    return '';
+  }
+
+  /// ПЛАШКА СО СПИСКОМ ИМЁН — форма выбрана владельцем 18.09.
+  ///
+  /// **ОДИН ЧЕЛОВЕК — ОДНОЙ СТРОКОЙ, НЕСКОЛЬКО — НУМЕРОВАННЫМ СПИСКОМ.**
+  /// «Çağırış göndərildi: Teymur O.» читается как предложение; тот же текст с
+  /// одним пунктом «1)» выглядел бы началом списка, которого нет.
+  ///
+  /// **ИМЕНА ЖИРНЫМ** — по той же причине, по какой они вообще здесь: человек
+  /// пришёл за именами, а не за словами вокруг них.
+  ///
+  /// **ВСЕ ИМЕНА, СКОЛЬКО БЫ НИ БЫЛО** (решение владельца). Плашка при
+  /// восьмерых вырастет на восемь строк — это осознанная цена: обрезанный
+  /// список прятал бы часть отправки молча, а высокая плашка видна и уходит
+  /// сама.
+  ///
+  /// **ПЯТЬ СЕКУНД ВМЕСТО ЧЕТЫРЁХ** (решение владельца): три имени за
+  /// умолчательные четыре не прочитываются.
+  SnackBar _namesSnackBar({required String head, required List<String> names}) {
+    return SnackBar(
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 5),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ЗАГОЛОВОК ТОЖЕ В ОДНУ СТРОКУ С ОБРЕЗКОЙ: при одном человеке он и
+          // есть всё сообщение («Çağırış göndərildi: Teymur Orucov»), и
+          // длинная фамилия обязана обрезаться точками, а не уехать вторым
+          // рядом, разорвав предложение посередине.
+          Text(head, maxLines: 1, overflow: TextOverflow.ellipsis),
+          for (var i = 0; i < names.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(text: '${i + 1}) '),
+                    TextSpan(
+                      text: names[i],
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                // ОБРЕЗАЕТ ЭКРАН, А НЕ МЫ (решение владельца 18.09). Имя
+                // показывается ПОЛНЫМ; не влезло — «Teymur Oru…», по
+                // настоящей ширине строки. Считать буквами нельзя: ширина
+                // знака зависит от шрифта и от самих букв, и счёт промахнулся
+                // бы то в одну сторону, то в другую.
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   /// НЕУШЕДШИЕ — ПОИМЁННО, С ДВЕРЬЮ В ЧАТ.

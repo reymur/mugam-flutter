@@ -41,6 +41,8 @@
 /// низ), а не тем, что общая часть спрашивает, кто её зовёт.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -83,6 +85,12 @@ List<User> filterPeople(
 /// потому они параметры, а не флаг: одноместный лист закрывается по нажатию
 /// и ничего не рисует справа, многоместный отмечает и рисует отметку. Ни
 /// одна из двух надобностей не заставляет строку спрашивать, кто её зовёт.
+/// КАК ЧАСТО ПЕРЕРИСОВЫВАТЬ РАДИ КРУЖКА — то же число, что в чате и на
+/// экране контакта (`about_contact_screen.dart`). Оно одно на все три места
+/// нарочно: с разными числами один человек гас бы в одном окне и горел в
+/// другом.
+const _presenceRefreshInterval = Duration(seconds: 20);
+
 class PersonRow extends StatelessWidget {
   const PersonRow({
     super.key,
@@ -100,19 +108,60 @@ class PersonRow extends StatelessWidget {
     final photo = user.photoURL;
     return ListTile(
       onTap: onTap,
-      leading: CircleAvatar(
-        radius: 22,
-        backgroundColor: kBg3,
-        backgroundImage: (photo != null && photo.isNotEmpty)
-            ? NetworkImage(photo)
-            : null,
-        child: (photo == null || photo.isEmpty)
-            ? Text(
-                user.name.isNotEmpty ? azUpperCase(user.name[0]) : '?',
-                style:
-                    const TextStyle(color: kGold, fontWeight: FontWeight.bold),
-              )
-            : null,
+      // КРУЖОК «В СЕТИ» — ТОТ ЖЕ, ЧТО В ЧАТЕ И ЕЩЁ В ОДИННАДЦАТИ МЕСТАХ
+      // (решение владельца 18.09: не заводить другого).
+      //
+      // ПРАВИЛО НЕ ПИШЕТСЯ ЗАНОВО, А СПРАШИВАЕТСЯ: `User.isActuallyOnline` —
+      // одно на весь проект. Два места, решающих «в сети ли он», разошлись бы
+      // молча, и человек был бы зелёным в чате и серым здесь (N49).
+      //
+      // ФОРМА ТА ЖЕ, ЧТО У СОСЕДЕЙ: кружок 12×12 в нижнем правом углу
+      // фотографии, обводкой цвета подложки. Взята у `create_group_screen`
+      // дословно — там ближайший по смыслу список людей с отметкой.
+      //
+      // ЛИШНИХ ЧТЕНИЙ НОЛЬ. `online` и `lastSeen` приходят тем же документом
+      // `users/{uid}`, что имя, фото и инструмент; список и так держит целого
+      // `User`. Отдельного запроса на присутствие нет и не нужно.
+      //
+      // ПРОТУХАНИЕ ЛЕЧИТСЯ ТАМ ЖЕ, ГДЕ У ЧАТА — таймером в состоянии списка
+      // (`_presenceRefreshInterval` выше). Здесь его нет и быть не должно:
+      // строка — `StatelessWidget`, и таймер в ней завёлся бы НА КАЖДУЮ
+      // строку.
+      //
+      // ЗДЕСЬ СТОЯЛА ЗАПИСЬ «обновления по времени нет, и это сказано вслух»
+      // — верная на тот час. Решением владельца 18.09 обновление заведено,
+      // и запись снята вместе со своим предметом, а не оставлена устаревшей.
+      leading: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          CircleAvatar(
+            radius: 22,
+            backgroundColor: kBg3,
+            backgroundImage: (photo != null && photo.isNotEmpty)
+                ? NetworkImage(photo)
+                : null,
+            child: (photo == null || photo.isEmpty)
+                ? Text(
+                    user.name.isNotEmpty ? azUpperCase(user.name[0]) : '?',
+                    style: const TextStyle(
+                        color: kGold, fontWeight: FontWeight.bold),
+                  )
+                : null,
+          ),
+          Positioned(
+            bottom: 0,
+            right: 0,
+            child: Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: user.isActuallyOnline ? kGreen : kMuted,
+                shape: BoxShape.circle,
+                border: Border.all(color: kBg2, width: 2),
+              ),
+            ),
+          ),
+        ],
       ),
       title: Text(
         user.name,
@@ -166,8 +215,40 @@ class _PersonPickerBodyState extends ConsumerState<PersonPickerBody> {
   final _searchController = TextEditingController();
   String _query = '';
 
+  // ОБНОВЛЕНИЕ ЗЕЛЁНОГО КРУЖКА — ТОТ ЖЕ ПРИЁМ, ЧТО В ЧАТЕ (решение владельца
+  // 18.09), и взят он дословно, а не написан заново.
+  //
+  // ЗАЧЕМ ОН ВООБЩЕ НУЖЕН. `isActuallyOnline` сравнивает `lastSeen` с
+  // `DateTime.now()`, то есть ответ зависит от ВРЕМЕНИ, а не только от
+  // данных. Поток `musiciansProvider` перерисовывает список, лишь когда
+  // меняется документ в базе, — а от того, что просто идёт время, он не
+  // сработает ни разу. Значит кружок замирает на том, каким был в миг
+  // открытия: человек вышел минуту назад, а он всё зелёный.
+  //
+  // ПОЧЕМУ ДВАДЦАТЬ СЕКУНД, А НЕ СВОЁ ЧИСЛО. Столько же стоит в
+  // `about_contact_screen.dart` и в `chat_screen.dart`, и довод записан там:
+  // кружок гаснет в пределах десятков секунд после протухания, при этом
+  // перерисовка ПУСТАЯ — никаких новых чтений из базы, а сам удар
+  // присутствия и так пишется раз в 60 секунд. Возьми мы здесь другое число,
+  // один и тот же человек гас бы в чате и горел в списке — и различить это
+  // было бы нечем.
+  //
+  // ПОЧЕМУ ЗДЕСЬ, А НЕ В `PersonRow`. Строка остаётся `StatelessWidget`:
+  // заведи таймер в ней — он завёлся бы НА КАЖДУЮ строку списка. Перерисовку
+  // просит тот, кто список держит.
+  Timer? _presenceRefreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _presenceRefreshTimer = Timer.periodic(_presenceRefreshInterval, (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
   @override
   void dispose() {
+    _presenceRefreshTimer?.cancel();
     _searchController.dispose();
     super.dispose();
   }
