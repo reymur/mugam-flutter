@@ -14,6 +14,7 @@ import '../core/agreements/leave_note.dart';
 import '../core/agreements/lineup.dart';
 import '../core/chat/chat_departure.dart';
 import '../core/chat/chat_existence.dart';
+import '../core/chat/unread_repair.dart';
 import '../core/models/activity_type.dart';
 import '../core/time/instant_iso.dart';
 import '../core/store/shared_stream.dart';
@@ -2578,12 +2579,28 @@ class FirestoreService {
         DateTime.now().difference(last) < _previewRefreshCooldown) {
       return;
     }
-    _lastPreviewRefreshAt[chatId] = DateTime.now();
+    final now = DateTime.now();
+    _lastPreviewRefreshAt[chatId] = now;
     try {
       await _functions
           .httpsCallable('refreshChatPreview')
           .call({'chatId': chatId}).timeout(_writeTimeout);
     } catch (e, st) {
+      // ОТКАТ ОСТЫВАНИЯ — 18.09, вторая половина N246.
+      //
+      // Отметка ставится ДО вызова, иначе пачка перестроек экрана дала бы
+      // пачку вызовов. Но при отказе она оставалась стоять, и неудавшийся
+      // вызов закрывал этот чат от повторной попытки на тридцать секунд —
+      // а вернуться к нему могла только пустая перерисовка по таймеру,
+      // которая для этого и стояла. Таймер снят, значит отметку надо
+      // снимать здесь.
+      //
+      // Сверка с `now`, а не безусловное удаление: за время вызова кто-то
+      // мог поставить свою, более свежую, и стирать чужую нельзя. Тот же
+      // вид отката, что у `_deliveredSeqWritten` ниже.
+      if (_lastPreviewRefreshAt[chatId] == now) {
+        _lastPreviewRefreshAt.remove(chatId);
+      }
       FirebaseCrashlytics.instance.recordError(
         e,
         st,
@@ -3236,20 +3253,47 @@ class FirestoreService {
   // фиксирует СОБЫТИЕ (что прочитано и когда), счётчик чинит СОСТОЯНИЕ.
   // Плюс запись дешевле — одно поле вместо трёх, и время прочтения при
   // починке не сдвигается, чего и добивалась правка A3.
-  Future<void> resetUnreadCount({
+  //
+  // ЗАСЛОНКА «ЗАПИСЬ В ПОЛЁТЕ» ЖИВЁТ ЗДЕСЬ, А НЕ НА ЭКРАНЕ (18.09).
+  // `chatMetaProvider` объявлен `autoDispose`: при каждом входе в чат он
+  // создаётся заново, и заслонка, живущая в состоянии экрана, начиналась бы
+  // пустой. Тот же довод записан у `_lastReadMsgIdWritten` выше.
+  final UnreadRepairGate _unreadRepairGate = UnreadRepairGate();
+
+  /// Обнулить счётчик непрочитанных. **Возвращает, состоялась ли запись.**
+  ///
+  /// ОТКАЗ БОЛЬШЕ НЕ ПРОГЛАТЫВАЕТСЯ, и это вся суть правки 18.09 (вторая
+  /// половина N246). Раньше метод ловил ошибку, писал её в Crashlytics и
+  /// возвращал успешный `Future<void>` — то есть у вызывающего не было
+  /// признака, по которому он мог бы попробовать снова. Единственным, кто
+  /// возвращался к вопросу, оказался пустой `setState` по таймеру раз в
+  /// двадцать секунд: он не чинил счётчик, он был ЕДИНСТВЕННЫМ ПОВТОРОМ для
+  /// записи, у которой отняли отказ.
+  ///
+  /// Теперь повтор ведёт снимок: заслонка снимается и после успеха, и после
+  /// отказа, следующий снимок документа пробует снова. Образец —
+  /// `_recordDeliveries` ниже, там та же мысль в виде отката пометки.
+  ///
+  /// `false` означает одно из двух — запись не начинали (такая же в полёте)
+  /// либо она отказала. Различать их вызывающему не нужно: в обоих случаях
+  /// ответ один — ждать следующего снимка, и он придёт.
+  Future<bool> resetUnreadCount({
     required String chatId,
     required String uid,
   }) async {
     try {
-      await _db.collection('chats').doc(chatId).update({
-        'unreadCount.$uid': 0,
-      }).timeout(_writeTimeout);
+      return await _unreadRepairGate.run(chatId, () async {
+        await _db.collection('chats').doc(chatId).update({
+          'unreadCount.$uid': 0,
+        }).timeout(_writeTimeout);
+      });
     } catch (e, st) {
       FirebaseCrashlytics.instance.recordError(
         e,
         st,
         reason: 'FirestoreService: resetUnreadCount failed',
       );
+      return false;
     }
   }
 

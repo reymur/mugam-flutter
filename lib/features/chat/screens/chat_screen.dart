@@ -27,6 +27,7 @@ import '../../../core/audio/voice_recording_session.dart';
 import '../../../core/media/image_compressor.dart';
 import '../../../core/native_sound_effect.dart';
 import '../../../core/chat/chat_access.dart';
+import '../../../core/chat/unread_repair.dart';
 import '../../../core/chat/chat_existence.dart';
 import '../../../core/chat/chat_messages_controller.dart';
 import '../../../core/queue/message_send_controller.dart';
@@ -138,29 +139,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   );
   bool _uploadingAudio = false;
   bool _hasText = false;
-  // ЭТОТ ТАЙМЕР ДЕРЖИТ ТРЕТЬЕ ДЕЛО, И ТОЛЬКО ЕГО. Имя у поля осталось от
-  // первых двух — так их и потеряли из виду; здесь сказано, что он делает
-  // НА САМОМ ДЕЛЕ.
+  // ЗДЕСЬ СТОЯЛ ПУСТОЙ `setState` ПО ТАЙМЕРУ РАЗ В ДВАДЦАТЬ СЕКУНД. Снят
+  // 18.09, и вот полный счёт того, что он держал, — потому что счёт этот
+  // дважды оказывался неполным.
   //
-  // Заводился он ради надписи «Onlayn» (снята 18.09) и держал заодно ободок
-  // истёкшей истории (уехал в `StatusRing` со своими часами, 18.09). Оба
-  // повода отпали, а таймер остался — из-за дела, которого не называл ни один
-  // комментарий:
+  //   1. надпись «Onlayn» в шапке — названа в комментарии, снята 18.09
+  //      вместе с самой надписью;
+  //   2. ободок истёкшей истории — НЕ НАЗВАН НИГДЕ, нашёлся проверкой перед
+  //      снятием; уехал в `StatusRing` со своими часами (18.09);
+  //   3. переспрос починки залипшего счётчика непрочитанных — НЕ НАЗВАН
+  //      НИГДЕ, нашёлся второй такой же проверкой;
+  //   4. переспрос починки устаревшего превью — НЕ НАЗВАН НИГДЕ И НЕ НАЙДЕН
+  //      ДАЖЕ ТОГДА: в реестре N246 записано «третье дело» в единственном
+  //      числе, а дел было четыре. Нашлось проходом по телу `build` уже
+  //      после того, как находка была заведена.
   //
-  // В `build` ниже стоит починка ЗАЛИПШЕГО СЧЁТЧИКА НЕПРОЧИТАННЫХ — счётчик
-  // больше нуля, а экран открыт, значит пишем ноль, не чаще раза в пять
-  // секунд. Пустая перерисовка раз в двадцать секунд эту починку
-  // ПЕРЕСПРАШИВАЕТ. Без таймера повтор случится только когда придёт новый
-  // снимок из базы, а если запись не прошла — снимок и не придёт, и счётчик
-  // останется висеть.
+  // Третье и четвёртое держались не на часах, а на том, что у обеих починок
+  // был отнят признак неудачи: запись глотала отказ, а заслонка ставилась до
+  // записи и при отказе не снималась. Повторить было нечем, кроме будильника.
+  // Теперь обе ведёт снимок, и обе после отказа не оставляют следа —
+  // `core/chat/unread_repair.dart` и `refreshChatPreviewIfStale`.
   //
-  // **Сделать этот повтор явным — отдельная работа со своим разбором; молча
-  // её не делать.** Пока она не сделана, таймер стоит, и стоит именно за
-  // этим.
-  //
-  // Двадцать секунд здесь СВОИ, а не общие: к `staleClockInterval` это число
-  // отношения больше не имеет — то, что от времени зависело, отсюда уехало.
-  Timer? _presenceRefreshTimer;
+  // МОРАЛЬ, РАДИ КОТОРОЙ ЭТОТ АБЗАЦ ОСТАВЛЕН НА МЕСТЕ СНЯТОГО ПОЛЯ: пустая
+  // перерисовка по таймеру обслуживает ВСЁ, что на экране зависит от
+  // повторного захода в `build`, и список своих подопечных она не называет.
+  // Отличить «таймер больше не нужен» от «таймер держит четыре вещи, о трёх
+  // из которых никто не знает» можно только чтением всего файла.
   // Uniform on all four corners for every bubble type (text/image/audio/
   // video) and both senders — WhatsApp's current bubbles have no tail.
   static const double _kBubbleRadius = 12.0;
@@ -244,19 +248,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   // the write itself idempotent regardless of how often the upstream
   // signal re-fires.
   String? _lastMarkedReadMsgId;
-  // Throttle for the "unread badge is stuck at a non-zero count while this
-  // reader is literally looking at the chat" repair below. The race it
-  // repairs: onNewMessage (Cloud Function) increments unreadCount.{uid}
-  // asynchronously, so for a message that arrives while its recipient
-  // already has the chat open, that increment can land AFTER the
-  // recipient's own markChatAsReadBy zeroed the count — leaving a phantom
-  // unread badge on a chat they've fully read. The old code happened to
-  // self-heal this because markChatAsReadBy fired on essentially every
-  // controller emission; now that it's correctly gated on the last-read
-  // message id actually changing, nothing re-zeroes a count that was
-  // clobbered after the fact, so this repair path replaces that accident
-  // with something deliberate and bounded.
-  DateTime? _lastUnreadRepairAt;
+  // ЗДЕСЬ СТОЯЛ ОГРАНИЧИТЕЛЬ ПОЧИНКИ СЧЁТЧИКА — `DateTime?
+  // _lastUnreadRepairAt`, не чаще раза в пять секунд. Снят 18.09 вместе с
+  // самой причиной его существования.
+  //
+  // Он был нужен не починке, а тому, что починка жила внутри `build`:
+  // перестраивается экран постоянно, и без ограничителя записи шли бы
+  // пачкой. Теперь починку ведёт слушатель `chatMetaProvider` (см. `build`),
+  // а тот срабатывает только на настоящее изменение документа — ограничивать
+  // нечего. Заслонку «запись в полёте» держит служба
+  // (`core/chat/unread_repair.dart`), и держит правильнее: та переживает
+  // пересоздание экрана, а поле здесь умирало вместе с ним.
 
   /// Предложения работы этого чата — ОДИН поток на весь экран.
   ///
@@ -317,9 +319,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       // переходное окно в реестре.
       PresenceService.instance.setActiveChat(widget.chatId);
     }
-    _presenceRefreshTimer = Timer.periodic(const Duration(seconds: 20), (_) {
-      if (mounted) setState(() {});
-    });
   }
 
   void _initBeepPlayer() async {
@@ -404,7 +403,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _voiceHold.removeListener(_onVoiceHoldChanged);
     _voiceHold.dispose();
     _voiceSession.dispose();
-    _presenceRefreshTimer?.cancel();
     _typingThrottleTimer?.cancel();
     _highlightTimer?.cancel();
     for (final timer in _purgeTimers.values) {
@@ -3934,6 +3932,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // ref.read reflects live data in the message options sheet.
     ref.watch(starredMessagesProvider(currentUid));
 
+    // ПОЧИНКА ЗАЛИПШЕГО СЧЁТЧИКА НЕПРОЧИТАННЫХ — ВЕДЁТ ЕЁ СНИМОК, А НЕ ЧАСЫ
+    // (18.09, вторая половина N246).
+    //
+    // Что чинится: `onNewMessage` прибавляет `unreadCount.{uid}` асинхронно и
+    // может успеть ПОСЛЕ того, как читатель его обнулил, — на прочитанном
+    // чате остаётся число. Правило и заслонка живут в
+    // `core/chat/unread_repair.dart`, разбор там же.
+    //
+    // ЗДЕСЬ БЫЛ БЛОК ВНУТРИ `build` С ОГРАНИЧИТЕЛЕМ НА ПЯТЬ СЕКУНД. Он уехал
+    // сюда целиком, и ограничитель снят как ненужный: он существовал ровно
+    // потому, что `build` крутится постоянно, а слушатель срабатывает только
+    // на настоящее изменение — поток `watchChatMeta` отсеян `distinct`.
+    //
+    // Сходимость: запись ставит ноль, ноль приходит снимком, правило даёт
+    // «не чинить». Отказ следа не оставляет — заслонка снимается и после
+    // него, и следующий снимок пробует снова.
+    ref.listen(chatMetaProvider(widget.chatId), (previous, next) {
+      final unread = myUnreadCount(next.value, currentUid);
+      if (!shouldRepairUnread(unread: unread, uid: currentUid)) return;
+      unawaited(
+        _firestoreService.resetUnreadCount(
+          chatId: widget.chatId,
+          uid: currentUid,
+        ),
+      );
+    });
+
     ref.listen(chatMessagesControllerProvider(widget.chatId), (
       previous,
       next,
@@ -4063,9 +4088,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             // карточке чата переставало обнуляться.
             //
             // Поэтому починка счётчика больше сюда не ходит: у неё свой
-            // метод, пишущий только unreadCount (см. _lastUnreadRepairAt
-            // ниже). Расписка фиксирует событие, счётчик чинит состояние —
-            // разные задачи, разные записи.
+            // метод, пишущий только unreadCount, и свой слушатель
+            // `chatMetaProvider` выше в этом же `build`. Расписка фиксирует
+            // событие, счётчик чинит состояние — разные задачи, разные
+            // записи.
             final recordedMsgId =
                 (ref.read(chatMetaProvider(widget.chatId)).value?['lastReadMsgId']
                         as Map<String, dynamic>?)?[currentUid]
@@ -4123,50 +4149,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // собеседник действительно один — шапка чата, звонки, «печатает».
     final otherUids =
         members?.where((m) => m != currentUid).toList() ?? const <String>[];
-    // Stuck-unread-badge repair — see _lastUnreadRepairAt's own comment for
-    // the race this exists for. Safe to drive from build(): it only ever
-    // fires while the count is genuinely non-zero for a chat this user has
-    // open, the write it makes sets that same count to 0 (so the very next
-    // snapshot stops it re-firing — it converges rather than looping), and
-    // the 5s throttle bounds it to at most one write per 5 seconds even if
-    // the write itself keeps failing. Deliberately does NOT go through
-    // _lastMarkedReadMsgId: that guard is about "has the newest message I've
-    // read changed", which is exactly what has NOT changed here.
-    final myUnread =
-        ((chatMetaAsync.value?['unreadCount']
-                as Map<String, dynamic>?)?[currentUid]
-            as num?)
-            ?.toInt() ??
-        0;
-    if (myUnread > 0 && currentUid.isNotEmpty) {
-      final now = DateTime.now();
-      final throttled =
-          _lastUnreadRepairAt != null &&
-          now.difference(_lastUnreadRepairAt!) < const Duration(seconds: 5);
-      if (!throttled) {
-        // Чинит СЧЁТЧИК, а не расписку (N22). Раньше здесь звался
-        // markChatAsReadBy, и это сломалось ровно в тот день, когда у
-        // него появился гвард по идентификатору сообщения: у залипшего
-        // счётчика идентификатор по определению тот же самый — он и
-        // залипает на последнем входящем, — поэтому гвард глушил починку
-        // вместе с холостыми расписками, и число на карточке чата
-        // переставало обнуляться.
-        //
-        // Экран чата открыт, значит человек читает: обнулить счётчик
-        // здесь безусловно правильно. Идентификатор последнего входящего
-        // для этого больше не нужен — а вместе с ним отпала и
-        // единственная причина, по которой починке требовался
-        // rawMessages.
-        _lastUnreadRepairAt = now;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _firestoreService.resetUnreadCount(
-            chatId: widget.chatId,
-            uid: currentUid,
-          );
-        });
-      }
-    }
     // Stale-preview repair. The chat card's preview is written server-side
     // now (onNewMessage / onMessageTombstoned / onMessageDeleted in
     // functions/src/index.ts), which means the client can notice it has
