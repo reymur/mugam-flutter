@@ -12,6 +12,7 @@ import '../../../firebase/firestore_service.dart';
 import '../../job_offer/job_offer_entry.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import '../../user/screens/user_profile_screen.dart';
+import '../../../shared/widgets/online_dot.dart';
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -292,18 +293,15 @@ class _MusicianCard extends ConsumerWidget {
                               fallbackFontSize: 24,
                             ),
                           ),
+                        // СЛЕВА — и это единственное такое место из
+                        // тринадцати. Расположение осталось у зовущего
+                        // именно поэтому: затащи его внутрь кружка, ему
+                        // пришлось бы принять переключатель «а этому
+                        // слева» (I58).
                         Positioned(
                           bottom: 0,
                           left: 0,
-                          child: Container(
-                            width: 12,
-                            height: 12,
-                            decoration: BoxDecoration(
-                              color: musician.isActuallyOnline ? kGreen : kMuted,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: kCard, width: 2),
-                            ),
-                          ),
+                          child: OnlineDot(user: musician, borderColor: kCard),
                         ),
                       ],
                     ),

@@ -55,6 +55,7 @@ import '../../../core/job_offer/offer_draft.dart';
 import '../../search/screens/filter_sheet.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import '../../user/screens/user_profile_screen.dart';
+import '../../../shared/widgets/online_dot.dart';
 
 // ---------------------------------------------------------------------------
 // Azerbaijani month names
@@ -7132,15 +7133,7 @@ class _ParticipantPickerDialogState
                               Positioned(
                                 bottom: 0,
                                 right: 0,
-                                child: Container(
-                                  width: 12,
-                                  height: 12,
-                                  decoration: BoxDecoration(
-                                    color: m.isActuallyOnline ? kGreen : kMuted,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: kBg2, width: 2),
-                                  ),
-                                ),
+                                child: OnlineDot(user: m),
                               ),
                             ],
                           ),

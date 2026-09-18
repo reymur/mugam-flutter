@@ -12,6 +12,7 @@ import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../job_offer/job_offer_entry.dart';
 import '../../status/screens/status_viewer_screen.dart';
+import '../../../shared/widgets/online_dot.dart';
 
 
 class UserProfileScreen extends ConsumerWidget {
@@ -162,17 +163,18 @@ class UserProfileScreen extends ConsumerWidget {
                       fallbackFontSize: 48,
                     ),
                   ),
+                // КРУПНЕЕ ОСТАЛЬНЫХ НАРОЧНО: портрет здесь во весь блок, и
+                // кружок двенадцати точек на нём потерялся бы. Переносится
+                // параметрами, а не приводится к общему виду — условие
+                // владельца 18.09.
                 Positioned(
                   bottom: 0,
                   right: 0,
-                  child: Container(
-                    width: 18,
-                    height: 18,
-                    decoration: BoxDecoration(
-                      color: liveUser.isActuallyOnline ? kGreen : kMuted,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: kHeroBg, width: 3),
-                    ),
+                  child: OnlineDot(
+                    user: liveUser,
+                    size: 18,
+                    borderColor: kHeroBg,
+                    borderWidth: 3,
                   ),
                 ),
               ],

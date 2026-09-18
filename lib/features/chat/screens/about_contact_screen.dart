@@ -12,6 +12,7 @@ import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import '../../user/screens/user_profile_screen.dart';
 import '../../starred/screens/starred_messages_screen.dart';
+import '../../../shared/widgets/online_dot.dart';
 
 // Matches WhatsApp's "About Contact" screen layout. The User model has
 // no phone number field (checked across the whole schema), so the contact's
@@ -32,15 +33,20 @@ class AboutContactScreen extends ConsumerStatefulWidget {
       _AboutContactScreenState();
 }
 
-// isActuallyOnline's staleness threshold is ~2 minutes (see User model /
-// docs/presence-system.md); this screen's live Firestore listener
-// (currentUserProvider) only rebuilds when the document actually changes,
-// not as time simply passes, so a periodic no-op setState is needed to
-// re-evaluate isActuallyOnline against a fresh DateTime.now(). 20s is
-// frequent enough that the dot flips to offline within a few tens of
-// seconds of actually going stale, without being wasteful — it's a pure
-// widget rebuild, no refetch, and the underlying heartbeat only writes
-// every 60s anyway.
+// ЭТОТ ТАЙМЕР ЗАВОДИЛСЯ РАДИ НАДПИСИ «Onlayn», А ОСТАЛСЯ РАДИ ДРУГОГО —
+// проверено 18.09, до того как снимать.
+//
+// Надписи больше нет: «в сети» показывает кружок, и он перерисовывает себя
+// сам (`shared/widgets/online_dot.dart`). Но на том же пустом `setState`
+// висело ВТОРОЕ дело, о котором здесь не было сказано ни слова:
+// `user.hasActiveStatus` ниже сравнивает `mostRecentStatusExpiresAt` с
+// `DateTime.now()`, то есть тоже зависит от хода времени, а не от данных.
+// Сними таймер — истёкшая история осталась бы с ободком до тех пор, пока не
+// изменится документ или человек не откроет экран заново.
+//
+// Поэтому таймер СТОИТ, а не снят вместе со своим поводом. Число то же, что
+// у кружка, и это не совпадение: оба пересчитывают время, и разъехавшиеся
+// числа означали бы, что на одном экране два признака устаревают по-разному.
 const _presenceRefreshInterval = Duration(seconds: 20);
 
 class _AboutContactScreenState extends ConsumerState<AboutContactScreen> {
@@ -106,14 +112,11 @@ class _AboutContactScreenState extends ConsumerState<AboutContactScreen> {
                     color: kText,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  user.isActuallyOnline ? '● Onlayn' : '○ Oflayn',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: user.isActuallyOnline ? const Color(0xFF4CAF50) : kMuted,
-                  ),
-                ),
+                // ЗДЕСЬ СТОЯЛА НАДПИСЬ «● Onlayn / ○ Oflayn» — снята решением
+                // владельца 18.09 вместе с её собственным зелёным
+                // (`Color(0xFF4CAF50)`, отличным от `kGreen` у всех кружков).
+                // «В сети» теперь показывается одним и тем же кружком везде;
+                // сам он уехал на портрет выше.
                 const SizedBox(height: 24),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -196,15 +199,37 @@ class _ContactAvatar extends ConsumerWidget {
     );
   }
 
+  // КРУЖОК «В СЕТИ» НА ПОРТРЕТЕ — вместо снятой надписи «Onlayn» под именем
+  // (владелец, 18.09). Восемнадцать точек и рамка в три — как на экране
+  // профиля: там такой же крупный портрет, и двенадцатиточечный кружок на нём
+  // потерялся бы. Цвет рамки здесь `kBg`, а не `kHeroBg`: это фон ЭТОГО
+  // экрана, а рамка кружка — всегда цвет того, что под ним.
+  Widget _withDot(Widget picture) => Stack(
+        clipBehavior: Clip.none,
+        children: [
+          picture,
+          Positioned(
+            bottom: 6,
+            right: 6,
+            child: OnlineDot(
+              user: user,
+              size: 18,
+              borderColor: kBg,
+              borderWidth: 3,
+            ),
+          ),
+        ],
+      );
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (!user.hasActiveStatus) {
-      return GestureDetector(
+      return _withDot(GestureDetector(
         onTap: user.photoURL != null
             ? () => showFullImage(context, user.photoURL!)
             : null,
         child: _plainAvatar(),
-      );
+      ));
     }
 
     final currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -222,7 +247,7 @@ class _ContactAvatar extends ConsumerWidget {
           ),
         );
 
-    return GestureDetector(
+    return _withDot(GestureDetector(
       onTap: openStatusViewer,
       onLongPress: () => showAvatarLongPressMenu(
         context,
@@ -235,7 +260,7 @@ class _ContactAvatar extends ConsumerWidget {
         hasUnviewed: hasUnviewed,
         size: 140 * 1.2,
       ),
-    );
+    ));
   }
 }
 

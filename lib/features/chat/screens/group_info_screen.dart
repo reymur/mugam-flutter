@@ -14,6 +14,7 @@ import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../search/screens/filter_sheet.dart';
 import '../../status/screens/status_viewer_screen.dart';
+import '../../../shared/widgets/online_dot.dart';
 
 // Group Info screen — mirrors mugam-v2's GroupInfo.tsx (header photo/name/
 // emoji, participant list with role badges + per-row admin actions,
@@ -629,15 +630,7 @@ class _ParticipantTile extends ConsumerWidget {
             Positioned(
               bottom: 0,
               right: 0,
-              child: Container(
-                width: 12,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: user?.isActuallyOnline == true ? kGreen : kMuted,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: kBg2, width: 2),
-                ),
-              ),
+              child: OnlineDot(user: user),
             ),
           ],
         ),
@@ -1269,15 +1262,7 @@ class _AddParticipantsSheetState extends ConsumerState<_AddParticipantsSheet> {
                               Positioned(
                                 bottom: 0,
                                 right: 0,
-                                child: Container(
-                                  width: 12,
-                                  height: 12,
-                                  decoration: BoxDecoration(
-                                    color: u.isActuallyOnline ? kGreen : kMuted,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(color: kBg2, width: 2),
-                                  ),
-                                ),
+                                child: OnlineDot(user: u),
                               ),
                             ],
                           ),

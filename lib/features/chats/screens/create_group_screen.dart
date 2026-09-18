@@ -12,6 +12,7 @@ import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../chat/screens/chat_screen.dart';
 import '../../search/screens/filter_sheet.dart';
 import '../../status/screens/status_viewer_screen.dart';
+import '../../../shared/widgets/online_dot.dart';
 
 // Group-creation screen — mirrors mugam-v2's CreateGroup.tsx + UserPicker.tsx
 // exactly in structure (name+emoji row, search, selected-member chips,
@@ -501,15 +502,7 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                             Positioned(
                               bottom: 0,
                               right: 0,
-                              child: Container(
-                                width: 12,
-                                height: 12,
-                                decoration: BoxDecoration(
-                                  color: u.isActuallyOnline ? kGreen : kMuted,
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: kBg2, width: 2),
-                                ),
-                              ),
+                              child: OnlineDot(user: u),
                             ),
                           ],
                         ),

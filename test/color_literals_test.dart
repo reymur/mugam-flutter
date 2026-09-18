@@ -38,10 +38,14 @@ import 'package:flutter_test/flutter_test.dart';
 /// освободившийся номер съезжает соседняя строка и молча получает чужое
 /// разрешение (урок из `guards_are_guards_test`).
 const _known = <String, int>{
-  'features/chat/screens/about_contact_screen.dart|Color(0xFF4CAF50)': 1,
+  // УБЫЛО 18.09: `about_contact_screen|Color(0xFF4CAF50)` и
+  // `chat_screen|Color(0xFF4CAF50)` — ОБА разом, и это один случай, а не два.
+  // Здесь красились слова «● Onlayn / ○ Oflayn», и красились СВОИМ зелёным:
+  // `0xFF4CAF50` против `kGreen` (`0xFF27AE60`) у всех одиннадцати кружков.
+  // Решением владельца слова сняты, «в сети» показывается одним и тем же
+  // кружком везде — второй зелёный ушёл вместе с ними.
   'features/chat/screens/chat_screen.dart|Color(0xFF2196F3)': 2,
   'features/chat/screens/chat_screen.dart|Color(0xFF43A047)': 1,
-  'features/chat/screens/chat_screen.dart|Color(0xFF4CAF50)': 1,
   'features/chat/screens/file_message_widgets.dart|Color(0xFF2196F3)': 1,
   'features/chat/screens/file_message_widgets.dart|Color(0xFF43A047)': 1,
   'features/chat/screens/file_message_widgets.dart|Color(0xFFE53935)': 1,

@@ -8,6 +8,7 @@ import '../../../shared/widgets/avatar_ring.dart';
 import '../../../shared/widgets/zoomable_image_viewer.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import '../../user/screens/user_profile_screen.dart';
+import '../../../shared/widgets/online_dot.dart';
 
 // Confirmed-friends roster, reached from ProfileSettingsScreen's "Dostlar"
 // ListTile. friendUidsProvider only ever gives back bare uids (the
@@ -153,15 +154,7 @@ class _FriendTile extends ConsumerWidget {
                   Positioned(
                     bottom: 0,
                     right: 0,
-                    child: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: user?.isActuallyOnline == true ? kGreen : kMuted,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: kBg2, width: 2),
-                      ),
-                    ),
+                    child: OnlineDot(user: user),
                   ),
                 ],
               ),

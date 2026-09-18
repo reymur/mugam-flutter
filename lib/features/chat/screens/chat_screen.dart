@@ -62,6 +62,7 @@ import 'location_picker_screen.dart';
 import 'media_thumbnail_cache.dart';
 import 'message_info_screen.dart';
 import 'video_message_widgets.dart';
+import '../../../shared/widgets/online_dot.dart';
 
 enum _SelectionPurpose { forward, delete }
 
@@ -137,13 +138,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   );
   bool _uploadingAudio = false;
   bool _hasText = false;
-  // isActuallyOnline's staleness threshold is ~2 minutes (see User model /
-  // docs/presence-system.md); the header's otherUser comes from a live
-  // Firestore listener (currentUserProvider) that only rebuilds when the
-  // document actually changes, not as time simply passes, so this
-  // periodic no-op setState re-evaluates isActuallyOnline against a fresh
-  // DateTime.now(). Same 20s interval and reasoning as
-  // about_contact_screen.dart's _presenceRefreshTimer.
+  // ЗАВОДИЛСЯ РАДИ НАДПИСИ «Onlayn» В ШАПКЕ, ОСТАЛСЯ РАДИ ОБОДКА ИСТОРИИ —
+  // проверено 18.09, до того как снимать, и снят не был именно поэтому.
+  //
+  // Надписи больше нет: в шапке кружок, и он перерисовывает себя сам. Но на
+  // том же пустом `setState` висело второе дело, здесь не названное:
+  // `otherUser?.hasActiveStatus` ниже сравнивает срок годности истории с
+  // `DateTime.now()`. Сними таймер — истёкшая история осталась бы с ободком
+  // вокруг портрета, пока не изменится документ.
+  //
+  // Число то же, что у кружка (`onlineDotRefreshInterval`), и это не
+  // совпадение: оба признака устаревают по времени, и разойдись числа —
+  // устаревали бы по-разному на одном экране.
   Timer? _presenceRefreshTimer;
   // Uniform on all four corners for every bubble type (text/image/audio/
   // video) and both senders — WhatsApp's current bubbles have no tail.
@@ -4467,16 +4473,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   displayName,
                   style: GoogleFonts.nunito(fontSize: 16, color: kText),
                 ),
-                if (!isGroup)
-                  Text(
-                    otherUser?.isActuallyOnline == true ? '● Onlayn' : '○ Oflayn',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: otherUser?.isActuallyOnline == true
-                          ? const Color(0xFF4CAF50)
-                          : kMuted,
-                    ),
-                  ),
+                // ЗДЕСЬ СТОЯЛИ СЛОВА «● Onlayn / ○ Oflayn». Сняты решением
+                // владельца 18.09: «в сети» показывается одним и тем же
+                // кружком везде, а не словом в двух местах и кружком в
+                // одиннадцати. Заодно ушёл ВТОРОЙ ЗЕЛЁНЫЙ: надпись красилась
+                // `Color(0xFF4CAF50)`, кружки — `kGreen` (`0xFF27AE60`).
+                // Одно понятие двумя цветами — расхождение, которое некому
+                // заметить.
+                //
+                // Сам кружок уехал на портрет собеседника ниже.
               ],
             );
             if (isGroup) {
@@ -4513,7 +4518,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 (viewerUserForRing?.hasUnviewedStatusFrom(otherUser!) ?? false);
             final headerAvatar = Padding(
               padding: const EdgeInsets.only(right: 10),
-              child: hasActiveStatus
+              // КРУЖОК «В СЕТИ» ВМЕСТО СНЯТОЙ НАДПИСИ (владелец, 18.09).
+              // Размер и рамка — умолчательные: портрет здесь 43,2 точки,
+              // ровно как в списке людей на вечере, значит и кружок тот же
+              // двенадцатиточечный. Своего числа заводить не за что.
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  hasActiveStatus
                   ? GestureDetector(
                       onTap: () => Navigator.push(
                         context,
@@ -4565,6 +4577,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         fallbackFontSize: 16,
                       ),
                     ),
+                  Positioned(
+                    bottom: 0,
+                    right: 0,
+                    child: OnlineDot(user: otherUser),
+                  ),
+                ],
+              ),
             );
             return GestureDetector(
               behavior: HitTestBehavior.opaque,

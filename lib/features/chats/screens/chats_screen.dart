@@ -21,6 +21,7 @@ import '../../status/screens/create_status_screen.dart';
 import '../../status/screens/status_viewer_screen.dart';
 import '../widgets/status_feed_bar.dart';
 import 'create_group_screen.dart';
+import '../../../shared/widgets/online_dot.dart';
 
 const double _kSearchRowHeight = 46;
 const double _kSearchCollapsedRowHeight = 16;
@@ -666,14 +667,9 @@ class _ChatsScreenState extends ConsumerState<ChatsScreen>
                 [user.instrument, user.city].where((s) => s.isNotEmpty).join(' · '),
                 style: const TextStyle(color: kMuted, fontSize: 12.5),
               ),
-              trailing: Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
-                  color: user.isActuallyOnline ? kGreen : kMuted,
-                  shape: BoxShape.circle,
-                ),
-              ),
+              // БЕЗ РАМКИ И МЕЛЬЧЕ — тоже нарочно: кружок стоит в конце
+              // строки, а не на фотографии, и отделять его не от чего.
+              trailing: OnlineDot(user: user, size: 10, borderColor: null),
             );
           },
         );
@@ -839,17 +835,7 @@ class _ChatListItem extends ConsumerWidget {
                         Positioned(
                           bottom: 0,
                           right: 0,
-                          child: Container(
-                            width: 12,
-                            height: 12,
-                            decoration: BoxDecoration(
-                              color: other?.isActuallyOnline == true
-                                  ? kGreen
-                                  : kMuted,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: kBg2, width: 2),
-                            ),
-                          ),
+                          child: OnlineDot(user: other),
                         ),
                     ],
                   ),
