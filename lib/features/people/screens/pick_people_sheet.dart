@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/colors.dart';
-import 'person_picker_core.dart';
+import '../widgets/person_picker_core.dart';
 
 // ---------------------------------------------------------------------------
 // «КОГО ПОЗВАТЬ В СОСТАВ» — выбор НЕСКОЛЬКИХ человек

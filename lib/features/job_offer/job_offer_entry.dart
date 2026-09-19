@@ -15,7 +15,7 @@ import '../../firebase/firestore_service.dart';
 import '../agreements/screens/agreements_screen.dart';
 import 'busy_days.dart';
 import 'screens/job_offer_days_sheet.dart';
-import 'screens/pick_person_sheet.dart';
+import '../people/screens/pick_person_sheet.dart';
 
 // ---------------------------------------------------------------------------
 // ЕДИНСТВЕННАЯ ТОЧКА ВЫЗОВА ПРЕДЛОЖЕНИЯ РАБОТЫ (пункт 6 плана, `docs/plan.md`)

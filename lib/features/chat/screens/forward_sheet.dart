@@ -106,6 +106,13 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
   // fields FilterSheet edits, mirroring SearchFilters.toAlgoliaFiltersExcluding's
   // semantics client-side instead of via an Algolia query — this list is
   // already fully loaded from chatsProvider, so there's nothing to query.
+  //
+  // ТЕЛО СВЕРКИ УЕХАЛО 19.09 В `SearchFilters.matchesPerson`, И ЗДЕСЬ ОСТАЛОСЬ
+  // ТО, ЧТО ТОЛЬКО ЭТОТ ЭКРАН И УМЕЕТ: достать из чата собеседника. Дел было
+  // два, общим с листом выбора людей оказалось одно — сверка человека с
+  // фильтрами (I58: сводить по задаче, а не по совпадению вида). Пять условий
+  // не переписаны заново, а перенесены: второе написание тех же пяти полей
+  // разошлось бы с первым молча.
   bool _chatMatchesFilters(Chat chat) {
     if (_filters.isEmpty || chat.isGroup) return true;
     final otherUid = chat.members.firstWhere(
@@ -114,19 +121,11 @@ class _ForwardSheetState extends ConsumerState<ForwardSheet> {
     );
     if (otherUid.isEmpty) return true;
     final user = ref.watch(currentUserProvider(otherUid)).value;
+    // `null` — документ собеседника ещё не приехал. Отбрасываем, и это НЕ то
+    // же, что «не подошёл»: поведение прежнее, сохранено при переносе нарочно,
+    // потому что оно про ЭТОТ экран, а не про правило (I47).
     if (user == null) return false;
-    if (_filters.city != null && user.city != _filters.city) return false;
-    if (_filters.minRating > 0 && user.rating < _filters.minRating) {
-      return false;
-    }
-    if (_filters.onlyAvailable && !user.available) return false;
-    if (_filters.onlyOnline && !user.isActuallyOnline) return false;
-    final wanted = _filters.activityType?.toSearchableInstruments() ?? const [];
-    if (wanted.isNotEmpty) {
-      final have = user.activityType?.toSearchableInstruments() ?? const [];
-      if (!wanted.any(have.contains)) return false;
-    }
-    return true;
+    return _filters.matchesPerson(user);
   }
 
   void _toggleChat(String chatId) {

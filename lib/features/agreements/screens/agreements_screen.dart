@@ -13,7 +13,6 @@ import '../../../core/agreements/deed_dismissals.dart';
 import '../../../core/agreements/event_deed_line.dart';
 import '../../../core/agreements/event_status_view.dart';
 import '../../../core/agreements/event_edit.dart';
-import '../../../core/search/user_search_controller.dart';
 import '../../../core/theme/colors.dart';
 import '../../../core/agreements/call_targets.dart';
 import '../../../core/agreements/day_buckets.dart';
@@ -48,13 +47,10 @@ import '../../../shared/widgets/event_conflict_banner.dart';
 import '../../../shared/widgets/event_conflict_dialog.dart';
 import '../../../shared/widgets/event_notes_picker.dart';
 import '../../../shared/widgets/wheel_date_time_picker.dart';
-import '../../job_offer/screens/pick_people_sheet.dart';
+import '../../people/screens/pick_people_sheet.dart';
 import '../../job_offer/job_offer_entry.dart';
 import '../../../core/job_offer/offer_draft.dart';
-import '../../search/screens/filter_sheet.dart';
-import '../../status/widgets/status_ring.dart';
 import '../../user/screens/user_profile_screen.dart';
-import '../../../shared/widgets/online_dot.dart';
 
 // ---------------------------------------------------------------------------
 // Azerbaijani month names
@@ -2620,30 +2616,55 @@ class _MyAnswerCardState extends State<_MyAnswerCard> {
             _dayNoticeBox(),
           ],
           const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: _answerButton(
-                  label: 'Gəlirəm',
-                  selected: mine == kAnswerGoing,
-                  onTap: _saving ? null : _sayGoing,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _answerButton(
-                  // ЗДЕСЬ СТОЯЛО СЛОВО ИЗ МАКЕТА — «Bacarmıram», не «Gələ
-                  // bilmirəm», — и довод был верен: слово брали у макета, а не
-                  // придумывали. Макет рисовали, когда способов отказаться
-                  // было два; с 17.09 он один, и слово у него одно.
-                  label: 'Gələ bilmirəm',
-                  selected: false,
-                  // У отказа вопроса о конфликте нет: человек освобождает
-                  // время, а не занимает его, и мешать ему нечем.
-                  onTap: _saving ? null : _sayCannotCome,
-                ),
-              ),
-            ],
+          // ВТОРАЯ КНОПКА ОТСЮДА СНЯТА 19.09 — N249. В блоке остался ОДИН
+          // ответ, и он во всю ширину.
+          //
+          // --- ЧТО ТУТ СТОЯЛО И ПОЧЕМУ ЭТО ОКАЗАЛОСЬ ДВОЙНИКОМ ---
+          //
+          // Рядом с «Gəlirəm» стояла «Gələ bilmirəm», а ниже по карточке —
+          // ещё одна «Gələ bilmirəm», отдельной кнопкой. Обе звали ОДНУ
+          // функцию с ОДНИМИ аргументами (`leaveEventWithReason`), то есть
+          // делали буквально одно.
+          //
+          // Двойник завёлся не по небрежности. 12.09 появилась отдельная
+          // кнопка выхода — пропавшая дверь N106. 17.09 стоявшая здесь
+          // «Bacarmıram» была не снята, а ПЕРЕИМЕНОВАНА в «Gələ bilmirəm» и
+          // переведена на ту же дорогу, и в тот же миг стала близнецом
+          // двенадцатисентябрьской. Пять суток между правками и тысяча семьсот
+          // строк между местами в одном файле — I42 дословно: не вплотную, не
+          // в другом файле, а на самом опасном расстоянии.
+          //
+          // --- ПОЧЕМУ СНЯТА ИМЕННО ЭТА ИЗ ДВУХ ---
+          //
+          //  1. БЛОК НАЗЫВАЕТСЯ «ВАШ ОТВЕТ», А ВЫХОД ОТВЕТОМ НЕ ЯВЛЯЕТСЯ — и
+          //     это было записано прямо здесь, у самой кнопки: «`selected`
+          //     здесь больше нет… выход ответом не остаётся». Кнопка, которая
+          //     не бывает выбранной, стояла в блоке выбранного ответа;
+          //  2. У ОТДЕЛЬНОЙ КНОПКИ УСЛОВИЕ ДАЁТ ПРАВИЛО `offersEventExit`, а у
+          //     блока — разметка. Правило прогоняется вердиктом, разметка не
+          //     прогоняется ничем (I32);
+          //  3. ПОД ВОПРОСОМ (`unsettled`) ВЫХОД ОБЯЗАН ОСТАТЬСЯ, и даёт его
+          //     только отдельная кнопка: блок там скрыт `answersClosed`. Сними
+          //     мы отдельную — из вечера под вопросом стало бы не выйти вовсе;
+          //  4. снятие лечит заодно половину N250 (см. условие показа блока в
+          //     карточке вечера).
+          //
+          // --- ЧТО ЭТО МЕНЯЕТ НА ЭКРАНЕ, ЧИСЛОМ ---
+          //
+          // Замер прода 19.09 03:24 +04: обе кнопки показывались у 91 пары
+          // «вечер × участник» из 131. То есть это была не редкость, а обычное
+          // состояние карточки.
+          //
+          // **ПОДВАЛЬНОЙ ФОРМЫ ЭТО НЕ КАСАЕТСЯ, И ЭТО НЕ НЕДОСМОТР.** На
+          // экране приглашения (`DƏVƏT`) отдельной кнопки выхода нет вовсе —
+          // `offersEventExit` там не зовётся ни разу, — и подвальная
+          // «Gələ bilmirəm» там единственная дверь. Новым переключателем это
+          // не стало: `_MyAnswerCard` и до правки строил две разные ветви по
+          // `widget.form`, и правка легла внутрь одной из них (I58).
+          _answerButton(
+            label: 'Gəlirəm',
+            selected: mine == kAnswerGoing,
+            onTap: _saving ? null : _sayGoing,
           ),
         ],
       ),
@@ -4286,9 +4307,22 @@ class _PersonalEventDetailScreenState
                     // чем; условие даёт `answersClosed`, а не разметка: тот же
                     // вопрос решает подвал экрана приглашения (N49, I32).
                     // Вернулся в силу — правило отпускает, блок возвращается.
-                    if (!isOwner &&
-                        event.answerFor(currentUid) != null &&
-                        !answersClosed(event)) ...[
+                    // УСЛОВИЕ ЦЕЛИКОМ ДАЁТ ПРАВИЛО `showsAnswerBlock`, а не
+                    // эта разметка (19.09, N250). Здесь стояло
+                    // `!isOwner && answerFor != null && !answersClosed(event)`,
+                    // и половина его была верна: вышедшего оно НЕ отсекало.
+                    // `answers[uid]` у него `left`, а не пусто, и блок
+                    // показывался — с «Gəlirəm», которая вернула бы его, и со
+                    // второй «Gələ bilmirəm», которая прогнала бы выход заново.
+                    // Соседняя кнопка выхода свою половину держала
+                    // (`offersEventExit`), а у разметки такой половины не было:
+                    // условие в правиле прогоняется, условие в разметке — нет
+                    // (I32).
+                    if (showsAnswerBlock(
+                      isOwner: isOwner,
+                      myAnswer: event.answerFor(currentUid),
+                      status: event.status,
+                    )) ...[
                       const SizedBox(height: 20),
                       _MyAnswerCard(
                         event: event,
@@ -6343,15 +6377,69 @@ class _EventFormModalState extends State<_EventFormModal> {
     });
   }
 
+  /// «+ ƏLAVƏ ET» — ТОТ ЖЕ ЛИСТ, ЧТО У «ÖZ ADAMLARIMI ÇAĞIR» (19.09).
+  ///
+  /// **Решение владельца 19.09: листов выбора людей на вечер было два, а дело
+  /// одно.** Здесь стоял свой `_ParticipantPickerDialog` — окно поверх формы,
+  /// со своим списком, своим поиском и своей строкой человека. Снят.
+  ///
+  /// --- ПОЧЕМУ СВЕЛИ ИМЕННО СЮДА, А НЕ НАОБОРОТ ---
+  ///
+  /// Не по виду и не по объёму, а по ИСТОЧНИКУ ДАННЫХ. Снятый диалог брал
+  /// людей из Algolia (`UserSearchController`), а индекс — снимок: `lastSeen`
+  /// в нём нарочно отстаёт десятиминутным шагом
+  /// (`ALGOLIA_LAST_SEEN_THROTTLE_MS`, `functions/src/algoliaShared.ts`),
+  /// потому что иначе индекс переписывался бы на каждое сердцебиение. Окно
+  /// свежести присутствия при этом 120 с.
+  ///
+  /// Отсюда кружок «в сети» в том окне **гас у всех не позже чем через две
+  /// минуты после открытия и больше не загорался**: список замер, а часы идут
+  /// (`StaleClock` бьёт каждые 20 с и пересчитывает `isActuallyOnline` со
+  /// свежим временем по замершему `lastSeen`). Лист `pickPeopleForLineup`
+  /// читает живой поток Firestore (`musiciansProvider`), и там тот же кружок
+  /// верен.
+  ///
+  /// То есть чинить надо было не кружок, а второй лист (N248).
+  ///
+  /// --- СКЛАДЫВАЕТ, А НЕ ЗАМЕНЯЕТ, И ЭТО НЕ МЕЛОЧЬ ПЕРЕЕЗДА ---
+  ///
+  /// Снятый диалог открывался с уже отмеченным составом и возвращал список
+  /// ЦЕЛИКОМ — снятая галочка означала «убрать из состава». Общий лист
+  /// открывается пустым и возвращает только отмеченных сейчас, поэтому здесь
+  /// они ПРИБАВЛЯЮТСЯ к составу.
+  ///
+  /// **Снятие при этом не потеряно** — оно живёт на крестике фишки, идёт той
+  /// же `_applyParticipantSelection` (N35), и фишка рисуется на каждого, кто
+  /// в составе. То есть убрать по-прежнему можно любого, а дорога к снятию
+  /// стала одна вместо двух.
+  ///
+  /// **И подпись кнопки наконец совпала с делом:** «+ Əlavə et» значит
+  /// «добавить», а замена всегда была не тем, что кнопка обещает.
+  ///
+  /// **Параметра «показать уже отмеченных» у листа НЕТ и заводить нельзя.**
+  /// Понадобься он — это был бы переключатель «а этому иначе», то есть
+  /// признак того, что в одну функцию сложены два дела (I58). Общей стала
+  /// часть ДО расхождения — сам лист; что делать с ответом, каждый решает у
+  /// себя: карточка зовёт `callTargets` и пишет сразу, форма кладёт в своё
+  /// состояние и пишет при сохранении.
   Future<void> _openParticipantPicker() async {
-    await showDialog(
-      context: context,
-      builder: (_) => _ParticipantPickerDialog(
-        selectedUids: _selectedParticipantUids,
-        onChanged: _applyParticipantSelection,
-        currentUid: widget.currentUid,
-      ),
-    );
+    final picked = await pickPeopleForLineup(context);
+    // `null` — закрыл, не выбрав: передумал, состав не трогаем. Пустой
+    // список по смыслу другое (I47), но сегодня невозможен — кнопка
+    // «готово» при пустом наборе не нажимается.
+    if (picked == null || picked.isEmpty || !mounted) return;
+    // ЧЕРЕЗ `_applyParticipantSelection`, А НЕ МИМО. Она единственная, кому
+    // позволено менять состав руками: за `_explicitlyRemoved` нет серверного
+    // правила, и путь, правящий состав сам, дал бы не отказ, а неверный
+    // исход (N35). Сторож по исходникам этого и требует.
+    final merged = <String>[
+      ..._selectedParticipantUids,
+      // Двойники отсеиваются здесь, а не в листе: лист не знает, кто уже в
+      // составе, и знать не должен — иначе ему пришлось бы принять состав
+      // параметром, то есть стать двумя листами.
+      ...picked.where((uid) => !_selectedParticipantUids.contains(uid)),
+    ];
+    _applyParticipantSelection(merged);
   }
 
   @override
@@ -6845,309 +6933,43 @@ class _EventFormModalState extends State<_EventFormModal> {
 }
 
 // ---------------------------------------------------------------------------
-// _ParticipantPickerDialog
+// ЗДЕСЬ ЖИЛ `_ParticipantPickerDialog` — ВТОРОЙ ЛИСТ ВЫБОРА ЛЮДЕЙ НА ВЕЧЕР.
+//
+// Снят 19.09 решением владельца: дело одно — выбрать людей на вечер, — значит
+// и лист один. Остался `pickPeopleForLineup`
+// (`features/people/screens/pick_people_sheet.dart`); его зовут обе кнопки,
+// «Öz adamlarımı çağır» и «+ Əlavə et».
+//
+// ПОЧЕМУ СНЯТ ИМЕННО ЭТОТ, А НЕ ТОТ. Не по виду и не по объёму, а по
+// ИСТОЧНИКУ: он брал людей из Algolia, а индекс — снимок. Кружок «в сети» на
+// снимке гас у всех не позже чем через две минуты после открытия и больше не
+// загорался, потому что список замер, а часы идут. Разбор целиком — у
+// `_openParticipantPicker` выше и в N248.
+//
+// ЗАПИСАНО СНЯТИЕМ, А НЕ СТЁРТО МОЛЧА: следующий, увидев у формы правки один
+// лист на двоих с карточкой вечера, должен знать, что второй тут БЫЛ и почему
+// его нет, — иначе заведёт заново, не найдя ни строчки. Тот же довод, что у
+// снятой роли `DayRole.declined`.
+//
+// ЧТО УЕХАЛО ВМЕСТЕ С НИМ И ГДЕ ЭТО ТЕПЕРЬ.
+//   • ФИЛЬТРЫ (город, инструмент, рейтинг, «Onlayn indi») НЕ потеряны: они
+//     переехали в общий лист тем же заходом и считаются теперь по живым
+//     данным, а не по индексу. «Onlayn indi» там впервые отвечает
+//     по-настоящему — у индекса окно запроса обязано быть шире шага
+//     переиндексации (N57), то есть «сейчас» означало «недавно».
+//   • БЕСКОНЕЧНАЯ ПРОКРУТКА СТРАНИЦАМИ уехала вместе с Algolia и обратно не
+//     просится: общий лист рисует всех сразу, и при двенадцати учётках прода
+//     (замер 19.09) это ничего не стоит. Станет стоить — платить придётся не
+//     за фильтры, а за `musiciansProvider`, который тянет коллекцию целиком
+//     и без них.
+//   • ОБОДОК ИСТОРИИ на строке списка — ПОТЕРЯН, и это сказано прямо, а не
+//     обойдено. Снятый диалог рисовал `StatusRing`, общий лист рисует
+//     простой кружок с фотографией. Мест с ободком стало десять вместо
+//     одиннадцати. Вернуть его — правка одной строки в `PersonRow`, но она
+//     отдала бы ободок И одноместному листу «кому предложить работу», где
+//     его отродясь не было; поэтому решение владельца, а не побочный итог
+//     этой работы.
 // ---------------------------------------------------------------------------
-class _ParticipantPickerDialog extends ConsumerStatefulWidget {
-  final List<String> selectedUids;
-  final ValueChanged<List<String>> onChanged;
-  // Needed for hasUnviewedStatusFrom below — the picker rows now show a
-  // status ring, which requires the VIEWER's own User doc (not just each
-  // row's), so unlike before this dialog can no longer stay a plain
-  // StatefulWidget with no Riverpod/uid access. Threaded in from the
-  // caller's own widget.currentUid (_openParticipantPicker below) rather
-  // than re-reading FirebaseAuth here, matching this dialog's own existing
-  // convention of taking currentUid as a constructor param instead of
-  // looking it up itself. Also doubles as the Algolia search's own
-  // self-exclusion uid now that this dialog does its own search instead of
-  // filtering the caller's widget.allUsers list (see UserSearchController).
-  final String currentUid;
-
-  const _ParticipantPickerDialog({
-    required this.selectedUids,
-    required this.onChanged,
-    required this.currentUid,
-  });
-
-  @override
-  ConsumerState<_ParticipantPickerDialog> createState() =>
-      _ParticipantPickerDialogState();
-}
-
-class _ParticipantPickerDialogState
-    extends ConsumerState<_ParticipantPickerDialog> {
-  late List<String> _selected;
-  final _searchController = TextEditingController();
-  final _scrollController = ScrollController();
-  SearchFilters _filters = const SearchFilters();
-  late final _searchCtrl = UserSearchController(
-    filters: _filters.toAlgoliaFilters(widget.currentUid),
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    _selected = List<String>.from(widget.selectedUids);
-    _searchCtrl.loadInitial();
-    _scrollController.addListener(_onScroll);
-  }
-
-  Future<void> _openFilters() async {
-    final result = await FilterSheet.show(
-      context,
-      initial: _filters,
-      nameController: _searchController,
-    );
-    if (result != null) {
-      setState(() => _filters = result);
-      _searchCtrl.updateFilters(_filters.toAlgoliaFilters(widget.currentUid));
-    }
-  }
-
-  void _onScroll() {
-    if (!_searchCtrl.hasMore ||
-        _searchCtrl.isLoading ||
-        _searchCtrl.isLoadingMore) {
-      return;
-    }
-    if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 200) {
-      _searchCtrl.loadMore();
-    }
-  }
-
-  @override
-  void dispose() {
-    _scrollController.removeListener(_onScroll);
-    _scrollController.dispose();
-    _searchCtrl.dispose();
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: kBg2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: SizedBox(
-        height: 500,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      onChanged: _searchCtrl.search,
-                      style: const TextStyle(color: kText, fontSize: 14),
-                      decoration: InputDecoration(
-                        hintText: 'Axtar...',
-                        hintStyle: const TextStyle(color: kMuted),
-                        filled: true,
-                        fillColor: kBg3,
-                        prefixIcon: const Icon(Icons.search, color: kMuted),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: kBorder),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: kBorder),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: kGold),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  InkWell(
-                    onTap: _openFilters,
-                    borderRadius: BorderRadius.circular(10),
-                    child: Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: _filters.activeCount > 0 ? kGold : kBg3,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: _filters.activeCount > 0 ? kGold : kBorder,
-                        ),
-                      ),
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Center(
-                            child: Icon(
-                              Icons.tune_rounded,
-                              size: 20,
-                              color: _filters.activeCount > 0
-                                  ? kOnGold
-                                  : kMuted,
-                            ),
-                          ),
-                          if (_filters.activeCount > 0)
-                            Positioned(
-                              right: -4,
-                              top: -4,
-                              child: Container(
-                                padding: const EdgeInsets.all(3),
-                                constraints: const BoxConstraints(
-                                  minWidth: 16,
-                                  minHeight: 16,
-                                ),
-                                decoration: const BoxDecoration(
-                                  color: kRed,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Text(
-                                  '${_filters.activeCount}',
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    color: kOnRed,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: ListenableBuilder(
-                listenable: _searchCtrl,
-                builder: (context, _) {
-                  if (_searchCtrl.isLoading) {
-                    return const Center(
-                      child: CircularProgressIndicator(color: kGold),
-                    );
-                  }
-                  if (_searchCtrl.error != null) {
-                    return Center(
-                      child: Text(
-                        _searchCtrl.error!,
-                        style: const TextStyle(color: kMuted),
-                      ),
-                    );
-                  }
-
-                  final filtered = _searchCtrl.results;
-                  return ListView.builder(
-                    controller: _scrollController,
-                    itemCount:
-                        filtered.length + (_searchCtrl.isLoadingMore ? 1 : 0),
-                    itemBuilder: (_, i) {
-                      if (i >= filtered.length) {
-                        return const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 16),
-                          child: Center(
-                            child: CircularProgressIndicator(color: kGold),
-                          ),
-                        );
-                      }
-                      final m = filtered[i];
-                      final sel = _selected.contains(m.id);
-                      const avatarBaseSize = 36.0;
-                      final avatarBoxSize = avatarBaseSize * 1.2;
-                      return ListTile(
-                        leading: SizedBox(
-                          width: avatarBoxSize,
-                          height: avatarBoxSize,
-                          child: Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              // Свёрнуто 18.09. Ободка в ветви «истории нет»
-                              // не было — `plainRingWidth: 0`.
-                              //
-                              // Портрет здесь круглый, как везде: до 16.09
-                              // этот список был единственным местом со
-                              // скруглённым квадратом, и строка меняла форму
-                              // в зависимости от того, есть ли у человека
-                              // история. Остальное в окне (поле поиска, углы
-                              // самого окна) своих скруглений не теряло.
-                              StatusRing(
-                                user: m,
-                                currentUid: widget.currentUid,
-                                size: avatarBoxSize,
-                                fallbackEmoji: m.emoji,
-                                plainRingWidth: 0,
-                                plainFallbackFontSize: 18,
-                              ),
-                              Positioned(
-                                bottom: 0,
-                                right: 0,
-                                child: OnlineDot(user: m),
-                              ),
-                            ],
-                          ),
-                        ),
-                        title: Text(
-                          m.name,
-                          style: TextStyle(
-                            color: sel ? kGold : kText,
-                            fontSize: 14,
-                          ),
-                        ),
-                        subtitle: Text(
-                          m.instrument,
-                          style: const TextStyle(color: kMuted, fontSize: 12),
-                        ),
-                        trailing: sel
-                            ? const Icon(Icons.check_circle, color: kGold)
-                            : const Icon(Icons.circle_outlined, color: kBorder),
-                        onTap: () => setState(() {
-                          if (sel) {
-                            _selected.remove(m.id);
-                          } else {
-                            _selected.add(m.id);
-                          }
-                        }),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: ElevatedButton(
-                onPressed: () {
-                  widget.onChanged(_selected);
-                  Navigator.of(context).pop();
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: kGold,
-                  foregroundColor: kOnGold,
-                  minimumSize: const Size.fromHeight(44),
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: const Text(
-                  'Təsdiqlə',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 /// ОТКАЗ С ПРИЧИНОЙ — ОДНА ДОРОГА НА ВСЕ ДВЕРИ (17.09, решение владельца).
 ///

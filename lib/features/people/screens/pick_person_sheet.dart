@@ -2,7 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart' hide User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'person_picker_core.dart';
+import '../widgets/person_picker_core.dart';
 
 // ---------------------------------------------------------------------------
 // «КОМУ ПРЕДЛОЖИТЬ РАБОТУ» — выбор ОДНОГО человека

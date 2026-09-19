@@ -49,6 +49,7 @@ import '../../../core/time/az_date_format.dart';
 import '../../../firebase/firestore_service.dart';
 import '../../../firebase/models.dart';
 import '../../../shared/widgets/online_dot.dart';
+import '../../search/screens/filter_sheet.dart';
 
 /// Отбор по подстроке — по имени, инструменту и городу сразу.
 ///
@@ -194,6 +195,42 @@ class _PersonPickerBodyState extends ConsumerState<PersonPickerBody> {
   final _searchController = TextEditingController();
   String _query = '';
 
+  // ФИЛЬТРЫ — ГОРОД, ИНСТРУМЕНТ, РЕЙТИНГ, «ONLAYN INDI» (19.09).
+  //
+  // **Живут в общей середине, а не в одном из листов, и это разбор, а не
+  // удобство.** Признак I58: посмотреть, что идёт ПОСЛЕ общего шага. Фильтр
+  // сужает список — дальше в обоих листах рисуется строка и по ней жмут.
+  // Совпало, значит дело одно, значит место общее.
+  //
+  // **Флага «а этому фильтров не показывать» здесь НЕТ и заводить нельзя** —
+  // это был бы ровно тот переключатель, по которому узнаётся склейка двух дел.
+  // Одноместный лист «кому предложить работу» получает фильтры вместе с
+  // многоместным, и это сказано вслух, а не сделано молча: при открытии
+  // фильтров ноль, кнопка ничего не меняет, пока её не тронут.
+  //
+  // ОТКУДА ОНИ ВЗЯЛИСЬ. Из снятого `_ParticipantPickerDialog`
+  // (`agreements_screen.dart`), где отбор делала Algolia. Здесь отбор идёт по
+  // ЖИВОМУ человеку — `SearchFilters.matchesPerson`, — и «Onlayn indi»
+  // впервые отвечает по-настоящему: у индекса окно запроса обязано быть шире
+  // десятиминутного шага переиндексации (N57), то есть «в сети сейчас» там
+  // значило «был в сети недавно».
+  //
+  // ЦЕНА, НАЗВАННАЯ СРАЗУ: отбор идёт ПОСЛЕ выборки, а не до. Algolia
+  // отбирала на сервере и отдавала двадцать подходящих; здесь берутся все и
+  // отбрасываются лишние. При двенадцати учётках прода (замер 19.09) это
+  // ничего не стоит, а когда станет стоить — платить придётся за
+  // `musiciansProvider`, который тянет коллекцию целиком и без фильтров.
+  SearchFilters _filters = const SearchFilters();
+
+  Future<void> _openFilters() async {
+    final result = await FilterSheet.show(
+      context,
+      initial: _filters,
+      nameController: _searchController,
+    );
+    if (result != null) setState(() => _filters = result);
+  }
+
   // ЗДЕСЬ СТОЯЛО ОБНОВЛЕНИЕ ЗЕЛЁНОГО КРУЖКА ПО ТАЙМЕРУ — заведено 18.09,
   // снято 18.09 же, в тот же день, и это не переделка, а окончание работы:
   // таймер переехал ВНУТРЬ самого кружка (`shared/widgets/online_dot.dart`),
@@ -230,31 +267,58 @@ class _PersonPickerBodyState extends ConsumerState<PersonPickerBody> {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-            child: TextField(
-              controller: _searchController,
-              style: const TextStyle(color: kText, fontSize: 14),
-              onChanged: (v) => setState(() => _query = v),
-              decoration: InputDecoration(
-                hintText: 'Ad, alət və ya şəhər',
-                hintStyle: const TextStyle(color: kMuted),
-                prefixIcon: const Icon(Icons.search, color: kMuted, size: 20),
-                filled: true,
-                fillColor: kBg3,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: kBorder),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchController,
+                    style: const TextStyle(color: kText, fontSize: 14),
+                    onChanged: (v) => setState(() => _query = v),
+                    decoration: InputDecoration(
+                      hintText: 'Ad, alət və ya şəhər',
+                      hintStyle: const TextStyle(color: kMuted),
+                      prefixIcon: const Icon(
+                        Icons.search,
+                        color: kMuted,
+                        size: 20,
+                      ),
+                      filled: true,
+                      fillColor: kBg3,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: kGold),
+                      ),
+                    ),
+                  ),
                 ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: kBorder),
+                const SizedBox(width: 10),
+                // КНОПКА ФИЛЬТРОВ — ТА ЖЕ, ЧТО В ПОИСКЕ И В СПИСКЕ ЧАТОВ.
+                //
+                // Вид взят у снятого `_ParticipantPickerDialog` дословно (42×42,
+                // скругление 10, значок `tune_rounded`, счётчик красным кружком
+                // в углу): фильтры переехали, а не завелись заново, и выглядеть
+                // они обязаны так же — иначе человек не узнает своё.
+                //
+                // `FilterSheet` и `SearchFilters` тоже общие, а не свои: пять
+                // полей фильтра решаются в одном месте на весь проект, и второе
+                // их написание разошлось бы молча (N49).
+                _FilterButton(
+                  activeCount: _filters.activeCount,
+                  onTap: _openFilters,
                 ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: kGold),
-                ),
-              ),
+              ],
             ),
           ),
           Expanded(
@@ -268,19 +332,39 @@ class _PersonPickerBodyState extends ConsumerState<PersonPickerBody> {
                 ),
               ),
               data: (all) {
-                final people = filterPeople(
+                final found = filterPeople(
                   all,
                   myUid: widget.myUid,
                   query: _query,
                 );
+                // ФИЛЬТРЫ ПОСЛЕ ПОИСКА, А НЕ ВМЕСТО НЕГО: поиск отвечает «кого
+                // я назвал», фильтр — «кто мне подходит», и вопросы эти
+                // складываются, а не заменяют друг друга.
+                final people = _filters.isEmpty
+                    ? found
+                    : found.where(_filters.matchesPerson).toList();
                 if (people.isEmpty) {
+                  // ТРИ ПУСТОТЫ, А НЕ ДВЕ (19.09, I47). Здесь их было две —
+                  // «никого нет вовсе» и «никто не подошёл под запрос», — и
+                  // сливать их было нельзя, потому что вторая подсказывает,
+                  // что делать. С приходом фильтров появилась ТРЕТЬЯ: список
+                  // не пуст и запрос не виноват, отсеял фильтр. Ответ у неё
+                  // свой, потому что и делать надо своё — снять фильтр, а не
+                  // переписать запрос.
+                  //
+                  // Порядок ветвей содержателен: сперва спрашивается фильтр,
+                  // потому что он сильнее — при включённом фильтре пустой
+                  // запрос НЕ означает «никого нет вовсе».
+                  final String word;
+                  if (!_filters.isEmpty && found.isNotEmpty) {
+                    word = 'Süzgəcə uyğun adam yoxdur';
+                  } else if (_query.trim().isEmpty) {
+                    word = 'Hələ heç kim yoxdur';
+                  } else {
+                    word = 'Tapılmadı';
+                  }
                   return Center(
-                    child: Text(
-                      _query.trim().isEmpty
-                          ? 'Hələ heç kim yoxdur'
-                          : 'Tapılmadı',
-                      style: const TextStyle(color: kMuted),
-                    ),
+                    child: Text(word, style: const TextStyle(color: kMuted)),
                   );
                 }
                 return ListView.builder(
@@ -293,6 +377,86 @@ class _PersonPickerBodyState extends ConsumerState<PersonPickerBody> {
           ),
           if (widget.footer != null) widget.footer!,
         ],
+      ),
+    );
+  }
+}
+
+/// КНОПКА ФИЛЬТРОВ У ЛИСТА ВЫБОРА ЛЮДЕЙ.
+///
+/// **Вид перенесён из снятого `_ParticipantPickerDialog` дословно** — 42×42,
+/// скругление 10, `tune_rounded` на 20, счётчик включённых красным кружком в
+/// углу со смещением −4. Приводить его «к общему виду» было нельзя: фильтры
+/// не заводились заново, они переехали, и человек обязан узнать своё.
+///
+/// **Отдельным виджетом, а не куском внутри `build`, по одной причине:** тот
+/// `build` и так длинный, а этот кусок ничего не знает ни о списке, ни о
+/// поиске — ему нужны число и нажатие. Это разделение по задаче, а не по
+/// длине (I58).
+///
+/// **Что он НЕ решает:** какие поля у фильтра и что они значат. Это
+/// `SearchFilters` и `FilterSheet`, общие на весь проект.
+class _FilterButton extends StatelessWidget {
+  const _FilterButton({required this.activeCount, required this.onTap});
+
+  final int activeCount;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final on = activeCount > 0;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        width: 42,
+        height: 42,
+        decoration: BoxDecoration(
+          color: on ? kGold : kBg3,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: on ? kGold : kBorder),
+        ),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Center(
+              child: Icon(
+                Icons.tune_rounded,
+                size: 20,
+                color: on ? kOnGold : kMuted,
+              ),
+            ),
+            // СЧЁТЧИК ВКЛЮЧЁННЫХ — не украшение: включённый фильтр меняет то,
+            // что человек видит, а сам по себе невидим. Без числа пустой
+            // список читался бы как «никого нет» (I14 — короткий вывод,
+            // принятый за хорошую новость).
+            if (on)
+              Positioned(
+                right: -4,
+                top: -4,
+                child: Container(
+                  padding: const EdgeInsets.all(3),
+                  constraints: const BoxConstraints(
+                    minWidth: 16,
+                    minHeight: 16,
+                  ),
+                  decoration: const BoxDecoration(
+                    color: kRed,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    '$activeCount',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: kOnRed,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

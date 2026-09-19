@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mugam_flutter/features/job_offer/screens/person_picker_core.dart';
+import 'package:mugam_flutter/features/people/widgets/person_picker_core.dart';
 import 'package:mugam_flutter/firebase/models.dart';
 
 import 'support/source_text.dart';
@@ -178,7 +178,7 @@ void main() {
     late String code;
 
     setUpAll(() {
-      code = readCode('lib/features/job_offer/screens/person_picker_core.dart');
+      code = readCode('lib/features/people/widgets/person_picker_core.dart');
     });
 
     // ТРИ ВЕРДИКТА НИЖЕ ПЕРЕПИСАНЫ 18.09, А НЕ УДАЛЕНЫ, и разница

@@ -508,4 +508,102 @@ void main() {
           ['Şübhə altında', null]);
     });
   });
+
+  // ---------------------------------------------------------------------
+  // БЛОК «CAVABINIZ» — ПОКАЗЫВАТЬ ЛИ (N250, 19.09)
+  //
+  // Правило заведено потому, что условие жило в разметке и разошлось с
+  // соседним: кнопка выхода вышедшего отсекала, блок ответа — нет.
+  //
+  // ЧЕГО ЭТИ ВЕРДИКТЫ НЕ ДОКАЗЫВАЮТ (I55): что карточка ЗОВЁТ это правило.
+  // Это сторож по исходникам ниже в этом же наборе и глаза на трубке.
+  // ---------------------------------------------------------------------
+  group('блок ответа: кому он показан', () {
+    test('владельцу — нет, он вечер создал', () {
+      expect(
+        showsAnswerBlock(
+            isOwner: true, myAnswer: kAnswerGoing, status: kStatusAgreed),
+        isFalse,
+      );
+    });
+
+    test('не участнику — нет: ответа у него нет вовсе', () {
+      expect(
+        showsAnswerBlock(
+            isOwner: false, myAnswer: null, status: kStatusAgreed),
+        isFalse,
+      );
+    });
+
+    test('ВЫШЕДШЕМУ — НЕТ, и это и есть N250', () {
+      // До 19.09 здесь было `true`: `answerFor` у вышедшего возвращает
+      // `left`, а не `null`, и условие в разметке его пропускало. Человек
+      // видел «Gəlirəm» (вернула бы его в состав) и вторую
+      // «Gələ bilmirəm» (прогнала бы выход заново и послала владельцу
+      // второе «İştirakçı ayrıldı»).
+      expect(
+        showsAnswerBlock(
+            isOwner: false, myAnswer: kAnswerLeft, status: kStatusAgreed),
+        isFalse,
+        reason: 'вышедший снова видит блок ответа — N250 вернулась',
+      );
+    });
+
+    test('согласившемуся и ждущему — да', () {
+      for (final a in const [kAnswerGoing, kAnswerWaiting]) {
+        expect(
+          showsAnswerBlock(
+              isOwner: false, myAnswer: a, status: kStatusAgreed),
+          isTrue,
+          reason: 'ответ $a: блок обязан быть показан',
+        );
+      }
+    });
+
+    test('под вопросом и у отменённого — нет: отвечать не на что', () {
+      for (final st in const [kStatusUnsettled, kStatusCancelled]) {
+        expect(
+          showsAnswerBlock(
+              isOwner: false, myAnswer: kAnswerGoing, status: st),
+          isFalse,
+          reason: 'состояние $st: блок показан, а отвечать не на что',
+        );
+      }
+    });
+
+    test('ЕДИНСТВЕННОЕ законное расхождение с выходом — «под вопросом»', () {
+      // Два правила отвечают на соседние вопросы и обязаны совпадать везде,
+      // КРОМЕ одного места: под вопросом отвечать не на что, а выйти есть
+      // (решение владельца 12.09). Совпади они всюду — одно из двух лишнее;
+      // разойдись где-то ещё — это и есть N250 в новом месте.
+      //
+      // Перебор, а не пример: пример соврал бы про непроверенные сочетания.
+      final answers = <String?>[
+        null,
+        kAnswerGoing,
+        kAnswerWaiting,
+        kAnswerLeft,
+      ];
+      const statuses = [kStatusAgreed, kStatusUnsettled, kStatusCancelled];
+      final differ = <String>[];
+      for (final owner in const [true, false]) {
+        for (final a in answers) {
+          for (final st in statuses) {
+            final block =
+                showsAnswerBlock(isOwner: owner, myAnswer: a, status: st);
+            final exit =
+                offersEventExit(isOwner: owner, myAnswer: a, status: st);
+            if (block != exit) differ.add('isOwner=$owner answer=$a status=$st');
+          }
+        }
+      }
+      expect(
+        differ,
+        ['isOwner=false answer=going status=unsettled',
+         'isOwner=false answer=waiting status=unsettled'],
+        reason: 'правила расходятся не там, где условлено:\n'
+            '${differ.join('\n')}',
+      );
+    });
+  });
 }

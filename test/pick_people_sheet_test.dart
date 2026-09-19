@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mugam_flutter/features/job_offer/screens/person_picker_core.dart';
+import 'package:mugam_flutter/features/people/widgets/person_picker_core.dart';
 import 'package:mugam_flutter/firebase/models.dart';
 
 // МНОГОМЕСТНЫЙ ЛИСТ — работа 7, шаг 3 (`docs/plan.md`), 08.09.
